@@ -13,9 +13,17 @@ public enum ClipboardDestination {
 
     /// Copies the file, returning false if it could not be copied.
     ///
-    /// A missing file is refused BEFORE the pasteboard is cleared, so a failed
-    /// copy never destroys whatever the user already had on their clipboard.
-    @discardableResult
+    /// The file's existence is checked BEFORE the pasteboard is cleared, so the
+    /// common failure — a recording that never got written — cannot destroy what
+    /// the user already had on their clipboard.
+    ///
+    /// That guarantee is narrower than "a failed copy is always harmless", and
+    /// deliberately so. `NSPasteboard` requires `clearContents()` before
+    /// `writeObjects(_:)`, with no atomic alternative, so a write that fails
+    /// *after* the clear leaves the clipboard empty. Snapshotting and restoring
+    /// the previous contents was considered and rejected: pasteboard items can be
+    /// lazily promised, so a restore may not faithfully reproduce them, which
+    /// would trade a near-unreachable failure for an unreliable mechanism.
     public static func copy(fileURL: URL, to pasteboard: NSPasteboard) -> Bool {
         guard FileManager.default.fileExists(atPath: fileURL.path) else {
             return false
