@@ -64,3 +64,40 @@ func captureIsPlayable() async throws {
     let tracks = try await asset.loadTracks(withMediaType: .video)
     #expect(tracks.count == 1)
 }
+
+@Test("Stopping without starting throws rather than writing a phantom bundle")
+func stopWithoutStartThrows() async throws {
+    let bundleURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension(SnittBundle.fileExtension)
+    defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+    let recorder = try Recorder.forTesting(bundleURL: bundleURL,
+                                           videoSize: CGSize(width: 320, height: 240))
+    await #expect(throws: RecorderError.notStarted) {
+        _ = try await recorder.stop()
+    }
+}
+
+@Test("A failure to finalize the movie surfaces instead of being swallowed")
+func finalizationFailureSurfaces() async throws {
+    let bundleURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension(SnittBundle.fileExtension)
+    defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+    let size = CGSize(width: 320, height: 240)
+    let recorder = try Recorder.forTesting(bundleURL: bundleURL, videoSize: size)
+    try await recorder.startForTesting()
+    for frame in 0..<10 {
+        recorder.feedForTesting(makeVideoBuffer(at: Double(frame) / 30.0, size: size),
+                                .screen)
+    }
+    _ = try await recorder.stop()
+
+    // The sink is already finished; a second stop must surface the sink's
+    // error rather than returning a bundle as though nothing went wrong.
+    await #expect(throws: (any Error).self) {
+        _ = try await recorder.stop()
+    }
+}

@@ -3,6 +3,11 @@ import CoreMedia
 import ScreenCaptureKit
 import SnittDocument
 
+public enum RecorderError: Error, Equatable {
+    /// `stop()` was called before `start()`.
+    case notStarted
+}
+
 /// Drives a capture into a complete `.snitt` bundle.
 ///
 /// On stop, writes the sidecar files so the bundle is valid the moment
@@ -46,11 +51,29 @@ public actor Recorder {
         try await session.start()
     }
 
+    /// Stops capture, finalizes the movie, and completes the bundle.
+    ///
+    /// Sidecar files are written even when finalization fails, so the bundle on
+    /// disk stays well-formed and recoverable — but the failure is then
+    /// rethrown, because a caller must never be handed a bundle that looks
+    /// complete while `capture.mov` is truncated or unplayable.
     public func stop() async throws -> SnittBundle {
-        // No-op when there is no live stream, which is the testing path.
+        guard startedAt != nil else { throw RecorderError.notStarted }
+
+        // Swallowed deliberately: on the testing path there is no live stream,
+        // and a stream-stop failure does not corrupt the written movie.
         try? await session.stop()
-        _ = try? await sink.finish()
+
+        var finishError: Error?
+        do {
+            _ = try await sink.finish()
+        } catch {
+            finishError = error
+        }
+
         try writeSidecars()
+
+        if let finishError { throw finishError }
         return bundle
     }
 
