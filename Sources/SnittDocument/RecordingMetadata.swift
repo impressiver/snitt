@@ -68,15 +68,15 @@ public struct RecordingMetadata: Codable, Sendable {
 /// Shared JSON configuration. ISO-8601 dates and sorted keys keep bundle
 /// files diffable and stable across writes.
 enum JSONCoding {
-    static var encoder: JSONEncoder {
+    static let encoder: JSONEncoder = {
         let e = JSONEncoder()
         e.dateEncodingStrategy = .iso8601
         e.outputFormatting = [.prettyPrinted, .sortedKeys]
         return e
-    }
-    static var decoder: JSONDecoder {
+    }()
+    static let decoder: JSONDecoder = {
         let d = JSONDecoder()
         d.dateDecodingStrategy = .iso8601
         return d
-    }
+    }()
 }

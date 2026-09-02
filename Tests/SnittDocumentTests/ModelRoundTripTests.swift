@@ -30,23 +30,27 @@ func metadataRoundTrips() throws {
     #expect(read.schemaVersion == 1)
 }
 
-@Test("EventLog round-trips and preserves ordering")
+@Test("EventLog round-trips and preserves write order, not time order")
 func eventLogRoundTrips() throws {
     let bundle = try makeBundle()
     defer { try? FileManager.default.removeItem(at: bundle.url) }
 
+    // Deliberately NOT in ascending time order: an implementation that
+    // sorted by timeSeconds would reorder these, and must not.
     let written = EventLog(events: [
+        LoggedEvent(timeSeconds: 2.5, kind: .marker, label: "the fix"),
         LoggedEvent(timeSeconds: 0.5, kind: .click, label: nil),
-        LoggedEvent(timeSeconds: 1.5, kind: .marker, label: "the fix"),
-        LoggedEvent(timeSeconds: 2.5, kind: .keystroke, label: nil),
+        LoggedEvent(timeSeconds: 1.5, kind: .keystroke, label: nil),
     ])
     try written.write(to: bundle)
     let read = try EventLog.read(from: bundle)
 
     #expect(read.events.count == 3)
-    #expect(read.events[1].kind == .marker)
-    #expect(read.events[1].label == "the fix")
-    #expect(read.events.map(\.timeSeconds) == [0.5, 1.5, 2.5])
+    #expect(read.events.map(\.timeSeconds) == [2.5, 0.5, 1.5],
+            "write order must survive the round trip unsorted")
+    #expect(read.events[0].kind == .marker)
+    #expect(read.events[0].label == "the fix")
+    #expect(read.events[1].label == nil)
 }
 
 @Test("A new EDL defaults to no cuts and unmuted tracks")
