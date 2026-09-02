@@ -8,7 +8,7 @@ set -euo pipefail
 
 IDENTITY_NAME="Snitt Development"
 
-if security find-identity -v -p codesigning | grep -q "$IDENTITY_NAME"; then
+if security find-identity -v -p codesigning | grep -q "\"$IDENTITY_NAME\""; then
   echo "$IDENTITY_NAME"
   exit 0
 fi
