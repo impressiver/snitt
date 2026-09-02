@@ -1,0 +1,33 @@
+# macOS
+.DS_Store
+
+# Xcode
+xcuserdata/
+*.xcuserstate
+*.xcscmblueprint
+*.xccheckout
+DerivedData/
+build/
+*.moved-aside
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved
+
+# Signing / secrets — never commit these
+*.p12
+*.mobileprovision
+*.cer
+.env
+.env.*
+
+# Snitt working artifacts
+*.snitt/
+*.mov
+*.mp4
+*.gif
