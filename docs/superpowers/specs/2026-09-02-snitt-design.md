@@ -383,6 +383,45 @@ surface, so it carries requirements beyond the universal ones above:
   that specifically — the window-scoped default is not overridable from the
   automation API alone.
 
+### 5.4 Agent target grants — one human-driven approval per target
+
+An agent has no human at the keyboard to drive `SCContentSharingPicker`, which
+would otherwise leave automation stuck on the bypass path (§5.2) and its monthly
+re-consent nag. The resolution: **a human approves a target once, through the
+picker, and agents may then record that target without further interruption.**
+
+**Grants are per application, not per window.** `SCWindow.windowID` is a
+per-session integer that changes when a window closes or its app relaunches, so
+persisting it would produce a grant that silently stops matching. The stable
+identity is the owning application's bundle identifier. A grant therefore reads
+"agents may record windows belonging to `com.apple.Safari`", and Snitt records
+the bundle identifier, the human-readable app name, and the approval date.
+
+Displays are never agent-grantable this way. Full-display capture for an agent
+requires the separate, explicit grant described above, because the whole point of
+window scoping is that a display grant is not something anyone should give away
+by approving a demo once.
+
+**The flow when an agent asks for an ungranted target:**
+
+1. The agent calls `snitt record start --app Safari`.
+2. Snitt finds no grant for `com.apple.Safari` and does **not** start recording.
+3. It returns a structured `consent_required` error immediately (§11) and, if a
+   human is present, surfaces the picker so they can approve.
+4. The agent reports the blockage to its human in whatever channel it has. The
+   human approves once.
+5. Every later agent recording of that app proceeds with no prompt.
+
+Step 3 is where this design earns its keep: **the agent must never block waiting
+on a dialog it cannot see.** A hung automation run that is silently parked behind
+an invisible modal is worse than a clean failure, so the error returns at once
+and the picker is a side effect for whoever is at the machine, not a gate the
+agent waits on.
+
+**Grants are visible and revocable.** Settings lists every granted application
+with its approval date and a revoke control. A consent mechanism nobody can
+audit or withdraw is not consent; it is a one-way door.
+
 **These requirements bind the schedule, not just the code.** Agent recording
 ships in M2, so the menu-bar indicator and kill switch ship in M2 — as a minimal
 status-item shell, with no editor and no timeline. A safety guarantee whose
@@ -441,6 +480,7 @@ CLI surface; MCP tools mirror these one-to-one
 
 ```
 snitt targets list                          → JSON: displays, windows, apps
+                                              (each carries `agentGranted: bool`)
 snitt record start --window-id N [--mic] [--system-audio]
                    [--max-duration 300]     → session id
 snitt record mark <session> [--label "..."] → timestamped marker (§4.12)
@@ -470,6 +510,12 @@ list. Together they let an agent write something *factually true* in a pull
 request — "42s demo, 3.1 MB, chapters: repro / fix / verify" — instead of
 narrating a video it has never seen. Both are near-free: every value is already
 computed elsewhere in the pipeline.
+
+**Agent consent.** `snitt record start` fails with `consent_required` when no
+human has yet approved the target's application for agent recording (§5.4). The
+error names the application and explains that a human must approve it once; the
+agent is expected to relay that to its human rather than retry. `snitt targets
+list` reports `agentGranted` per target so an agent can check before it tries.
 
 **`--auto-trim`** clips dead air before the first and after the last logged input
 event. Note the limit honestly: it works only where input events exist. An agent
@@ -552,6 +598,11 @@ Other failure modes:
 - **Agent requests capture while permission is missing:** fail with a structured,
   actionable error on stdout and a non-zero exit code. Never block on a GUI
   prompt an agent cannot see or answer.
+- **Agent requests an ungranted target (§5.4):** return `consent_required`
+  immediately, naming the application and stating that a human must approve it
+  once. Surface the picker to whoever is at the machine as a side effect, but
+  never make the agent wait on it — an automation run parked behind an invisible
+  modal is worse than a clean failure.
 - **Agent session orphaned by a crashed client:** the max-duration cap (§5)
   bounds it; the app finalizes and releases the session.
 - **IPC version mismatch:** see §10.
@@ -603,7 +654,8 @@ before it is allowed to gate anything. Sampling happens during the existing
 - **M2** `SnittAutomation`, IPC + version handshake, CLI, MCP server, consent
   model (§5), **`SCContentSharingPicker` adoption (§5.2) — replaces M1's
   `SCShareableContent` enumeration and is what makes the permission grant
-  one-time**, window-scoped capture as the universal default (§5.1), menu-bar
+  one-time**, window-scoped capture as the universal default (§5.1), per-application agent
+  target grants with a settings UI to list and revoke them (§5.4), menu-bar
   status item + kill switch, global hotkey instant capture (§4.11), export with
   `--max-size`, stop-and-copy default (§4.1), `snitt inspect` + export manifest,
   capture health (§12.1), git context (§7)
@@ -834,6 +886,9 @@ needle, this is the entry that predicted it.
 
 | D29 | Window-scoped capture is the default for EVERY recording, not just agent-initiated ones | The incidental-leak risk does not depend on who pressed record. Proven, not hypothesised: a Mail password notification was captured in the first real M1 recording, during ordinary human full-display capture | M1 verification record; §5.1 | Decided | safety-scoped-too-narrowly |
 | D30 | Target selection moves to `SCContentSharingPicker`; M1's `SCShareableContent` enumeration is a known divergence for M2 to correct | macOS 15 shows a recurring MONTHLY re-consent prompt to apps that bypass the system picker — its wording is literally "requesting to bypass the system private window picker". Enumerating our own targets would nag every user forever, defeating the one-time-grant promise. The picker also gives window scoping for free, so D29 and D30 are one change | §4.6 (which already cited the picker), §5.2 | Decided | permission-recurs-not-persists |
+
+| D31 | Agent recording of a target requires one human-driven picker approval, granted **per application bundle identifier**, persisted until revoked | Agents have no human to drive `SCContentSharingPicker`, which would strand automation on the bypass path and its monthly nag (§5.2). Per-window grants are impossible because `SCWindow.windowID` is a per-session integer that changes on relaunch, so the grant would silently stop matching; the bundle identifier is the stable key. Displays stay excluded — a display grant is exactly what window scoping exists to prevent giving away casually | §5.2, §5.4; `SCWindow.windowID` semantics | Decided | unstable-identity-as-permission-key |
+| D32 | An ungranted agent request returns `consent_required` immediately and never blocks on the picker | An automation run parked behind a modal no human can see is worse than a clean failure — the agent cannot report it, cannot time out meaningfully, and cannot ask for help. Failing fast lets the agent relay the blockage to its human, which is the only path to resolution | §5.4, §11 | Decided | invisible-modal-blocks-automation |
 
 `conformance: 2026-09-02` (post-M1)
 
