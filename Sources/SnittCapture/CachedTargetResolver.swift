@@ -61,9 +61,13 @@ public struct CachedTargetResolver: TargetResolver {
 
         switch reference.kind {
         case .display:
-            guard let displayID = reference.displayID,
-                  let display = content.displays.first(where: { $0.displayID == displayID })
-            else { throw TargetResolutionError.targetGone("display") }
+            guard let displayID = reference.displayID else {
+                throw TargetResolutionError.targetGone("display (no id recorded)")
+            }
+            guard let display = content.displays.first(where: { $0.displayID == displayID })
+            else {
+                throw TargetResolutionError.targetGone("display \(displayID)")
+            }
 
             return ResolvedTarget(
                 filter: SCContentFilter(display: display, excludingWindows: []),

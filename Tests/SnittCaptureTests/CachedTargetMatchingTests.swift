@@ -51,14 +51,18 @@ func noMatchWhenAppAbsent() {
     #expect(found == nil)
 }
 
-@Test("Ignores window ids entirely when matching")
+@Test("Matching ignores window ids — an id-ordered match would pick the wrong window")
 func ignoresWindowIDs() {
-    // The same app, different window ids than any previous session — matching
-    // must not depend on them, because they change every relaunch.
     let ref = TargetReference.window(bundleIdentifier: "com.apple.Safari",
                                      titleHint: "Docs")
+    // Two windows of the same app. The one matching the title hint deliberately
+    // has the HIGHER id and comes SECOND, so an implementation that preferred
+    // the lowest id, or simply took the first window without consulting the
+    // title, returns the wrong one and fails this test.
     let found = CachedTargetResolver.bestMatch(for: ref, among: [
+        candidate(1, "com.apple.Safari", "Inbox"),
         candidate(99_001, "com.apple.Safari", "Docs"),
     ])
-    #expect(found?.windowID == 99_001)
+    #expect(found?.windowID == 99_001,
+            "the title hint must decide, not window id order or list position")
 }
