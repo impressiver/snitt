@@ -21,3 +21,19 @@ func observerTracksCompletion() async {
     _ = await box.deliver(.failure(.cancelled))
     #expect(await box.hasCompleted == true)
 }
+
+@Test("An outcome arriving before the continuation is armed is not lost")
+func earlyOutcomeIsHeldUntilArmed() async throws {
+    let box = PickerOutcomeBox()
+    // Deliver BEFORE anything is armed — the old design dropped this silently.
+    let accepted = await box.deliver(.failure(.cancelled))
+    #expect(accepted == true)
+    #expect(await box.hasCompleted == true)
+
+    // Arming afterwards must resume with the held outcome rather than hang.
+    await #expect(throws: TargetResolutionError.cancelled) {
+        try await withCheckedThrowingContinuation { continuation in
+            Task { await box.arm(continuation) }
+        }
+    }
+}
