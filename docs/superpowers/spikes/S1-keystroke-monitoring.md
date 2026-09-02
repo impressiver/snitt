@@ -4,18 +4,59 @@
 `NSEvent.addGlobalMonitorForEvents`, or does it require `CGEventTap` with an
 Input Monitoring grant?
 
-**Date:** 2026-09-02  ·  **macOS version:** 26.5.2  ·  **Status:** Blocked — awaiting human execution
+**Date:** 2026-09-02  ·  **macOS version:** 26.5.2  ·  **Status:** Resolved
 
 ## Observations
 
-| Condition | NSEvent keyDown | NSEvent mouseDown | CGEventTap keyDown |
-|---|---|---|---|
-| Input Monitoring DENIED | | | |
-| Input Monitoring GRANTED | | | |
+Measured with probe **revision 2**. Revision 1's results were discarded — see
+"Probe defect" below.
+
+| Condition | NSEvent keyDown | NSEvent mouseDown | CGEventTap keyDown | Tap created? |
+|---|---|---|---|---|
+| Input Monitoring **DENIED** | 0 | 0 | 0 | **failed** |
+| Input Monitoring **GRANTED** | **0** | 3 | **23** | succeeded |
+
+The result that matters is the bolded one: `NSEvent` global `keyDown` counted
+**zero even with Input Monitoring granted**, while `CGEventTap` went from
+failing outright to capturing 23 keystrokes.
 
 ## Recommendation
 
-**AWAITING HUMAN EXECUTION — do not fill in without running the probe.**
+**Use `CGEventTap` with the Input Monitoring grant. Do not use
+`NSEvent.addGlobalMonitorForEvents` for keystrokes.**
+
+The two APIs are gated by *different TCC services*, which is the whole answer:
+
+- `CGEventTap` → **Input Monitoring** (`kTCCServiceListenEvent`)
+- `NSEvent.addGlobalMonitorForEvents` → **Accessibility** (`kTCCServiceAccessibility`)
+
+This is confirmed by Apple developer-forum guidance as well as by the table
+above: granting Input Monitoring did nothing for `NSEvent` because it is not
+the permission that API reads. `NSEvent` would additionally have required
+Accessibility — a broader, scarier grant that lets an app control the machine,
+and a harder thing to ask a user for than "let this recorder see keystrokes".
+
+Snitt should therefore call `CGRequestListenEventAccess()` and create a
+`CGEventTap`. That is both the narrower permission and the better onboarding
+story.
+
+## Probe defect — why revision 1's data was thrown away
+
+Revision 1 reported all zeros including `mouseDown`, which looked like a clean
+"denied" result and was not. Two independent bugs:
+
+1. It called `CGPreflightListenEventAccess()` — which only *reads* the current
+   grant — and never `CGRequestListenEventAccess()`, the call that raises the
+   prompt. No dialog ever appeared, so the "granted" condition could not be
+   entered at all.
+2. It ran a bare `RunLoop.main.run()` with no `NSApplication`. AppKit global
+   monitors are delivered through the application event machinery, so without a
+   running `NSApp` they never fire — which is why even `mouseDown` counted zero,
+   despite mouse monitors historically needing no permission.
+
+The lesson worth carrying: an all-zero measurement from an instrument that has
+never been shown to produce a non-zero reading is not evidence of absence. Rev 2
+was made discriminating first — able to show a positive — and only then trusted.
 
 ## Consequences
 
