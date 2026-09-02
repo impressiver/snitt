@@ -46,13 +46,31 @@ struct S4Probe {
 
     static func append(_ line: String) {
         let stamp = ISO8601DateFormatter().string(from: Date())
-        let entry = "\(stamp) \(line)\n"
-        if let handle = try? FileHandle(forWritingTo: logURL) {
-            handle.seekToEndOfFile()
-            handle.write(Data(entry.utf8))
-            try? handle.close()
-        } else {
-            try? Data(entry.utf8).write(to: logURL)
+        let entry = Data("\(stamp) \(line)\n".utf8)
+
+        // First write: the file does not exist, so creating it is safe.
+        if !FileManager.default.fileExists(atPath: logURL.path) {
+            do {
+                try entry.write(to: logURL)
+            } catch {
+                FileHandle.standardError.write(
+                    Data("s4: could not create log at \(logURL.path): \(error)\n".utf8))
+            }
+            return
+        }
+
+        // The log EXISTS. Append only. There is deliberately no whole-file-write
+        // fallback here: Data.write(to:) truncates, and this log accumulates
+        // months of observations that cannot be regenerated. Failing loudly and
+        // losing one line beats succeeding quietly and losing everything.
+        do {
+            let handle = try FileHandle(forWritingTo: logURL)
+            defer { try? handle.close() }
+            try handle.seekToEnd()
+            try handle.write(contentsOf: entry)
+        } catch {
+            FileHandle.standardError.write(
+                Data("s4: could not append to log (\(error)) — log left intact\n".utf8))
         }
     }
 
