@@ -7,10 +7,10 @@ set -euo pipefail
 APP="build/Snitt.app"
 BUNDLE_ID="com.impressiver.snitt"
 
-swift build -c debug --product snitt-probe
+swift build -c debug --product SnittApp
 
-if [ ! -f ".build/debug/snitt-probe" ]; then
-  echo "error: swift build did not produce .build/debug/snitt-probe" >&2
+if [ ! -f ".build/debug/SnittApp" ]; then
+  echo "error: swift build did not produce .build/debug/SnittApp" >&2
   exit 1
 fi
 
@@ -34,8 +34,8 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-if [ -f ".build/debug/snitt-probe" ]; then
-  cp ".build/debug/snitt-probe" "$APP/Contents/MacOS/Snitt"
+if [ -f ".build/debug/SnittApp" ]; then
+  cp ".build/debug/SnittApp" "$APP/Contents/MacOS/Snitt"
 fi
 
 if IDENTITY="$(./Scripts/signing-identity.sh)"; then
