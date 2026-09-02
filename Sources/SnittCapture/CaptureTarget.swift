@@ -88,7 +88,7 @@ public enum CaptureTarget: @unchecked Sendable {
     ///   Keep this method only for headless target listing where no human is
     ///   present to drive a picker; do not build the interactive flow on it.
     @available(*, deprecated,
-               message: "Use PickerTargetResolver or CachedTargetResolver. This enumerates directly, which is the bypass path (§5.2).")
+               message: "Interactive callers should use PickerTargetResolver, and repeat captures CachedTargetResolver. Headless callers with no human to drive a picker should keep using this — it enumerates directly, which is the bypass path (§5.2).")
     public static func available() async throws -> [CaptureTarget] {
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true

@@ -69,15 +69,17 @@ public struct CachedTargetResolver: TargetResolver {
                 throw TargetResolutionError.targetGone("display \(displayID)")
             }
 
+            let filter = SCContentFilter(display: display, excludingWindows: [])
+            let size = filter.pixelDimensions
             return ResolvedTarget(
-                filter: SCContentFilter(display: display, excludingWindows: []),
+                filter: filter,
                 descriptor: CaptureTargetDescriptor(
                     id: display.displayID,
                     kind: CaptureTargetDescriptor.Kind.display.rawValue,
                     title: "Display \(display.displayID)",
                     applicationName: nil,
-                    width: display.width,
-                    height: display.height
+                    width: size.width,
+                    height: size.height
                 ),
                 reference: reference,
                 provenance: .cache
@@ -99,15 +101,17 @@ public struct CachedTargetResolver: TargetResolver {
                 )
             }
 
+            let filter = SCContentFilter(desktopIndependentWindow: window)
+            let size = filter.pixelDimensions
             return ResolvedTarget(
-                filter: SCContentFilter(desktopIndependentWindow: window),
+                filter: filter,
                 descriptor: CaptureTargetDescriptor(
                     id: window.windowID,
                     kind: CaptureTargetDescriptor.Kind.window.rawValue,
                     title: window.title,
                     applicationName: window.owningApplication?.applicationName,
-                    width: match.width,
-                    height: match.height
+                    width: size.width,
+                    height: size.height
                 ),
                 reference: reference,
                 provenance: .cache

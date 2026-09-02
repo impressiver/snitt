@@ -34,3 +34,23 @@ public struct ResolvedTarget: @unchecked Sendable {
         self.provenance = provenance
     }
 }
+
+extension SCContentFilter {
+    /// Capture dimensions in PIXELS.
+    ///
+    /// `SCStreamConfiguration.width`/`height` are pixel counts, but
+    /// `SCWindow.frame` and `SCDisplay.width` are in points. On a Retina display
+    /// those differ by the backing scale, so a resolver that reports points
+    /// silently configures a half-resolution capture. Deriving the size from the
+    /// filter — the one object BOTH resolvers produce — keeps the interactive and
+    /// cached paths from disagreeing about how big the same window is.
+    ///
+    /// Dimensions are rounded down to even numbers because H.264 requires even
+    /// width and height.
+    var pixelDimensions: (width: Int, height: Int) {
+        let scale = CGFloat(pointPixelScale)
+        let width = Int(contentRect.width * scale)
+        let height = Int(contentRect.height * scale)
+        return (width - (width % 2), height - (height % 2))
+    }
+}

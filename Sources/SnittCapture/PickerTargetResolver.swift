@@ -101,15 +101,14 @@ extension PickerTargetResolver: SCContentSharingPickerObserver {
                                      for stream: SCStream?) {
         // The picker hands back a finished filter but no descriptor, so the
         // dimensions come from the filter's own content rect.
-        let rect = filter.contentRect
-        let scale = filter.pointPixelScale
+        let size = filter.pixelDimensions
         let descriptor = CaptureTargetDescriptor(
             id: 0,
             kind: CaptureTargetDescriptor.Kind.window.rawValue,
             title: nil,
             applicationName: nil,
-            width: Int(rect.width * CGFloat(scale)),
-            height: Int(rect.height * CGFloat(scale))
+            width: size.width,
+            height: size.height
         )
         finish(.success(ResolvedTarget(filter: filter,
                                        descriptor: descriptor,
