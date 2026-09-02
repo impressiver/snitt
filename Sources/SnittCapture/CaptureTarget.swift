@@ -77,6 +77,16 @@ public enum CaptureTarget: @unchecked Sendable {
     ///
     /// This call triggers the Screen Recording permission prompt, which is
     /// why it happens at first record rather than at launch (spec 4.10).
+    ///
+    /// - Important: This is the **bypass path**, and M2 must replace it.
+    ///   Enumerating targets ourselves and drawing our own picker is what
+    ///   macOS 15 calls "bypassing the system private window picker", and such
+    ///   apps get a **recurring monthly re-consent prompt** — which breaks the
+    ///   one-time-grant promise in spec 5.2 no matter how few permissions we
+    ///   request. `SCContentSharingPicker` is the replacement: it avoids the
+    ///   monthly nag and yields window-scoped selection by default (spec 5.1).
+    ///   Keep this method only for headless target listing where no human is
+    ///   present to drive a picker; do not build the interactive flow on it.
     public static func available() async throws -> [CaptureTarget] {
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true
