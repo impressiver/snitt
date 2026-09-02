@@ -38,7 +38,14 @@ if [ -f ".build/debug/snitt-probe" ]; then
   cp ".build/debug/snitt-probe" "$APP/Contents/MacOS/Snitt"
 fi
 
-codesign --force --deep --sign - "$APP"
+if IDENTITY="$(./Scripts/signing-identity.sh)"; then
+  codesign --force --sign "$IDENTITY" "$APP"
+  echo "Signed with stable identity: $IDENTITY"
+  echo "TCC grants will persist across rebuilds."
+else
+  codesign --force --sign - "$APP"
+  echo "WARNING: signed ad-hoc. The app's identity changes on every build, so" >&2
+  echo "macOS will forget Screen Recording permission each time you rebuild." >&2
+  echo "Run ./Scripts/signing-identity.sh for one-time setup instructions." >&2
+fi
 echo "Built $APP"
-echo "NOTE: ad-hoc signing changes identity on each rebuild, so macOS may"
-echo "re-prompt for Screen Recording. Developer ID signing lands at M5."
