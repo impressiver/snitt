@@ -4,19 +4,57 @@
 initiated from a background, non-foreground app? What happens when the screen
 is locked or no user is logged in?
 
-**Date:** 2026-09-02  ·  **macOS version:** 26.5.2  ·  **Status:** Blocked — awaiting human execution
+**Date:** 2026-09-02  ·  **macOS version:** 26.5.2  ·  **Status:** Partially resolved — background capture confirmed; locked-screen case and production IPC topology still unrun
 
 ## Observations
 
 | Condition | Frames received | Non-black frames | Notes |
 |---|---|---|---|
-| Foreground (control) | | | |
-| Background, detached | | | |
-| Screen locked | | | |
+| Foreground (control) | 306 | 142 | ~61 fps over 5s, consistent with the 60 fps config. `isFrontmost` reported **false** — see Limitations. |
+| Background, detached (`nohup`) | 295 | 102 | Capture works. No permission failure, no error. |
+| Screen locked | *(not run)* | | Still outstanding. |
+
+Both runs saw 1 display and 58 windows, so `SCShareableContent` enumerated
+normally in each.
 
 ## Recommendation
 
-**AWAITING HUMAN EXECUTION — do not fill in without running the probe.**
+**Background capture works.** A detached, non-frontmost process receives frames
+containing real (non-black) screen content, with no permission error and no
+degradation to blank output. Nothing here invalidates the thin-client
+architecture in §4.9, and M2 is not blocked on this result.
+
+That conclusion is narrower than the probe's framing suggests, for two reasons
+recorded under Limitations below. It should be read as "a background process is
+not categorically prevented from capturing", not as "the production topology is
+verified".
+
+## Limitations of this run — read before relying on the result
+
+1. **The frontmost/background comparison was not actually established.**
+   `Process is frontmost: false` in BOTH runs. A Swift Package Manager binary
+   launched from a terminal is never the frontmost application — the terminal
+   is. So the "control" and the "background" run differed only in whether the
+   process was detached via `nohup`, not in frontmost status. The useful claim
+   that survives is that a non-frontmost, non-bundled process captures real
+   content.
+
+2. **Both runs inherited the terminal's TCC grant.** The responsible process was
+   Terminal in both cases (§4.9). The production topology is different: a CLI
+   whose parent is an arbitrary agent host, talking over IPC to `Snitt.app`,
+   which holds its own grant. That path is unexercised here and remains the
+   thing M2 actually depends on.
+
+3. **The non-black heuristic is coarse.** The probe samples one byte per 32nd
+   row — effectively the leftmost pixel column — so a dark region at the screen's
+   left edge reads as "black". The 33-46% non-black rates should NOT be read as
+   "half the frames were empty". They are consistent with either the heuristic's
+   crudeness or with ScreenCaptureKit delivering repeated/idle frames, and this
+   run cannot distinguish the two.
+
+   Note this is suggestive of the idle-frame behavior that the `.complete`
+   frame-status guard in `CaptureSession.isCompleteFrame` was added to handle —
+   but it is not evidence for it, and should not be cited as such.
 
 ## Consequences
 
