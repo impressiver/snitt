@@ -7,7 +7,12 @@ set -euo pipefail
 APP="build/Snitt.app"
 BUNDLE_ID="com.impressiver.snitt"
 
-swift build -c debug --product snitt-probe 2>/dev/null || true
+swift build -c debug --product snitt-probe
+
+if [ ! -f ".build/debug/snitt-probe" ]; then
+  echo "error: swift build did not produce .build/debug/snitt-probe" >&2
+  exit 1
+fi
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

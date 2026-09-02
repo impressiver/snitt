@@ -11,6 +11,11 @@ let package = Package(
     targets: [
         .target(name: "SnittDocument"),
         .target(name: "SnittCapture", dependencies: ["SnittDocument"]),
+        .executableTarget(
+            name: "snitt-probe",
+            dependencies: ["SnittCapture", "SnittDocument"],
+            path: "Sources/snitt-probe"
+        ),
         .testTarget(name: "SnittDocumentTests", dependencies: ["SnittDocument"]),
         .testTarget(name: "SnittCaptureTests", dependencies: ["SnittCapture"]),
     ]
