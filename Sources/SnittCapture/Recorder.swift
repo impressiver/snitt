@@ -23,7 +23,7 @@ public actor Recorder {
     private var startedAt: Date?
     private var isFinished = false
 
-    public init(target: CaptureTarget,
+    public init(target: ResolvedTarget,
                 bundleURL: URL,
                 options: CaptureOptions = CaptureOptions(),
                 initiator: Initiator = .human) throws {

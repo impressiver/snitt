@@ -87,6 +87,8 @@ public enum CaptureTarget: @unchecked Sendable {
     ///   monthly nag and yields window-scoped selection by default (spec 5.1).
     ///   Keep this method only for headless target listing where no human is
     ///   present to drive a picker; do not build the interactive flow on it.
+    @available(*, deprecated,
+               message: "Use PickerTargetResolver or CachedTargetResolver. This enumerates directly, which is the bypass path (§5.2).")
     public static func available() async throws -> [CaptureTarget] {
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true

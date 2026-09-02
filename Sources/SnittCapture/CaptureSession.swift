@@ -26,7 +26,7 @@ public enum CaptureError: Error, Equatable {
 /// All three inputs arrive on this one stream against one clock, which is
 /// why macOS 15 is the floor (spec sections 4.6 and 9).
 public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable {
-    private let target: CaptureTarget?
+    private let target: ResolvedTarget?
     private let sink: SampleBufferSink
     private let options: CaptureOptions
 
@@ -40,7 +40,7 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
     private let lock = NSLock()
     private var didBegin = false
 
-    public init(target: CaptureTarget,
+    public init(target: ResolvedTarget,
                 sink: SampleBufferSink,
                 options: CaptureOptions = CaptureOptions()) {
         self.target = target
@@ -79,7 +79,10 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
         // be configured per-track rather than identically.
         configuration.channelCount = 1
 
-        let stream = SCStream(filter: target.contentFilter(),
+        // The filter arrives already resolved — by the picker for interactive
+        // selection, or by cache re-resolution for the hotkey path. The session
+        // deliberately does not participate in selection (§5.2).
+        let stream = SCStream(filter: target.filter,
                               configuration: configuration,
                               delegate: nil)
 

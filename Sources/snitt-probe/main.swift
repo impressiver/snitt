@@ -3,6 +3,7 @@
 // This tool exists to debug permission-gated capture, so it must never die
 // with a bare Swift runtime trap — an uncaught `try` at top level produces
 // EXC_BREAKPOINT and tells the operator nothing about what failed.
+import CoreGraphics
 import Foundation
 import ScreenCaptureKit
 import SnittCapture
@@ -34,22 +35,19 @@ if !CGPreflightScreenCaptureAccess() {
     }
 }
 
-let targets: [CaptureTarget]
+let resolver = CachedTargetResolver(
+    reference: .display(id: CGMainDisplayID())
+)
+
+let resolved: ResolvedTarget
 do {
-    targets = try await CaptureTarget.available()
+    resolved = try await resolver.resolve()
 } catch {
-    fail("Could not enumerate capture targets: \(error)",
+    fail("Could not resolve the main display: \(error)",
          hint: "This almost always means Screen Recording is still denied.")
 }
 
-guard let display = targets.first(where: {
-    if case .display = $0 { return true } else { return false }
-}) else {
-    fail("No display available to record.",
-         hint: "\(targets.count) target(s) were returned, none of them a display.")
-}
-
-print("Recording display: \(display.descriptor.width)x\(display.descriptor.height)")
+print("Recording display: \(resolved.descriptor.width)x\(resolved.descriptor.height)")
 print(wantsMic
       ? "Microphone: ON (--mic) — expect a second permission prompt"
       : "Microphone: off (pass --mic to enable; costs an extra permission prompt)")
@@ -62,7 +60,7 @@ let output = FileManager.default.homeDirectoryForCurrentUser
 let recorder: Recorder
 do {
     recorder = try Recorder(
-        target: display,
+        target: resolved,
         bundleURL: output,
         // Mic is OFF by default, deliberately. Screen + system audio cost ONE
         // permission dialog on macOS 15 (they share the "Screen & System Audio
