@@ -22,6 +22,7 @@ func createsBundleLayout() throws {
     #expect(bundle.eventsURL.lastPathComponent == "events.json")
     #expect(bundle.editURL.lastPathComponent == "edit.json")
     #expect(bundle.metaURL.lastPathComponent == "meta.json")
+    #expect(bundle.posterURL.lastPathComponent == "poster.png")
 }
 
 @Test("Creating a bundle where one already exists throws")
@@ -44,4 +45,19 @@ func rejectsNonDirectory() throws {
     #expect(throws: SnittBundleError.notADirectory) {
         _ = try SnittBundle(opening: url)
     }
+}
+
+@Test("Creating a bundle under a nonexistent parent throws rather than fabricating it")
+func refusesToCreateMissingParents() throws {
+    let parent = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+    let nested = parent
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension(SnittBundle.fileExtension)
+    defer { try? FileManager.default.removeItem(at: parent) }
+
+    #expect(throws: (any Error).self) {
+        _ = try SnittBundle(creatingAt: nested)
+    }
+    #expect(!FileManager.default.fileExists(atPath: parent.path))
 }

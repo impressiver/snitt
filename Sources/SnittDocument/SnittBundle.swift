@@ -32,7 +32,7 @@ public struct SnittBundle: Sendable {
             throw SnittBundleError.alreadyExists
         }
         try FileManager.default.createDirectory(
-            at: url, withIntermediateDirectories: true
+            at: url, withIntermediateDirectories: false
         )
         self.url = url
     }
