@@ -8,6 +8,9 @@ import ScreenCaptureKit
 import SnittCapture
 import SnittDocument
 
+/// Mic capture is opt-in. See the CaptureOptions call below for why.
+let wantsMic = CommandLine.arguments.contains("--mic")
+
 func fail(_ message: String, hint: String? = nil) -> Never {
     FileHandle.standardError.write(Data("\nERROR: \(message)\n".utf8))
     if let hint {
@@ -47,6 +50,9 @@ guard let display = targets.first(where: {
 }
 
 print("Recording display: \(display.descriptor.width)x\(display.descriptor.height)")
+print(wantsMic
+      ? "Microphone: ON (--mic) — expect a second permission prompt"
+      : "Microphone: off (pass --mic to enable; costs an extra permission prompt)")
 
 let output = FileManager.default.homeDirectoryForCurrentUser
     .appendingPathComponent(
@@ -58,7 +64,12 @@ do {
     recorder = try Recorder(
         target: display,
         bundleURL: output,
-        options: CaptureOptions(captureMicrophone: true, captureSystemAudio: true)
+        // Mic is OFF by default, deliberately. Screen + system audio cost ONE
+        // permission dialog on macOS 15 (they share the "Screen & System Audio
+        // Recording" grant); enabling the mic adds a SECOND, separate prompt.
+        // Asking for both up front is the difference between one dialog and
+        // two on a user's very first run — see spec 4.10. Pass --mic to opt in.
+        options: CaptureOptions(captureMicrophone: wantsMic, captureSystemAudio: true)
     )
 } catch {
     fail("Could not create the recording bundle at \(output.path): \(error)",

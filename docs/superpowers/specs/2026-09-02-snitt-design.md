@@ -39,6 +39,7 @@ the user has seen anything.
 - Export and share with minimal friction, including to a byte-size target
 - **Be drivable by a coding agent**, safely and without permission friction
 - **Start and stop from a single keystroke**, without opening a window (§4.11)
+- **Cost exactly one permission dialog on first run** (§4.10)
 - **Land on the clipboard by default**, so sharing is a paste (§4.1)
 - **Tell an agent whether the recording actually worked** (§12.1)
 - Feel like a native Mac app: fast, small, quiet, keyboard-driven
@@ -234,18 +235,52 @@ in a context the user understands. A necessary side effect is that the app is
 always resident during an agent recording, which is what makes the consent
 guarantees in §5 enforceable.
 
-### 4.10 Progressive permissioning
+### 4.10 Progressive permissioning — one dialog on first run
 
-Permissions are requested **at first use of the feature that needs them**, never
-upfront:
+macOS TCC dialogs are system-owned and per-service. **They cannot be merged**;
+there is no API for a combined prompt. The number of dialogs a user sees is
+therefore decided entirely by how many services Snitt asks for, and when.
 
-- **Screen Recording** — at the first recording. Unavoidable; it is the product.
-- **Microphone** — the first time the user enables mic capture.
-- **Input Monitoring** — only if and when overlay capture ships (§4.2).
+**System audio does not need its own permission.** On macOS 15 it is covered by
+the Screen Recording grant — the settings pane is named "Screen & System Audio
+Recording". So the core demo case, screen plus application sound, costs exactly
+one dialog. This is a load-bearing fact: it means the default configuration is
+also the cheapest one.
 
-A first-run user therefore meets exactly one permission gate (§1's 60-second
-budget). Requesting all three at launch is the single easiest way to lose a user
-who is one keystroke away from just pressing `Cmd+Shift+5` instead.
+The resulting ladder, which no feature may shortcut:
+
+| What the user does | Dialogs | Service |
+|---|---|---|
+| Record screen with system audio | **1** | Screen Recording |
+| …plus voiceover | 2 | + Microphone |
+| …plus keystroke overlays | 3 | + Input Monitoring |
+
+Rules that produce that ladder:
+
+1. **Microphone capture is OFF by default.** Most demos do not need voiceover,
+   and defaulting it on turns every first run into two dialogs instead of one.
+   The mic prompt is paid only when a user deliberately enables the mic.
+2. **Nothing is requested at launch.** Each permission is requested at first use
+   of the feature that needs it: Screen Recording at the first recording
+   (unavoidable — it is the product), Microphone when mic capture is enabled,
+   Input Monitoring only if overlay capture ships (§4.2, and see S1's finding
+   that this requires `CGEventTap`, not `NSEvent`).
+3. **Pre-explain before prompting.** Snitt shows its own brief sheet — what it
+   needs, why, and that macOS will ask next — *before* triggering the system
+   dialog. A prompt the user is expecting reads as normal software; one that
+   appears unannounced reads as an app grabbing at their machine. This costs
+   nothing and is the difference between "scary" and "fine".
+4. **Handle the already-denied case explicitly.** macOS shows each dialog at
+   most once per responsible process; after a denial, requesting again silently
+   does nothing. The UI must detect denial and deep-link to the relevant System
+   Settings pane instead of calling a request API that no-ops. Spike S1 proved
+   how easily this is missed — a probe that only preflighted never prompted at
+   all, and the failure was silent.
+
+A first-run user therefore meets exactly one permission gate, which is what §1's
+60-second budget requires. Requesting all three at launch is the single easiest
+way to lose a user who is one keystroke away from pressing `Cmd+Shift+5`
+instead.
 
 ### 4.11 Instant capture
 
@@ -518,7 +553,10 @@ before it is allowed to gate anything. Sampling happens during the existing
   capture (§4.11), export with `--max-size`, stop-and-copy default (§4.1),
   `snitt inspect` + export manifest, capture health (§12.1), git context (§7)
 - **M3** Event logging (data only, no rendering), markers + WebVTT chapters
-  (§4.12), `--auto-trim`, progressive permission onboarding (§4.10)
+  (§4.12), `--auto-trim`, progressive permission onboarding (§4.10) — including
+  the pre-explain sheet and the already-denied deep link, which are the parts
+  most likely to be skipped and are what make the flow feel safe rather than
+  grabby
 - **M4** EDL model, timeline UI with marker jump-points, preview (explicit
   passthrough composition slot, §9)
 - **M5** Packaging: Developer ID, notarization, Sparkle, diagnostics (§12)
@@ -604,6 +642,8 @@ managing it.)*
 | The burn-in "shortcut" gets adopted under schedule pressure | Named as an explicit anti-goal in §3 with its consequences spelled out |
 | Redaction gets built reactively after a privacy incident | Bound to the M5 gate decision in §3; same cost class as overlays |
 | Capture health warnings fire on legitimately static demos | Warnings only, never gating; thresholds tuned against real recordings (§12.1) |
+| Permission dialogs stack up and read as invasive | §4.10's ladder: mic off by default, nothing requested at launch, pre-explain before every prompt. First run costs one dialog |
+| Incidental capture of notifications and private content | §5 window-scoping for agent sessions; observed in the first real M1 recording, where a Mail password notification was captured (see M1 verification record) |
 
 ## 17. Domains
 
@@ -728,6 +768,15 @@ preserved here because if v0's gate later shows these features did not move the
 needle, this is the entry that predicted it.
 
 `conformance: 2026-09-02` (pass 2)
+
+### Post-M1 — decisions from real-recording review (2026-09-02)
+
+| # | Decision | Rationale | Rests on | Status | Shape |
+|---|---|---|---|---|---|
+| D27 | Microphone capture defaults OFF; §4.10 rewritten around a one-dialog first run | macOS TCC dialogs cannot be merged, but system audio shares the Screen Recording grant on macOS 15, so screen + app sound costs exactly ONE dialog. Defaulting the mic on doubled that for every user, contradicting §1's 60-second budget. Verified in practice: `snitt-probe` was requesting mic unconditionally | Verified during M1 manual verification; §1, §4.10 | Decided | default-costs-a-permission |
+| D28 | Pre-explain sheet required before every system prompt; already-denied case must deep-link to System Settings | A prompt the user expects reads as normal; an unannounced one reads as grabbing. And macOS never re-prompts after denial — a request call silently no-ops, which is exactly how spike S1 wasted two runs before the defect was found | S1 findings; §4.10 | Decided | silent-no-op-permission-api |
+
+`conformance: 2026-09-02` (post-M1)
 
 ### Termination
 
