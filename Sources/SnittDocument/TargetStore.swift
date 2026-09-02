@@ -1,14 +1,26 @@
 import Foundation
 
+/// The kind of target a stored record describes.
+///
+/// Deliberately a separate enum from `SnittCapture.TargetReference.Kind`: the storage
+/// layer must not depend on ScreenCaptureKit. Using a local enum rather than a bare
+/// String means an unrecognised value fails at DECODE, where `load()` already degrades
+/// to "no cached target", instead of surviving as a garbage string that breaks later
+/// during conversion.
+public enum StoredTargetKind: String, Codable, Sendable {
+    case window
+    case display
+}
+
 /// The on-disk shape of a cached target. Kept as a plain string-keyed record in
 /// `SnittDocument` so the storage layer does not depend on ScreenCaptureKit.
 public struct StoredTargetReference: Codable, Sendable, Equatable {
-    public var kind: String
+    public var kind: StoredTargetKind
     public var bundleIdentifier: String?
     public var titleHint: String?
     public var displayID: UInt32?
 
-    public init(kind: String,
+    public init(kind: StoredTargetKind,
                 bundleIdentifier: String?,
                 titleHint: String?,
                 displayID: UInt32?) {
@@ -48,7 +60,7 @@ public final class TargetStore: @unchecked Sendable {
     public func save(_ reference: StoredTargetReference) throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        try encoder.encode(reference).write(to: fileURL)
+        try encoder.encode(reference).write(to: fileURL, options: .atomic)
     }
 
     public func clear() throws {

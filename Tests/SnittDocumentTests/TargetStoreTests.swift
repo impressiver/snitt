@@ -20,14 +20,14 @@ func savedReferenceReloads() throws {
     defer { try? FileManager.default.removeItem(at: url) }
 
     let store = TargetStore(fileURL: url)
-    try store.save(StoredTargetReference(kind: "window",
+    try store.save(StoredTargetReference(kind: .window,
                                          bundleIdentifier: "com.apple.Safari",
                                          titleHint: "Docs",
                                          displayID: nil))
 
     let reloaded = TargetStore(fileURL: url).load()
     #expect(reloaded?.bundleIdentifier == "com.apple.Safari")
-    #expect(reloaded?.kind == "window")
+    #expect(reloaded?.kind == .window)
 }
 
 @Test("A corrupt store loads nil instead of throwing or crashing")
@@ -46,10 +46,22 @@ func clearRemovesReference() throws {
     defer { try? FileManager.default.removeItem(at: url) }
 
     let store = TargetStore(fileURL: url)
-    try store.save(StoredTargetReference(kind: "display",
+    try store.save(StoredTargetReference(kind: .display,
                                          bundleIdentifier: nil,
                                          titleHint: nil,
                                          displayID: 3))
     try store.clear()
     #expect(store.load() == nil)
+}
+
+@Test("A record with an unrecognised kind fails to decode and loads as nil")
+func unknownKindLoadsNil() throws {
+    let url = tempStoreURL()
+    defer { try? FileManager.default.removeItem(at: url) }
+    // Well-formed JSON, but "monitor" is not a kind we know.
+    try Data(#"{"kind":"monitor","bundleIdentifier":null,"titleHint":null,"displayID":3}"#.utf8)
+        .write(to: url)
+
+    #expect(TargetStore(fileURL: url).load() == nil,
+            "an unknown kind must fail at decode, not survive as a garbage value")
 }
