@@ -30,6 +30,12 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
     private let sink: SampleBufferSink
     private let options: CaptureOptions
 
+    /// Mutated only by `start()` and `stop()`, deliberately without lock
+    /// protection: `stop()` awaits, and holding an `NSLock` across an await
+    /// is unsound. Callers must invoke `start()`/`stop()` from a single
+    /// serialized context — Task 10's `Recorder` is an actor, which provides
+    /// that. `handle` never touches `stream`, so the delivery queue's
+    /// concurrent access never races with it.
     private var stream: SCStream?
     private let lock = NSLock()
     private var didBegin = false
@@ -109,16 +115,21 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
         guard let track = TrackKind(type) else { return }
         guard CMSampleBufferDataIsReady(buffer) else { return }
 
+        // The lock is held across begin+append, not just across the didBegin
+        // flip. ScreenCaptureKit delivers on a CONCURRENT queue, so releasing
+        // it earlier would let an append from another track reach the sink
+        // before the begin that must precede it — silently dropping the
+        // session's first buffer. The sink serializes internally anyway, so
+        // holding the lock here costs no real concurrency.
         lock.lock()
-        let needsBegin = !didBegin
-        if needsBegin { didBegin = true }
-        lock.unlock()
+        defer { lock.unlock() }
 
         do {
             // The session starts at the first buffer's timestamp, so the
             // three tracks share one timeline from the same clock.
-            if needsBegin {
+            if !didBegin {
                 try sink.begin(at: buffer.presentationTimeStamp)
+                didBegin = true
             }
             try sink.append(buffer, to: track)
         } catch {

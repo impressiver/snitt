@@ -7,6 +7,7 @@ import ScreenCaptureKit
 /// Records what the session routed, so the pipeline can be tested with no screen.
 final class SpySink: SampleBufferSink, @unchecked Sendable {
     var begun = false
+    var beginCount = 0
     var appended: [(TrackKind, Double)] = []
     var finishedURL = URL(fileURLWithPath: "/tmp/spy.mov")
     private let lock = NSLock()
@@ -14,6 +15,7 @@ final class SpySink: SampleBufferSink, @unchecked Sendable {
     func begin(at startTime: CMTime) throws {
         lock.lock(); defer { lock.unlock() }
         begun = true
+        beginCount += 1
     }
 
     func append(_ buffer: CMSampleBuffer, to track: TrackKind) throws {
@@ -62,4 +64,5 @@ func beginsExactlyOnce() throws {
     }
     #expect(sink.appended.count == 10)
     #expect(sink.begun == true)
+    #expect(sink.beginCount == 1)
 }
