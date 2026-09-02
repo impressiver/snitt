@@ -1,5 +1,5 @@
 import Foundation
-@preconcurrency import ScreenCaptureKit
+import ScreenCaptureKit
 
 /// A serializable description of something Snitt can record.
 ///
@@ -29,7 +29,15 @@ public struct CaptureTargetDescriptor: Codable, Sendable, Equatable {
     }
 }
 
-public enum CaptureTarget: Sendable {
+/// Something Snitt can record.
+///
+/// `@unchecked Sendable` is a deliberate, narrow assertion: `SCDisplay` and `SCWindow`
+/// are not marked `Sendable` by ScreenCaptureKit, but they are immutable snapshots
+/// returned once by `SCShareableContent` and Snitt never mutates them — it only reads
+/// their identifiers and dimensions. Scoping the claim here, rather than using a
+/// file-wide `@preconcurrency import`, keeps strict-concurrency checking active for
+/// every other ScreenCaptureKit type used in this file.
+public enum CaptureTarget: @unchecked Sendable {
     case display(SCDisplay)
     case window(SCWindow)
 
