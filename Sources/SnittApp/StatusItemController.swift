@@ -20,14 +20,20 @@ public struct StatusItemPresentation: Equatable {
 /// anything can start a recording without a visible window.
 ///
 /// `NSObject` subclass because the click handler is an `@objc` selector target.
+@MainActor
 final class StatusItemController: NSObject {
     private var statusItem: NSStatusItem?
     private var timer: Timer?
     private(set) var state: RecordingState = .idle
 
     /// What the menu-bar item should show. Pure, so it can be tested without UI.
-    public static func presentation(for state: RecordingState,
-                                    now: Date) -> StatusItemPresentation {
+    ///
+    /// `nonisolated` deliberately: the class is `@MainActor` because it mutates
+    /// AppKit, but this function reads nothing and touches no UI, so isolating it
+    /// would force every caller — including tests — onto the main actor for no
+    /// safety benefit.
+    nonisolated public static func presentation(for state: RecordingState,
+                                                now: Date) -> StatusItemPresentation {
         switch state {
         case .idle:
             return StatusItemPresentation(symbolName: "record.circle",
@@ -72,12 +78,21 @@ final class StatusItemController: NSObject {
         timer = nil
         if case .recording = newState {
             // Refresh the elapsed-time readout once a second so the indicator
-            // is visibly live rather than a static dot.
-            timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-                guard let self, case .recording = self.state else { return }
-                self.apply(self.state)
-            }
+            // is visibly live rather than a static dot. Target/selector, not a
+            // closure: `Timer.scheduledTimer`'s closure overload takes a plain
+            // `@Sendable` closure in this SDK overlay, which can't touch
+            // main-actor state, so this mirrors the button's target/action wiring.
+            timer = Timer.scheduledTimer(timeInterval: 1,
+                                         target: self,
+                                         selector: #selector(tick),
+                                         userInfo: nil,
+                                         repeats: true)
         }
+    }
+
+    @objc private func tick() {
+        guard case .recording = state else { return }
+        apply(state)
     }
 
     private func apply(_ state: RecordingState) {
