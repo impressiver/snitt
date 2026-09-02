@@ -69,6 +69,15 @@ public final class HotkeyMonitor {
             GetApplicationEventTarget(), 0, &hotKeyRef
         )
         guard registerStatus == noErr else {
+            // Undo the handler installed moments ago, so start() is all-or-nothing.
+            // Without this, a caller retrying after a failed registration installs a
+            // SECOND handler and orphans the first — which still holds a non-owning
+            // pointer to self and would dereference freed memory once this object is
+            // released, crashing inside a C callback with no Swift stack.
+            if let handlerRef {
+                RemoveEventHandler(handlerRef)
+                self.handlerRef = nil
+            }
             throw HotkeyError.registrationFailed(registerStatus)
         }
 
