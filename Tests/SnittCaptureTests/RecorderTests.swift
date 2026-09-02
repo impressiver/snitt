@@ -95,9 +95,10 @@ func finalizationFailureSurfaces() async throws {
     }
     _ = try await recorder.stop()
 
-    // The sink is already finished; a second stop must surface the sink's
-    // error rather than returning a bundle as though nothing went wrong.
-    await #expect(throws: (any Error).self) {
+    // The sink is already finished; a second stop must surface the
+    // alreadyFinished guard rather than returning a bundle as though nothing
+    // went wrong.
+    await #expect(throws: RecorderError.alreadyFinished) {
         _ = try await recorder.stop()
     }
 }

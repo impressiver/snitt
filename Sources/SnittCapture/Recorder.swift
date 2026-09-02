@@ -6,6 +6,8 @@ import SnittDocument
 public enum RecorderError: Error, Equatable {
     /// `stop()` was called before `start()`.
     case notStarted
+    /// `stop()` was called a second time after finalization already ran.
+    case alreadyFinished
 }
 
 /// Drives a capture into a complete `.snitt` bundle.
@@ -19,6 +21,7 @@ public actor Recorder {
     private let initiator: Initiator
 
     private var startedAt: Date?
+    private var isFinished = false
 
     public init(target: CaptureTarget,
                 bundleURL: URL,
@@ -59,6 +62,10 @@ public actor Recorder {
     /// complete while `capture.mov` is truncated or unplayable.
     public func stop() async throws -> SnittBundle {
         guard startedAt != nil else { throw RecorderError.notStarted }
+        guard !isFinished else { throw RecorderError.alreadyFinished }
+
+        let stoppedAt = Date()
+        isFinished = true
 
         // Swallowed deliberately: on the testing path there is no live stream,
         // and a stream-stop failure does not corrupt the written movie.
@@ -71,14 +78,14 @@ public actor Recorder {
             finishError = error
         }
 
-        try writeSidecars()
+        try writeSidecars(stoppedAt: stoppedAt)
 
         if let finishError { throw finishError }
         return bundle
     }
 
-    private func writeSidecars() throws {
-        let duration = startedAt.map { Date().timeIntervalSince($0) }
+    private func writeSidecars(stoppedAt: Date) throws {
+        let duration = startedAt.map { stoppedAt.timeIntervalSince($0) }
         let metadata = RecordingMetadata(
             createdAt: startedAt ?? Date(),
             initiator: initiator,

@@ -72,6 +72,12 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
         configuration.capturesAudio = options.captureSystemAudio
         configuration.captureMicrophone = options.captureMicrophone
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: 60)
+        // Match AssetWriterSink's mono audio inputs explicitly. SCK defaults to
+        // 2 channels, and feeding stereo PCM into a mono AAC input without a
+        // channel layout is a known AVAssetWriter conversion failure. Stereo
+        // system audio is a later enhancement; it requires the sink's inputs to
+        // be configured per-track rather than identically.
+        configuration.channelCount = 1
 
         let stream = SCStream(filter: target.contentFilter(),
                               configuration: configuration,
@@ -115,6 +121,14 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
         guard let track = TrackKind(type) else { return }
         guard CMSampleBufferDataIsReady(buffer) else { return }
 
+        // ScreenCaptureKit delivers .screen buffers for idle/blank/suspended
+        // frames that carry no new surface. Appending one fails the
+        // AVAssetWriter permanently — after which every later append is a
+        // silent no-op — so a single idle frame on a static screen would
+        // destroy the whole recording. Audio buffers carry no frame info and
+        // are never filtered here.
+        if type == .screen, !Self.isCompleteFrame(buffer) { return }
+
         // The lock is held across begin+append, not just across the didBegin
         // flip. ScreenCaptureKit delivers on a CONCURRENT queue, so releasing
         // it earlier would let an append from another track reach the sink
@@ -136,5 +150,23 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
             // Dropping a buffer must never tear down the stream; a partial
             // recording beats no recording (spec section 11).
         }
+    }
+
+    /// True when a screen sample buffer represents a newly rendered frame.
+    ///
+    /// A buffer whose status is anything other than `.complete` carries no new
+    /// surface content. Buffers with no attachment at all are treated as
+    /// complete, because that is how synthetic buffers in tests arrive.
+    private static func isCompleteFrame(_ buffer: CMSampleBuffer) -> Bool {
+        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
+                buffer, createIfNecessary: false
+              ) as? [[SCStreamFrameInfo: Any]],
+              let first = attachments.first,
+              let rawStatus = first[.status] as? Int,
+              let status = SCFrameStatus(rawValue: rawStatus)
+        else {
+            return true
+        }
+        return status == .complete
     }
 }

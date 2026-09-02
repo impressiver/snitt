@@ -40,6 +40,18 @@ func routesBuffersToTracks() throws {
     #expect(sink.appended.map(\.0) == [.video, .systemAudio, .microphone])
 }
 
+@Test("Buffers without ScreenCaptureKit frame attachments are treated as complete")
+func synthesizedBuffersAreNotFilteredOut() throws {
+    let sink = SpySink()
+    let session = CaptureSession.forTesting(sink: sink)
+    let size = CGSize(width: 320, height: 240)
+
+    session.handle(makeVideoBuffer(at: 0.0, size: size), of: .screen)
+
+    #expect(sink.appended.count == 1,
+            "a synthetic buffer carries no frame info and must not be dropped")
+}
+
 @Test("Begins the sink on the first buffer, not before")
 func beginsLazilyOnFirstBuffer() throws {
     let sink = SpySink()
