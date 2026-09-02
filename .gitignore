@@ -17,7 +17,8 @@ build/
 # Swift Package Manager
 .build/
 .swiftpm/
-Package.resolved
+# Package.resolved IS committed: Snitt ships as an app, so dependency
+# versions are pinned so every machine and CI build resolves identically.
 
 # Signing / secrets — never commit these
 *.p12
