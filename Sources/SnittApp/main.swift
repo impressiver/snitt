@@ -58,6 +58,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case .failed(let message):
                 statusItem.update(.idle)
                 notify(message)
+            case .ignored:
+                // A press landed mid-transition. Deliberately silent: the user
+                // pressed twice quickly and the first press is still working.
+                break
             }
         }
     }

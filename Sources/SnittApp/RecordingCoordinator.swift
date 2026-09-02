@@ -14,6 +14,8 @@ public enum CoordinatorOutcome: Equatable, Sendable {
     case stopped(URL, copied: Bool)
     case cancelled
     case failed(String)
+    /// A press arrived while a start or stop was already in flight; ignored.
+    case ignored
 }
 
 /// Drives one recording from hotkey press to clipboard.
@@ -24,6 +26,15 @@ public actor RecordingCoordinator {
     private let outputDirectory: URL
 
     private var active: Recorder?
+
+    /// Guards the whole transition, claimed before any suspension point.
+    ///
+    /// Actors are reentrant: without this, a second `toggle()` arriving while the
+    /// first is suspended inside `resolve()` — which lasts seconds on the picker
+    /// path — would also observe `active == nil` and start a second recording.
+    /// Checking `active` alone is not enough, because it is not assigned until
+    /// after the awaits complete.
+    private var isTransitioning = false
 
     public init(pickerResolver: TargetResolver,
                 cachedResolverFactory: @escaping @Sendable (TargetReference) -> TargetResolver,
@@ -46,6 +57,10 @@ public actor RecordingCoordinator {
     }
 
     public func toggle() async -> CoordinatorOutcome {
+        guard !isTransitioning else { return .ignored }
+        isTransitioning = true
+        defer { isTransitioning = false }
+
         if active != nil { return await stopRecording() }
         return await startRecording()
     }
