@@ -80,6 +80,7 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     private let cachedResolverFactory: @Sendable (TargetReference) -> TargetResolver
     private let store: TargetStore
     private let outputDirectory: URL
+    private let focuser: WindowFocuser
 
     private var active: Recorder?
 
@@ -104,11 +105,13 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     public init(pickerResolver: TargetResolver,
                 cachedResolverFactory: @escaping @Sendable (TargetReference) -> TargetResolver,
                 store: TargetStore,
-                outputDirectory: URL) {
+                outputDirectory: URL,
+                focuser: WindowFocuser = .system) {
         self.pickerResolver = pickerResolver
         self.cachedResolverFactory = cachedResolverFactory
         self.store = store
         self.outputDirectory = outputDirectory
+        self.focuser = focuser
     }
 
     /// The hotkey ALWAYS presents the system picker.
@@ -170,7 +173,10 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         guard active == nil else {
             return .failed("A recording is already in progress.", reason: .alreadyRecording)
         }
-        let outcome = await startRecording(forcedResolver: cachedResolverFactory(reference))
+        // An agent's demo is watched by a human too, so it auto-focuses just
+        // like the hotkey path — there is no Shift key for an agent to hold.
+        let outcome = await startRecording(forcedResolver: cachedResolverFactory(reference),
+                                           suppressFocus: false)
         if case .started = outcome { agentSessionID = sessionID }
         return outcome
     }
@@ -217,17 +223,18 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         await active?.mark(label: label)
     }
 
-    public func toggle() async -> CoordinatorOutcome {
+    public func toggle(suppressFocus: Bool = false) async -> CoordinatorOutcome {
         guard !isTransitioning else { return .ignored }
         isTransitioning = true
         defer { isTransitioning = false }
 
         if active != nil { return await stopRecording() }
-        return await startRecording()
+        return await startRecording(suppressFocus: suppressFocus)
     }
 
     private func startRecording(
-        forcedResolver: TargetResolver? = nil
+        forcedResolver: TargetResolver? = nil,
+        suppressFocus: Bool = false
     ) async -> CoordinatorOutcome {
         // Screen Recording must be granted before ANY capture API returns real
         // content. Preflight only READS the current state; Request is what raises
@@ -314,6 +321,14 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         if forcedResolver == nil,
            let reference = target.reference, let stored = Self.stored(from: reference) {
             try? store.save(stored)
+        }
+
+        // Before capture starts, never after: activating a window can dismiss a
+        // menu or move a focus ring, and that transition must not be in the
+        // recording (§4.13). Suppressed when the caller asked for it — recording
+        // a window precisely because it is in the background is a real case.
+        if !suppressFocus {
+            _ = focuser.focus(descriptor: target.descriptor)
         }
 
         let url = outputDirectory.appendingPathComponent(

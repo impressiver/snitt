@@ -17,15 +17,20 @@ public struct CaptureTargetDescriptor: Codable, Sendable, Equatable {
     public var applicationName: String?
     public var width: Int
     public var height: Int
+    /// The owning application's process id, for window targets. Needed to
+    /// activate the app before capture starts (§4.13); nil for displays.
+    public var processID: pid_t?
 
     public init(id: UInt32, kind: String, title: String?,
-                applicationName: String?, width: Int, height: Int) {
+                applicationName: String?, width: Int, height: Int,
+                processID: pid_t? = nil) {
         self.id = id
         self.kind = kind
         self.title = title
         self.applicationName = applicationName
         self.width = width
         self.height = height
+        self.processID = processID
     }
 }
 
@@ -59,7 +64,8 @@ public enum CaptureTarget: @unchecked Sendable {
                 title: window.title,
                 applicationName: window.owningApplication?.applicationName,
                 width: Int(window.frame.width),
-                height: Int(window.frame.height)
+                height: Int(window.frame.height),
+                processID: window.owningApplication?.processID
             )
         }
     }

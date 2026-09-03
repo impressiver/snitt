@@ -92,8 +92,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func handleHotkey() {
         guard let coordinator else { return }
+        // §4.13: auto-focus is the default, not a rule. Holding Shift while
+        // pressing the hotkey records the target where it sits.
+        let suppress = NSEvent.modifierFlags.contains(.shift)
         Task { @MainActor in
-            let outcome = await coordinator.toggle()
+            let outcome = await coordinator.toggle(suppressFocus: suppress)
             switch outcome {
             case .started(_, let usedCache):
                 statusItem.update(.recording(startedAt: Date()))
