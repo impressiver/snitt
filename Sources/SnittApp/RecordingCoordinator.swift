@@ -247,8 +247,13 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         // preflighted never prompted at all, and two runs were wasted before the
         // defect was found. The app had the same bug — it called SCShareableContent
         // and hoped, which is why it never appeared in System Settings.
-        let granted = await MainActor.run {
-            ScreenRecordingAccess.ensureGranted()
+        let granted = await MainActor.run { () -> Bool in
+            // Nothing is requested at launch; this is first use (§4.10).
+            if ScreenRecordingAccess.isGranted() { return true }
+            guard PermissionOnboarding.preExplain(.screenRecording) else { return false }
+            let result = ScreenRecordingAccess.ensureGranted()
+            if !result { PermissionOnboarding.showAlreadyDenied(.screenRecording) }
+            return result
         }
         guard granted else {
             return .failed(Self.screenRecordingDeniedMessage, reason: .permissionDenied)
