@@ -93,11 +93,16 @@ public actor Recorder {
 
     /// Records a marker at the current offset into the recording.
     ///
+    /// Deliberately `async` and awaited rather than spawning a detached task:
+    /// the common agent sequence is `record mark` immediately followed by
+    /// `record stop`, and a fire-and-forget write loses that race silently
+    /// while having already told the agent the marker landed.
+    ///
     /// Returns the offset so the caller can report it — an agent that just
-    /// marked "ran the tests" wants to know where that landed.
-    public func mark(label: String?) -> Double {
+    /// marked "ran the tests" wants to know where that fell.
+    public func mark(label: String?) async -> Double {
         let offset = startedAt.map { Date().timeIntervalSince($0) } ?? 0
-        Task { await markers.add(at: offset, label: label) }
+        await markers.add(at: offset, label: label)
         return offset
     }
 

@@ -127,3 +127,25 @@ func agentProvenanceReachesTheBundle() async throws {
     #expect(try RecordingMetadata.read(from: bundle).initiator == .agent,
             "provenance is the one field whose whole purpose is telling the two apart")
 }
+
+@Test("A marker added immediately before stop is in the written bundle")
+func markJustBeforeStopSurvives() async throws {
+    // The common agent sequence is `record mark` then `record stop`. With a
+    // fire-and-forget write this raced the snapshot and lost silently, having
+    // already told the agent the marker landed.
+    let bundleURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension(SnittBundle.fileExtension)
+    defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+    let size = CGSize(width: 320, height: 240)
+    let recorder = try Recorder.forTesting(bundleURL: bundleURL, videoSize: size)
+    try await recorder.startForTesting()
+    recorder.feedForTesting(makeVideoBuffer(at: 0, size: size), .screen)
+
+    _ = await recorder.mark(label: "last thing")
+    let bundle = try await recorder.stop()
+
+    let events = try EventLog.read(from: bundle).events
+    #expect(events.contains { $0.label == "last thing" && $0.kind == .marker })
+}
