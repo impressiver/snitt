@@ -32,3 +32,9 @@ build/
 *.mov
 *.mp4
 *.gif
+
+# Scratch space for manual verification. macOS gates ~/Desktop behind the
+# Files-and-Folders TCC service, so a shell cannot read the .snitt bundles
+# Snitt writes there — copying one here is how you inspect it. Finder also
+# refuses to copy into /tmp, which is why this lives in the repo.
+/tmp/
