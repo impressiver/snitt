@@ -9,46 +9,99 @@ private func repositoryRoot() -> URL {
         .deletingLastPathComponent()          // repo root
 }
 
-/// Removes `//` line comments and `/* */` block comments.
+/// Returns `source` with comments and string-literal CONTENTS removed, so that
+/// a match against the result means a real call site and not a mention.
 ///
-/// The guard matches source text, so without this a file could satisfy it with
-/// a COMMENT mentioning the call it never makes — and every historical instance
-/// of this defect lived in a file with a paragraph of prose about permissions.
-/// A guard a comment can defeat is not a guard.
+/// Both removals close false negatives found in review: an identifier named in
+/// a doc comment, or quoted inside an error message, previously satisfied the
+/// guard while the call was never made. Stripping errs toward removing too
+/// much — that direction produces a false POSITIVE, which fails loudly and a
+/// human adjusts. A false negative ships the defect silently, which is the
+/// whole failure this guard exists to prevent.
 ///
-/// This deliberately does NOT handle string literals containing `//` (e.g. a URL
-/// in a string literal would have the rest of that line stripped). That is a
-/// conscious trade-off: it can only produce a false POSITIVE (the guard
-/// complains when it should not), which fails loudly and a human adjusts. The
-/// direction that must never happen is a false NEGATIVE — a comment hiding a
-/// missing call — and this closes that.
-private func strippingComments(_ source: String) -> String {
+/// Handles, in one pass, and without letting one construct nest inside
+/// another it should not (a `//` inside a string is not a comment; a `"`
+/// inside a comment does not open a literal):
+/// - `//` line comments
+/// - `/* ... */` block comments, with a nesting depth counter — Swift allows
+///   `/* /* */ */`, and a scanner that closes on the first `*/` mishandles it
+/// - `"..."` string literals, respecting `\"` escapes
+/// - `"""..."""` multiline string literals
+/// - raw strings: any `#"` is treated as opening a literal that runs to the
+///   next `"#`. This under-counts delimiters for `##"..."##` and deeper, but
+///   that only means it can stop stripping early inside an unusual raw
+///   string — a false positive risk, not a false negative one — so it is the
+///   safe direction and not worth the extra complexity here.
+private func strippingCommentsAndLiterals(_ source: String) -> String {
+    let chars = Array(source)
+    let n = chars.count
     var out = ""
-    var index = source.startIndex
-    var inLine = false, inBlock = false
+    out.reserveCapacity(n)
+    var i = 0
+    var blockDepth = 0
 
-    while index < source.endIndex {
-        let rest = source[index...]
-        if inLine {
-            if source[index] == "\n" { inLine = false; out.append("\n") }
-            index = source.index(after: index)
-        } else if inBlock {
-            if rest.hasPrefix("*/") {
-                inBlock = false
-                index = source.index(index, offsetBy: 2)
-            } else {
-                index = source.index(after: index)
+    func has(_ needle: String, at index: Int) -> Bool {
+        let needleChars = Array(needle)
+        guard index + needleChars.count <= n else { return false }
+        for k in 0..<needleChars.count where chars[index + k] != needleChars[k] { return false }
+        return true
+    }
+
+    while i < n {
+        if blockDepth > 0 {
+            if has("/*", at: i) { blockDepth += 1; i += 2 }
+            else if has("*/", at: i) { blockDepth -= 1; i += 2 }
+            else {
+                if chars[i] == "\n" { out.append("\n") }
+                i += 1
             }
-        } else if rest.hasPrefix("//") {
-            inLine = true
-            index = source.index(index, offsetBy: 2)
-        } else if rest.hasPrefix("/*") {
-            inBlock = true
-            index = source.index(index, offsetBy: 2)
-        } else {
-            out.append(source[index])
-            index = source.index(after: index)
+            continue
         }
+
+        if has("//", at: i) {
+            while i < n, chars[i] != "\n" { i += 1 }
+            continue
+        }
+
+        if has("/*", at: i) {
+            blockDepth = 1
+            i += 2
+            continue
+        }
+
+        if has("\"\"\"", at: i) {
+            i += 3
+            while i < n, !has("\"\"\"", at: i) {
+                if chars[i] == "\n" { out.append("\n") }
+                i += 1
+            }
+            i = min(i + 3, n)
+            continue
+        }
+
+        if has("#\"", at: i) {
+            i += 2
+            while i < n, !has("\"#", at: i) {
+                if chars[i] == "\n" { out.append("\n") }
+                i += 1
+            }
+            i = min(i + 2, n)
+            continue
+        }
+
+        if chars[i] == "\"" {
+            i += 1
+            while i < n, chars[i] != "\"" {
+                if chars[i] == "\\", i + 1 < n { i += 2; continue }
+                if chars[i] == "\n" { out.append("\n") }
+                i += 1
+            }
+            i = min(i + 1, n)
+            continue
+        }
+
+        out.append(chars[i])
+        i += 1
     }
     return out
 }
@@ -74,7 +127,7 @@ func noPreflightWithoutRequest() throws {
     // that only preflights silently measures nothing — three times now.
     var offenders: [String] = []
     for url in swiftSources() {
-        let source = strippingComments(try String(contentsOf: url, encoding: .utf8))
+        let source = strippingCommentsAndLiterals(try String(contentsOf: url, encoding: .utf8))
         for service in ["ScreenCapture", "ListenEvent"] {
             if source.contains("CGPreflight\(service)Access"),
                !source.contains("CGRequest\(service)Access") {
@@ -98,8 +151,10 @@ func enumerationSitesEnsureAccess() throws {
     // which is the half that actually bit us there.
     let allowed: [String: String] = [
         "CaptureTarget.swift":
-            "A pure enumeration helper. Its callers ensure access; it deliberately "
-            + "does not prompt, so listing composes without side effects.",
+            "A pure enumeration helper that deliberately does not prompt, so listing "
+            + "composes without side effects. No production caller exists yet, so "
+            + "nothing currently guarantees access is ensured before it runs — "
+            + "re-audit this entry when AutomationHost.listTargets() (Task 7) lands.",
         "CachedTargetResolver.swift":
             "Resolves a stored reference against live windows. Reached only from "
             + "RecordingCoordinator, which ensures access before resolving.",
@@ -111,7 +166,7 @@ func enumerationSitesEnsureAccess() throws {
     var offenders: [String] = []
     for url in swiftSources() where url.path.hasPrefix(root.path) {
         let name = url.lastPathComponent
-        let source = strippingComments(try String(contentsOf: url, encoding: .utf8))
+        let source = strippingCommentsAndLiterals(try String(contentsOf: url, encoding: .utf8))
         guard source.contains("SCShareableContent.") else { continue }
         if allowed[name] != nil { continue }
         if source.contains("ScreenRecordingAccess.ensureGranted")
@@ -119,4 +174,24 @@ func enumerationSitesEnsureAccess() throws {
         offenders.append("\(name): enumerates SCShareableContent without ensuring access")
     }
     #expect(offenders.isEmpty, "\(offenders)")
+}
+
+@Test("The scanner removes mentions but keeps real call sites")
+func scannerRemovesMentionsNotCalls() {
+    // Each of these previously defeated the guard, or would have.
+    let cases: [(String, Bool, String)] = [
+        ("let x = CGRequestScreenCaptureAccess()", true,  "a real call must survive"),
+        ("// call CGRequestScreenCaptureAccess() here", false, "line comment"),
+        ("/* CGRequestScreenCaptureAccess() */", false, "block comment"),
+        ("/* /* CGRequestScreenCaptureAccess() */ */", false, "NESTED block comment"),
+        ("let s = \"call CGRequestScreenCaptureAccess() first\"", false, "string literal"),
+        ("let s = \"\"\"\nCGRequestScreenCaptureAccess()\n\"\"\"", false, "multiline string"),
+        ("let s = \"an escaped \\\" quote\" ; CGRequestScreenCaptureAccess()",
+         true, "a call after a literal containing an escaped quote must survive"),
+        (##"let s = #"CGRequestScreenCaptureAccess()"#"##, false, "raw string"),
+    ]
+    for (source, shouldSurvive, why) in cases {
+        let stripped = strippingCommentsAndLiterals(source)
+        #expect(stripped.contains("CGRequestScreenCaptureAccess") == shouldSurvive, "\(why): \(source)")
+    }
 }
