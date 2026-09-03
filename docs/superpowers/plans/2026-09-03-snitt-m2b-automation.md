@@ -212,29 +212,50 @@ Add to `Package.swift` targets:
 Note the non-black check samples a GRID, not one pixel column — spike S3's heuristic
 sampled a single column and its findings had to record that as a limitation.
 
-- [ ] **Step 2: Build and run the server from a granted context**
+- [ ] **Step 2: Build and sign the probe as its own app**
 
-Run:
+The probe must run under an identity that is **not the terminal's**, or it cannot
+answer the question it exists to ask. Two things are required and neither is optional:
+
+- **Its own signed bundle.** TCC keys on *code identity*, not on filesystem location.
+  A binary copied into `Snitt.app/Contents/MacOS/` keeps its own ad-hoc signature
+  (`Identifier=S5RealTopology-5555…`, `flags=0x2(adhoc)`) and gets no share of
+  `com.impressiver.snitt`'s grant — it would silently fall back to the launching
+  terminal's, which is precisely what made spike S3 unable to answer this. Copying
+  into the signed bundle also breaks its seal.
+- **Launch through LaunchServices.** Even a correctly signed binary started from a
+  shell has the terminal as its `p_responsible_pid`. Only `open` makes the app
+  responsible for itself.
+
+Create `Scripts/make-s5-probe-app.sh`, modelled on `Scripts/make-app.sh` — same
+`set -euo pipefail`, same `Scripts/signing-identity.sh` call with the same ad-hoc
+fallback and warning. It assembles `build/S5Server.app` with `CFBundleExecutable`
+`S5Server`, `CFBundleIdentifier` `com.impressiver.snitt.s5probe`,
+`LSMinimumSystemVersion` `15.0`, and `LSUIElement` true, copying
+`.build/debug/S5RealTopology` in as `Contents/MacOS/S5Server`.
+
+Because `open` leaves the server with no stdout, add a `log()` helper to
+`S5Probe.swift` that appends to `~/Desktop/S5-server.log`, and use it for every
+message `serve()` emits. Leave `ask()` printing to stdout — it runs in a terminal.
+
+- [ ] **Step 3: Run it (human)**
 
 ```bash
-swift build --product S5RealTopology
-cp .build/debug/S5RealTopology build/Snitt.app/Contents/MacOS/S5RealTopology
-./build/Snitt.app/Contents/MacOS/S5RealTopology serve
-```
+./Scripts/make-s5-probe-app.sh
+rm -f ~/Desktop/S5-server.log
+open build/S5Server.app --args serve
+# Grant Screen Recording to "S5Server" when prompted, then relaunch it —
+# macOS requires a relaunch after the grant is toggled.
 
-Copying the probe **inside the bundle** is what makes it inherit Snitt's code identity and
-therefore Snitt's Screen Recording grant. Leave it running.
-
-- [ ] **Step 3: Ask from an unrelated parent**
-
-In a second terminal:
-
-```bash
+# From a terminal, whose own identity holds no grant:
 ./.build/debug/S5RealTopology ask
-```
+cat ~/Desktop/S5-server.log
 
-This binary is outside the bundle, so its own identity has no grant. Record what the
-server reports.
+# Control: the same probe with the TERMINAL as responsible process. This is what
+# S3 measured. It should succeed, and is only a baseline to compare against.
+./.build/debug/S5RealTopology serve   # one terminal
+./.build/debug/S5RealTopology ask     # another
+```
 
 - [ ] **Step 4: Write the findings document**
 
@@ -258,7 +279,7 @@ being what counts. If it is not, M2b needs a different design.
 
 | Condition | frames | nonBlack | Notes |
 |---|---|---|---|
-| Server inside Snitt.app, client outside | | | |
+| Server = S5Server.app (own grant, launched via `open`), client from terminal | | | |
 | Server run directly from the terminal (control) | | | |
 
 ## Recommendation
@@ -276,7 +297,8 @@ triggered by an unrelated client, say so plainly and state what M2b must do inst
 - [ ] **Step 5: Commit**
 
 ```bash
-git add Spikes/S5RealTopology docs/superpowers/spikes/S5-real-topology.md Package.swift
+git add Spikes/S5RealTopology docs/superpowers/spikes/S5-real-topology.md \
+        Scripts/make-s5-probe-app.sh Package.swift
 git commit -m "spike(S5): probe capture in the real client-to-app topology
 
 S3 proved a background process can capture but inherited the terminal's grant
