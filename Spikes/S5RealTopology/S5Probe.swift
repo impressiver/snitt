@@ -12,6 +12,19 @@ import CoreVideo
 
 let socketPath = "/tmp/snitt-s5.sock"
 
+/// `serve` runs inside an app bundle launched via LaunchServices, so it has no
+/// terminal to print to. Append to a file the human can read instead.
+func log(_ message: String) {
+    let url = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Desktop/S5-server.log")
+    let line = Data((message + "\n").utf8)
+    if let handle = try? FileHandle(forWritingTo: url) {
+        handle.seekToEndOfFile(); handle.write(line); try? handle.close()
+    } else {
+        try? line.write(to: url)
+    }
+}
+
 @main
 struct S5Probe {
     static func main() async {
@@ -36,7 +49,7 @@ struct S5Probe {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, size) }
         }
         listen(fd, 1)
-        print("S5 server listening on \(socketPath)")
+        log("S5 server listening on \(socketPath)")
 
         while true {
             let client = accept(fd, nil, nil)
@@ -47,7 +60,7 @@ struct S5Probe {
             var reply = result + "\n"
             _ = reply.withUTF8 { write(client, $0.baseAddress, $0.count) }
             close(client)
-            print("S5 server handled a request: \(result)")
+            log("S5 server handled a request: \(result)")
         }
     }
 
