@@ -72,7 +72,11 @@ func concurrentTogglesDoNotDoubleStart() async throws {
         pickerResolver: SlowResolver(gate: gate),
         cachedResolverFactory: { _ in SlowResolver(gate: gate) },
         store: store,
-        outputDirectory: FileManager.default.temporaryDirectory
+        outputDirectory: FileManager.default.temporaryDirectory,
+        // Granted, deterministically. Otherwise these tests assert their
+        // property only on a machine that happens to have the grant and pass
+        // vacuously everywhere else.
+        ensureAccess: { true }
     )
 
     // First toggle suspends inside resolve(), holding the transition.
@@ -115,7 +119,11 @@ func agentStartsWithAnEmptyStore() async throws {
         pickerResolver: MarkerResolver(),   // must never be used by an agent request
         cachedResolverFactory: { _ in MarkerResolver() },
         store: store,
-        outputDirectory: FileManager.default.temporaryDirectory
+        outputDirectory: FileManager.default.temporaryDirectory,
+        // Granted, deterministically. Otherwise these tests assert their
+        // property only on a machine that happens to have the grant and pass
+        // vacuously everywhere else.
+        ensureAccess: { true }
     )
 
     let outcome = await coordinator.startForAgent(
@@ -130,12 +138,19 @@ func agentStartsWithAnEmptyStore() async throws {
     // no way to do without live enumeration (see the task report). What this
     // DOES prove, unambiguously: the forced resolver's `resolve()` ran at all,
     // which is exactly the step the bug skipped.
-    guard case .failed(let message, _) = outcome else {
+    //
+    // Asserted POSITIVELY, on MarkerResolver's own error. The previous version
+    // only checked that the message did NOT contain "cached target could not
+    // be read" — which an unrelated permission-denied message also satisfies,
+    // so on an ungranted machine it passed against the exact bug it names.
+    guard case .failed(let message, let reason) = outcome else {
         Issue.record("expected a failure surfaced from MarkerResolver, got \(outcome)")
         return
     }
-    #expect(!message.contains("cached target could not be read"),
-            "an agent's forced resolver must run instead of hitting the empty-store cache guard — got: \(message)")
+    #expect(message.contains("MarkerError"),
+            "the failure must be the forced resolver's OWN — got: \(message)")
+    #expect(reason == .internalError)
+    #expect(!message.contains("cached target could not be read"))
 }
 
 @Test("A coordinator that never started an agent session refuses to stop one")
@@ -152,7 +167,11 @@ func stopForAgentRefusesUnknownSession() async {
         pickerResolver: MarkerResolver(),
         cachedResolverFactory: { _ in MarkerResolver() },
         store: store,
-        outputDirectory: FileManager.default.temporaryDirectory
+        outputDirectory: FileManager.default.temporaryDirectory,
+        // Granted, deterministically. Otherwise these tests assert their
+        // property only on a machine that happens to have the grant and pass
+        // vacuously everywhere else.
+        ensureAccess: { true }
     )
     let result = await coordinator.stopForAgent(sessionID: "never-started")
     #expect(result == .notCurrentSession,
@@ -226,7 +245,11 @@ func agentFailureLeavesTheHumanStoreIntact() async throws {
         pickerResolver: GoneResolver(),
         cachedResolverFactory: { _ in GoneResolver() },
         store: store,
-        outputDirectory: FileManager.default.temporaryDirectory
+        outputDirectory: FileManager.default.temporaryDirectory,
+        // Granted, deterministically. Otherwise these tests assert their
+        // property only on a machine that happens to have the grant and pass
+        // vacuously everywhere else.
+        ensureAccess: { true }
     )
 
     _ = await coordinator.startForAgent(
@@ -252,14 +275,21 @@ func humanFailureClearsTheStore() async throws {
         pickerResolver: GoneResolver(),
         cachedResolverFactory: { _ in GoneResolver() },
         store: store,
-        outputDirectory: FileManager.default.temporaryDirectory
+        outputDirectory: FileManager.default.temporaryDirectory,
+        // Granted, deterministically. Otherwise these tests assert their
+        // property only on a machine that happens to have the grant and pass
+        // vacuously everywhere else.
+        ensureAccess: { true }
     )
 
     let outcome = await coordinator.toggle()
-    // `toggle()` reaches the resolver only once Screen Recording is granted; on
-    // a machine without the grant it stops earlier, and the store is untouched
-    // for a different reason. Only assert when the resolver actually ran.
-    guard case .failed(_, .targetUnavailable) = outcome else { return }
+    // Asserted, not guarded past. This used to be
+    // `guard case ... else { return }` — a silent pass on any other outcome,
+    // including the permission-denied one an ungranted machine produces.
+    guard case .failed(_, .targetUnavailable) = outcome else {
+        Issue.record("expected the resolver's targetGone to surface, got \(outcome)")
+        return
+    }
     #expect(store.load() == nil,
             "a stale cache must be cleared so the next press offers the picker")
 }

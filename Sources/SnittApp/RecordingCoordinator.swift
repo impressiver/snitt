@@ -82,6 +82,14 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     private let store: TargetStore
     private let outputDirectory: URL
     private let focuser: WindowFocuser
+    /// Raises the Screen Recording grant, non-interactively.
+    ///
+    /// Injectable so the coordinator's own behaviour can be tested on a
+    /// machine that has not granted it. Without this seam, two tests here
+    /// asserted their property only when the grant happened to exist and
+    /// passed vacuously otherwise — which is the same class of hole as the
+    /// bugs they were written for.
+    private let ensureAccess: @MainActor @Sendable () -> Bool
 
     private var active: Recorder?
 
@@ -107,12 +115,15 @@ public actor RecordingCoordinator: AgentRecordingControlling {
                 cachedResolverFactory: @escaping @Sendable (TargetReference) -> TargetResolver,
                 store: TargetStore,
                 outputDirectory: URL,
-                focuser: WindowFocuser = .system) {
+                focuser: WindowFocuser = .system,
+                ensureAccess: @escaping @MainActor @Sendable () -> Bool
+                    = { ScreenRecordingAccess.ensureGranted() }) {
         self.pickerResolver = pickerResolver
         self.cachedResolverFactory = cachedResolverFactory
         self.store = store
         self.outputDirectory = outputDirectory
         self.focuser = focuser
+        self.ensureAccess = ensureAccess
     }
 
     /// The hotkey ALWAYS presents the system picker.
@@ -286,7 +297,7 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         // without the grant. The sheets now live in `AppDelegate`, the only
         // human-facing caller; an agent gets `permission_denied` over the
         // socket, which is a thing it can act on.
-        let granted = await MainActor.run { ScreenRecordingAccess.ensureGranted() }
+        let granted = await MainActor.run { ensureAccess() }
         guard granted else {
             return .failed(Self.screenRecordingDeniedMessage, reason: .permissionDenied)
         }
