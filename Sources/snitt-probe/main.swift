@@ -67,7 +67,9 @@ do {
         // Recording" grant); enabling the mic adds a SECOND, separate prompt.
         // Asking for both up front is the difference between one dialog and
         // two on a user's very first run — see spec 4.10. Pass --mic to opt in.
-        options: CaptureOptions(captureMicrophone: wantsMic, captureSystemAudio: true)
+        options: CaptureOptions(captureMicrophone: wantsMic, captureSystemAudio: true),
+        // A person ran this probe from a terminal.
+        initiator: .human
     )
 } catch {
     fail("Could not create the recording bundle at \(output.path): \(error)",

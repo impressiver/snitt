@@ -23,10 +23,15 @@ public actor Recorder {
     private var startedAt: Date?
     private var isFinished = false
 
+    /// - Parameter initiator: Deliberately has NO default. A default of
+    ///   `.human` is what let every agent recording ship mislabelled: the
+    ///   argument was simply never passed, and nothing failed. Provenance is
+    ///   the one metadata field whose whole purpose is telling the two apart,
+    ///   so an omission must be a compile error rather than a silent lie.
     public init(target: ResolvedTarget,
                 bundleURL: URL,
                 options: CaptureOptions = CaptureOptions(),
-                initiator: Initiator = .human) throws {
+                initiator: Initiator) throws {
         let bundle = try SnittBundle(creatingAt: bundleURL)
         let descriptor = target.descriptor
         let sink = try AssetWriterSink(
@@ -100,13 +105,14 @@ public actor Recorder {
 
     // MARK: - Testing seam
 
-    static func forTesting(bundleURL: URL, videoSize: CGSize) throws -> Recorder {
+    static func forTesting(bundleURL: URL, videoSize: CGSize,
+                           initiator: Initiator = .human) throws -> Recorder {
         let bundle = try SnittBundle(creatingAt: bundleURL)
         let sink = try AssetWriterSink(outputURL: bundle.captureURL,
                                        videoSize: videoSize)
         let session = CaptureSession.forTesting(sink: sink)
         return Recorder(bundle: bundle, sink: sink,
-                        session: session, initiator: .human)
+                        session: session, initiator: initiator)
     }
 
     func startForTesting() async throws {

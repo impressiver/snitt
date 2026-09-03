@@ -102,3 +102,28 @@ func finalizationFailureSurfaces() async throws {
         _ = try await recorder.stop()
     }
 }
+
+@Test("An agent-initiated recording is stamped as such in metadata.json")
+func agentProvenanceReachesTheBundle() async throws {
+    // Closes finding 6 one layer deeper than `initiator(isAgent:)` can. Every
+    // recording shipped as `.human` because `Recorder.init` defaulted to it, so
+    // `.agent` had zero references outside its own declaration — including in
+    // any bundle Snitt had ever written.
+    let bundleURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension(SnittBundle.fileExtension)
+    defer { try? FileManager.default.removeItem(at: bundleURL) }
+
+    let size = CGSize(width: 320, height: 240)
+    let recorder = try Recorder.forTesting(bundleURL: bundleURL, videoSize: size,
+                                           initiator: .agent)
+    try await recorder.startForTesting()
+    for frame in 0..<5 {
+        recorder.feedForTesting(
+            makeVideoBuffer(at: Double(frame) / 30.0, size: size), .screen)
+    }
+    let bundle = try await recorder.stop()
+
+    #expect(try RecordingMetadata.read(from: bundle).initiator == .agent,
+            "provenance is the one field whose whole purpose is telling the two apart")
+}

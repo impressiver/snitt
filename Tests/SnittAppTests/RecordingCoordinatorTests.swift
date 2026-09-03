@@ -171,3 +171,91 @@ func agentRecordingsCarryAgentProvenance() {
     #expect(RecordingCoordinator.initiator(isAgent: true) == .agent)
     #expect(RecordingCoordinator.initiator(isAgent: false) == .human)
 }
+
+@Test("The -3801 error reports permission_denied, not an internal error")
+func reasonMapsScreenCaptureDenial() {
+    // Finding 3's most important case, and it had no test at all.
+    // ScreenCaptureKit reports a missing Screen Recording grant as -3801. If
+    // this said `.internalError`, an agent would get exit 16 and no idea that
+    // granting permission and relaunching Snitt is the entire fix — while
+    // `explain(_:)` printed a message that says exactly that. The two must not
+    // be able to disagree.
+    let denial = NSError(domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+                         code: -3801)
+    #expect(RecordingCoordinator.reason(for: denial) == .permissionDenied)
+    #expect(RecordingCoordinator.explain(denial).contains("does not have permission"),
+            "the human text and the machine code must describe the same failure")
+
+    // Anything else is internal: a different SCStream code, and a foreign domain
+    // that happens to share the number.
+    #expect(RecordingCoordinator.reason(for: NSError(
+        domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+        code: -3802)) == .internalError)
+    #expect(RecordingCoordinator.reason(for: NSError(
+        domain: "com.example.Other", code: -3801)) == .internalError)
+}
+
+/// Resolves nothing: reports the target as gone, exactly as
+/// `CachedTargetResolver` does when the app has no windows on screen.
+final class GoneResolver: TargetResolver, @unchecked Sendable {
+    func resolve() async throws -> ResolvedTarget {
+        throw TargetResolutionError.targetGone("com.example.Gone")
+    }
+}
+
+private func storedSafari() -> StoredTargetReference {
+    StoredTargetReference(kind: .window, bundleIdentifier: "com.apple.Safari",
+                          titleHint: "Inbox", displayID: nil)
+}
+
+@Test("An agent's failed start does not erase the human's cached target")
+func agentFailureLeavesTheHumanStoreIntact() async throws {
+    // Minor 8. The `targetGone` arm cleared the store unguarded, while the WRITE
+    // side thirteen lines below was correctly guarded — an agent naming a window
+    // that is not open says nothing about the human's last hotkey choice.
+    //
+    // Reachable without a real SCContentFilter because the throw happens before
+    // `Recorder.init` is ever called.
+    let store = TargetStore(fileURL: FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString))
+    try store.save(storedSafari())
+
+    let coordinator = RecordingCoordinator(
+        pickerResolver: GoneResolver(),
+        cachedResolverFactory: { _ in GoneResolver() },
+        store: store,
+        outputDirectory: FileManager.default.temporaryDirectory
+    )
+
+    _ = await coordinator.startForAgent(
+        sessionID: "s1",
+        reference: .window(bundleIdentifier: "com.example.Gone", titleHint: nil))
+
+    #expect(store.load() == storedSafari(),
+            "an agent must not be able to erase the human's cached target")
+}
+
+@Test("A human's own failed start DOES clear the stale cache")
+func humanFailureClearsTheStore() async throws {
+    // The other direction: the guard must not have disabled the behaviour it
+    // was narrowing. A human whose cached app is gone should get the picker on
+    // the next press rather than the same failure again.
+    let store = TargetStore(fileURL: FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString))
+    try store.save(storedSafari())
+
+    let coordinator = RecordingCoordinator(
+        pickerResolver: GoneResolver(),
+        cachedResolverFactory: { _ in GoneResolver() },
+        store: store,
+        outputDirectory: FileManager.default.temporaryDirectory
+    )
+
+    let outcome = await coordinator.toggle()
+    // `toggle()` reaches the resolver only once Screen Recording is granted; on
+    // a machine without the grant it stops earlier, and the store is untouched
+    // for a different reason. Only assert when the resolver actually ran.
+    guard case .failed(_, .targetUnavailable) = outcome else { return }
+    #expect(store.load() == nil,
+            "a stale cache must be cleared so the next press offers the picker")
+}
