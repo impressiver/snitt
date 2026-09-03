@@ -41,8 +41,8 @@ let parsed = CommandLineParser.parse(Array(CommandLine.arguments.dropFirst()))
 let command: ParsedCommand
 switch parsed {
 case .success(let value): command = value
-case .failure(let message):
-    note(message)
+case .failure(let failure):
+    note(failure.message)
     exit(2)
 }
 

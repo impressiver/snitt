@@ -37,10 +37,10 @@ func recordStopNeedsSession() {
 @Test("An unknown command fails with a message rather than defaulting to something")
 func unknownCommandFails() {
     let parsed = CommandLineParser.parse(["frobnicate"])
-    guard case .failure(let message) = parsed else {
+    guard case .failure(let failure) = parsed else {
         Issue.record("an unknown command must not silently succeed"); return
     }
-    #expect(message.contains("frobnicate"))
+    #expect(failure.message.contains("frobnicate"))
 }
 
 private extension Result {
