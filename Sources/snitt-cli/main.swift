@@ -28,6 +28,7 @@ snitt — record a window and hand back a .snitt bundle
         [--display <id>] [--max-duration <seconds>]
         [--mic] [--no-system-audio]        parsed, not yet applied (M3)
   snitt record stop <session-id>         stop; prints the bundle path
+  snitt record mark <session-id> [--label <text>]   drop a marker
   snitt status                           whether a recording is running
 
 Output is JSON on stdout and human text on stderr, so a script can parse one
@@ -56,6 +57,7 @@ switch command {
 case .targetsList:              body = .listTargets
 case .recordStart(let options): body = .startRecording(options)
 case .recordStop(let session):  body = .stopRecording(sessionID: session)
+case .recordMark(let session, let label): body = .mark(sessionID: session, label: label)
 case .status:                   body = .status
 case .help:                     body = .status  // unreachable; handled above
 }

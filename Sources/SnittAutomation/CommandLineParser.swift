@@ -15,6 +15,7 @@ public enum ParsedCommand: Equatable {
     case targetsList
     case recordStart(StartOptions)
     case recordStop(String)
+    case recordMark(sessionID: String, label: String?)
     case status
     case help
 }
@@ -53,6 +54,20 @@ public enum CommandLineParser {
                                   + "Run `snitt status` to find it."))
                 }
                 return .success(.recordStop(session))
+            case "mark":
+                guard let session = args.first else {
+                    return .failure(ParseFailure(
+                        "`record mark` needs a session id. Run `snitt status` to find it."))
+                }
+                var label: String?
+                if args.count > 1 {
+                    guard args[1] == "--label", args.count > 2 else {
+                        return .failure(ParseFailure("Unknown option after the session id. "
+                                                   + "Use `--label <text>`."))
+                    }
+                    label = args[2]
+                }
+                return .success(.recordMark(sessionID: session, label: label))
             default:
                 return .failure(ParseFailure("Unknown record subcommand: \(sub)"))
             }

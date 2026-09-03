@@ -104,9 +104,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         case .stopRecording(let sessionID):
             return await stop(sessionID)
 
-        case .mark:
-            return .failure(AutomationError(code: .internalError,
-                                           message: "Markers are not wired up yet."))
+        case .mark(let sessionID, let label):
+            return await mark(sessionID: sessionID, label: label)
         }
     }
 
@@ -208,6 +207,22 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         default:
             try? await registry.close(sessionID)
             return .failure(Self.error(for: outcome))
+        }
+    }
+
+    private func mark(sessionID: String, label: String?) async -> AutomationResponse {
+        if let refusal = policy().evaluate(StartOptions(bundleIdentifier: "probe")) {
+            return .failure(refusal)
+        }
+        switch await coordinator.markForAgent(sessionID: sessionID, label: label) {
+        case .marked(let offset):
+            return .marked(timeSeconds: offset)
+        case .notCurrentSession, .notRecording:
+            return .failure(AutomationError(
+                code: .noSuchSession,
+                message: "No recording with that session id.",
+                hint: "Markers can only be added to a recording you started. "
+                    + "Check `snitt status` for the current session."))
         }
     }
 

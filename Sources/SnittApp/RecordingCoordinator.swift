@@ -58,9 +58,20 @@ public enum AgentStopResult: Equatable, Sendable {
 /// which ScreenCaptureKit offers no way to construct off a real screen. Declared
 /// here and adopted in `RecordingCoordinator`'s own declaration — not a
 /// retroactive conformance.
+/// The outcome of an agent's request to drop a marker into ITS OWN session.
+public enum AgentMarkResult: Equatable, Sendable {
+    case marked(Double)
+    /// Nothing is recording, or the recording that is running was not started
+    /// by an agent.
+    case notRecording
+    /// Something is recording, but not the session that asked.
+    case notCurrentSession
+}
+
 public protocol AgentRecordingControlling: Sendable {
     func startForAgent(sessionID: String, reference: TargetReference) async -> CoordinatorOutcome
     func stopForAgent(sessionID: String) async -> AgentStopResult
+    func markForAgent(sessionID: String, label: String?) async -> AgentMarkResult
 }
 
 /// Drives one recording from hotkey press to clipboard.
@@ -182,6 +193,18 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         default:
             return .failed("The recording did not finalize.")
         }
+    }
+
+    /// Drops a marker into the running agent recording (§4.12).
+    ///
+    /// Ownership is checked inside the actor, in the same critical section as
+    /// the mark, for the same reason `stopForAgent` does: a marker landing in
+    /// a human's recording because a stale session id was accepted is the same
+    /// class of leak as returning them its bundle path.
+    public func markForAgent(sessionID: String, label: String?) async -> AgentMarkResult {
+        guard let recorder = active, agentSessionID != nil else { return .notRecording }
+        guard agentSessionID == sessionID else { return .notCurrentSession }
+        return .marked(await recorder.mark(label: label))
     }
 
     public func toggle() async -> CoordinatorOutcome {

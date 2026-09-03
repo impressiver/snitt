@@ -29,6 +29,7 @@ actor FakeCoordinator: AgentRecordingControlling {
     private(set) var activeSession: String?
     private(set) var startCalls: [String] = []
     private(set) var stopCalls: [String] = []
+    private(set) var markCalls: [String] = []
 
     init(startOutcome: CoordinatorOutcome = .started("Window", usedCache: true)) {
         self.startOutcome = startOutcome
@@ -54,6 +55,12 @@ actor FakeCoordinator: AgentRecordingControlling {
         guard activeSession == sessionID else { return .notCurrentSession }
         activeSession = nil
         return .stopped(URL(fileURLWithPath: "/tmp/agent-\(sessionID).snitt"), copied: true)
+    }
+
+    func markForAgent(sessionID: String, label: String?) async -> AgentMarkResult {
+        markCalls.append(sessionID)
+        guard activeSession == sessionID else { return .notCurrentSession }
+        return .marked(0)
     }
 }
 

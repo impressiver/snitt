@@ -22,6 +22,7 @@ public actor Recorder {
 
     private var startedAt: Date?
     private var isFinished = false
+    private let markers = MarkerLog()
 
     /// - Parameter initiator: Deliberately has NO default. A default of
     ///   `.human` is what let every agent recording ship mislabelled: the
@@ -83,13 +84,24 @@ public actor Recorder {
             finishError = error
         }
 
-        try writeSidecars(stoppedAt: stoppedAt)
+        let collectedMarkers = await markers.snapshot()
+        try writeSidecars(stoppedAt: stoppedAt, collectedMarkers: collectedMarkers)
 
         if let finishError { throw finishError }
         return bundle
     }
 
-    private func writeSidecars(stoppedAt: Date) throws {
+    /// Records a marker at the current offset into the recording.
+    ///
+    /// Returns the offset so the caller can report it — an agent that just
+    /// marked "ran the tests" wants to know where that landed.
+    public func mark(label: String?) -> Double {
+        let offset = startedAt.map { Date().timeIntervalSince($0) } ?? 0
+        Task { await markers.add(at: offset, label: label) }
+        return offset
+    }
+
+    private func writeSidecars(stoppedAt: Date, collectedMarkers: [LoggedEvent]) throws {
         let duration = startedAt.map { stoppedAt.timeIntervalSince($0) }
         let metadata = RecordingMetadata(
             createdAt: startedAt ?? Date(),
@@ -99,7 +111,7 @@ public actor Recorder {
             health: nil    // populated in M2
         )
         try metadata.write(to: bundle)
-        try EventLog().write(to: bundle)
+        try EventLog(events: collectedMarkers).write(to: bundle)
         try EditDecisionList.fullRange().write(to: bundle)
     }
 

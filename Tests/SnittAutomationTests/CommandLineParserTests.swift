@@ -43,6 +43,19 @@ func unknownCommandFails() {
     #expect(failure.message.contains("frobnicate"))
 }
 
+@Test("record mark parses a session and an optional label")
+func parsesRecordMark() {
+    #expect(CommandLineParser.parse(["record", "mark", "abc"])
+            == .success(.recordMark(sessionID: "abc", label: nil)))
+    #expect(CommandLineParser.parse(["record", "mark", "abc", "--label", "ran tests"])
+            == .success(.recordMark(sessionID: "abc", label: "ran tests")))
+}
+
+@Test("record mark without a session id is refused")
+func recordMarkNeedsSession() {
+    #expect(CommandLineParser.parse(["record", "mark"]).isFailure)
+}
+
 private extension Result {
     var isFailure: Bool { if case .failure = self { return true }; return false }
 }

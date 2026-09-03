@@ -152,6 +152,21 @@ public enum MCPBridge {
                 name: "snitt_status",
                 description: "Report whether a recording is currently running.",
                 inputSchema: ["type": "object", "properties": [String: Any]()]),
+            ToolDefinition(
+                name: "snitt_add_marker",
+                description: "Drop a labelled marker into the running recording, so a "
+                           + "reviewer can jump to this moment. Narrate what you just did.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "sessionId": ["type": "string"],
+                        "label": [
+                            "type": "string",
+                            "description": "What is happening at this moment",
+                        ],
+                    ],
+                    "required": ["sessionId"],
+                ]),
         ]
     }
 
@@ -197,6 +212,12 @@ public enum MCPBridge {
                 return .failure(MCPBridgeError("snitt_stop_recording requires sessionId"))
             }
             return .success(.stopRecording(sessionID: session))
+
+        case "snitt_add_marker":
+            guard let session = arguments["sessionId"] as? String else {
+                return .failure(MCPBridgeError("snitt_add_marker requires sessionId"))
+            }
+            return .success(.mark(sessionID: session, label: arguments["label"] as? String))
 
         default:
             return .failure(MCPBridgeError("Unknown tool: \(name)"))
