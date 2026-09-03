@@ -45,6 +45,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.onClick = { [weak self] in
             self?.handleHotkey()
         }
+
+        // Quitting stops an in-flight recording first. Terminating mid-capture
+        // would leave a bundle whose capture.mov is playable (fragments are
+        // flushed as they are written) but whose sidecar files were never
+        // produced — a half-written document rather than a short one.
+        statusItem.onQuit = { [weak self] in
+            guard let self, let coordinator = self.coordinator else {
+                NSApp.terminate(nil)
+                return
+            }
+            Task { @MainActor in
+                _ = await coordinator.stopIfRecording()
+                NSApp.terminate(nil)
+            }
+        }
     }
 
     private func handleHotkey() {

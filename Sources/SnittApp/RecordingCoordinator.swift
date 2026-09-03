@@ -57,6 +57,19 @@ public actor RecordingCoordinator {
         hasCachedTarget ? .cache : .picker
     }
 
+    /// Stops a recording if one is running; a no-op otherwise.
+    ///
+    /// Used on quit so a capture in progress is finished rather than abandoned.
+    /// Respects the same transition guard as `toggle()`, so it cannot race a
+    /// start that is still resolving.
+    public func stopIfRecording() async -> CoordinatorOutcome? {
+        guard !isTransitioning else { return nil }
+        guard active != nil else { return nil }
+        isTransitioning = true
+        defer { isTransitioning = false }
+        return await stopRecording()
+    }
+
     public func toggle() async -> CoordinatorOutcome {
         guard !isTransitioning else { return .ignored }
         isTransitioning = true

@@ -58,16 +58,50 @@ final class StatusItemController: NSObject {
     /// safety guarantee would be unmet.
     var onClick: (() -> Void)?
 
+    /// Invoked by the "Quit Snitt" menu item. Routed through the app delegate
+    /// rather than calling `NSApp.terminate` here, so an in-flight recording can
+    /// be stopped and its bundle finished before the process goes away.
+    var onQuit: (() -> Void)?
+
     func install() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         item.button?.target = self
         item.button?.action = #selector(handleClick)
+        // Receive right-clicks as well, so a context menu can be shown WITHOUT
+        // assigning `statusItem.menu` — assigning it would replace the button's
+        // action entirely, and that action is §5.3's kill switch.
+        item.button?.sendAction(on: [.leftMouseUp, .rightMouseUp])
         statusItem = item
         apply(.idle)
     }
 
     @objc private func handleClick() {
+        if NSApp.currentEvent?.type == .rightMouseUp {
+            showContextMenu()
+            return
+        }
         onClick?()
+    }
+
+    /// Right-click menu. Attached only for the duration of the click, then
+    /// detached, so left-click keeps invoking `onClick` (the kill switch).
+    private func showContextMenu() {
+        guard let statusItem, let button = statusItem.button else { return }
+
+        let menu = NSMenu()
+        let quitItem = NSMenuItem(title: "Quit Snitt",
+                                  action: #selector(quitSelected),
+                                  keyEquivalent: "q")
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        statusItem.menu = menu
+        button.performClick(nil)
+        statusItem.menu = nil
+    }
+
+    @objc private func quitSelected() {
+        onQuit?()
     }
 
     func update(_ newState: RecordingState) {
