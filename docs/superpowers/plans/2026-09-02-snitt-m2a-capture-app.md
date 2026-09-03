@@ -1045,10 +1045,20 @@ replay API exists (V12), so that is a cost, not an oversight."
   - `public init(allowedModes: SCContentSharingPickerMode = [.singleWindow, .singleApplication])`
   - `final class PickerObserver: NSObject, SCContentSharingPickerObserver` — internal, holds the continuation
 
-**Do not attempt to cache or replay the picker's result here.** V12: the picker
-has no replay API. Reuse happens by storing a `TargetReference` (Task 3) and
-re-resolving through `CachedTargetResolver` (Task 5), which is a different
-mechanism with a different cost.
+**Do not try to REPLAY the picker's selection — but DO derive a `TargetReference`
+from the filter it returns.** These are different things, and conflating them is
+what broke the first version of this plan.
+
+V12 established there is no API to replay a prior picker selection. That does not
+mean the picker's result is opaque: `SCContentFilter` exposes what was chosen, so
+this resolver must extract a bundle identifier and title and hand back a
+`TargetReference`. Without it nothing ever seeds the target store, `store.load()`
+always returns nil, and the hotkey shows the picker on every single press — which
+silently deletes §4.11's entire premise.
+
+**This resolver OWNS seeding the cache.** No other code path can: `CachedTargetResolver`
+only echoes back a reference it was already given, and the coordinator can only save
+what it is handed. If `reference` is nil here, the feature does not exist.
 
 **Testing note:** the picker cannot be driven in tests — it is system UI
 requiring a human. The tests cover the observer's continuation bookkeeping,
@@ -1105,6 +1115,20 @@ import ScreenCaptureKit
 actor PickerOutcomeBox {
     private(set) var hasCompleted = false
 
+    /// Prepares the box for a NEW picker session.
+    ///
+    /// Load-bearing: the resolver is long-lived — Task 11 constructs one instance
+    /// for the whole app — while the box is a one-shot latch. Without resetting,
+    /// the SECOND `resolve()` finds `hasCompleted` already true, refuses to resume
+    /// the continuation, and hangs forever. That hang happens inside the
+    /// coordinator's transition guard, so it wedges every later hotkey press AND
+    /// the menu-bar kill switch, silently and permanently.
+    func reset() {
+        continuation = nil
+        pending = nil
+        hasCompleted = false
+    }
+
     /// Returns true if this outcome was accepted, false if one already arrived.
     @discardableResult
     func deliver(_ outcome: Result<ResolvedTarget, TargetResolutionError>) -> Bool {
@@ -1135,25 +1159,42 @@ public final class PickerTargetResolver: NSObject, TargetResolver, @unchecked Se
     }
 
     public func resolve() async throws -> ResolvedTarget {
-        let picker = SCContentSharingPicker.shared
-        guard picker.isAvailable else { throw TargetResolutionError.unavailable }
+        // Reset FIRST: this resolver outlives a single session, and a latched box
+        // would hang the second call forever. See PickerOutcomeBox.reset().
+        await box.reset()
 
-        var configuration = SCContentSharingPickerConfiguration()
-        configuration.allowedPickerModes = allowedModes
-        picker.configuration = configuration
-
-        picker.add(self)
-        picker.isActive = true
+        // All picker interaction happens on the main actor. This is system UI, and
+        // the resolver is called from inside an actor, so without the hop these run
+        // off-main. The build stays warning-free either way — SCContentSharingPicker
+        // is unannotated in the SDK overlay, so the compiler has nothing to check.
+        await MainActor.run {
+            let picker = SCContentSharingPicker.shared
+            var configuration = SCContentSharingPickerConfiguration()
+            configuration.allowedPickerModes = allowedModes
+            picker.configuration = configuration
+            picker.add(self)
+            picker.isActive = true
+        }
         defer {
-            picker.remove(self)
-            picker.isActive = false
+            Task { @MainActor in
+                let picker = SCContentSharingPicker.shared
+                picker.remove(self)
+                picker.isActive = false
+            }
         }
 
         return try await withCheckedThrowingContinuation { continuation in
-            self.continuation = continuation
-            picker.present()
+            Task {
+                // Arm before presenting, so an immediate callback has somewhere to go.
+                await box.arm(continuation)
+                await MainActor.run { SCContentSharingPicker.shared.present() }
+            }
         }
     }
+
+Note there is deliberately no `isAvailable` guard: that property does NOT exist on
+`SCContentSharingPicker` in the macOS 15 SDK. Unavailability surfaces through
+`contentSharingPickerStartDidFailWithError` instead.
 
     private func finish(_ outcome: Result<ResolvedTarget, TargetResolutionError>) {
         Task {
@@ -1172,21 +1213,42 @@ extension PickerTargetResolver: SCContentSharingPickerObserver {
     public func contentSharingPicker(_ picker: SCContentSharingPicker,
                                      didUpdateWith filter: SCContentFilter,
                                      for stream: SCStream?) {
-        // The picker hands back a finished filter but no descriptor, so the
-        // dimensions come from the filter's own content rect.
-        let rect = filter.contentRect
-        let scale = filter.pointPixelScale
+        var reference: TargetReference?
+        var title: String?
+        var applicationName: String?
+
+        // Derive a durable reference so the hotkey can reuse this target later.
+        // Gated because `includedWindows`/`includedApplications` require macOS
+        // 15.2 while this project's floor is 15.0 (set by D11 for
+        // `captureMicrophone`). Below 15.2 the reference stays nil and every
+        // press shows the picker — degraded, but correct.
+        if #available(macOS 15.2, *) {
+            if let window = filter.includedWindows.first {
+                title = window.title
+                applicationName = window.owningApplication?.applicationName
+                if let bundleID = window.owningApplication?.bundleIdentifier {
+                    reference = .window(bundleIdentifier: bundleID,
+                                        titleHint: window.title)
+                }
+            } else if let app = filter.includedApplications.first {
+                applicationName = app.applicationName
+                reference = .window(bundleIdentifier: app.bundleIdentifier,
+                                    titleHint: nil)
+            }
+        }
+
+        let size = filter.pixelDimensions
         let descriptor = CaptureTargetDescriptor(
             id: 0,
             kind: CaptureTargetDescriptor.Kind.window.rawValue,
-            title: nil,
-            applicationName: nil,
-            width: Int(rect.width * CGFloat(scale)),
-            height: Int(rect.height * CGFloat(scale))
+            title: title,
+            applicationName: applicationName,
+            width: size.width,
+            height: size.height
         )
         finish(.success(ResolvedTarget(filter: filter,
                                        descriptor: descriptor,
-                                       reference: nil,
+                                       reference: reference,
                                        provenance: .picker)))
     }
 
@@ -2054,9 +2116,14 @@ public enum ResolverChoice: Equatable, Sendable {
 }
 
 public enum CoordinatorOutcome: Equatable, Sendable {
-    case started(String)
+    /// `usedCache` is what tells the UI whether this recording took the bypass
+    /// path, which is the only path that incurs the recurring macOS prompt — and
+    /// therefore the only moment the §5.5 explainer should appear.
+    case started(String, usedCache: Bool)
     case stopped(URL, copied: Bool)
     case cancelled
+    /// A press arrived while a start or stop was already in flight; ignored.
+    case ignored
     case failed(String)
 }
 
@@ -2068,6 +2135,15 @@ public actor RecordingCoordinator {
     private let outputDirectory: URL
 
     private var active: Recorder?
+
+    /// Guards the whole transition, claimed BEFORE any suspension point.
+    ///
+    /// Actors are reentrant. Checking `active` alone is not enough, because it is
+    /// not assigned until after `resolve()` and `start()` complete — and on the
+    /// picker path `resolve()` stays suspended for SECONDS while a human chooses a
+    /// window. A second press in that window would also see `active == nil` and
+    /// start a second recording: two AVAssetWriters on one screen.
+    private var isTransitioning = false
 
     public init(pickerResolver: TargetResolver,
                 cachedResolverFactory: @escaping @Sendable (TargetReference) -> TargetResolver,
@@ -2090,6 +2166,10 @@ public actor RecordingCoordinator {
     }
 
     public func toggle() async -> CoordinatorOutcome {
+        guard !isTransitioning else { return .ignored }
+        isTransitioning = true
+        defer { isTransitioning = false }
+
         if active != nil { return await stopRecording() }
         return await startRecording()
     }
@@ -2134,7 +2214,8 @@ public actor RecordingCoordinator {
             let recorder = try Recorder(target: target, bundleURL: url)
             try await recorder.start()
             active = recorder
-            return .started(target.descriptor.title ?? "screen")
+            return .started(target.descriptor.title ?? "screen",
+                            usedCache: choice == .cache)
         } catch {
             return .failed("Could not start recording: \(error)")
         }
@@ -2237,7 +2318,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let monitor = HotkeyMonitor(combination: .defaultCombination) { [weak self] in
             self?.handleHotkey()
         }
-        try? monitor.start()
+        // Do NOT swallow this with `try?`. If the combination is already claimed by
+        // another app — a real, reachable error — the app would otherwise launch
+        // with a dead hotkey and no indication its headline feature is off.
+        do {
+            try monitor.start()
+        } catch {
+            notify("Snitt could not register the ⌥⌘5 shortcut — another app may be "
+                 + "using it. You can still start and stop recording from the menu bar.")
+        }
         hotkey = monitor
 
         // §5.3's kill switch: clicking the menu-bar item does the same thing as
@@ -2251,16 +2340,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleHotkey() {
         guard let coordinator else { return }
         Task { @MainActor in
-            ConsentExplainer.showIfNeeded()
             let outcome = await coordinator.toggle()
             switch outcome {
-            case .started:
+            case .started(_, let usedCache):
                 statusItem.update(.recording(startedAt: Date()))
+                // Explain the recurring prompt only when this recording actually
+                // took the bypass path — the picker path does not incur it, so
+                // explaining there would describe a prompt Snitt never causes.
+                if usedCache { ConsentExplainer.showIfNeeded() }
             case .stopped(let url, let copied):
                 statusItem.update(.idle)
-                notify(copied ? "Copied to clipboard" : "Saved to \(url.lastPathComponent)")
+                // Success is SILENT. A modal on the happy path costs a click on
+                // every recording and can surface behind the user's front window,
+                // which is the opposite of what copy-on-stop exists for.
+                if !copied {
+                    notify("Recording saved to \(url.lastPathComponent), but it "
+                         + "could not be copied to the clipboard.")
+                }
             case .cancelled:
                 statusItem.update(.idle)
+            case .ignored:
+                // A press landed mid-transition. Deliberately silent.
+                break
             case .failed(let message):
                 statusItem.update(.idle)
                 notify(message)
@@ -2269,6 +2370,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func notify(_ message: String) {
+        // Accessory apps have no Dock presence, so an un-activated alert can appear
+        // behind whatever the user is looking at while the app sits modal.
+        NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = message
         alert.addButton(withTitle: "OK")
@@ -2342,10 +2446,36 @@ it reads as macOS asking rather than Snitt misbehaving."
 - [ ] `swift build -Xswiftc -strict-concurrency=complete` emits zero warnings
 - [ ] `codesign -dv build/Snitt.app` shows the same `Authority` across two consecutive builds
 - [ ] Pressing ⌥⌘5 twice in a row records and stops **without showing the picker the second time**
+      *(requires macOS 15.2+; on 15.0–15.1 the picker appears every time by design — see Task 6)*
+- [ ] **Record, stop, then record AGAIN — three recordings in one app session.** This is the
+      single check that catches the two defects the first version of this plan shipped: a
+      picker that never seeds the cache, and a one-shot outcome box that wedges the app on
+      its second use. Neither survives one manual run; neither was visible to any
+      task-scoped review
 - [ ] A finished recording is on the clipboard and pastes into another app
 - [ ] The menu-bar indicator shows a live elapsed timer for the whole recording
 - [ ] Clicking the menu-bar item stops a recording (§5.3's kill switch, by mouse alone)
 - [ ] `docs/superpowers/spikes/S4-nag-scoping.md` exists with its observation table open
+
+## Two defects this plan originally contained — read before re-running it
+
+Both were found only by the final whole-branch review, after all eleven tasks had passed
+their own reviews. Both lived in the SEAM between tasks, which is exactly what per-task
+review cannot see. They are fixed above; recorded here so the shape is recognisable.
+
+1. **Nobody owned seeding the cache.** Task 6 was told "do not cache the picker's result"
+   (correct about replay, wrong as written), and Task 11 assumed a reference would arrive.
+   Each brief was self-consistent; the feature between them did not exist. **When two tasks
+   share a contract, one of them must be named as its owner in writing.**
+
+2. **A one-shot object held by a process-lifetime owner.** Task 6 built a latch that is
+   correct for one use; Task 11 constructed one resolver for the whole app. Both correct
+   alone; together, the app wedged on its second recording. **When one task creates a
+   stateful object and another decides its lifetime, the lifetime belongs in both briefs.**
+
+The generalisable check: for every object one task creates and another owns, ask what
+happens on the SECOND use. Both defects answer that question badly, and both would have
+been caught by recording twice in one session.
 
 ## What this plan deliberately does not build
 
