@@ -8,11 +8,13 @@ let package = Package(
         .library(name: "SnittDocument", targets: ["SnittDocument"]),
         .library(name: "SnittCapture", targets: ["SnittCapture"]),
         .library(name: "SnittExport", targets: ["SnittExport"]),
+        .library(name: "SnittAutomation", targets: ["SnittAutomation"]),
     ],
     targets: [
         .target(name: "SnittDocument"),
         .target(name: "SnittCapture", dependencies: ["SnittDocument"]),
         .target(name: "SnittExport", dependencies: ["SnittDocument"]),
+        .target(name: "SnittAutomation", dependencies: ["SnittCapture", "SnittDocument"]),
         .executableTarget(
             name: "snitt-probe",
             dependencies: ["SnittCapture", "SnittDocument"],
@@ -25,6 +27,7 @@ let package = Package(
         .testTarget(name: "SnittDocumentTests", dependencies: ["SnittDocument"]),
         .testTarget(name: "SnittCaptureTests", dependencies: ["SnittCapture"]),
         .testTarget(name: "SnittExportTests", dependencies: ["SnittExport"]),
+        .testTarget(name: "SnittAutomationTests", dependencies: ["SnittAutomation"]),
         .testTarget(name: "SnittAppTests",
                     dependencies: ["SnittApp", "SnittCapture", "SnittDocument"]),
         // THROWAWAY SPIKE CODE — spec section 14, S1/S3/S4/S5. Not for production use.
