@@ -23,8 +23,17 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// can capture the main-actor-isolated app delegate directly.
     typealias RecordingStateSink = @MainActor (RecordingState) -> Void
 
+    /// Resolves git context for a client's working directory.
+    ///
+    /// Injectable because the production call — `GitContextResolver.resolve` —
+    /// was reachable by no test at all: deleting the line outright left the
+    /// whole suite green, while it is the line the milestone's headline claim
+    /// ("a demo arrives as feature-branch-a1b2c3d.snitt") depends on.
+    typealias GitResolving = @Sendable (URL) -> GitContext?
+
     private let coordinator: any AgentRecordingControlling
     private let settings: @Sendable () -> AgentSettings
+    private let resolveGit: GitResolving
     private let onRecordingState: RecordingStateSink
     private let registry = SessionRegistry()
     private var server: AutomationServer?
@@ -37,10 +46,12 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
 
     init(coordinator: any AgentRecordingControlling,
          settings: @escaping @Sendable () -> AgentSettings,
-         onRecordingState: @escaping RecordingStateSink = { _ in }) {
+         onRecordingState: @escaping RecordingStateSink = { _ in },
+         resolveGit: @escaping GitResolving = { GitContextResolver.resolve(in: $0) }) {
         self.coordinator = coordinator
         self.settings = settings
         self.onRecordingState = onRecordingState
+        self.resolveGit = resolveGit
     }
 
     private func pushState(_ state: RecordingState) async {
@@ -202,11 +213,18 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         // repository a recording is about (§7). Snitt.app's own cwd is "/".
         let git = options.workingDirectory
             .map { URL(fileURLWithPath: $0) }
-            .flatMap { GitContextResolver.resolve(in: $0) }
+            .flatMap { resolveGit($0) }
+
+        // The agent's audio choices, which used to stop at the wire: nothing
+        // read `options.microphone`, so `--mic` was a no-op end to end and
+        // `health.micRMS` could only ever be nil.
+        let captureOptions = CaptureOptions(captureMicrophone: options.microphone,
+                                            captureSystemAudio: options.systemAudio)
 
         let outcome = await coordinator.startForAgent(sessionID: sessionID,
                                                       reference: reference,
-                                                      git: git)
+                                                      git: git,
+                                                      options: captureOptions)
         switch outcome {
         case .started(let name, _):
             await pushState(.recording(startedAt: Date()))

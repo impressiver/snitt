@@ -30,11 +30,15 @@ public actor Recorder {
     ///   argument was simply never passed, and nothing failed. Provenance is
     ///   the one metadata field whose whole purpose is telling the two apart,
     ///   so an omission must be a compile error rather than a silent lie.
+    /// - Parameter git: Also has NO default, for the same reason. Provenance
+    ///   and repository context are the same class of field: a caller that
+    ///   forgets one produces a recording that is quietly missing the thing
+    ///   the milestone exists to add.
     public init(target: ResolvedTarget,
                 bundleURL: URL,
                 options: CaptureOptions = CaptureOptions(),
                 initiator: Initiator,
-                git: GitContext? = nil) throws {
+                git: GitContext?) throws {
         let bundle = try SnittBundle(creatingAt: bundleURL)
         let descriptor = target.descriptor
         let sink = try AssetWriterSink(
@@ -52,7 +56,7 @@ public actor Recorder {
                  sink: AssetWriterSink,
                  session: CaptureSession,
                  initiator: Initiator,
-                 git: GitContext? = nil) {
+                 git: GitContext? = nil) {   // testing seam only
         self.bundle = bundle
         self.sink = sink
         self.session = session

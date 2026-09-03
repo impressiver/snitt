@@ -69,7 +69,9 @@ do {
         // two on a user's very first run — see spec 4.10. Pass --mic to opt in.
         options: CaptureOptions(captureMicrophone: wantsMic, captureSystemAudio: true),
         // A person ran this probe from a terminal.
-        initiator: .human
+        initiator: .human,
+        // The probe records whatever is on screen, not a repository's work.
+        git: nil
     )
 } catch {
     fail("Could not create the recording bundle at \(output.path): \(error)",

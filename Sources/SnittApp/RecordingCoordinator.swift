@@ -70,7 +70,7 @@ public enum AgentMarkResult: Equatable, Sendable {
 
 public protocol AgentRecordingControlling: Sendable {
     func startForAgent(sessionID: String, reference: TargetReference,
-                       git: GitContext?) async -> CoordinatorOutcome
+                       git: GitContext?, options: CaptureOptions) async -> CoordinatorOutcome
     func stopForAgent(sessionID: String) async -> AgentStopResult
     func markForAgent(sessionID: String, label: String?) async -> AgentMarkResult
 }
@@ -166,9 +166,15 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     /// idle for the whole recording. §5.3 requires a visible indicator for the
     /// entire duration, so `AutomationHost` pushes state through its
     /// `onRecordingState` sink around every call to this method.
+    /// - Parameter options: The agent's audio choices, straight from
+    ///   `StartOptions`. These used to stop at the wire: `AutomationHost` never
+    ///   read `--mic`, and `Recorder` was built with no `options:` at all, so
+    ///   `CaptureOptions()`'s defaults applied, no microphone output was ever
+    ///   added to the stream, and `health.micRMS` was necessarily nil.
     public func startForAgent(sessionID: String,
                               reference: TargetReference,
-                              git: GitContext?) async -> CoordinatorOutcome {
+                              git: GitContext?,
+                              options: CaptureOptions) async -> CoordinatorOutcome {
         guard !isTransitioning else { return .ignored }
         isTransitioning = true
         defer { isTransitioning = false }
@@ -178,7 +184,8 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         // An agent's demo is watched by a human too, so it auto-focuses just
         // like the hotkey path — there is no Shift key for an agent to hold.
         let outcome = await startRecording(forcedResolver: cachedResolverFactory(reference),
-                                           suppressFocus: false, git: git)
+                                           suppressFocus: false, git: git,
+                                           options: options)
         if case .started = outcome { agentSessionID = sessionID }
         return outcome
     }
@@ -238,13 +245,27 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         defer { isTransitioning = false }
 
         if active != nil { return await stopRecording() }
-        return await startRecording(suppressFocus: suppressFocus)
+        // The hotkey keeps today's capture defaults: system audio on,
+        // microphone OFF. §4.10 rung 2 — the microphone prompt is paid only
+        // when someone deliberately turns it on. Git context is nil because
+        // Snitt.app's own working directory is "/"; only a client knows which
+        // repository a recording is about (§7).
+        return await startRecording(forcedResolver: nil,
+                                    suppressFocus: suppressFocus,
+                                    git: nil,
+                                    options: CaptureOptions())
     }
 
+    /// No parameter has a default, deliberately, and for the reason
+    /// `Recorder.init(initiator:)` gives: `git` defaulting to nil is how the
+    /// whole git-provenance feature could have been silently omitted at a call
+    /// site, and `options` defaulting is how `--mic` became a no-op. An
+    /// omission must be a compile error, not a quietly wrong recording.
     private func startRecording(
-        forcedResolver: TargetResolver? = nil,
-        suppressFocus: Bool = false,
-        git: GitContext? = nil
+        forcedResolver: TargetResolver?,
+        suppressFocus: Bool,
+        git: GitContext?,
+        options: CaptureOptions
     ) async -> CoordinatorOutcome {
         // Screen Recording must be granted before ANY capture API returns real
         // content. Preflight only READS the current state; Request is what raises
@@ -360,6 +381,7 @@ public actor RecordingCoordinator: AgentRecordingControlling {
             // nothing ever passed otherwise. `forcedResolver != nil` IS the
             // agent path — an agent names its target explicitly, a human picks.
             let recorder = try Recorder(target: target, bundleURL: url,
+                                        options: options,
                                         initiator: Self.initiator(isAgent: forcedResolver != nil),
                                         git: git)
             try await recorder.start()

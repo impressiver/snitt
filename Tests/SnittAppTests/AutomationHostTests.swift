@@ -30,7 +30,13 @@ actor FakeCoordinator: AgentRecordingControlling {
     private(set) var activeSession: String?
     private(set) var startCalls: [String] = []
     private(set) var stopCalls: [String] = []
-    private(set) var markCalls: [String] = []
+    private(set) var markCalls: [(sessionID: String, label: String?)] = []
+    /// What the host actually handed over. Both were accepted and dropped on
+    /// the floor before: `git` was ignored outright, so deleting
+    /// `GitContextResolver.resolve` from the host kept every test green, and
+    /// `options` did not exist — `--mic` was a no-op end to end.
+    private(set) var receivedGit: [GitContext?] = []
+    private(set) var receivedOptions: [CaptureOptions] = []
 
     init(startOutcome: CoordinatorOutcome = .started("Window", usedCache: true)) {
         self.startOutcome = startOutcome
@@ -45,8 +51,11 @@ actor FakeCoordinator: AgentRecordingControlling {
 
     func startForAgent(sessionID: String,
                        reference: TargetReference,
-                       git: GitContext?) async -> CoordinatorOutcome {
+                       git: GitContext?,
+                       options: CaptureOptions) async -> CoordinatorOutcome {
         startCalls.append(sessionID)
+        receivedGit.append(git)
+        receivedOptions.append(options)
         if case .started = startOutcome { activeSession = sessionID }
         return startOutcome
     }
@@ -60,9 +69,10 @@ actor FakeCoordinator: AgentRecordingControlling {
     }
 
     func markForAgent(sessionID: String, label: String?) async -> AgentMarkResult {
-        markCalls.append(sessionID)
+        markCalls.append((sessionID, label))
+        guard activeSession != nil else { return .notRecording }
         guard activeSession == sessionID else { return .notCurrentSession }
-        return .marked(0)
+        return .marked(12.5)
     }
 }
 
@@ -84,9 +94,15 @@ private func makeHost(coordinator: FakeCoordinator,
         onRecordingState: { state in recorder.record(state) })
 }
 
-private func startBody(maxDuration: Double? = nil) -> AutomationRequest.Body {
+private func startBody(maxDuration: Double? = nil,
+                       microphone: Bool = false,
+                       systemAudio: Bool = true,
+                       workingDirectory: String? = nil) -> AutomationRequest.Body {
     .startRecording(StartOptions(bundleIdentifier: "com.example.App",
-                                 maxDurationSeconds: maxDuration))
+                                 microphone: microphone,
+                                 systemAudio: systemAudio,
+                                 maxDurationSeconds: maxDuration,
+                                 workingDirectory: workingDirectory))
 }
 
 // MARK: - Critical 1: the indicator
@@ -190,7 +206,7 @@ func watchdogDoesNotStopSomeoneElsesRecording() async throws {
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
     let started = await host.handle(startBody(maxDuration: 0.2))
-    guard case .started(let sessionID, _) = started else {
+    guard case .started = started else {
         Issue.record("expected a started response, got \(started)")
         return
     }
@@ -452,4 +468,168 @@ func consentGatesTheCoordinator() async {
     #expect(await coordinator.startCalls.isEmpty,
             "a refused request must never reach the recording machinery")
     #expect(recorder.states.isEmpty)
+}
+
+// MARK: - The git wiring, which nothing reached
+
+@MainActor
+@Test("The client's working directory is resolved and handed to the coordinator")
+func workingDirectoryBecomesGitContext() async {
+    // The discriminating check. `GitContextResolver.resolve(in:)` had no test
+    // reaching it: `FakeCoordinator.startForAgent` accepted `git:` and ignored
+    // it, so deleting the resolve call from `AutomationHost` entirely left all
+    // 184 tests green — while that one line is what §7's "a demo arrives as
+    // feature-branch-a1b2c3d.snitt" depends on.
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let seen = AskedPaths()
+    let host = AutomationHost(
+        coordinator: coordinator,
+        settings: { AgentSettings(agentRecordingEnabled: true) },
+        onRecordingState: { state in recorder.record(state) },
+        resolveGit: { url in
+            seen.record(url.path)
+            return GitContext(branch: "feat/markers", commit: "a1b2c3d")
+        })
+
+    _ = await host.handle(startBody(workingDirectory: "/Users/someone/src/project"))
+
+    #expect(seen.all == ["/Users/someone/src/project"],
+            "the CLIENT's cwd is the only one that means anything — Snitt.app's own is \"/\"")
+    let git = await coordinator.receivedGit
+    #expect(git.count == 1)
+    #expect(git.first??.branch == "feat/markers")
+    #expect(git.first??.commit == "a1b2c3d",
+            "git context that stops at the host never reaches meta.json or the bundle name")
+}
+
+@MainActor
+@Test("A request with no working directory resolves nothing")
+func noWorkingDirectoryMeansNoGit() async {
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let seen = AskedPaths()
+    let host = AutomationHost(
+        coordinator: coordinator,
+        settings: { AgentSettings(agentRecordingEnabled: true) },
+        onRecordingState: { state in recorder.record(state) },
+        resolveGit: { url in seen.record(url.path); return GitContext(branch: "x") })
+
+    _ = await host.handle(startBody())
+
+    #expect(seen.all.isEmpty, "nothing may be guessed from Snitt.app's own cwd")
+    let git = await coordinator.receivedGit
+    #expect(git.count == 1 && git[0] == nil)
+}
+
+/// Thread-safe because the resolver closure is `@Sendable`.
+private final class AskedPaths: @unchecked Sendable {
+    private let lock = NSLock()
+    private var paths: [String] = []
+    func record(_ path: String) { lock.lock(); paths.append(path); lock.unlock() }
+    var all: [String] { lock.lock(); defer { lock.unlock() }; return paths }
+}
+
+// MARK: - Important 4: --mic reaches the capture
+
+@MainActor
+@Test("--mic reaches the capture options instead of stopping at the wire")
+func microphoneOptionIsThreadedThrough() async {
+    // `StartOptions.microphone` was parsed by the CLI and the MCP bridge and
+    // travelled over the socket, and then nothing read it: `RecordingCoordinator`
+    // built `Recorder(...)` with no `options:`, so no `.microphone` output was
+    // ever added to the stream and `health.micRMS` was always nil.
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let host = makeHost(coordinator: coordinator, recorder: recorder)
+
+    _ = await host.handle(startBody(microphone: true, systemAudio: false))
+
+    let options = await coordinator.receivedOptions
+    #expect(options.count == 1)
+    #expect(options.first?.captureMicrophone == true)
+    #expect(options.first?.captureSystemAudio == false)
+}
+
+@MainActor
+@Test("The microphone stays off unless it was asked for")
+func microphoneIsOffByDefault() async {
+    // §4.10 rung 2: the microphone prompt is paid only when someone
+    // deliberately enables it.
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let host = makeHost(coordinator: coordinator, recorder: recorder)
+
+    _ = await host.handle(startBody())
+
+    let options = await coordinator.receivedOptions
+    #expect(options.first?.captureMicrophone == false)
+    #expect(options.first?.captureSystemAudio == true)
+}
+
+// MARK: - Important 2: the marker handler
+
+@MainActor
+@Test("A mark on the agent's own session returns its offset")
+func markOnOwnedSessionReturnsTheOffset() async {
+    // No test ever constructed `.mark(...)` and called `handle`, so the whole
+    // marker request path — consent gate, coordinator call, response shape —
+    // was unexercised; `markCalls` was recorded and never asserted.
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let host = makeHost(coordinator: coordinator, recorder: recorder)
+
+    let started = await host.handle(startBody())
+    guard case .started(let sessionID, _) = started else {
+        Issue.record("expected a started response, got \(started)")
+        return
+    }
+
+    let response = await host.handle(.mark(sessionID: sessionID, label: "ran the tests"))
+    #expect(response == .marked(timeSeconds: 12.5))
+
+    let calls = await coordinator.markCalls
+    #expect(calls.count == 1)
+    #expect(calls.first?.sessionID == sessionID)
+    #expect(calls.first?.label == "ran the tests",
+            "the label is the whole point of a marker — it must not be dropped")
+}
+
+@MainActor
+@Test("A mark on someone else's session is refused, not silently landed")
+func markOnAnotherSessionIsRefused() async {
+    // The leak this guards: a marker landing in a human's recording because a
+    // stale session id was accepted is the same class of defect as handing an
+    // agent someone else's bundle path.
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let host = makeHost(coordinator: coordinator, recorder: recorder)
+
+    _ = await host.handle(startBody())
+    let response = await host.handle(.mark(sessionID: "not-mine", label: nil))
+
+    guard case .failure(let error) = response else {
+        Issue.record("expected a refusal, got \(response)")
+        return
+    }
+    #expect(error.code == .noSuchSession)
+    #expect(error.hint?.contains("snitt status") == true)
+}
+
+@MainActor
+@Test("A mark from an agent that may not record never reaches the coordinator")
+func markIsGatedByConsent() async {
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let host = AutomationHost(coordinator: coordinator,
+                              settings: { AgentSettings(agentRecordingEnabled: false) },
+                              onRecordingState: { state in recorder.record(state) })
+
+    let response = await host.handle(.mark(sessionID: "s1", label: nil))
+    guard case .failure(let error) = response else {
+        Issue.record("expected a refusal, got \(response)")
+        return
+    }
+    #expect(error.code == .consentRequired)
+    #expect(await coordinator.markCalls.isEmpty)
 }
