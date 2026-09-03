@@ -44,10 +44,4 @@ public struct WindowFocuser: Sendable {
         guard let pid = descriptor.processID else { return false }
         return activate(pid)
     }
-
-    /// Convenience for callers holding a `ResolvedTarget` rather than a
-    /// bare descriptor.
-    public func focus(_ target: ResolvedTarget) -> Bool {
-        focus(descriptor: target.descriptor)
-    }
 }

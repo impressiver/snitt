@@ -77,12 +77,16 @@ public final class AssetWriterSink: SampleBufferSink, @unchecked Sendable {
     }
 
     public func append(_ buffer: CMSampleBuffer, to track: TrackKind) throws {
-        health.observe(buffer, track: track)
-
         lock.lock(); defer { lock.unlock() }
         guard started else { throw SinkError.notStarted }
         guard !finished else { throw SinkError.alreadyFinished }
         guard let input = inputs[track] else { return }
+
+        // Measured only once the buffer is one this sink will actually take.
+        // Observing before the guards folded rejected buffers — appended
+        // before `begin`, or after `finish` — into §12.1's metrics, so the
+        // health of a recording included frames and audio that are not in it.
+        health.observe(buffer, track: track)
 
         // Dropping when not ready is correct: back-pressure from the encoder
         // must never block ScreenCaptureKit's delivery queue.

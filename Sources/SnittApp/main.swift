@@ -64,7 +64,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let markerHotkey = HotkeyMonitor(combination: .markerCombination) { [weak self] in
             self?.handleMarkerHotkey()
         }
-        try? markerHotkey.start()
+        do {
+            try markerHotkey.start()
+        } catch {
+            // Reported for the same reason the record hotkey's failure is: a
+            // silently dead marker hotkey means a person presses it through a
+            // whole demo and finds no markers afterwards.
+            notify("Snitt could not register the ⌥⌘M marker shortcut — another app "
+                 + "may be using it. Recording is unaffected.")
+        }
         self.markerHotkey = markerHotkey
 
         // §5.3's kill switch: clicking the menu-bar item does the same thing as
