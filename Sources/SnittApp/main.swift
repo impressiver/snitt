@@ -96,6 +96,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // pressing the hotkey records the target where it sits.
         let suppress = NSEvent.modifierFlags.contains(.shift)
         Task { @MainActor in
+            // The interactive half of §4.10's permission ladder lives HERE, not
+            // in the coordinator: this is the only path with a human in front
+            // of it. An agent's `record start` shares the coordinator, and a
+            // modal raised there would land on someone's screen and block the
+            // socket until it was clicked.
+            //
+            // Only for a press that would START something — stopping needs no
+            // grant and must never raise a sheet.
+            if await !coordinator.isRecording, !ensureScreenRecordingGrant() { return }
+
             let outcome = await coordinator.toggle(suppressFocus: suppress)
             switch outcome {
             case .started(_, let usedCache):
@@ -132,6 +142,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 break
             }
         }
+    }
+
+    /// Runs §4.10's ladder for a person: explain, ask, and follow up correctly.
+    ///
+    /// Returns whether recording may proceed.
+    ///
+    /// The follow-up is where the first run used to go wrong.
+    /// `CGRequestScreenCaptureAccess()` returns `false` WHILE the user is
+    /// granting in the dialog it just raised (spike S5), so showing "Screen
+    /// Recording is turned off for Snitt. macOS only asks once." on that
+    /// `false` put a contradiction on top of the live dialog. It is shown only
+    /// once Snitt has asked BEFORE — which is the state in which macOS really
+    /// does refuse to ask again.
+    private func ensureScreenRecordingGrant() -> Bool {
+        if ScreenRecordingAccess.isGranted() { return true }
+        // Nothing is requested at launch; this is first use (§4.10).
+        guard PermissionOnboarding.preExplain(.screenRecording) else { return false }
+
+        let askedBefore = PermissionOnboarding.hasRequested(.screenRecording)
+        PermissionOnboarding.markRequested(.screenRecording)
+        if ScreenRecordingAccess.ensureGranted() { return true }
+
+        switch PermissionOnboarding.followUp(deniedHavingAskedBefore: askedBefore) {
+        case .awaitingRelaunch:
+            // Deliberately silent. macOS's own dialog is on screen and is the
+            // only thing the user should be reading; the grant takes effect on
+            // the next launch.
+            break
+        case .alreadyDenied:
+            PermissionOnboarding.showAlreadyDenied(.screenRecording)
+        }
+        return false
     }
 
     /// ⌥⌘M drops a marker into whatever is recording — the human half of §4.12.

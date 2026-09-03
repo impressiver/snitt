@@ -45,6 +45,46 @@ public enum PermissionOnboarding {
         defaults.set(true, forKey: key(service))
     }
 
+    private static func requestedKey(_ service: Service) -> String {
+        "com.impressiver.snitt.requested.\(service.rawValue)"
+    }
+
+    /// Whether Snitt has ever RAISED the system prompt for this service.
+    ///
+    /// Distinct from `shouldPreExplain`: that records whether we explained,
+    /// this records whether macOS was actually asked.
+    public static func hasRequested(_ service: Service,
+                                    defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: requestedKey(service))
+    }
+
+    public static func markRequested(_ service: Service,
+                                     defaults: UserDefaults = .standard) {
+        defaults.set(true, forKey: requestedKey(service))
+    }
+
+    /// What a `false` from a TCC request actually means.
+    public enum RequestFollowUp: Equatable, Sendable {
+        /// The dialog is on screen right now (or was, this launch) and the
+        /// grant lands on the NEXT launch. Nothing may be shown: spike S5
+        /// observed `CGRequestScreenCaptureAccess()` returning false WHILE the
+        /// user was granting, so the "turned off, macOS only asks once" sheet
+        /// would appear on top of the dialog that is asking.
+        case awaitingRelaunch
+        /// Snitt has asked before and been refused. macOS raises no second
+        /// dialog, so the only remaining action is the Settings deep link.
+        case alreadyDenied
+    }
+
+    /// Decides which follow-up a denied request earns.
+    ///
+    /// Pure, because the first-run sequence it governs — pre-explain, system
+    /// dialog, immediate `false` — cannot be reproduced in a test: TCC state is
+    /// per-machine and one-shot.
+    public static func followUp(deniedHavingAskedBefore askedBefore: Bool) -> RequestFollowUp {
+        askedBefore ? .alreadyDenied : .awaitingRelaunch
+    }
+
     /// Deep link to the exact Settings pane for a service.
     ///
     /// Needed because macOS shows a TCC prompt only ONCE. After a denial,
@@ -69,6 +109,11 @@ public enum PermissionOnboarding {
         guard shouldPreExplain(service, defaults: defaults) else { return true }
         markPreExplained(service, defaults: defaults)
 
+        // Snitt is an `.accessory` app with no Dock icon, so a modal it raises
+        // can open behind whatever the user is looking at, with nothing to
+        // click in the Dock to find it. `AppDelegate.notify()` activates for
+        // exactly this reason.
+        NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Snitt needs \(service.displayName)"
         alert.informativeText = service.why + "\n\nmacOS will ask next."
@@ -86,6 +131,7 @@ public enum PermissionOnboarding {
     /// denial would tell the user their correct action failed.
     @MainActor
     public static func showAlreadyDenied(_ service: Service) {
+        NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "\(service.displayName) is turned off for Snitt"
         alert.informativeText =

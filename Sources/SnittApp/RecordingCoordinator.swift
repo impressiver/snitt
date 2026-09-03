@@ -225,6 +225,13 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         await active?.mark(label: label)
     }
 
+    /// Whether a recording is running right now.
+    ///
+    /// Read by the hotkey caller so it only runs the human permission flow for
+    /// a press that would START something — a press that stops a recording
+    /// needs no grant and must never raise a sheet.
+    public var isRecording: Bool { active != nil }
+
     public func toggle(suppressFocus: Bool = false) async -> CoordinatorOutcome {
         guard !isTransitioning else { return .ignored }
         isTransitioning = true
@@ -247,14 +254,18 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         // preflighted never prompted at all, and two runs were wasted before the
         // defect was found. The app had the same bug — it called SCShareableContent
         // and hoped, which is why it never appeared in System Settings.
-        let granted = await MainActor.run { () -> Bool in
-            // Nothing is requested at launch; this is first use (§4.10).
-            if ScreenRecordingAccess.isGranted() { return true }
-            guard PermissionOnboarding.preExplain(.screenRecording) else { return false }
-            let result = ScreenRecordingAccess.ensureGranted()
-            if !result { PermissionOnboarding.showAlreadyDenied(.screenRecording) }
-            return result
-        }
+        //
+        // Deliberately NON-INTERACTIVE. The pre-explain and already-denied
+        // sheets used to run here, inside the critical section both `toggle()`
+        // and `startForAgent()` share and while `isTransitioning` is held. That
+        // put an `NSAlert.runModal()` on someone's screen in response to an
+        // agent's `snitt record start`, blocked the socket until a human
+        // clicked it — with the kill switch disabled meanwhile — and made
+        // `swift test` hang (or trap, with no `NSApplication`) on any machine
+        // without the grant. The sheets now live in `AppDelegate`, the only
+        // human-facing caller; an agent gets `permission_denied` over the
+        // socket, which is a thing it can act on.
+        let granted = await MainActor.run { ScreenRecordingAccess.ensureGranted() }
         guard granted else {
             return .failed(Self.screenRecordingDeniedMessage, reason: .permissionDenied)
         }
