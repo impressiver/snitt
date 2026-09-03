@@ -194,9 +194,11 @@ func enumerationSitesEnsureAccess() throws {
     let allowed: [String: String] = [
         "CaptureTarget.swift":
             "A pure enumeration helper that deliberately does not prompt, so listing "
-            + "composes without side effects. No production caller exists yet, so "
-            + "nothing currently guarantees access is ensured before it runs — "
-            + "re-audit this entry when AutomationHost.listTargets() (Task 7) lands.",
+            + "composes without side effects. Its production caller is "
+            + "AutomationHost.listTargets() (Task 7), which calls "
+            + "ScreenRecordingAccess.ensureGranted() before invoking "
+            + "headlessAvailable() and returns permission_denied (with a "
+            + "relaunch-Snitt hint) when it is not yet granted.",
         "CachedTargetResolver.swift":
             "Resolves a stored reference against live windows. Reached only from "
             + "RecordingCoordinator, which ensures access before resolving.",

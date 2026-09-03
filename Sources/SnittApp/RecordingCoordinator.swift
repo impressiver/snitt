@@ -80,6 +80,22 @@ public actor RecordingCoordinator {
         return await stopRecording()
     }
 
+    /// Starts a recording on behalf of an agent, against an explicit target.
+    ///
+    /// Deliberately shares `startRecording()` and the same `isTransitioning`
+    /// guard as the hotkey path: an agent request arriving mid-hotkey-press must
+    /// not start a second recording, and the visible indicator and kill switch
+    /// then apply to agent sessions for free (§5.3).
+    public func startForAgent(reference: TargetReference) async -> CoordinatorOutcome {
+        guard !isTransitioning else { return .ignored }
+        isTransitioning = true
+        defer { isTransitioning = false }
+        guard active == nil else {
+            return .failed("A recording is already in progress.")
+        }
+        return await startRecording(forcedResolver: cachedResolverFactory(reference))
+    }
+
     public func toggle() async -> CoordinatorOutcome {
         guard !isTransitioning else { return .ignored }
         isTransitioning = true
@@ -89,7 +105,9 @@ public actor RecordingCoordinator {
         return await startRecording()
     }
 
-    private func startRecording() async -> CoordinatorOutcome {
+    private func startRecording(
+        forcedResolver: TargetResolver? = nil
+    ) async -> CoordinatorOutcome {
         // Screen Recording must be granted before ANY capture API returns real
         // content. Preflight only READS the current state; Request is what raises
         // the prompt and registers the app in System Settings' list.
@@ -104,9 +122,14 @@ public actor RecordingCoordinator {
         guard granted else { return .failed(Self.screenRecordingDeniedMessage) }
 
         let stored = store.load()
-        let choice = Self.resolverChoice(hasCachedTarget: stored != nil)
+        // An agent names its target explicitly, so there is nothing to pick and
+        // nothing to cache-check — but everything downstream (permission
+        // preflight, resolution, the Recorder, the indicator) stays shared.
+        let choice: ResolverChoice = forcedResolver != nil
+            ? .cache
+            : Self.resolverChoice(hasCachedTarget: stored != nil)
 
-        let resolver: TargetResolver
+        var resolver: TargetResolver
         switch choice {
         case .cache:
             guard let stored, let reference = Self.reference(from: stored) else {
@@ -116,6 +139,7 @@ public actor RecordingCoordinator {
         case .picker:
             resolver = pickerResolver
         }
+        if let forcedResolver { resolver = forcedResolver }
 
         let target: ResolvedTarget
         do {

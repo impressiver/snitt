@@ -96,4 +96,25 @@ public enum CaptureTarget: @unchecked Sendable {
         return content.displays.map { .display($0) }
              + content.windows.map { .window($0) }
     }
+
+    /// Enumerates what can be recorded, for callers with no human present.
+    ///
+    /// This is the carve-out `available()`'s deprecation note describes, given
+    /// its own name so headless callers do not have to suppress a warning aimed
+    /// at interactive ones. It is still the bypass path (§5.2) and still costs
+    /// the recurring re-consent prompt — that is a cost of automation, which
+    /// D42 accepted deliberately. Interactive callers must keep using
+    /// `PickerTargetResolver`.
+    ///
+    /// - Important: This does NOT ensure Screen Recording access itself. The
+    ///   caller must call `ScreenRecordingAccess.ensureGranted()` first —
+    ///   enumerating without it is the exact defect this codebase has shipped
+    ///   three times (see `ScreenRecordingAccess`'s doc comment).
+    public static func headlessAvailable() async throws -> [CaptureTarget] {
+        let content = try await SCShareableContent.excludingDesktopWindows(
+            false, onScreenWindowsOnly: true
+        )
+        return content.displays.map { .display($0) }
+             + content.windows.map { .window($0) }
+    }
 }

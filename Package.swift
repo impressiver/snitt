@@ -22,7 +22,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "SnittApp",
-            dependencies: ["SnittCapture", "SnittDocument", "SnittExport"]
+            dependencies: ["SnittCapture", "SnittDocument", "SnittExport", "SnittAutomation"]
         ),
         .testTarget(name: "SnittDocumentTests", dependencies: ["SnittDocument"]),
         .testTarget(name: "SnittCaptureTests", dependencies: ["SnittCapture"]),

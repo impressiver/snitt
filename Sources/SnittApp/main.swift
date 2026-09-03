@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusItem = StatusItemController()
     private var hotkey: HotkeyMonitor?
     private var coordinator: RecordingCoordinator?
+    private var automationHost: AutomationHost?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.install()
@@ -27,6 +28,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             outputDirectory: outputDirectory
         )
         self.coordinator = coordinator
+
+        var agentSettings = AgentSettings.load()
+        statusItem.agentRecordingEnabled = agentSettings.agentRecordingEnabled
+        statusItem.onToggleAgentRecording = { [weak self] enabled in
+            agentSettings.agentRecordingEnabled = enabled
+            agentSettings.save()
+            self?.statusItem.agentRecordingEnabled = enabled
+        }
+
+        let host = AutomationHost(coordinator: coordinator,
+                                  settings: { AgentSettings.load() })
+        host.start()
+        automationHost = host
 
         let monitor = HotkeyMonitor(combination: .defaultCombination) { [weak self] in
             self?.handleHotkey()
