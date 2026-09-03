@@ -35,23 +35,46 @@ public struct CachedTargetResolver: TargetResolver {
         self.reference = reference
     }
 
+    /// Below this, on either axis, a window is a palette or a utility panel
+    /// rather than something worth recording.
+    ///
+    /// The agent path always passes `titleHint: nil` — `--app <bundle-id>` has
+    /// no title to give — so without a floor an agent asking to record an app
+    /// with a floating inspector could silently capture a 60×200 strip and be
+    /// told it succeeded. Refusing is better: `target_not_found` is a fact the
+    /// agent can act on, an unusable recording is not.
+    static let minimumWindowEdge = 100
+
     /// Chooses the window that best matches a stored reference.
     ///
     /// Window ids are deliberately ignored: they change every relaunch (V10).
     /// Matching is by bundle identifier, with the title used only to
-    /// disambiguate — a stale title falls back to the app's first window rather
-    /// than failing, because recording the right app beats recording nothing.
+    /// disambiguate — a stale title falls back to the app's LARGEST window
+    /// rather than failing, because recording the right app beats recording
+    /// nothing.
+    ///
+    /// Largest, not first: `content.windows` order is ScreenCaptureKit's, not a
+    /// ranking, so `first` meant "an arbitrary window of that app". Ties keep
+    /// the earliest candidate, so the order is stable rather than dependent on
+    /// how `max(by:)` breaks ties.
     static func bestMatch(for reference: TargetReference,
                           among candidates: [WindowCandidate]) -> WindowCandidate? {
         guard let bundleID = reference.bundleIdentifier else { return nil }
-        let sameApp = candidates.filter { $0.bundleIdentifier == bundleID }
-        guard !sameApp.isEmpty else { return nil }
+        let sameApp = candidates.filter {
+            $0.bundleIdentifier == bundleID
+                && $0.width >= minimumWindowEdge
+                && $0.height >= minimumWindowEdge
+        }
+        guard let first = sameApp.first else { return nil }
 
         if let hint = reference.titleHint,
            let exact = sameApp.first(where: { $0.title == hint }) {
             return exact
         }
-        return sameApp.first
+        return sameApp.dropFirst().reduce(first) { best, candidate in
+            candidate.width * candidate.height > best.width * best.height
+                ? candidate : best
+        }
     }
 
     public func resolve() async throws -> ResolvedTarget {

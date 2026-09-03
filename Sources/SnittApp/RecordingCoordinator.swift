@@ -245,8 +245,13 @@ public actor RecordingCoordinator: AgentRecordingControlling {
             return .cancelled
         } catch TargetResolutionError.targetGone(let app) {
             // The cached app is gone. Clear the stale cache so the next press
-            // offers the picker rather than failing again.
-            try? store.clear()
+            // offers the picker rather than failing again — but only on the
+            // human's own path. The store is the human's cache of their last
+            // hotkey-approved target, and the same reasoning that keeps an
+            // agent from WRITING it (see below) keeps an agent's failed start
+            // from ERASING it. An agent naming a window that is not open says
+            // nothing about the human's last choice.
+            if forcedResolver == nil { try? store.clear() }
             return .failed("\(app) is no longer available. Press again to pick a new target.",
                            reason: .targetUnavailable)
         } catch {
@@ -269,7 +274,13 @@ public actor RecordingCoordinator: AgentRecordingControlling {
             "Snitt-\(Int(Date().timeIntervalSince1970)).snitt"
         )
         do {
-            let recorder = try Recorder(target: target, bundleURL: url)
+            // Provenance is the one metadata field whose entire purpose is
+            // telling agent recordings from human ones, and every recording was
+            // stamped `.human` because `Recorder.init` defaults to it and
+            // nothing ever passed otherwise. `forcedResolver != nil` IS the
+            // agent path — an agent names its target explicitly, a human picks.
+            let recorder = try Recorder(target: target, bundleURL: url,
+                                        initiator: Self.initiator(isAgent: forcedResolver != nil))
             try await recorder.start()
             active = recorder
             return .started(target.descriptor.title ?? "screen",
@@ -358,6 +369,16 @@ public actor RecordingCoordinator: AgentRecordingControlling {
                 """
         }
         return "Could not start recording: \(error.localizedDescription)"
+    }
+
+    /// Who a recording is attributed to in its metadata.
+    ///
+    /// An agent names its target explicitly and a human picks one, so a forced
+    /// resolver IS the agent path — there is no other caller that supplies one.
+    /// Extracted so the mapping itself is checkable: the call site cannot be,
+    /// because reaching it needs a real `SCContentFilter`.
+    static func initiator(isAgent: Bool) -> Initiator {
+        isAgent ? .agent : .human
     }
 
     static func reference(from stored: StoredTargetReference) -> TargetReference? {

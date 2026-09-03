@@ -66,3 +66,62 @@ func ignoresWindowIDs() {
     #expect(found?.windowID == 99_001,
             "the title hint must decide, not window id order or list position")
 }
+
+private func sized(_ id: UInt32, _ bundle: String?, _ title: String?,
+                   _ width: Int, _ height: Int) -> WindowCandidate {
+    WindowCandidate(windowID: id, bundleIdentifier: bundle,
+                    title: title, width: width, height: height)
+}
+
+@Test("With no title hint, the LARGEST window of the app wins")
+func prefersLargestWindow() {
+    // The agent path always passes titleHint: nil, because `--app <bundle-id>`
+    // has no title to give. `sameApp.first` therefore meant "an arbitrary
+    // window": ScreenCaptureKit's ordering is not a ranking. The main window is
+    // deliberately LAST here, so the old implementation returns the palette.
+    let ref = TargetReference.window(bundleIdentifier: "com.example.Editor",
+                                     titleHint: nil)
+    let found = CachedTargetResolver.bestMatch(for: ref, among: [
+        sized(1, "com.example.Editor", "Inspector", 240, 700),
+        sized(2, "com.example.Editor", "Palette", 300, 400),
+        sized(3, "com.example.Editor", "Untitled.txt", 1400, 900),
+    ])
+    #expect(found?.windowID == 3,
+            "an agent asking for an app must get its main window, not a side panel")
+}
+
+@Test("Windows below the size floor are not recordable at all")
+func rejectsTinyWindows() {
+    let ref = TargetReference.window(bundleIdentifier: "com.example.Editor",
+                                     titleHint: nil)
+    let found = CachedTargetResolver.bestMatch(for: ref, among: [
+        sized(1, "com.example.Editor", "Toolbar", 60, 800),
+        sized(2, "com.example.Editor", "Tooltip", 400, 24),
+    ])
+    #expect(found == nil,
+            "target_not_found is a fact an agent can act on; a 60-pixel strip is not")
+}
+
+@Test("The size floor applies to a title-hint match too")
+func titleHintCannotSelectATinyWindow() {
+    let ref = TargetReference.window(bundleIdentifier: "com.example.Editor",
+                                     titleHint: "Palette")
+    let found = CachedTargetResolver.bestMatch(for: ref, among: [
+        sized(1, "com.example.Editor", "Palette", 80, 80),
+        sized(2, "com.example.Editor", "Untitled.txt", 1400, 900),
+    ])
+    #expect(found?.windowID == 2,
+            "a stale hint naming an unusable window must fall through, not win")
+}
+
+@Test("Equal-area windows keep list order rather than depending on tie-breaking")
+func equalAreasAreStable() {
+    let ref = TargetReference.window(bundleIdentifier: "com.example.Editor",
+                                     titleHint: nil)
+    let found = CachedTargetResolver.bestMatch(for: ref, among: [
+        sized(7, "com.example.Editor", "One", 800, 600),
+        sized(8, "com.example.Editor", "Two", 600, 800),
+    ])
+    #expect(found?.windowID == 7,
+            "identical areas must not make the choice depend on how max(by:) breaks ties")
+}

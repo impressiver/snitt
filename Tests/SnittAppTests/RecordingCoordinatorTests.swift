@@ -156,3 +156,18 @@ func stopForAgentRefusesUnknownSession() async {
     #expect(result == .notCurrentSession,
             "an agent must not be able to stop a recording it does not own")
 }
+
+@Test("An agent recording is stamped as agent-initiated, not human")
+func agentRecordingsCarryAgentProvenance() {
+    // Every recording was stamped `.human`: `Recorder.init` defaults to it and
+    // `startRecording` never passed one on either path, so `.agent` had zero
+    // references outside its own declaration. Provenance is the one metadata
+    // field whose entire purpose is telling the two apart.
+    //
+    // The call site itself cannot be tested — reaching `Recorder.init` needs a
+    // real `SCContentFilter`, which ScreenCaptureKit will not construct without
+    // live screen enumeration. This pins the mapping; the wiring is by
+    // inspection.
+    #expect(RecordingCoordinator.initiator(isAgent: true) == .agent)
+    #expect(RecordingCoordinator.initiator(isAgent: false) == .human)
+}
