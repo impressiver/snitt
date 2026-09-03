@@ -12,6 +12,7 @@ import SnittDocument
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusItem = StatusItemController()
     private var hotkey: HotkeyMonitor?
+    private var markerHotkey: HotkeyMonitor?
     private var coordinator: RecordingCoordinator?
     private var automationHost: AutomationHost?
 
@@ -59,6 +60,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                  + "using it. You can still start and stop recording from the menu bar.")
         }
         hotkey = monitor
+
+        let markerHotkey = HotkeyMonitor(combination: .markerCombination) { [weak self] in
+            self?.handleMarkerHotkey()
+        }
+        try? markerHotkey.start()
+        self.markerHotkey = markerHotkey
 
         // §5.3's kill switch: clicking the menu-bar item does the same thing as
         // the hotkey, so a recording can always be stopped by mouse alone —
@@ -122,6 +129,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 break
             }
         }
+    }
+
+    /// ⌥⌘M drops a marker into whatever is recording — the human half of §4.12.
+    ///
+    /// Deliberately silent when nothing is recording: a marker hotkey that
+    /// interrupts with an alert would be worse than one that does nothing —
+    /// the user already knows there was nothing to mark.
+    private func handleMarkerHotkey() {
+        guard let coordinator else { return }
+        Task { await coordinator.markCurrentRecording(label: nil) }
     }
 
     private func notify(_ message: String) {

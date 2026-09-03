@@ -19,6 +19,30 @@ func combinationsCompareOnBothFields() {
     #expect(a == c)
 }
 
+@Test("Each registration gets a distinct hotkey id")
+func registrationsGetDistinctIDs() {
+    // Two monitors sharing an id is half of why a second hotkey fires both
+    // callbacks; the other half is the handler not checking which id fired.
+    let first = HotkeyMonitor.nextHotKeyID()
+    let second = HotkeyMonitor.nextHotKeyID()
+    #expect(first != second)
+}
+
+@Test("The marker combination differs from the record combination")
+func markerCombinationIsDistinct() {
+    #expect(HotkeyCombination.markerCombination != HotkeyCombination.defaultCombination)
+}
+
+@Test("A monitor only fires for its own hotkey id")
+func monitorIgnoresOtherHotkeys() {
+    var fired = 0
+    let monitor = HotkeyMonitor(combination: .markerCombination) { fired += 1 }
+    monitor.handle(hotKeyID: monitor.hotKeyID)
+    #expect(fired == 1)
+    monitor.handle(hotKeyID: monitor.hotKeyID &+ 1)
+    #expect(fired == 1, "a monitor must ignore a hotkey it did not register")
+}
+
 // Both tests below register the real ⌥⌘5 combination with the window server.
 // Grouped in a serialized suite so they cannot run concurrently and collide
 // on that single, real, OS-level resource (swift-testing parallelizes free

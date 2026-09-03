@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import os
 
 public struct HotkeyCombination: Equatable, Sendable {
     public var keyCode: UInt32
@@ -14,6 +15,13 @@ public struct HotkeyCombination: Equatable, Sendable {
     /// without colliding with it.
     public static let defaultCombination = HotkeyCombination(
         keyCode: UInt32(kVK_ANSI_5),
+        modifiers: UInt32(optionKey | cmdKey)
+    )
+
+    /// Option-Command-M — "mark". Distinct from the record combination so the
+    /// two never collide (§4.12).
+    public static let markerCombination = HotkeyCombination(
+        keyCode: UInt32(kVK_ANSI_M),
         modifiers: UInt32(optionKey | cmdKey)
     )
 }
@@ -32,10 +40,24 @@ public enum HotkeyError: Error, Equatable {
 /// window server and requires no TCC grant at all, which is what lets the
 /// hotkey work inside §4.10's one-dialog first-run budget.
 public final class HotkeyMonitor {
+    private static let idCounter = OSAllocatedUnfairLock(initialState: UInt32(0))
+
+    /// Hands out a fresh hotkey id per registration.
+    ///
+    /// Previously every monitor used `id: 1`. Combined with a callback that
+    /// never checked which hotkey fired, a second monitor made BOTH callbacks
+    /// run on either keypress — so adding a marker hotkey would have started a
+    /// recording too.
+    public static func nextHotKeyID() -> UInt32 {
+        idCounter.withLock { value in value += 1; return value }
+    }
+
     private let combination: HotkeyCombination
     private let onFire: () -> Void
     private var hotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
+
+    public let hotKeyID: UInt32 = HotkeyMonitor.nextHotKeyID()
 
     public private(set) var isRegistered = false
 
@@ -44,16 +66,26 @@ public final class HotkeyMonitor {
         self.onFire = onFire
     }
 
+    /// Invoked by the Carbon callback with the id that actually fired.
+    func handle(hotKeyID firedID: UInt32) {
+        guard firedID == hotKeyID else { return }
+        onFire()
+    }
+
     public func start() throws {
         guard !isRegistered else { return }
 
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
                                       eventKind: UInt32(kEventHotKeyPressed))
-        let callback: EventHandlerUPP = { _, _, userData in
-            guard let userData else { return noErr }
+        let callback: EventHandlerUPP = { _, event, userData in
+            guard let userData, let event else { return noErr }
+            var firedID = EventHotKeyID()
+            GetEventParameter(event, EventParamName(kEventParamDirectObject),
+                              EventParamType(typeEventHotKeyID), nil,
+                              MemoryLayout<EventHotKeyID>.size, nil, &firedID)
             let monitor = Unmanaged<HotkeyMonitor>
                 .fromOpaque(userData).takeUnretainedValue()
-            monitor.onFire()
+            monitor.handle(hotKeyID: firedID.id)
             return noErr
         }
 
@@ -63,7 +95,7 @@ public final class HotkeyMonitor {
         )
         guard status == noErr else { throw HotkeyError.registrationFailed(status) }
 
-        let hotKeyID = EventHotKeyID(signature: OSType(0x534E_5454), id: 1) // 'SNTT'
+        let hotKeyID = EventHotKeyID(signature: OSType(0x534E_5454), id: self.hotKeyID) // 'SNTT'
         let registerStatus = RegisterEventHotKey(
             combination.keyCode, combination.modifiers, hotKeyID,
             GetApplicationEventTarget(), 0, &hotKeyRef

@@ -207,6 +207,16 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         return .marked(await recorder.mark(label: label))
     }
 
+    /// Marks whatever is recording, regardless of who started it (§4.12).
+    ///
+    /// The human counterpart to `markForAgent`: no session id to check, since a
+    /// person pressing the marker hotkey means "mark this", full stop — there is
+    /// no ownership ambiguity to resolve the way there is for an agent's request.
+    @discardableResult
+    public func markCurrentRecording(label: String?) async -> Double? {
+        await active?.mark(label: label)
+    }
+
     public func toggle() async -> CoordinatorOutcome {
         guard !isTransitioning else { return .ignored }
         isTransitioning = true
