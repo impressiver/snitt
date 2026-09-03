@@ -51,3 +51,16 @@ func nonBGRAFrameContributesNoSample() {
     sampler.observe(buffer, track: .video)
     #expect(sampler.result().meanFrameVariance == nil)
 }
+
+@Test("A BGRA frame does contribute a sample")
+func bgraFrameContributesASample() {
+    // The negative test alone would pass against a guard written against the
+    // WRONG constant (32ARGB instead of 32BGRA) — a biplanar buffer is not
+    // 32ARGB either. That slip would skip every real frame and report a nil
+    // variance in every bundle, with nothing to catch it. This is the half
+    // that pins the accept path.
+    let sampler = HealthSampler()
+    sampler.observe(makeVideoBuffer(at: 0, size: CGSize(width: 320, height: 240)), track: .video)
+    #expect(sampler.result().meanFrameVariance != nil,
+            "a BGRA frame must be measured, not skipped")
+}
