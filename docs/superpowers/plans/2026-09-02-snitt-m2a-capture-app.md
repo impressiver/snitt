@@ -2054,10 +2054,10 @@ which is what keeps the hotkey inside the one-dialog first-run budget."
   - `static func resolverChoice(hasCachedTarget: Bool) -> ResolverChoice`
   - `public enum ResolverChoice: Equatable { case picker, cache }`
 
-**This is where §4.11's decision becomes code (D36):** the hotkey reuses the last
-approved target through the cache; the picker appears only when there is nothing
-cached. That costs the monthly prompt, deliberately — a per-recording picker
-would cost far more.
+**This is where §4.11's decision becomes code (D42):** the hotkey presents the
+picker on every press. An earlier revision reused the last approved target and was
+reversed by real use — silent reuse is surprising, and picking every time also
+removes the monthly re-consent prompt for human recording.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2073,10 +2073,12 @@ func firstRunUsesPicker() {
     #expect(RecordingCoordinator.resolverChoice(hasCachedTarget: false) == .picker)
 }
 
-@Test("With a cached target the cache is used, not the picker")
-func laterRunsUseCache() {
-    #expect(RecordingCoordinator.resolverChoice(hasCachedTarget: true) == .cache,
-            "the hotkey must not present a picker on every press")
+@Test("The picker is used EVEN WHEN a target is cached — every press asks")
+func cachedTargetIsNotReusedForTheHotkey() {
+    // Falsifiable on purpose: this is the exact input the previous design
+    // answered with `.cache`, so a regression to target-reuse fails here.
+    #expect(RecordingCoordinator.resolverChoice(hasCachedTarget: true) == .picker,
+            "silently re-recording the last window is surprising; the user picks each time")
 }
 
 @Test("Outcomes distinguish cancellation from failure")
@@ -2155,14 +2157,19 @@ public actor RecordingCoordinator {
         self.outputDirectory = outputDirectory
     }
 
-    /// Which resolver a hotkey press should use.
+    /// The hotkey ALWAYS presents the system picker (§4.11, D42).
     ///
-    /// The picker appears only when nothing is cached. Presenting it on every
-    /// press would put a system dialog between a keystroke and a recording,
-    /// every time, forever — which costs far more than the monthly re-consent
-    /// prompt the cache path incurs (§4.11, D36).
+    /// An earlier revision reused the last approved target for speed. Real use
+    /// rejected it: silently re-selecting a previously chosen window is
+    /// surprising, and choosing the target is the moment a person decides what
+    /// they are about to share.
+    ///
+    /// The reversal also removes the monthly macOS re-consent prompt for human
+    /// recording, because every capture now flows through the picker rather than
+    /// the `SCShareableContent` bypass. The cached machinery is retained for the
+    /// automation surface, which has no human to drive a picker.
     public static func resolverChoice(hasCachedTarget: Bool) -> ResolverChoice {
-        hasCachedTarget ? .cache : .picker
+        .picker
     }
 
     public func toggle() async -> CoordinatorOutcome {
@@ -2414,9 +2421,9 @@ Then, in order:
 3. The menu-bar item switches to a stop symbol with a live elapsed timer.
 4. Press **⌥⌘5** again. Recording stops; a "Copied to clipboard" alert appears.
 5. Paste into any app that accepts files — the recording pastes.
-6. Press **⌥⌘5** twice more. **The picker must NOT appear this time** — the
-   cached target is reused. This is the check that matters most; if the picker
-   reappears, §4.11's whole premise is broken and the cache is not working.
+6. Press **⌥⌘5** twice more. **The picker MUST appear again** — every press asks
+   which window to record (D42). If it silently re-records the previous window,
+   the reversal has regressed.
 7. Confirm a `.snitt` bundle exists on the Desktop with a `capture.mov` inside.
 8. Start one more recording with the hotkey, then **stop it by clicking the
    menu-bar item** rather than pressing the hotkey. It must stop. This is §5.3's
@@ -2445,8 +2452,7 @@ it reads as macOS asking rather than Snitt misbehaving."
 - [ ] `swift test` passes — 54 tests, 0 failures
 - [ ] `swift build -Xswiftc -strict-concurrency=complete` emits zero warnings
 - [ ] `codesign -dv build/Snitt.app` shows the same `Authority` across two consecutive builds
-- [ ] Pressing ⌥⌘5 twice in a row records and stops **without showing the picker the second time**
-      *(requires macOS 15.2+; on 15.0–15.1 the picker appears every time by design — see Task 6)*
+- [ ] Pressing ⌥⌘5 presents the picker **every time**, so the user chooses the target per recording (D42)
 - [ ] **Record, stop, then record AGAIN — three recordings in one app session.** This is the
       single check that catches the two defects the first version of this plan shipped: a
       picker that never seeds the cache, and a one-shot outcome box that wedges the app on

@@ -9,10 +9,12 @@ func firstRunUsesPicker() {
     #expect(RecordingCoordinator.resolverChoice(hasCachedTarget: false) == .picker)
 }
 
-@Test("With a cached target the cache is used, not the picker")
-func laterRunsUseCache() {
-    #expect(RecordingCoordinator.resolverChoice(hasCachedTarget: true) == .cache,
-            "the hotkey must not present a picker on every press")
+@Test("The picker is used EVEN WHEN a target is cached — every press asks")
+func cachedTargetIsNotReusedForTheHotkey() {
+    // Falsifiable on purpose: this is the exact input the previous design
+    // answered with `.cache`, so a regression to target-reuse fails here.
+    #expect(RecordingCoordinator.resolverChoice(hasCachedTarget: true) == .picker,
+            "silently re-recording the last window is surprising; the user picks each time")
 }
 
 @Test("Outcomes distinguish cancellation from failure")

@@ -47,14 +47,25 @@ public actor RecordingCoordinator {
         self.outputDirectory = outputDirectory
     }
 
-    /// Which resolver a hotkey press should use.
+    /// The hotkey ALWAYS presents the system picker.
     ///
-    /// The picker appears only when nothing is cached. Presenting it on every
-    /// press would put a system dialog between a keystroke and a recording,
-    /// every time, forever — which costs far more than the monthly re-consent
-    /// prompt the cache path incurs (§4.11, D36).
+    /// This reverses the original design, which reused the last approved target so
+    /// a press recorded immediately. Real use rejected it: silently re-selecting a
+    /// previously chosen window is surprising, and choosing the target is exactly
+    /// the moment a person decides what they are about to share with someone else.
+    ///
+    /// The trade is favourable in a way the original reasoning missed. Every
+    /// recording now goes through `SCContentSharingPicker` rather than the
+    /// `SCShareableContent` enumeration bypass, so macOS stops charging the app its
+    /// recurring monthly re-consent prompt (§5.2). The cost is a picker between the
+    /// keystroke and the recording; the gains are no recurring permission
+    /// interruption and no chance of recording the wrong window.
+    ///
+    /// The cached-target machinery is retained, not deleted: the automation surface
+    /// (M2b) has no human to drive a picker and still needs to re-resolve a stored
+    /// reference.
     public static func resolverChoice(hasCachedTarget: Bool) -> ResolverChoice {
-        hasCachedTarget ? .cache : .picker
+        .picker
     }
 
     /// Stops a recording if one is running; a no-op otherwise.

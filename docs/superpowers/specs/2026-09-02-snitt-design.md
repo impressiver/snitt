@@ -301,18 +301,25 @@ instead.
 ### 4.11 Instant capture
 
 Recording starts and stops from a **global hotkey** and a **menu-bar item**,
-without opening a window. The hotkey **reuses the last approved target**; the
-picker appears only for the first selection, an explicit "change target" action,
-and any full-display request.
+without opening a window. **Every press presents the system picker**, so the user
+chooses what to share each time.
 
-**This costs the monthly prompt, deliberately.** Reusing a cached target means
-resolving it via `SCShareableContent`, which is the bypass path (§5.2). The
-alternative — presenting the system picker on every hotkey press — would be a
-system dialog interrupting a keystroke the user expected to just work, every
-time, forever. A monthly prompt costs once a month; a picker costs once per
-recording. For the "record this repro right now" workflow the per-use cost
-dominates by roughly the ratio of recordings-per-month to one, so the cached
-target wins and §5.5 explains the prompt rather than avoiding it.
+An earlier revision had the hotkey silently reuse the last approved target, on
+the reasoning that a picker per recording costs more than a prompt per month.
+Real use rejected it: silently re-selecting a previously chosen window is
+surprising, and choosing the target is exactly the moment a person decides what
+they are about to show someone else.
+
+**The reversal is favourable in a way the original reasoning missed.** Because
+every recording now goes through `SCContentSharingPicker` instead of the
+`SCShareableContent` bypass, macOS stops charging the app its recurring monthly
+re-consent prompt (§5.2). What looked like a speed-versus-friction trade was
+actually speed versus *recurring interruption plus the risk of recording the
+wrong window* — and the picker wins both of those.
+
+"Instant" therefore means no window to find, no app to focus, no menu to
+navigate: one keystroke to the picker, one choice, recording. It does not mean
+zero UI, and §1's budget is measured accordingly.
 
 This is not a convenience feature. Snitt competes with `Cmd+Shift+5`, which is
 free, pre-installed, and one keystroke away. A recorder that must be launched,
@@ -378,11 +385,15 @@ V10 (window IDs are per-session), that means:
 > **Any recording where a human does not pick a target at that moment must call
 > `SCShareableContent`, and therefore takes the monthly prompt.**
 
-So the picker helps manual record-button use, which is the majority interaction.
-It does **not** help hotkey instant capture (§4.11) or agent recording (§4.8),
-both of which are structurally committed to the bypass path. Those two are
-Snitt's differentiators, so **the monthly prompt is a permanent operating cost of
-the product, not a migration artefact.** §5.5 covers how that is handled.
+So the picker helps every recording a human starts — including the hotkey, which
+now presents it on every press (§4.11). It does **not** help agent recording
+(§4.8), which by definition has no human to choose a target and is therefore
+structurally committed to the bypass path.
+
+**The monthly prompt is therefore an operating cost of AUTOMATION, not of the
+product as a whole.** A person who only ever records by hand should never see it.
+An installation that enables agent recording will. §5.5 covers how that is
+explained.
 
 An undocumented "Persistent Content Capture" entitlement reportedly suppresses
 the prompt, but Apple publishes no process for obtaining it (V11). It is not a
@@ -451,8 +462,10 @@ real usage evidence, not reintroduced as a friction fix it cannot deliver.
 
 ### 5.5 Recurring consent is by design — explain it, do not fight it
 
-Because hotkey and agent recordings are permanently on the bypass path (§5.2),
-users will see the macOS monthly re-consent prompt indefinitely. Snitt does not
+Because agent recordings are structurally on the bypass path (§5.2), any
+installation with agent recording enabled will see the macOS monthly re-consent
+prompt indefinitely. Human-driven recording no longer incurs it, since the hotkey
+presents the picker (§4.11). Snitt does not
 attempt to architect around this; the cost of contorting the product exceeds the
 cost of the prompt.
 
@@ -984,7 +997,7 @@ documented method list rather than accepted on their word.
 | D33 | §5.2 corrected: the picker removes the monthly prompt **only for recordings a human picks interactively**. Hotkey capture and agent recording are structurally on the bypass path, so the prompt is a permanent operating cost | V12 + V9. The original claim read as a solved problem; it was solved only for the minority path | V9, V12; §4.8, §4.11 | Decided | promise-narrower-than-stated |
 | D34 | The persistent per-application agent grant store is **deleted**, not deferred | It bought nothing: the grant could not produce a filter, so the OS prompt fired regardless — it removed only a Snitt-drawn dialog. Deleting also moots the §5.1 contradiction (nothing persists to go stale) and the bundle-ID spoofing hole (no trust object to spoof). Red team escalated from defer to delete once V12 landed | V12; §5.1, §5.3 | Decided | mechanism-without-benefit |
 | D35 | `consent_required` retained, redefined: it means "agent recording is not enabled in settings", not "this target lacks a grant" | The immediate-failure behaviour from D32 was right and survives; only its trigger changes | D32, D34 | Decided | mechanism-survives-premise-change |
-| D36 | §4.11 uses a **cached last-approved target** for the hotkey, accepting the monthly prompt; the picker appears only for first selection, target change, and full-display | A monthly prompt costs once a month; a picker on every hotkey press costs once per recording, forever. For "record this repro now", per-use cost dominates | V12; §1, §5.2 | Decided | per-use-cost-beats-periodic-cost |
+| D36 | ~~§4.11 uses a cached last-approved target for the hotkey~~ **SUPERSEDED by D42** — real use rejected silent target reuse, and presenting the picker every time also removes the monthly prompt for human recording | A monthly prompt costs once a month; a picker on every hotkey press costs once per recording, forever. For "record this repro now", per-use cost dominates | V12; §1, §5.2 | **Superseded** → D42 | per-use-cost-beats-periodic-cost |
 | D37 | §5.5 added: explain the recurring prompt at first occurrence, log the last re-consent timestamp in diagnostics, and treat any frequency **beyond** the monthly baseline as a defect rather than something to narrate | Operator's distinction: accept-and-explain is right for an OS constraint and wrong for a self-inflicted one | V12; §12 | Decided | accept-os-fix-self-inflicted |
 | D38 | Picker adoption folds into M2 as its first PR, **not** a separate gated milestone | Its urgency fell once it stopped being a product-wide nag fix. Still worth the day it costs for manual recording, which is the majority interaction. Pragmatist retracted its own "hard dependency" framing — grants and picker are independent | V12 | Decided | urgency-rested-on-refuted-premise |
 | D39 | Stable code-signing identity moves **into M2**, ahead of grant-dependent features (was M5) | TCC keys grants to code identity, and ad-hoc signing changes it every build. §5.5's rule — monthly is expected, more is a bug — is unenforceable while the app's identity is unstable, because nobody could tell them apart | Operator; §5.5, §13 | Decided | rule-unenforceable-without-precondition |
@@ -996,6 +1009,18 @@ app-wide, D38's remaining justification weakens further and picker adoption may
 be worth dropping entirely. Recorded rather than guessed.
 
 `conformance: 2026-09-02` (pass 3)
+
+### Post-M2a — reversed by real use (2026-09-02)
+
+| # | Decision | Rationale | Rests on | Status | Shape |
+|---|---|---|---|---|---|
+| D42 | **The hotkey presents the picker on EVERY press.** Supersedes D36's cached-target reuse | The product owner used the built app and rejected target-reuse as surprising: choosing the target is the moment you decide what you are about to share. The revisit gate is satisfied by the strongest evidence available — real use of the real thing, against a decision that had rested on an assumption about preference. **The reversal also removes the monthly re-consent prompt for all human recording**, because every capture now flows through `SCContentSharingPicker` rather than the enumeration bypass. The original trade was framed as speed vs. friction; it was actually speed vs. recurring interruption plus wrong-window risk | Direct user feedback on a running build; V9, V12; §4.11, §5.2 | Decided | assumption-about-preference-tested |
+
+D36 is marked **Superseded** above. The cached-target machinery is retained rather
+than deleted — the automation surface (M2b) has no human to drive a picker and
+still needs to re-resolve a stored reference.
+
+`conformance: 2026-09-02` (post-M2a)
 
 ### Termination
 
