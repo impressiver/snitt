@@ -39,6 +39,8 @@ the user has seen anything.
 - Export and share with minimal friction, including to a byte-size target
 - **Be drivable by a coding agent**, safely and without permission friction
 - **Start and stop from a single keystroke**, without opening a window (§4.11)
+- **Cost exactly one permission dialog on first run, and not ask again** (§4.10, §5.2)
+- **Record a window by default**, never the whole screen by accident (§5.1)
 - **Land on the clipboard by default**, so sharing is a paste (§4.1)
 - **Tell an agent whether the recording actually worked** (§12.1)
 - Feel like a native Mac app: fast, small, quiet, keyboard-driven
@@ -80,6 +82,9 @@ Explicitly deferred, and none of these should be designed around now:
 - **Batch multi-format export** (mp4 + gif from one pass). Deferred as a
   post-gate candidate; its interaction with per-format `--max-size` iteration
   needs its own design pass.
+- **A persistent per-application agent grant store.** Specified, then deleted —
+  it could not deliver the frictionless recording it existed for. See §5.4 for
+  the full reasoning, recorded so it is not re-proposed.
 
 ## 4. Decisions
 
@@ -172,6 +177,12 @@ ScreenCaptureKit captures the microphone natively from macOS 15 via
 `SCStream` as `SCStreamOutputType.microphone` **(V3)**. System audio has been
 available since 13.0 **(V2)** and `SCContentSharingPicker` since 14.0 **(V1)**.
 
+`SCContentSharingPicker` matters for a second reason discovered after M1: macOS
+15 shows a **recurring monthly re-consent prompt** to apps that bypass the system
+picker and enumerate content themselves. Using the picker is therefore not just a
+UI convenience — it is what makes the Screen Recording grant a one-time event
+rather than a monthly interruption (§5.2).
+
 Targeting 15 means all three inputs arrive on one stream against one clock, and
 the A/V drift problem **disappears entirely** rather than being mitigated. That
 deletes a hand-synchronization code path, a fallback branch, a whole class of
@@ -234,24 +245,81 @@ in a context the user understands. A necessary side effect is that the app is
 always resident during an agent recording, which is what makes the consent
 guarantees in §5 enforceable.
 
-### 4.10 Progressive permissioning
+### 4.10 Progressive permissioning — one dialog on first run
 
-Permissions are requested **at first use of the feature that needs them**, never
-upfront:
+macOS TCC dialogs are system-owned and per-service. **They cannot be merged**;
+there is no API for a combined prompt. The number of dialogs a user sees is
+therefore decided entirely by how many services Snitt asks for, and when.
 
-- **Screen Recording** — at the first recording. Unavoidable; it is the product.
-- **Microphone** — the first time the user enables mic capture.
-- **Input Monitoring** — only if and when overlay capture ships (§4.2).
+**System audio does not need its own permission.** On macOS 15 it is covered by
+the Screen Recording grant — the settings pane is named "Screen & System Audio
+Recording". So the core demo case, screen plus application sound, costs exactly
+one dialog. This is a load-bearing fact: it means the default configuration is
+also the cheapest one.
 
-A first-run user therefore meets exactly one permission gate (§1's 60-second
-budget). Requesting all three at launch is the single easiest way to lose a user
-who is one keystroke away from just pressing `Cmd+Shift+5` instead.
+The resulting ladder, which no feature may shortcut:
+
+| What the user does | Dialogs | Service |
+|---|---|---|
+| Record screen with system audio | **1** | Screen Recording |
+| …plus voiceover | 2 | + Microphone |
+| …plus keystroke overlays | 3 | + Input Monitoring |
+
+Rules that produce that ladder:
+
+1. **Microphone capture is OFF by default.** Most demos do not need voiceover,
+   and defaulting it on turns every first run into two dialogs instead of one.
+   The mic prompt is paid only when a user deliberately enables the mic.
+2. **Nothing is requested at launch.** Each permission is requested at first use
+   of the feature that needs it: Screen Recording at the first recording
+   (unavoidable — it is the product), Microphone when mic capture is enabled,
+   Input Monitoring only if overlay capture ships (§4.2, and see S1's finding
+   that this requires `CGEventTap`, not `NSEvent`).
+3. **Pre-explain before prompting.** Snitt shows its own brief sheet — what it
+   needs, why, and that macOS will ask next — *before* triggering the system
+   dialog. A prompt the user is expecting reads as normal software; one that
+   appears unannounced reads as an app grabbing at their machine. This costs
+   nothing and is the difference between "scary" and "fine".
+4. **Handle the already-denied case explicitly.** macOS shows each dialog at
+   most once per responsible process; after a denial, requesting again silently
+   does nothing. The UI must detect denial and deep-link to the relevant System
+   Settings pane instead of calling a request API that no-ops. Spike S1 proved
+   how easily this is missed — a probe that only preflighted never prompted at
+   all, and the failure was silent.
+
+**One dialog, once.** The ladder above counts first-run dialogs; §5.2 is what
+stops that one dialog from recurring. An app that bypasses the system picker is
+re-prompted monthly by macOS 15 regardless of how few services it requested, so
+progressive permissioning and picker-based selection are two halves of the same
+promise. Neither alone delivers it.
+
+A first-run user therefore meets exactly one permission gate, which is what §1's
+60-second budget requires. Requesting all three at launch is the single easiest
+way to lose a user who is one keystroke away from pressing `Cmd+Shift+5`
+instead.
 
 ### 4.11 Instant capture
 
 Recording starts and stops from a **global hotkey** and a **menu-bar item**,
-without opening a window. The target defaults to the last-used window or the
-frontmost application; the picker is available but never on the critical path.
+without opening a window. **Every press presents the system picker**, so the user
+chooses what to share each time.
+
+An earlier revision had the hotkey silently reuse the last approved target, on
+the reasoning that a picker per recording costs more than a prompt per month.
+Real use rejected it: silently re-selecting a previously chosen window is
+surprising, and choosing the target is exactly the moment a person decides what
+they are about to show someone else.
+
+**The reversal is favourable in a way the original reasoning missed.** Because
+every recording now goes through `SCContentSharingPicker` instead of the
+`SCShareableContent` bypass, macOS stops charging the app its recurring monthly
+re-consent prompt (§5.2). What looked like a speed-versus-friction trade was
+actually speed versus *recurring interruption plus the risk of recording the
+wrong window* — and the picker wins both of those.
+
+"Instant" therefore means no window to find, no app to focus, no menu to
+navigate: one keystroke to the picker, one choice, recording. It does not mean
+zero UI, and §1's budget is measured accordingly.
 
 This is not a convenience feature. Snitt competes with `Cmd+Shift+5`, which is
 free, pre-installed, and one keystroke away. A recorder that must be launched,
@@ -277,29 +345,168 @@ narration has nowhere to attach. This rides the existing sidecar architecture
 exactly — another timestamped event type in a file that already exists — and
 touches no video pixels, so it is available before the compositor.
 
-## 5. Consent and privacy for agent recordings
+### 4.13 Focus the target when recording starts
 
-An agent that can record the screen is a materially different privacy surface
-from a recorder a human drives, and Snitt's users are precisely the people with
-customer data, staging credentials, and private conversations on screen. These
-are requirements, not settings suggestions:
+When a recording begins, Snitt brings the chosen window to the front and activates
+its application.
+
+ScreenCaptureKit captures a window correctly even when it is occluded or behind
+others, so this is not required for the recording to work. It is required for the
+recording to be *watchable*: a demo of a window the presenter never actually looked
+at reads as a screenshot with a cursor wandering over it, and a presenter who has to
+find and click their target after pressing record has spent the seconds §1 exists to
+protect.
+
+Two consequences to design around rather than discover:
+
+- **Focus changes what is recorded.** Activating a window can dismiss a menu, close a
+  popover, or move a focus ring — so the first frames may differ from what the user
+  saw when they pressed the hotkey. Focus therefore happens *before* capture starts,
+  not after, so the transition is not in the recording.
+- **It must be skippable.** Recording a window precisely *because* it is in the
+  background — a log tailing behind an editor, a progress window — is a real case.
+  Auto-focus is the default, not a rule, and a modifier held while pressing the
+  hotkey suppresses it.
+
+Display captures never auto-focus; there is nothing to bring forward.
+
+## 5. Consent and privacy
+
+### 5.1 Window-scoped capture is the default for everyone
+
+**Every recording is window-scoped by default — human-initiated and
+agent-initiated alike.** Full-display capture is available, but it is a
+deliberate choice the user makes, never what happens if they just press record.
+
+This was originally scoped to agent sessions only. That was wrong, and the first
+real recording made during M1 proved it: a "Mail Password Required" notification
+banner appeared in frame during a routine human-driven full-display capture. The
+leak is incidental and it does not care who started the recording — a
+notification, a password manager, an adjacent Slack thread. Snitt's users are
+precisely the people with customer data and staging credentials on screen.
+
+Window scoping makes the safe thing the default thing. That is the whole
+argument, and it applies to every recording.
+
+### 5.2 Selection goes through the system picker
+
+Target selection uses **`SCContentSharingPicker`** (macOS 14+), not
+`SCShareableContent` enumeration with an app-drawn picker. Two reasons, and the
+second is not optional:
+
+1. It is the OS's own window picker, so window-scoped selection is what the user
+   is handed by default.
+2. **It removes the monthly re-consent prompt — but only for recordings a human
+   picks interactively.** macOS 15 nags apps that bypass the picker; the prompt's
+   own wording is that the app "is requesting to bypass the system private window
+   picker and directly access your screen and audio."
+
+**This promise is narrower than it first appears, and the limit is structural.**
+`SCContentSharingPicker` exposes only `present*()` methods and observer callbacks
+— **there is no API to replay, persist, or reuse a prior selection**, and no way
+to obtain an `SCContentFilter` without showing UI to a human (V12). Combined with
+V10 (window IDs are per-session), that means:
+
+> **Any recording where a human does not pick a target at that moment must call
+> `SCShareableContent`, and therefore takes the monthly prompt.**
+
+So the picker helps every recording a human starts — including the hotkey, which
+now presents it on every press (§4.11). It does **not** help agent recording
+(§4.8), which by definition has no human to choose a target and is therefore
+structurally committed to the bypass path.
+
+**The monthly prompt is therefore an operating cost of AUTOMATION, not of the
+product as a whole.** A person who only ever records by hand should never see it.
+An installation that enables agent recording will. §5.5 covers how that is
+explained.
+
+An undocumented "Persistent Content Capture" entitlement reportedly suppresses
+the prompt, but Apple publishes no process for obtaining it (V11). It is not a
+plan.
+
+**Open question (V13):** whether macOS scopes the prompt per-app-capability-usage
+— any `SCShareableContent` call taints the app — or per-recording-path. If the
+former, even picker-driven sessions are nagged once any hotkey or agent path
+ships, and the picker's remaining benefit shrinks further. Spike S4 (§14) exists
+to answer this; app-wide taint is the conservative planning assumption until it
+does.
+
+**Known divergence:** M1's `CaptureTarget.available()` uses `SCShareableContent`
+directly. M2 corrects this for the interactive path (see §13).
+
+### 5.3 Additional rules for agent-initiated recordings
+
+An agent that can record the screen is still a materially different privacy
+surface, so it carries requirements beyond the universal ones above:
 
 - **Agent-initiated recording is off by default**, behind an explicit opt-in in
   settings.
-- **Agent recordings are window-scoped by default**, never full-display. The
-  common leak is incidental — a notification banner, a password manager, an
-  adjacent Slack thread — and window scoping makes the safe thing the default
-  thing.
 - **A visible indicator is shown for the entire duration** of any
   agent-initiated session, with a menu-bar kill switch that stops it
   immediately.
 - **Agent sessions have a maximum duration**, so a hung or abandoned agent
   cannot fill the disk with a six-hour recording.
+- **Agent sessions cannot silently escalate to full-display.** Where a human can
+  choose full-display capture, an agent may only do so if the user has granted
+  that specifically — the window-scoped default is not overridable from the
+  automation API alone.
 
-**These requirements bind the schedule, not just the code.** Agent recording
-ships in M2, so the menu-bar indicator and kill switch ship in M2 — as a minimal
-status-item shell, with no editor and no timeline. A safety guarantee whose
-enforcement mechanism is scheduled three milestones later is not a guarantee.
+### 5.4 No persistent agent target grants — and why
+
+An earlier revision specified a persistent per-application grant store: a human
+approves an app once through the picker, agents then record it without further
+interruption. **That design is deleted.** It could not work, and the reason is
+worth recording so it is not re-proposed.
+
+The grant was meant to buy frictionless agent recording. But V12 establishes that
+a stored grant cannot be turned back into an `SCContentFilter` — the picker has
+no replay API — so an unattended agent must call `SCShareableContent` regardless
+of what Snitt's own store says, and takes the monthly OS prompt anyway. The grant
+would therefore have removed a *Snitt-drawn* dialog while the *OS-drawn* one
+still fired. It purchased nothing a user would notice.
+
+Deleting it also resolves two problems it had created:
+
+- It reintroduced the exact incidental-leak class §5.1 exists to prevent. A
+  standing "agents may record Safari" grant cannot know what Safari is showing
+  six weeks later, when an unattended agent uses it. With nothing persisted,
+  nothing goes stale.
+- Its key was a bundle identifier with no binding to a code signature, so an app
+  replaced or spoofed under the same identifier would have inherited standing
+  recording permission. With no trust object, there is nothing to spoof.
+
+**What authorizes agent recording instead:** §5.3's controls, unchanged — the
+global opt-in that is off by default, the window-scoped default, the maximum
+session duration, the visible indicator, and the kill switch. Authorization is
+per-installation rather than per-application. If per-application scoping turns
+out to be wanted, it should be justified on access-control grounds and gated on
+real usage evidence, not reintroduced as a friction fix it cannot deliver.
+
+`consent_required` (§8, §11) is retained, but its meaning changes: it now means
+"agent recording is not enabled in settings", not "this target lacks a grant".
+
+### 5.5 Recurring consent is by design — explain it, do not fight it
+
+Because agent recordings are structurally on the bypass path (§5.2), any
+installation with agent recording enabled will see the macOS monthly re-consent
+prompt indefinitely. Human-driven recording no longer incurs it, since the hotkey
+presents the picker (§4.11). Snitt does not
+attempt to architect around this; the cost of contorting the product exceeds the
+cost of the prompt.
+
+What Snitt does instead:
+
+- **Explain it once, at first occurrence.** A brief sheet stating that macOS
+  re-confirms screen access periodically, that this is OS behaviour rather than a
+  Snitt fault, and what it means. An unexplained recurring prompt reads as an app
+  misbehaving; an explained one reads as the platform.
+- **Distinguish it in diagnostics.** `snitt diagnostics export` records the last
+  OS re-consent timestamp, so support can tell an expected monthly prompt from a
+  genuine regression at a glance (§12).
+- **Never let it hide a real bug.** Any prompt frequency *beyond* the monthly
+  baseline is a defect to fix — most likely unstable code-signing identity — not
+  a UX problem to narrate. That distinction is why Developer ID signing moved
+  earlier (§13).
 
 ## 6. Architecture
 
@@ -354,6 +561,7 @@ CLI surface; MCP tools mirror these one-to-one
 
 ```
 snitt targets list                          → JSON: displays, windows, apps
+                                              (each carries `agentGranted: bool`)
 snitt record start --window-id N [--mic] [--system-audio]
                    [--max-duration 300]     → session id
 snitt record mark <session> [--label "..."] → timestamped marker (§4.12)
@@ -384,13 +592,45 @@ request — "42s demo, 3.1 MB, chapters: repro / fix / verify" — instead of
 narrating a video it has never seen. Both are near-free: every value is already
 computed elsewhere in the pipeline.
 
+**Agent consent.** `snitt record start` fails with `consent_required` when no
+human has yet approved the target's application for agent recording (§5.4). The
+error names the application and explains that a human must approve it once; the
+agent is expected to relay that to its human rather than retry. `snitt targets
+list` reports `agentGranted` per target so an agent can check before it tries.
+
 **`--auto-trim`** clips dead air before the first and after the last logged input
-event. Note the limit honestly: it works only where input events exist. An agent
-that drives an app through a CLI, an HTTP call, or a programmatic API produces no
-OS-level input at all, so there is nothing to key on — this is primarily a
-human-recording feature, and spike S1's findings on event capture determine how
-far it generalizes. It is **not** the silence-removal that §3 excludes: that is
-audio-signal analysis, this is a query over an event log already on disk.
+event.
+
+**`--auto-trim-gaps` (enhancement, beyond the M3 baseline)** additionally removes
+dead air *between* events — the stretches mid-recording where nothing happens
+because the presenter was reading, thinking, or waiting on a build. This is where
+most of the wasted length in a real demo actually sits; head and tail trimming only
+removes the bookends.
+
+It is a ripple delete over the same event log: find runs longer than a threshold
+containing no logged event, and cut them from the EDL. Three things make it harder
+than the head/tail case, and all three are why it is an enhancement rather than part
+of the baseline:
+
+- **Waiting is sometimes the content.** A gap while a build runs or a spinner spins
+  is exactly what the viewer needs to see. The threshold has to be generous, and
+  removing a gap must be reviewable and undoable rather than silent — it edits the
+  EDL, so it already is.
+- **Cuts need somewhere to land.** An abrupt jump mid-sentence is worse than the dead
+  air it removed. Gap removal must respect audio: never cut where either audio track
+  is above the noise floor, even if no input event occurred.
+- **It inherits `--auto-trim`'s event dependency.** An agent driving an app through a
+  CLI or HTTP produces no OS-level input, so a purely event-driven pass would see the
+  entire recording as one long gap and delete it. Any gap detection must therefore
+  consider frame change as well as input events, or refuse to run when the event log
+  is empty.
+
+Both flags are limited by where input events exist. An agent that drives an app
+through a CLI, an HTTP call, or a programmatic API produces no OS-level input at all,
+so there is nothing to key on — these are primarily human-recording features, and
+spike S1's findings on event capture determine how far they generalize. Neither is
+the silence-removal that §3 excludes: that is audio-signal analysis over the whole
+timeline, these are queries over an event log already on disk.
 
 The contract ends at a local path. Snitt does not upload (§3).
 
@@ -465,6 +705,11 @@ Other failure modes:
 - **Agent requests capture while permission is missing:** fail with a structured,
   actionable error on stdout and a non-zero exit code. Never block on a GUI
   prompt an agent cannot see or answer.
+- **Agent requests an ungranted target (§5.4):** return `consent_required`
+  immediately, naming the application and stating that a human must approve it
+  once. Surface the picker to whoever is at the machine as a side effect, but
+  never make the agent wait on it — an automation run parked behind an invisible
+  modal is worse than a clean failure.
 - **Agent session orphaned by a crashed client:** the max-duration cap (§5)
   bounds it; the app finalizes and releases the session.
 - **IPC version mismatch:** see §10.
@@ -513,19 +758,46 @@ before it is allowed to gate anything. Sampling happens during the existing
 
 - **M0** Spikes S1, S3 (§14)
 - **M1** Capture to disk — one `SCStream`, video + system audio + mic
-- **M2** `SnittAutomation`, IPC + version handshake, CLI, MCP server, consent
-  model (§5), **menu-bar status item + kill switch**, global hotkey instant
-  capture (§4.11), export with `--max-size`, stop-and-copy default (§4.1),
-  `snitt inspect` + export manifest, capture health (§12.1), git context (§7)
+- **M2** **Stable code-signing identity first** (see below), then
+  `SCContentSharingPicker` adoption for the interactive path as the first PR,
+  then `SnittAutomation`, IPC + version handshake, CLI, MCP server, consent model
+  (§5), window-scoped capture as the universal default (§5.1), menu-bar status
+  item + kill switch, global hotkey instant capture with cached target (§4.11),
+  stop-and-copy default (§4.1)
 - **M3** Event logging (data only, no rendering), markers + WebVTT chapters
-  (§4.12), `--auto-trim`, progressive permission onboarding (§4.10)
+  (§4.12), `--auto-trim` (head/tail), auto-focus the target on record (§4.13),
+  progressive permission onboarding (§4.10) — including
+  the pre-explain sheet and the already-denied deep link — plus the four items
+  moved out of M2 because they bear on neither v0 validation question: export
+  with `--max-size`, `snitt inspect` + export manifest, capture health (§12.1),
+  and git context (§7)
 - **M4** EDL model, timeline UI with marker jump-points, preview (explicit
   passthrough composition slot, §9)
-- **M5** Packaging: Developer ID, notarization, Sparkle, diagnostics (§12)
+- **M5** Packaging: notarization, Sparkle, diagnostics (§12). *(Developer ID
+  signing moved earlier — see the M2 note below.)*
 - **▶ v0 SHIP — validation gate**
 - **M6** Overlay desirability probe
 - **M7** Custom compositor + overlay rendering *(conditional on M6)*
 - **M8** Licensing; Mac App Store variant
+
+**Enhancement, unscheduled:** `--auto-trim-gaps` (§8) — removing dead air *between*
+events. Deliberately not placed in a milestone: it needs the EDL and timeline (M4) to
+be reviewable, and it needs audio-aware cut points, so it should follow the v0 gate
+where real recordings can show how long the gaps actually are.
+
+### Why signing moved into M2
+
+M1 is ad-hoc signed, which has no stable code identity: TCC keys grants to the
+code signature, so every rebuild risks resetting the Screen Recording
+authorization. That would stack an *unpredictable* prompt on top of the
+*predictable* monthly one from §5.2 — and unlike the monthly prompt, this half is
+self-inflicted and fixable.
+
+The rule §5.5 states is that the monthly baseline is explained while anything
+beyond it is a defect. That rule is unenforceable while the app's own identity
+changes on every build, because no one could tell the two apart. A stable signing
+identity therefore has to precede the features whose behaviour depends on grants
+persisting — which is M2, not M5.
 
 ### The v0 gate
 
@@ -564,6 +836,16 @@ feasibility of overlays, and how many call sites §4.3's conditionals touch.
 initiated over IPC from a background (non-foreground) app? Define and verify
 behavior when the screen is locked, when no user is logged in, and when the app
 was launched by the CLI rather than by the user.
+
+**S4 — Is the monthly re-consent prompt scoped per-app or per-path?** §5.2's
+remaining value, and §4.11's cached-target design, both assume macOS charges the
+prompt only to recordings that bypass the picker. If instead it is keyed to the
+app having called `SCShareableContent` *at all*, then picker-driven sessions are
+nagged too once any hotkey or agent path ships, and picker adoption buys almost
+nothing. **Honest cost: the prompt is monthly, so this needs weeks of observation
+on a build that uses both paths — it cannot be answered from documentation.**
+Until it is, assume app-wide taint (the conservative reading) and do not claim
+the picker as a product-wide mitigation.
 
 *(S2 — A/V drift — was deleted. Raising the floor to macOS 15 (§4.6) removes the
 hand-synchronized mic path the spike existed to de-risk. This is the clearest
@@ -604,6 +886,11 @@ managing it.)*
 | The burn-in "shortcut" gets adopted under schedule pressure | Named as an explicit anti-goal in §3 with its consequences spelled out |
 | Redaction gets built reactively after a privacy incident | Bound to the M5 gate decision in §3; same cost class as overlays |
 | Capture health warnings fire on legitimately static demos | Warnings only, never gating; thresholds tuned against real recordings (§12.1) |
+| Permission dialogs stack up and read as invasive | §4.10's ladder: mic off by default, nothing requested at launch, pre-explain before every prompt. First run costs one dialog |
+| Incidental capture of notifications and private content | §5.1 window-scoping is now the default for ALL recordings, not just agent ones — prompted by a Mail password notification appearing in the first real M1 recording |
+| **Monthly re-consent is permanent for hotkey and agent capture** | **No mitigation exists.** V12 makes the picker unusable for non-interactive capture, and the Persistent Content Capture entitlement is undocumented (V11). §5.5 explains the prompt rather than avoiding it. Do not let a changelog imply M2 closed this — picker adoption fixes it for manual record-button use only |
+| Unstable code-signing identity causes prompts beyond the monthly baseline | Stable signing moved into M2 ahead of grant-dependent features (§13); any excess prompt frequency is then a defect, not narration |
+| The picker's remaining benefit may be smaller than assumed | Spike S4 (§14) tests whether the prompt is app-wide; conservative assumption until answered |
 
 ## 17. Domains
 
@@ -631,6 +918,13 @@ these are the ground truth available.
 | V3 | `SCStreamConfiguration.captureMicrophone` is macOS **15.0+**; on 15+ the mic arrives through the same `SCStream` as `SCStreamOutputType.microphone`. On macOS 14, mic must be captured via `AVCaptureDevice` and hand-synchronized. | **CONFIRMED** — docs JSON `introducedAt: "15.0"`. (The enum *case* badge reads 12.3, inherited from the enum; the functional gate is the config property.) |
 | V4 | macOS TCC attributes to the **responsible process**, which chains to the GUI app; children inherit `p_responsible_pid`; an unbundled plain executable does not appear properly in System Settings for screen capture. | **CONFIRMED** — Apple developer forums + TCC documentation. §4.9's *conclusion* is right; its stated mechanism ("per-binary") is imprecise. |
 | V5 | `AVVideoCompositionCoreAnimationTool` cannot be used with `AVPlayerItem` — offline/export only; playback overlays require `AVSynchronizedLayer`. | **CONFIRMED** — Apple developer forums. Means overlays in both preview and export from one code path require a custom `AVVideoCompositing` class. |
+| V7 | On macOS 15, system audio is covered by the Screen Recording grant (the pane is "Screen & System Audio Recording"); the microphone is a separate TCC service. | **CONFIRMED** — Apple settings taxonomy; consistent with `capturesAudio` (V2) needing no extra grant while `captureMicrophone` prompts separately. |
+| V8 | macOS 15 shows a **recurring monthly** screen-recording re-consent prompt, whose wording is that the app "is requesting to bypass the system private window picker". | **CONFIRMED** — widely reported behaviour of macOS 15; wording quoted from the prompt itself. |
+| V9 | The prompt is triggered by *any material ScreenCaptureKit use that does not go through `SCContentSharingPicker`* — **specifically including asking for `SCShareableContent`**. Using the picker avoids it. | **CONFIRMED** — matches V8's prompt wording and reported developer guidance. **M1's shipped `CaptureTarget.available()` is on the triggering path.** |
+| V10 | `SCWindow.windowID` is a per-session integer; a relaunched app produces new windows with new IDs, so it cannot be a durable permission key. | **CONFIRMED** — `CGWindowID` semantics; IDs identify window instances, not logical windows. |
+| V11 | A "Persistent Content Capture" entitlement exists that suppresses the monthly prompt entirely, but Apple publishes no documentation or process for obtaining it. | **CONFIRMED as reported; UNOBTAINABLE in practice** — treat as unavailable, not as a fallback plan. |
+| V12 | `SCContentSharingPicker` exposes only `present*()` methods plus configuration/observer plumbing; results arrive via `SCContentSharingPickerObserver` callbacks. **There is no API to replay, persist, or reuse a prior selection non-interactively** — no method yields an `SCContentFilter` without showing UI to a human. | **CONFIRMED — re-verified against the SDK header** (`SCContentSharingPicker.h`, macOS 15 SDK), not a doc summary. The complete member list is: `sharedPicker`, `defaultConfiguration`, `maximumStreamCount`, `active`, `addObserver:`, `removeObserver:`, `setConfiguration:forStream:`, and four `present*` variants. Nothing replay-, reuse-, restore-, or last-selection-shaped exists. **Refutes premises under D30, D31, D32 and §4.11.** |
+| V13 | Whether the monthly nag is scoped per-app-capability-usage (any `SCShareableContent` call taints the whole app) or per-recording-path. | **UNVERIFIED — and expensive to verify.** The prompt's own wording describes app behaviour, and TCC tracks per responsible process, so app-wide taint is the likely reading. Confirming it empirically needs weeks of observation because the prompt is monthly. Treat app-wide as the conservative planning assumption. |
 | V6 | A custom `AVVideoCompositing` class **is** used for real-time playback: for an `AVPlayerItem` with non-nil `videoComposition` whose `customVideoCompositorClass` is set, AVFoundation instantiates and uses it. | **CONFIRMED** — Apple documentation. §9's one-builder mechanism is sound; the compositor is both necessary and sufficient. |
 
 ### Decisions
@@ -728,6 +1022,65 @@ preserved here because if v0's gate later shows these features did not move the
 needle, this is the entry that predicted it.
 
 `conformance: 2026-09-02` (pass 2)
+
+### Post-M1 — decisions from real-recording review (2026-09-02)
+
+| # | Decision | Rationale | Rests on | Status | Shape |
+|---|---|---|---|---|---|
+| D27 | Microphone capture defaults OFF; §4.10 rewritten around a one-dialog first run | macOS TCC dialogs cannot be merged, but system audio shares the Screen Recording grant on macOS 15, so screen + app sound costs exactly ONE dialog. Defaulting the mic on doubled that for every user, contradicting §1's 60-second budget. Verified in practice: `snitt-probe` was requesting mic unconditionally | Verified during M1 manual verification; §1, §4.10 | Decided | default-costs-a-permission |
+| D28 | Pre-explain sheet required before every system prompt; already-denied case must deep-link to System Settings | A prompt the user expects reads as normal; an unannounced one reads as grabbing. And macOS never re-prompts after denial — a request call silently no-ops, which is exactly how spike S1 wasted two runs before the defect was found | S1 findings; §4.10 | Decided | silent-no-op-permission-api |
+
+| D29 | Window-scoped capture is the default for EVERY recording, not just agent-initiated ones | The incidental-leak risk does not depend on who pressed record. Proven, not hypothesised: a Mail password notification was captured in the first real M1 recording, during ordinary human full-display capture | M1 verification record; §5.1 | Decided | safety-scoped-too-narrowly |
+| D30 | ~~Target selection moves to `SCContentSharingPicker`; makes the grant one-time~~ **SUPERSEDED by D33** — the picker cannot serve non-interactive capture (V12), so it makes the grant one-time only for manual record-button use | macOS 15 shows a recurring MONTHLY re-consent prompt to apps that bypass the system picker — its wording is literally "requesting to bypass the system private window picker". Enumerating our own targets would nag every user forever, defeating the one-time-grant promise. The picker also gives window scoping for free, so D29 and D30 are one change | §4.6 (which already cited the picker), §5.2 | **Superseded** → D33 | permission-recurs-not-persists |
+
+| D31 | ~~Agent target grants per application bundle identifier, persisted until revoked~~ **SUPERSEDED by D34** — a stored grant cannot become an `SCContentFilter` (V12), so it removed a Snitt dialog while the OS prompt fired anyway | Agents have no human to drive `SCContentSharingPicker`, which would strand automation on the bypass path and its monthly nag (§5.2). Per-window grants are impossible because `SCWindow.windowID` is a per-session integer that changes on relaunch, so the grant would silently stop matching; the bundle identifier is the stable key. Displays stay excluded — a display grant is exactly what window scoping exists to prevent giving away casually | §5.2, §5.4; `SCWindow.windowID` semantics | **Superseded** → D34 | unstable-identity-as-permission-key |
+| D32 | ~~An *ungranted* agent request returns `consent_required`~~ **SUPERSEDED by D35** — the mechanism survives, its trigger changes: there are no grants to lack | An automation run parked behind a modal no human can see is worse than a clean failure — the agent cannot report it, cannot time out meaningfully, and cannot ask for help. Failing fast lets the agent relay the blockage to its human, which is the only path to resolution | §5.4, §11 | **Superseded** → D35 | invisible-modal-blocks-automation |
+
+`conformance: 2026-09-02` (post-M1)
+
+### Pass 3 — M2 scope review (2026-09-02)
+
+Triggered by: six decisions (D27–D32) landing after M1, all into M2. Roster: all
+five personas, resumed with retained context for one feedback round.
+
+**The pass turned on one verified fact.** V12 — `SCContentSharingPicker` has no
+API to replay or reuse a selection non-interactively — refuted premises under
+D30, D31, D32 *and* §4.11 simultaneously. Two personas reached it independently
+(principal engineer, product/UX); it was then confirmed directly against Apple's
+documented method list rather than accepted on their word.
+
+| # | Decision | Rationale | Rests on | Status | Shape |
+|---|---|---|---|---|---|
+| D33 | §5.2 corrected: the picker removes the monthly prompt **only for recordings a human picks interactively**. Hotkey capture and agent recording are structurally on the bypass path, so the prompt is a permanent operating cost | V12 + V9. The original claim read as a solved problem; it was solved only for the minority path | V9, V12; §4.8, §4.11 | Decided | promise-narrower-than-stated |
+| D34 | The persistent per-application agent grant store is **deleted**, not deferred | It bought nothing: the grant could not produce a filter, so the OS prompt fired regardless — it removed only a Snitt-drawn dialog. Deleting also moots the §5.1 contradiction (nothing persists to go stale) and the bundle-ID spoofing hole (no trust object to spoof). Red team escalated from defer to delete once V12 landed | V12; §5.1, §5.3 | Decided | mechanism-without-benefit |
+| D35 | `consent_required` retained, redefined: it means "agent recording is not enabled in settings", not "this target lacks a grant" | The immediate-failure behaviour from D32 was right and survives; only its trigger changes | D32, D34 | Decided | mechanism-survives-premise-change |
+| D36 | ~~§4.11 uses a cached last-approved target for the hotkey~~ **SUPERSEDED by D42** — real use rejected silent target reuse, and presenting the picker every time also removes the monthly prompt for human recording | A monthly prompt costs once a month; a picker on every hotkey press costs once per recording, forever. For "record this repro now", per-use cost dominates | V12; §1, §5.2 | **Superseded** → D42 | per-use-cost-beats-periodic-cost |
+| D37 | §5.5 added: explain the recurring prompt at first occurrence, log the last re-consent timestamp in diagnostics, and treat any frequency **beyond** the monthly baseline as a defect rather than something to narrate | Operator's distinction: accept-and-explain is right for an OS constraint and wrong for a self-inflicted one | V12; §12 | Decided | accept-os-fix-self-inflicted |
+| D38 | Picker adoption folds into M2 as its first PR, **not** a separate gated milestone | Its urgency fell once it stopped being a product-wide nag fix. Still worth the day it costs for manual recording, which is the majority interaction. Pragmatist retracted its own "hard dependency" framing — grants and picker are independent | V12 | Decided | urgency-rested-on-refuted-premise |
+| D39 | Stable code-signing identity moves **into M2**, ahead of grant-dependent features (was M5) | TCC keys grants to code identity, and ad-hoc signing changes it every build. §5.5's rule — monthly is expected, more is a bug — is unenforceable while the app's identity is unstable, because nobody could tell them apart | Operator; §5.5, §13 | Decided | rule-unenforceable-without-precondition |
+| D40 | Export `--max-size`, `snitt inspect` + manifest, capture health, and git context move from M2 to M3 | None bears on either v0 validation question. Shrinks M2 to what actually proves the product | §13 v0 gate | Decided | scope-not-serving-the-gate |
+| D41 | Spike S4 added: is the monthly prompt scoped per-app or per-path? | Decides whether D36's cached-target design and the picker's residual value are real. **Cannot be answered from documentation** — the prompt is monthly, so it needs weeks of observation. Conservative assumption (app-wide taint) holds until then | V13 | Decided | assumption-needs-time-not-research |
+
+**Open question carried forward (V13):** the S4 answer. If the prompt turns out
+app-wide, D38's remaining justification weakens further and picker adoption may
+be worth dropping entirely. Recorded rather than guessed.
+
+`conformance: 2026-09-02` (pass 3)
+
+### Post-M2a — reversed by real use (2026-09-02)
+
+| # | Decision | Rationale | Rests on | Status | Shape |
+|---|---|---|---|---|---|
+| D42 | **The hotkey presents the picker on EVERY press.** Supersedes D36's cached-target reuse | The product owner used the built app and rejected target-reuse as surprising: choosing the target is the moment you decide what you are about to share. The revisit gate is satisfied by the strongest evidence available — real use of the real thing, against a decision that had rested on an assumption about preference. **The reversal also removes the monthly re-consent prompt for all human recording**, because every capture now flows through `SCContentSharingPicker` rather than the enumeration bypass. The original trade was framed as speed vs. friction; it was actually speed vs. recurring interruption plus wrong-window risk | Direct user feedback on a running build; V9, V12; §4.11, §5.2 | Decided | assumption-about-preference-tested |
+
+D36 is marked **Superseded** above. The cached-target machinery is retained rather
+than deleted — the automation surface (M2b) has no human to drive a picker and
+still needs to re-resolve a stored reference.
+
+| D43 | Focus the target window when recording starts, by default, suppressible with a modifier; never for display captures | ScreenCaptureKit captures occluded windows fine, so this is about the recording being watchable rather than possible — and about not spending the §1 budget hunting for the window after pressing record. Focus happens BEFORE capture starts so the activation transition is not in the recording; skippable because deliberately recording a background window is a real case | §1, §4.13 | Decided | default-with-an-escape |
+| D44 | `--auto-trim-gaps` removes dead air BETWEEN events; recorded as an unscheduled enhancement, not a milestone item | Most wasted length in a real demo sits mid-recording, not at the bookends. Held back because it needs three things the baseline does not: a generous threshold (waiting on a build is sometimes the content), audio-aware cut points (never cut where either track is above the noise floor), and frame-change detection as well as input events — without which an agent-driven recording, which logs no OS input, would be seen as one long gap and deleted entirely | §8, D23, S1 | Decided | enhancement-needing-its-own-evidence |
+
+`conformance: 2026-09-02` (post-M2a)
 
 ### Termination
 
