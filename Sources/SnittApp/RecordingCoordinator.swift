@@ -121,25 +121,35 @@ public actor RecordingCoordinator {
         }
         guard granted else { return .failed(Self.screenRecordingDeniedMessage) }
 
-        let stored = store.load()
-        // An agent names its target explicitly, so there is nothing to pick and
-        // nothing to cache-check — but everything downstream (permission
-        // preflight, resolution, the Recorder, the indicator) stays shared.
-        let choice: ResolverChoice = forcedResolver != nil
-            ? .cache
-            : Self.resolverChoice(hasCachedTarget: stored != nil)
-
-        var resolver: TargetResolver
-        switch choice {
-        case .cache:
-            guard let stored, let reference = Self.reference(from: stored) else {
-                return .failed("The cached target could not be read.")
+        // An agent names its target explicitly, so there is no picker to show and
+        // no cache to consult — and consulting one is actively wrong: the store is
+        // empty until the hotkey path has run at least once, which an agent has no
+        // reason to have done. Bypassing the switch entirely (rather than applying
+        // the forced resolver as an override AFTER it) is deliberate: the `.cache`
+        // arm's `guard let stored` used to run unconditionally and return
+        // `.failed("The cached target could not be read.")` before any override
+        // could take effect, which broke every agent recording on a fresh
+        // install — the store had never been written, so the guard always fired.
+        // Everything downstream (permission preflight, resolution, the Recorder,
+        // the indicator, the kill switch) still stays shared with the hotkey path.
+        let resolver: TargetResolver
+        let choice: ResolverChoice
+        if let forcedResolver {
+            resolver = forcedResolver
+            choice = .cache // only affects `usedCache:` in the returned outcome
+        } else {
+            let stored = store.load()
+            choice = Self.resolverChoice(hasCachedTarget: stored != nil)
+            switch choice {
+            case .cache:
+                guard let stored, let reference = Self.reference(from: stored) else {
+                    return .failed("The cached target could not be read.")
+                }
+                resolver = cachedResolverFactory(reference)
+            case .picker:
+                resolver = pickerResolver
             }
-            resolver = cachedResolverFactory(reference)
-        case .picker:
-            resolver = pickerResolver
         }
-        if let forcedResolver { resolver = forcedResolver }
 
         let target: ResolvedTarget
         do {
@@ -155,7 +165,15 @@ public actor RecordingCoordinator {
             return .failed(Self.explain(error))
         }
 
-        if let reference = target.reference, let stored = Self.stored(from: reference) {
+        // Deliberately skipped for agent recordings: the store is the human's
+        // cache of their own last hotkey-approved target, and an agent's
+        // explicitly-named target is a separate track (§5.3). Writing it here
+        // would let an agent silently overwrite what a human's next hotkey press
+        // resolves against — surprising today, and load-bearing the moment
+        // `resolverChoice` ever consults the cache again. An agent recording a
+        // window does not imply a human wants that window recorded next time.
+        if forcedResolver == nil,
+           let reference = target.reference, let stored = Self.stored(from: reference) {
             try? store.save(stored)
         }
 

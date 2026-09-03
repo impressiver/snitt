@@ -84,3 +84,49 @@ func concurrentTogglesDoNotDoubleStart() async throws {
     await gate.open()
     _ = await first
 }
+
+/// Distinguishes "the forced resolver actually ran" from every other outcome,
+/// including the pre-fix bug's `.failed("The cached target could not be
+/// read.")` — which fired from the `.cache` switch arm's `guard let stored`
+/// before a forced resolver was ever consulted.
+private struct MarkerError: Error, Equatable {}
+
+final class MarkerResolver: TargetResolver, @unchecked Sendable {
+    func resolve() async throws -> ResolvedTarget {
+        throw MarkerError()
+    }
+}
+
+@Test("An agent recording works on a machine where the hotkey path has never run")
+func agentStartsWithAnEmptyStore() async throws {
+    // A genuinely empty store — nothing has ever been written to this path,
+    // which is the ordinary state on a fresh install: agent recording needs
+    // no prior hotkey use. The pre-fix bug routed every agent request through
+    // the `.cache` switch arm regardless, which read this same empty store and
+    // failed with "The cached target could not be read." before the forced
+    // resolver (the agent's own, explicit target) was ever reached.
+    let store = TargetStore(fileURL: FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString))
+    let coordinator = RecordingCoordinator(
+        pickerResolver: MarkerResolver(),   // must never be used by an agent request
+        cachedResolverFactory: { _ in MarkerResolver() },
+        store: store,
+        outputDirectory: FileManager.default.temporaryDirectory
+    )
+
+    let outcome = await coordinator.startForAgent(
+        reference: .window(bundleIdentifier: "com.example.Agent", titleHint: nil))
+
+    // `MarkerResolver.resolve()` always throws, so the coordinator can never
+    // reach `.started` in this test — reaching a real `.started` would require
+    // constructing a genuine `SCContentFilter`, which ScreenCaptureKit offers
+    // no way to do without live enumeration (see the task report). What this
+    // DOES prove, unambiguously: the forced resolver's `resolve()` ran at all,
+    // which is exactly the step the bug skipped.
+    guard case .failed(let message) = outcome else {
+        Issue.record("expected a failure surfaced from MarkerResolver, got \(outcome)")
+        return
+    }
+    #expect(!message.contains("cached target could not be read"),
+            "an agent's forced resolver must run instead of hitting the empty-store cache guard — got: \(message)")
+}
