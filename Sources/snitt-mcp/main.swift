@@ -28,6 +28,18 @@ func textContent(_ text: String) -> [String: Any] {
     ["content": [["type": "text", "text": text]]]
 }
 
+/// A tool CALL that fails — bad arguments, an unknown tool name, or a request
+/// the app itself refused — is reported through the result channel with
+/// `isError: true`, not as a JSON-RPC protocol error. A protocol error means
+/// "the request itself was malformed" and a real client may treat it as fatal
+/// for the call; a well-formed call that then fails is tool output, and the
+/// calling model needs to see that text to self-correct (e.g. add the missing
+/// argument and retry). Genuine protocol errors stay for what they mean: an
+/// unsupported method, or a message that cannot be parsed as JSON-RPC at all.
+func toolError(id: Any?, _ text: String) {
+    result(id: id, ["content": [["type": "text", "text": text]], "isError": true])
+}
+
 /// Renders a response as the text an agent reads back.
 func describe(_ response: AutomationResponse) -> String {
     let encoder = JSONEncoder()
@@ -78,7 +90,7 @@ while let line = readLine(strippingNewline: true) {
 
         switch MCPBridge.request(forTool: name, arguments: arguments) {
         case .failure(let problem):
-            failure(id: id, problem.message)
+            toolError(id: id, problem.message)
         case .success(let body):
             do {
                 let response = try await AutomationClient().send(body)

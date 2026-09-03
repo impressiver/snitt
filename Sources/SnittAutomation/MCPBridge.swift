@@ -119,13 +119,26 @@ public enum MCPBridge {
                     "properties": [
                         "bundleIdentifier": [
                             "type": "string",
-                            "description": "Bundle id of the app whose window to record",
+                            "description": "Bundle id of the app whose window to record. "
+                                + "Preferred over displayID — window recording needs no "
+                                + "extra opt-in.",
+                        ],
+                        "displayID": [
+                            "type": "number",
+                            "description": "Numeric id of a whole display to record instead "
+                                + "of a window. Requires a person to have separately "
+                                + "enabled full-display agent recording in Snitt's "
+                                + "settings; refused otherwise. Prefer bundleIdentifier.",
                         ],
                         "microphone": ["type": "boolean", "default": false],
                         "systemAudio": ["type": "boolean", "default": true],
                         "maxDurationSeconds": ["type": "number"],
                     ],
-                    "required": ["bundleIdentifier"],
+                    // Exactly one of bundleIdentifier/displayID is required, which
+                    // JSON Schema's flat "required" array cannot express (that would
+                    // need "anyOf" over two required-arrays). Validated instead in
+                    // `request(forTool:arguments:)`, where the actionable message can
+                    // name both options together.
                 ]),
             ToolDefinition(
                 name: "snitt_stop_recording",
@@ -152,10 +165,26 @@ public enum MCPBridge {
             return .success(.status)
 
         case "snitt_start_recording":
-            guard let bundleID = arguments["bundleIdentifier"] as? String else {
-                return .failure(MCPBridgeError("snitt_start_recording requires bundleIdentifier"))
+            var options = StartOptions()
+
+            // ConsentPolicy.evaluate checks displayID before bundleIdentifier
+            // and returns as soon as a display request is permitted, never
+            // consulting bundleIdentifier at all when displayID is present.
+            // Mirror that precedence here rather than picking arbitrarily, so
+            // a request naming both is decided the same way on both frontends.
+            if let rawDisplay = arguments["displayID"] {
+                guard let displayID = displayID(from: rawDisplay) else {
+                    return .failure(MCPBridgeError(
+                        "displayID must be a whole number between 0 and \(UInt32.max)"))
+                }
+                options.displayID = displayID
+            } else if let bundleID = arguments["bundleIdentifier"] as? String {
+                options.bundleIdentifier = bundleID
+            } else {
+                return .failure(MCPBridgeError(
+                    "snitt_start_recording requires either bundleIdentifier or displayID"))
             }
-            var options = StartOptions(bundleIdentifier: bundleID)
+
             if let mic = arguments["microphone"] as? Bool { options.microphone = mic }
             if let sys = arguments["systemAudio"] as? Bool { options.systemAudio = sys }
             if let max = arguments["maxDurationSeconds"] as? Double {
@@ -172,5 +201,22 @@ public enum MCPBridge {
         default:
             return .failure(MCPBridgeError("Unknown tool: \(name)"))
         }
+    }
+
+    /// Converts an MCP argument value to a `UInt32` display id.
+    ///
+    /// The CLI parses `--display` straight into `UInt32`; JSON numbers arrive
+    /// here as `Int`, `Double`, or `NSNumber` depending on the decoder. All three
+    /// bridge to `NSNumber` on Darwin, so that is the single conversion path.
+    /// Anything fractional or outside `UInt32`'s range is refused rather than
+    /// silently truncated — a wrong display id would record the wrong thing.
+    private static func displayID(from value: Any) -> UInt32? {
+        // Bool bridges to NSNumber too, and a stray `true`/`false` should be
+        // refused rather than read as 1/0.
+        guard !(value is Bool), let number = value as? NSNumber else { return nil }
+        let double = number.doubleValue
+        guard double.truncatingRemainder(dividingBy: 1) == 0 else { return nil }
+        guard double >= 0, double <= Double(UInt32.max) else { return nil }
+        return UInt32(double)
     }
 }
