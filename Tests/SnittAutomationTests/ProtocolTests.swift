@@ -68,3 +68,49 @@ func socketPathIsNotWorldWritable() {
     #expect(path.contains("Application Support/Snitt"))
     #expect(!path.hasPrefix("/tmp"), "/tmp is world-writable; another user could squat the socket")
 }
+
+@Test("The protocol version is 2 — .mark is not backward compatible")
+func protocolVersionIsTwo() {
+    // An old app receiving `.mark` fails to decode and reports internal_error.
+    // §10 requires a mismatch to be refused outright with a usable message, so
+    // the version moves and the handshake produces upgrade_required instead.
+    #expect(AutomationProtocol.version == 2)
+}
+
+@Test("StartOptions carries the client's working directory")
+func startOptionsCarryWorkingDirectory() throws {
+    // Snitt.app's own cwd is "/" — only the client knows which repository a
+    // recording is about (§7).
+    var options = StartOptions(bundleIdentifier: "com.apple.Safari")
+    options.workingDirectory = "/Users/x/project"
+    let back = try JSONDecoder().decode(
+        StartOptions.self, from: JSONEncoder().encode(options))
+    #expect(back.workingDirectory == "/Users/x/project")
+}
+
+@Test("StartOptions still decodes when workingDirectory is absent")
+func workingDirectoryIsOptional() throws {
+    let json = Data(#"{"microphone":false,"systemAudio":true}"#.utf8)
+    let options = try JSONDecoder().decode(StartOptions.self, from: json)
+    #expect(options.workingDirectory == nil)
+}
+
+@Test("A mark request round-trips with its session and label")
+func markRoundTrips() throws {
+    let request = AutomationRequest(body: .mark(sessionID: "abc", label: "ran tests"))
+    let back = try JSONDecoder().decode(
+        AutomationRequest.self, from: JSONEncoder().encode(request))
+    guard case .mark(let session, let label) = back.body else {
+        Issue.record("wrong body case"); return
+    }
+    #expect(session == "abc")
+    #expect(label == "ran tests")
+}
+
+@Test("A marked response carries the time the marker landed at")
+func markedResponseRoundTrips() throws {
+    let response = AutomationResponse.marked(timeSeconds: 12.5)
+    let back = try JSONDecoder().decode(
+        AutomationResponse.self, from: JSONEncoder().encode(response))
+    #expect(back == response)
+}

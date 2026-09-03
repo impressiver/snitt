@@ -3,7 +3,12 @@ import Foundation
 public enum AutomationProtocol {
     /// Bumped whenever the wire format changes incompatibly. The server refuses
     /// mismatches rather than guessing (§10).
-    public static let version = 1
+    ///
+    /// 2 — added `.mark` and `StartOptions.workingDirectory`. The new request
+    /// case is why this is a bump and not an additive change: an old app cannot
+    /// decode `.mark` and would report `internal_error`, where §10 wants a
+    /// refusal that says what to do.
+    public static let version = 2
 }
 
 public struct StartOptions: Codable, Sendable, Equatable {
@@ -12,17 +17,26 @@ public struct StartOptions: Codable, Sendable, Equatable {
     public var microphone: Bool
     public var systemAudio: Bool
     public var maxDurationSeconds: Double?
+    /// The client's working directory, used to discover git context (§7).
+    ///
+    /// Filled by the CLI, not the app: `Snitt.app`'s own directory is `/`, so it
+    /// cannot know which repository a recording is about. Hotkey recordings have
+    /// no working directory and therefore no git context, which is correct —
+    /// pressing a key is not associated with a checkout.
+    public var workingDirectory: String?
 
     public init(bundleIdentifier: String? = nil,
                 displayID: UInt32? = nil,
                 microphone: Bool = false,
                 systemAudio: Bool = true,
-                maxDurationSeconds: Double? = nil) {
+                maxDurationSeconds: Double? = nil,
+                workingDirectory: String? = nil) {
         self.bundleIdentifier = bundleIdentifier
         self.displayID = displayID
         self.microphone = microphone
         self.systemAudio = systemAudio
         self.maxDurationSeconds = maxDurationSeconds
+        self.workingDirectory = workingDirectory
     }
 }
 
@@ -33,6 +47,7 @@ public struct AutomationRequest: Codable, Sendable {
         case startRecording(StartOptions)
         case stopRecording(sessionID: String)
         case status
+        case mark(sessionID: String, label: String?)
     }
 
     public var protocolVersion: Int
@@ -124,4 +139,5 @@ public enum AutomationResponse: Codable, Sendable, Equatable {
     case stopped(bundlePath: String)
     case status(StatusInfo)
     case failure(AutomationError)
+    case marked(timeSeconds: Double)
 }

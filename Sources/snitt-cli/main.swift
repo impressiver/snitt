@@ -76,6 +76,9 @@ do {
         note("Saved \(path)")
     case .status(let info):            emit(info)
     case .handshake(let info):         emit(info)
+    case .marked(let timeSeconds):
+        emit(["markedAt": timeSeconds])
+        note("Marker placed at \(timeSeconds)s")
     }
 } catch ClientError.notRunning {
     note("Snitt is not running. Open Snitt and try again.")

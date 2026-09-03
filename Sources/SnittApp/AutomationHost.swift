@@ -103,6 +103,10 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
 
         case .stopRecording(let sessionID):
             return await stop(sessionID)
+
+        case .mark:
+            return .failure(AutomationError(code: .internalError,
+                                           message: "Markers are not wired up yet."))
         }
     }
 

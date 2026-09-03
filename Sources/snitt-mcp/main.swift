@@ -58,6 +58,8 @@ func describe(_ response: AutomationResponse) -> String {
         return "Snitt \(info.appVersion), protocol \(info.protocolVersion)"
     case .failure(let error):
         return "\(error.code.rawValue): \(error.message)" + (error.hint.map { "\n\($0)" } ?? "")
+    case .marked(let timeSeconds):
+        return "Marker placed at \(timeSeconds)s"
     }
 }
 
