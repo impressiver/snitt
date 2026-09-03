@@ -38,3 +38,29 @@ func branchOnlyNamesTheBundle() {
     #expect(BundleNaming.filename(git: GitContext(branch: "main", commit: nil),
                                   timestamp: 1) == "main.snitt")
 }
+
+@Test("A branch beginning with a dot does not produce a hidden bundle")
+func leadingDotIsStripped() {
+    let name = BundleNaming.filename(
+        git: GitContext(branch: ".hidden-wip", commit: "a1b2c3d"), timestamp: 1)
+    #expect(!name.hasPrefix("."),
+            "a dot-prefixed bundle is hidden by Finder and ls — the user would see nothing where their recording should be")
+}
+
+@Test("Dots inside a branch name are preserved")
+func interiorDotsSurvive() {
+    // release.2 and v1.2 are ordinary branch names; only a LEADING dot hides.
+    let name = BundleNaming.filename(
+        git: GitContext(branch: "release.2", commit: "a1b2c3d"), timestamp: 1)
+    #expect(name == "release.2-a1b2c3d.snitt")
+}
+
+@Test("A very long branch name is truncated to a safe filename length")
+func longBranchNameIsTruncated() {
+    let longBranch = String(repeating: "x", count: 400)
+    let name = BundleNaming.filename(
+        git: GitContext(branch: longBranch, commit: "a1b2c3d"), timestamp: 1)
+    #expect(name.utf8.count <= 210, "expected a truncated name, got \(name.utf8.count) bytes")
+    #expect(name.hasSuffix(".snitt"))
+    #expect(name.contains("a1b2c3d"), "the commit — the more identifying half — must survive truncation")
+}
