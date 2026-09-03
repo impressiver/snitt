@@ -28,6 +28,11 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     private let registry = SessionRegistry()
     private var server: AutomationServer?
 
+    /// Guards `watchdog` only. Requests can arrive on several connections at
+    /// once, so the task handle needs a lock even though everything else this
+    /// class touches is an actor.
+    private let lock = NSLock()
+    private var watchdog: Task<Void, Never>?
 
     init(coordinator: any AgentRecordingControlling,
          settings: @escaping @Sendable () -> AgentSettings,
@@ -49,7 +54,24 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// is the registry's half, so `snitt status` stops claiming a recording that
     /// a person ended from the menu bar.
     func clearAgentSession() async {
+        cancelWatchdog()
         await registry.closeAny()
+    }
+
+    private func cancelWatchdog() {
+        lock.lock()
+        let task = watchdog
+        watchdog = nil
+        lock.unlock()
+        task?.cancel()
+    }
+
+    private func setWatchdog(_ task: Task<Void, Never>) {
+        lock.lock()
+        let previous = watchdog
+        watchdog = task
+        lock.unlock()
+        previous?.cancel()
     }
 
     func start() {
@@ -59,6 +81,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     }
 
     func stop() {
+        cancelWatchdog()
         server?.stop()
         server = nil
     }
@@ -176,6 +199,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         switch outcome {
         case .started(let name, _):
             await pushState(.recording(startedAt: Date()))
+            armWatchdog(sessionID: sessionID, after: maxDuration)
             return .started(sessionID: sessionID, target: name)
         default:
             try? await registry.close(sessionID)
@@ -219,6 +243,38 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         }
     }
 
+    /// §5.3's session cap, enforced rather than merely reported.
+    ///
+    /// The cap was computed, stored and queryable, and nothing ever acted on it:
+    /// `expiredSession(now:)` had no production caller. Snitt is a resident
+    /// menu-bar app that never quits on its own, so an agent that crashes after
+    /// `record start` left `AVAssetWriter` writing until the disk filled.
+    ///
+    /// Two independent guards stop this from ever ending someone ELSE's
+    /// recording. The task is cancelled on a normal stop, and even if a stale
+    /// one runs, `stopForAgent(sessionID:)` refuses unless the coordinator's
+    /// active recording is still that exact session.
+    private func armWatchdog(sessionID: String, after seconds: Double) {
+        setWatchdog(Task.detached { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled, let self else { return }
+            await self.expire(sessionID)
+        })
+    }
+
+    private func expire(_ sessionID: String) async {
+        guard await registry.expiredSession(now: Date()) == sessionID else { return }
+        let result = await coordinator.stopForAgent(sessionID: sessionID)
+        // The registry entry is stale either way — the session is over, or it
+        // was never the thing recording any more.
+        try? await registry.close(sessionID)
+        // Only when WE stopped it. If a person is recording now, blanking the
+        // indicator would hide their own live recording.
+        if case .stopped = result {
+            await pushState(.idle)
+        }
+    }
+
     /// Stops the agent's OWN session.
     ///
     /// Order matters: the registry entry is closed only after the coordinator
@@ -231,6 +287,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         let result = await coordinator.stopForAgent(sessionID: sessionID)
         switch result {
         case .stopped(let url, _):
+            cancelWatchdog()
             try? await registry.close(sessionID)
             await pushState(.idle)
             return .stopped(bundlePath: url.path)
@@ -239,6 +296,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             // Either the id was never valid, or a person already ended it. Drop
             // the registry entry if it names this session so `snitt status` and
             // the next `record start` agree with reality — but stop nothing.
+            cancelWatchdog()
             try? await registry.close(sessionID)
             return .failure(AutomationError(
                 code: .noSuchSession,
@@ -253,6 +311,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                 hint: "Try `snitt record stop` again in a moment."))
 
         case .failed(let message):
+            cancelWatchdog()
             try? await registry.close(sessionID)
             await pushState(.idle)
             return .failure(AutomationError(code: .internalError,

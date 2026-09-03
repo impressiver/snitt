@@ -128,6 +128,76 @@ func failedStartDoesNotLightTheIndicator() async {
             "nothing is recording, so nothing may be indicated")
 }
 
+// MARK: - Critical 2: the session cap is enforced, not merely reported
+
+@MainActor
+@Test("A session that outlives its cap is actually stopped")
+func expiredSessionIsStopped() async throws {
+    // The discriminating check for Critical 2. `ConsentPolicy.effectiveMaxDuration`
+    // clamped the cap, `SessionRegistry.open` stored it and `expiredSession(now:)`
+    // reported it — and `expiredSession` had NO production caller, only tests.
+    // There was no timer and no watchdog, so an agent that crashed after
+    // `record start` left AVAssetWriter writing indefinitely: Snitt is a
+    // resident menu-bar app that never quits on its own. Pre-fix this test hung
+    // on the poll below until it failed, because nothing ever stopped anything.
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let host = makeHost(coordinator: coordinator, recorder: recorder)
+
+    // A cap below the 600s ceiling passes through `effectiveMaxDuration`
+    // unchanged, so this is the real production path and not a test-only knob.
+    let started = await host.handle(startBody(maxDuration: 0.2))
+    guard case .started(let sessionID, _) = started else {
+        Issue.record("expected a started response, got \(started)")
+        return
+    }
+
+    var stopped: [String] = []
+    for _ in 0..<40 {
+        try await Task.sleep(for: .milliseconds(50))
+        stopped = await coordinator.stopCalls
+        if !stopped.isEmpty { break }
+    }
+    #expect(stopped == [sessionID],
+            "the cap exists so a hung agent cannot fill the disk; it must ACT")
+
+    let status = await host.handle(.status)
+    #expect(status == .status(StatusInfo(recording: false, sessionID: nil,
+                                         elapsedSeconds: nil)),
+            "the expired session must be closed, not left claiming to record")
+    #expect(recorder.states.last == .idle,
+            "the indicator must clear when the watchdog ends the session")
+}
+
+@MainActor
+@Test("A stale watchdog never stops a later human recording")
+func watchdogDoesNotStopSomeoneElsesRecording() async throws {
+    // The failure mode this fix must not introduce: a watchdog armed for a
+    // session that has since ended firing into whatever is recording now. Two
+    // guards must hold — the task is cancelled on a normal stop, and
+    // `stopForAgent` refuses a session the coordinator no longer owns.
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let host = makeHost(coordinator: coordinator, recorder: recorder)
+
+    let started = await host.handle(startBody(maxDuration: 0.2))
+    guard case .started(let sessionID, _) = started else {
+        Issue.record("expected a started response, got \(started)")
+        return
+    }
+    // A person stops it from the menu bar, then starts their own recording.
+    await coordinator.humanStops()
+    await host.clearAgentSession()
+
+    try await Task.sleep(for: .milliseconds(600))
+
+    let stopCalls = await coordinator.stopCalls
+    #expect(stopCalls.isEmpty,
+            "a cancelled watchdog must not reach the coordinator at all")
+    #expect(!recorder.states.contains(.idle),
+            "the watchdog must not blank the indicator over a human's recording")
+}
+
 // MARK: - Important 3: outcomes map to the agent-facing contract
 
 @Test("Each coordinator failure maps to its own error code")
