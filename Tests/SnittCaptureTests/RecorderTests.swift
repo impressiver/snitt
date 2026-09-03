@@ -130,9 +130,19 @@ func agentProvenanceReachesTheBundle() async throws {
 
 @Test("A marker added immediately before stop is in the written bundle")
 func markJustBeforeStopSurvives() async throws {
-    // The common agent sequence is `record mark` then `record stop`. With a
-    // fire-and-forget write this raced the snapshot and lost silently, having
-    // already told the agent the marker landed.
+    // The common agent sequence is `record mark` then `record stop`, and this
+    // pins that path end to end.
+    //
+    // It does NOT discriminate the fire-and-forget version this replaced:
+    // restoring `Task { await markers.add(...) }` and running this 110 times,
+    // including a 20-way concurrent variant, produced no failures. A
+    // non-detached Task created inside an actor-isolated method inherits that
+    // actor's context, so the write was enqueued ahead of the later stop(),
+    // and both operations then serialised on MarkerLog's executor in enqueue
+    // order. Neither is guaranteed — actors are reentrant and their executors
+    // are not specified FIFO — so the old code worked by scheduler behaviour,
+    // not by construction. The ordering guarantee now lives in `mark` being
+    // awaited; this test guards the end-to-end path, not that guarantee.
     let bundleURL = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
         .appendingPathExtension(SnittBundle.fileExtension)
