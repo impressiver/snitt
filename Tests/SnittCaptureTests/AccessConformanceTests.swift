@@ -9,6 +9,50 @@ private func repositoryRoot() -> URL {
         .deletingLastPathComponent()          // repo root
 }
 
+/// Removes `//` line comments and `/* */` block comments.
+///
+/// The guard matches source text, so without this a file could satisfy it with
+/// a COMMENT mentioning the call it never makes — and every historical instance
+/// of this defect lived in a file with a paragraph of prose about permissions.
+/// A guard a comment can defeat is not a guard.
+///
+/// This deliberately does NOT handle string literals containing `//` (e.g. a URL
+/// in a string literal would have the rest of that line stripped). That is a
+/// conscious trade-off: it can only produce a false POSITIVE (the guard
+/// complains when it should not), which fails loudly and a human adjusts. The
+/// direction that must never happen is a false NEGATIVE — a comment hiding a
+/// missing call — and this closes that.
+private func strippingComments(_ source: String) -> String {
+    var out = ""
+    var index = source.startIndex
+    var inLine = false, inBlock = false
+
+    while index < source.endIndex {
+        let rest = source[index...]
+        if inLine {
+            if source[index] == "\n" { inLine = false; out.append("\n") }
+            index = source.index(after: index)
+        } else if inBlock {
+            if rest.hasPrefix("*/") {
+                inBlock = false
+                index = source.index(index, offsetBy: 2)
+            } else {
+                index = source.index(after: index)
+            }
+        } else if rest.hasPrefix("//") {
+            inLine = true
+            index = source.index(index, offsetBy: 2)
+        } else if rest.hasPrefix("/*") {
+            inBlock = true
+            index = source.index(index, offsetBy: 2)
+        } else {
+            out.append(source[index])
+            index = source.index(after: index)
+        }
+    }
+    return out
+}
+
 private func swiftSources() -> [URL] {
     let root = repositoryRoot()
     var found: [URL] = []
@@ -30,7 +74,7 @@ func noPreflightWithoutRequest() throws {
     // that only preflights silently measures nothing — three times now.
     var offenders: [String] = []
     for url in swiftSources() {
-        let source = try String(contentsOf: url, encoding: .utf8)
+        let source = strippingComments(try String(contentsOf: url, encoding: .utf8))
         for service in ["ScreenCapture", "ListenEvent"] {
             if source.contains("CGPreflight\(service)Access"),
                !source.contains("CGRequest\(service)Access") {
@@ -67,7 +111,7 @@ func enumerationSitesEnsureAccess() throws {
     var offenders: [String] = []
     for url in swiftSources() where url.path.hasPrefix(root.path) {
         let name = url.lastPathComponent
-        let source = try String(contentsOf: url, encoding: .utf8)
+        let source = strippingComments(try String(contentsOf: url, encoding: .utf8))
         guard source.contains("SCShareableContent.") else { continue }
         if allowed[name] != nil { continue }
         if source.contains("ScreenRecordingAccess.ensureGranted")
