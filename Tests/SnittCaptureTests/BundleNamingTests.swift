@@ -5,9 +5,35 @@ import SnittDocument
 
 @Test("A branch and commit name the bundle")
 func branchAndCommitNameTheBundle() {
+    // The timestamp is part of the name even WITH git context. This test used
+    // to pin "feature-markers-a1b2c3d.snitt" as correct, which made the name a
+    // pure function of branch+commit — and so made every second recording of
+    // the same commit fail on `SnittBundle.alreadyExists`, permanently.
     let name = BundleNaming.filename(
         git: GitContext(branch: "feature/markers", commit: "a1b2c3d"), timestamp: 100)
-    #expect(name == "feature-markers-a1b2c3d.snitt")
+    #expect(name == "feature-markers-a1b2c3d-100.snitt")
+}
+
+@Test("Two recordings on the same commit do not collide")
+func sameCommitTwiceProducesDistinctNames() {
+    // The discriminating check. Record, stop, edit, record again without
+    // committing — the ordinary loop — and pre-fix both names were identical,
+    // so the second `SnittBundle(creatingAt:)` threw `.alreadyExists` and the
+    // agent got exit 16 naming a filesystem enum, forever, until a human moved
+    // the file off the Desktop.
+    let git = GitContext(branch: "feat/m3a-capture-context", commit: "a1b2c3d")
+    let first = BundleNaming.filename(git: git, timestamp: 1_788_464_616)
+    let second = BundleNaming.filename(git: git, timestamp: 1_788_464_700)
+    #expect(first != second,
+            "the second recording on an unchanged working tree must get its own bundle")
+    #expect(first == "feat-m3a-capture-context-a1b2c3d-1788464616.snitt")
+}
+
+@Test("A branch named \".\" does not produce a hyphen-led bundle name")
+func degenerateBranchNameIsNotHyphenLed() {
+    let name = BundleNaming.filename(git: GitContext(branch: ".", commit: "a1b2c3d"),
+                                     timestamp: 7)
+    #expect(name == "a1b2c3d-7.snitt")
 }
 
 @Test("A slash in a branch name never becomes a path separator")
@@ -30,13 +56,13 @@ func noGitFallsBackToTimestamp() {
 @Test("A commit with no branch still names the bundle")
 func commitOnlyNamesTheBundle() {
     #expect(BundleNaming.filename(git: GitContext(branch: nil, commit: "a1b2c3d"),
-                                  timestamp: 1) == "a1b2c3d.snitt")
+                                  timestamp: 1) == "a1b2c3d-1.snitt")
 }
 
 @Test("A branch with no commit still names the bundle")
 func branchOnlyNamesTheBundle() {
     #expect(BundleNaming.filename(git: GitContext(branch: "main", commit: nil),
-                                  timestamp: 1) == "main.snitt")
+                                  timestamp: 1) == "main-1.snitt")
 }
 
 @Test("A branch beginning with a dot does not produce a hidden bundle")
@@ -52,7 +78,7 @@ func interiorDotsSurvive() {
     // release.2 and v1.2 are ordinary branch names; only a LEADING dot hides.
     let name = BundleNaming.filename(
         git: GitContext(branch: "release.2", commit: "a1b2c3d"), timestamp: 1)
-    #expect(name == "release.2-a1b2c3d.snitt")
+    #expect(name == "release.2-a1b2c3d-1.snitt")
 }
 
 @Test("A very long branch name is truncated to a safe filename length")

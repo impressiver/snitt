@@ -12,24 +12,36 @@ public enum BundleNaming {
     /// error instead of a name Snitt could simply have prevented.
     private static let maxAssembledLength = 200
 
+    /// The timestamp is ALWAYS part of the name, git context or not.
+    ///
+    /// It used to appear only in the no-git fallback, which made the name a
+    /// pure function of branch+commit. `outputDirectory` is fixed and
+    /// `SnittBundle(creatingAt:)` throws `.alreadyExists`, so the ordinary
+    /// edit-review-retry loop — record, stop, record again without
+    /// committing — failed permanently with an internal error naming a
+    /// filesystem enum, until a human moved the first bundle out of the way.
+    /// Two recordings of the same commit are the normal case, not a
+    /// collision to be reported.
     public static func filename(git: GitContext?, timestamp: Int) -> String {
         let branch = git?.branch.map(sanitize)
         let commit = git?.commit.map(sanitize)
 
         var parts = [branch, commit].compactMap { $0 }.filter { !$0.isEmpty }
-        guard !parts.isEmpty else { return "Snitt-\(timestamp).snitt" }
+        let suffix = "-\(timestamp)"
+        guard !parts.isEmpty else { return "Snitt\(suffix).snitt" }
 
         // Truncate the BRANCH half, not the commit: the commit is the more
         // identifying half of the two, and short-circuiting a long branch
-        // name still leaves a usable, disambiguating name.
+        // name still leaves a usable, disambiguating name. The timestamp is
+        // never truncated — it is what makes the name unique.
+        let budget = maxAssembledLength - suffix.utf8.count
         if parts.count == 2 {
             let commitPart = parts[1]
-            // Room for "-<commit>.snitt" plus the joining "-".
-            let budget = maxAssembledLength - commitPart.utf8.count - 1
-            parts[0] = String(parts[0].prefix(max(0, budget)))
+            // Room for "-<commit>" plus the joining "-".
+            parts[0] = String(parts[0].prefix(max(0, budget - commitPart.utf8.count - 1)))
             parts = parts.filter { !$0.isEmpty }
         } else {
-            parts[0] = String(parts[0].prefix(maxAssembledLength))
+            parts[0] = String(parts[0].prefix(max(0, budget)))
         }
 
         let assembled = parts.joined(separator: "-")
@@ -42,14 +54,19 @@ public enum BundleNaming {
         // be. Applied to the ASSEMBLED name, not per-part, so ".hidden"
         // joined with a commit is still caught.
         //
-        // The literal ".." is not a risk here: the commit and ".snitt" are
+        // The literal ".." is not a risk here: the timestamp and ".snitt" are
         // always appended after this strip, so the assembled name can never
         // BE ".." — only ever start with it as a substring, which is exactly
         // what this trims away.
-        let unhidden = String(assembled.drop { $0 == "." })
+        //
+        // Leading hyphens go with the dots. `sanitize` turns any character it
+        // does not allow into "-", so a branch named "." or "/wip" assembles
+        // to a name beginning with a hyphen — harmless to the filesystem, but
+        // a leading "-" makes the bundle awkward to pass to any command line.
+        let unhidden = String(assembled.drop { $0 == "." || $0 == "-" })
 
-        let name = unhidden.isEmpty ? "Snitt-\(timestamp)" : unhidden
-        return name + ".snitt"
+        let name = unhidden.isEmpty ? "Snitt" : unhidden
+        return name + suffix + ".snitt"
     }
 
     /// Branch names legitimately contain "/" and ":". The result is appended to
