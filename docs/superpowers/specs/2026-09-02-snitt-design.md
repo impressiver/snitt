@@ -758,12 +758,16 @@ before it is allowed to gate anything. Sampling happens during the existing
 
 - **M0** Spikes S1, S3 (§14)
 - **M1** Capture to disk — one `SCStream`, video + system audio + mic
-- **M2** **Stable code-signing identity first** (see below), then
-  `SCContentSharingPicker` adoption for the interactive path as the first PR,
-  then `SnittAutomation`, IPC + version handshake, CLI, MCP server, consent model
-  (§5), window-scoped capture as the universal default (§5.1), menu-bar status
-  item + kill switch, global hotkey instant capture with cached target (§4.11),
-  stop-and-copy default (§4.1)
+- **M2a — SHIPPED.** Stable code-signing identity; `SCContentSharingPicker`
+  adoption; window-scoped capture as the universal default (§5.1); menu-bar status
+  item + kill switch (§5.3); global hotkey presenting the picker on every press
+  (§4.11, D42); stop-and-copy (§4.1)
+- **M2b** The automation surface: `SnittAutomation`, IPC + version handshake
+  (§10), the `snitt` CLI, the MCP server (§4.8), and consent enforcement for
+  agent-initiated recording (§5.3). **First step is verifying S3's untested half**
+  — that capture works in the real topology, a CLI whose parent is an arbitrary
+  agent host talking over IPC to Snitt.app holding its own TCC grant (§4.9). S3
+  confirmed background capture works but exercised only the terminal's grant
 - **M3** Event logging (data only, no rendering), markers + WebVTT chapters
   (§4.12), `--auto-trim` (head/tail), auto-focus the target on record (§4.13),
   progressive permission onboarding (§4.10) — including
