@@ -13,6 +13,9 @@ public final class AssetWriterSink: SampleBufferSink, @unchecked Sendable {
     private var started = false
     private var finished = false
 
+    /// §12.1: sampling rides the existing pass — there is no second decode.
+    public let health = HealthSampler()
+
     public init(outputURL: URL, videoSize: CGSize) throws {
         writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
 
@@ -74,6 +77,8 @@ public final class AssetWriterSink: SampleBufferSink, @unchecked Sendable {
     }
 
     public func append(_ buffer: CMSampleBuffer, to track: TrackKind) throws {
+        health.observe(buffer, track: track)
+
         lock.lock(); defer { lock.unlock() }
         guard started else { throw SinkError.notStarted }
         guard !finished else { throw SinkError.alreadyFinished }
