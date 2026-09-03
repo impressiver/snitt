@@ -1,5 +1,10 @@
 import Testing
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#elseif canImport(Glibc)
+import Glibc
+#endif
 @testable import SnittAutomation
 
 /// Answers with a canned response and records what it was asked.
@@ -73,4 +78,70 @@ func versionMismatchIsRefused() async throws {
         Issue.record("a version mismatch must not be executed"); return
     }
     #expect(error.code == .upgradeRequired)
+}
+
+/// Binds, listens and accepts connections but never writes back — simulates a
+/// wedged Snitt.app: alive, and it accepted the connection, but it never answers.
+final class SilentPeer: @unchecked Sendable {
+    private let socketURL: URL
+    private var fd: Int32 = -1
+    private let queue = DispatchQueue(label: "silent-peer.accept")
+
+    init(socketURL: URL) {
+        self.socketURL = socketURL
+    }
+
+    func start() throws {
+        try? FileManager.default.removeItem(at: socketURL)
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { throw ServerError.socketCreationFailed }
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let path = socketURL.path
+        let maxLength = MemoryLayout.size(ofValue: addr.sun_path)
+        _ = withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
+            ptr.withMemoryRebound(to: CChar.self, capacity: maxLength) { cptr in
+                path.withCString { strcpy(cptr, $0) }
+            }
+        }
+        let size = socklen_t(MemoryLayout<sockaddr_un>.size)
+        let bindResult = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, size) }
+        }
+        guard bindResult == 0 else { close(fd); throw ServerError.bindFailed("bind failed") }
+        guard listen(fd, 1) == 0 else { close(fd); throw ServerError.listenFailed("listen failed") }
+
+        self.fd = fd
+        queue.async { [fd] in
+            // Accept and then just sit on the connection, never reading or
+            // writing, until the socket is torn down by stop().
+            _ = accept(fd, nil, nil)
+        }
+    }
+
+    func stop() {
+        if fd >= 0 {
+            shutdown(fd, SHUT_RDWR)
+            close(fd)
+            fd = -1
+        }
+        try? FileManager.default.removeItem(at: socketURL)
+    }
+}
+
+@Test("A server that accepts but never answers times out instead of hanging forever")
+func wedgedServerTimesOut() async throws {
+    // §11: an agent must never block on something it cannot see. A process that
+    // is alive and accepted the connection, but never replies, is exactly that —
+    // and it is the failure a hand-rolled socket server is most prone to.
+    let url = tempSocketURL()
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    let silent = SilentPeer(socketURL: url)   // accepts, never writes
+    try silent.start()
+    defer { silent.stop() }
+
+    let client = AutomationClient(socketURL: url, timeout: 1)
+    await #expect(throws: ClientError.timedOut) { _ = try await client.send(.status) }
 }

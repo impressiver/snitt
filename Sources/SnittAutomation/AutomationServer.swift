@@ -56,7 +56,7 @@ public final class AutomationServer: @unchecked Sendable {
             close(fd)
             throw ServerError.pathTooLong
         }
-        withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
+        _ = withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
             ptr.withMemoryRebound(to: CChar.self, capacity: maxLength) { cptr in
                 path.withCString { strcpy(cptr, $0) }
             }
@@ -96,6 +96,11 @@ public final class AutomationServer: @unchecked Sendable {
         stateLock.unlock()
 
         if fd >= 0 {
+            // POSIX does not define what happens when another thread is blocked
+            // in accept() on an fd that gets closed out from under it — the
+            // number can be reused before the blocked call wakes. Shutting the
+            // socket down first forces that accept() to return promptly.
+            shutdown(fd, SHUT_RDWR)
             close(fd)
         }
         try? FileManager.default.removeItem(at: socketURL)
@@ -120,8 +125,21 @@ public final class AutomationServer: @unchecked Sendable {
         }
     }
 
+    /// A client that connects and never sends a complete line would otherwise
+    /// park this connection's thread forever. Snitt is a long-running app, so
+    /// that is a slow thread leak rather than a test-only concern.
+    private static let connectionReadTimeout: TimeInterval = 30
+
     private func handleConnection(_ fd: Int32) {
         defer { close(fd) }
+
+        var tv = timeval()
+        tv.tv_sec = Int(Self.connectionReadTimeout)
+        tv.tv_usec = 0
+        withUnsafeBytes(of: &tv) { raw in
+            _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, raw.baseAddress, socklen_t(MemoryLayout<timeval>.size))
+        }
+
         var framer = LineFramer()
         var readBuffer = [UInt8](repeating: 0, count: 65_536)
 
@@ -202,6 +220,12 @@ public final class AutomationServer: @unchecked Sendable {
 }
 
 /// Bridges an async handler result back onto the blocking connection thread.
+///
+/// `value` is unsynchronised, but that is safe: the writing `Task` sets it and
+/// then calls `semaphore.signal()`, and the reading thread only observes it
+/// after `semaphore.wait()` returns. The semaphore's signal/wait pair is itself
+/// a synchronisation primitive, so it establishes the happens-before edge that
+/// makes the plain, lock-free field access correct.
 private final class ResponseBox: @unchecked Sendable {
     var value: AutomationResponse?
 }
