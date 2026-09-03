@@ -345,6 +345,31 @@ narration has nowhere to attach. This rides the existing sidecar architecture
 exactly — another timestamped event type in a file that already exists — and
 touches no video pixels, so it is available before the compositor.
 
+### 4.13 Focus the target when recording starts
+
+When a recording begins, Snitt brings the chosen window to the front and activates
+its application.
+
+ScreenCaptureKit captures a window correctly even when it is occluded or behind
+others, so this is not required for the recording to work. It is required for the
+recording to be *watchable*: a demo of a window the presenter never actually looked
+at reads as a screenshot with a cursor wandering over it, and a presenter who has to
+find and click their target after pressing record has spent the seconds §1 exists to
+protect.
+
+Two consequences to design around rather than discover:
+
+- **Focus changes what is recorded.** Activating a window can dismiss a menu, close a
+  popover, or move a focus ring — so the first frames may differ from what the user
+  saw when they pressed the hotkey. Focus therefore happens *before* capture starts,
+  not after, so the transition is not in the recording.
+- **It must be skippable.** Recording a window precisely *because* it is in the
+  background — a log tailing behind an editor, a progress window — is a real case.
+  Auto-focus is the default, not a rule, and a modifier held while pressing the
+  hotkey suppresses it.
+
+Display captures never auto-focus; there is nothing to bring forward.
+
 ## 5. Consent and privacy
 
 ### 5.1 Window-scoped capture is the default for everyone
@@ -574,12 +599,38 @@ agent is expected to relay that to its human rather than retry. `snitt targets
 list` reports `agentGranted` per target so an agent can check before it tries.
 
 **`--auto-trim`** clips dead air before the first and after the last logged input
-event. Note the limit honestly: it works only where input events exist. An agent
-that drives an app through a CLI, an HTTP call, or a programmatic API produces no
-OS-level input at all, so there is nothing to key on — this is primarily a
-human-recording feature, and spike S1's findings on event capture determine how
-far it generalizes. It is **not** the silence-removal that §3 excludes: that is
-audio-signal analysis, this is a query over an event log already on disk.
+event.
+
+**`--auto-trim-gaps` (enhancement, beyond the M3 baseline)** additionally removes
+dead air *between* events — the stretches mid-recording where nothing happens
+because the presenter was reading, thinking, or waiting on a build. This is where
+most of the wasted length in a real demo actually sits; head and tail trimming only
+removes the bookends.
+
+It is a ripple delete over the same event log: find runs longer than a threshold
+containing no logged event, and cut them from the EDL. Three things make it harder
+than the head/tail case, and all three are why it is an enhancement rather than part
+of the baseline:
+
+- **Waiting is sometimes the content.** A gap while a build runs or a spinner spins
+  is exactly what the viewer needs to see. The threshold has to be generous, and
+  removing a gap must be reviewable and undoable rather than silent — it edits the
+  EDL, so it already is.
+- **Cuts need somewhere to land.** An abrupt jump mid-sentence is worse than the dead
+  air it removed. Gap removal must respect audio: never cut where either audio track
+  is above the noise floor, even if no input event occurred.
+- **It inherits `--auto-trim`'s event dependency.** An agent driving an app through a
+  CLI or HTTP produces no OS-level input, so a purely event-driven pass would see the
+  entire recording as one long gap and delete it. Any gap detection must therefore
+  consider frame change as well as input events, or refuse to run when the event log
+  is empty.
+
+Both flags are limited by where input events exist. An agent that drives an app
+through a CLI, an HTTP call, or a programmatic API produces no OS-level input at all,
+so there is nothing to key on — these are primarily human-recording features, and
+spike S1's findings on event capture determine how far they generalize. Neither is
+the silence-removal that §3 excludes: that is audio-signal analysis over the whole
+timeline, these are queries over an event log already on disk.
 
 The contract ends at a local path. Snitt does not upload (§3).
 
@@ -714,7 +765,8 @@ before it is allowed to gate anything. Sampling happens during the existing
   item + kill switch, global hotkey instant capture with cached target (§4.11),
   stop-and-copy default (§4.1)
 - **M3** Event logging (data only, no rendering), markers + WebVTT chapters
-  (§4.12), `--auto-trim`, progressive permission onboarding (§4.10) — including
+  (§4.12), `--auto-trim` (head/tail), auto-focus the target on record (§4.13),
+  progressive permission onboarding (§4.10) — including
   the pre-explain sheet and the already-denied deep link — plus the four items
   moved out of M2 because they bear on neither v0 validation question: export
   with `--max-size`, `snitt inspect` + export manifest, capture health (§12.1),
@@ -727,6 +779,11 @@ before it is allowed to gate anything. Sampling happens during the existing
 - **M6** Overlay desirability probe
 - **M7** Custom compositor + overlay rendering *(conditional on M6)*
 - **M8** Licensing; Mac App Store variant
+
+**Enhancement, unscheduled:** `--auto-trim-gaps` (§8) — removing dead air *between*
+events. Deliberately not placed in a milestone: it needs the EDL and timeline (M4) to
+be reviewable, and it needs audio-aware cut points, so it should follow the v0 gate
+where real recordings can show how long the gaps actually are.
 
 ### Why signing moved into M2
 
@@ -1019,6 +1076,9 @@ be worth dropping entirely. Recorded rather than guessed.
 D36 is marked **Superseded** above. The cached-target machinery is retained rather
 than deleted — the automation surface (M2b) has no human to drive a picker and
 still needs to re-resolve a stored reference.
+
+| D43 | Focus the target window when recording starts, by default, suppressible with a modifier; never for display captures | ScreenCaptureKit captures occluded windows fine, so this is about the recording being watchable rather than possible — and about not spending the §1 budget hunting for the window after pressing record. Focus happens BEFORE capture starts so the activation transition is not in the recording; skippable because deliberately recording a background window is a real case | §1, §4.13 | Decided | default-with-an-escape |
+| D44 | `--auto-trim-gaps` removes dead air BETWEEN events; recorded as an unscheduled enhancement, not a milestone item | Most wasted length in a real demo sits mid-recording, not at the bookends. Held back because it needs three things the baseline does not: a generous threshold (waiting on a build is sometimes the content), audio-aware cut points (never cut where either track is above the noise floor), and frame-change detection as well as input events — without which an agent-driven recording, which logs no OS input, would be seen as one long gap and deleted entirely | §8, D23, S1 | Decided | enhancement-needing-its-own-evidence |
 
 `conformance: 2026-09-02` (post-M2a)
 
