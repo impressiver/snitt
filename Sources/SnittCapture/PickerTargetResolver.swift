@@ -40,6 +40,18 @@ actor PickerOutcomeBox {
         return true
     }
 
+    /// Prepares the box for a new picker session.
+    ///
+    /// The resolver is long-lived — one instance serves the whole app — but the box
+    /// is a one-shot latch. Without resetting it, the second `resolve()` would find
+    /// `hasCompleted` already true, refuse to resume the continuation, and hang
+    /// forever. Safe because the actor serialises this against `deliver`.
+    func reset() {
+        continuation = nil
+        pending = nil
+        hasCompleted = false
+    }
+
     private func resume(_ continuation: CheckedContinuation<ResolvedTarget, Error>,
                         with outcome: Result<ResolvedTarget, TargetResolutionError>) {
         switch outcome {
@@ -66,17 +78,28 @@ public final class PickerTargetResolver: NSObject, TargetResolver, @unchecked Se
     }
 
     public func resolve() async throws -> ResolvedTarget {
-        let picker = SCContentSharingPicker.shared
+        // FIRST, before anything else: the resolver is long-lived — one instance
+        // serves the whole app — while the box is a one-shot latch. A stale latch
+        // would make this call hang forever and wedge the coordinator.
+        await box.reset()
 
-        var configuration = SCContentSharingPickerConfiguration()
-        configuration.allowedPickerModes = allowedModes
-        picker.configuration = configuration
-
-        picker.add(self)
-        picker.isActive = true
+        // Picker setup is system UI presentation and must happen on the main
+        // actor; `resolve()` is called from inside an actor, so it otherwise runs
+        // off-main.
+        await MainActor.run {
+            let picker = SCContentSharingPicker.shared
+            var configuration = SCContentSharingPickerConfiguration()
+            configuration.allowedPickerModes = allowedModes
+            picker.configuration = configuration
+            picker.add(self)
+            picker.isActive = true
+        }
         defer {
-            picker.remove(self)
-            picker.isActive = false
+            Task { @MainActor in
+                let picker = SCContentSharingPicker.shared
+                picker.remove(self)
+                picker.isActive = false
+            }
         }
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -99,20 +122,41 @@ extension PickerTargetResolver: SCContentSharingPickerObserver {
     public func contentSharingPicker(_ picker: SCContentSharingPicker,
                                      didUpdateWith filter: SCContentFilter,
                                      for stream: SCStream?) {
+        var reference: TargetReference?
+        var title: String?
+        var applicationName: String?
+
+        // Derive a durable reference so the hotkey can reuse this target later.
+        // Gated: these properties require macOS 15.2 and the floor is 15.0. Below
+        // that the reference stays nil and every press shows the picker — degraded
+        // but correct.
+        if #available(macOS 15.2, *) {
+            if let window = filter.includedWindows.first {
+                title = window.title
+                applicationName = window.owningApplication?.applicationName
+                if let bundleID = window.owningApplication?.bundleIdentifier {
+                    reference = .window(bundleIdentifier: bundleID, titleHint: window.title)
+                }
+            } else if let app = filter.includedApplications.first {
+                applicationName = app.applicationName
+                reference = .window(bundleIdentifier: app.bundleIdentifier, titleHint: nil)
+            }
+        }
+
         // The picker hands back a finished filter but no descriptor, so the
         // dimensions come from the filter's own content rect.
         let size = filter.pixelDimensions
         let descriptor = CaptureTargetDescriptor(
             id: 0,
             kind: CaptureTargetDescriptor.Kind.window.rawValue,
-            title: nil,
-            applicationName: nil,
+            title: title,
+            applicationName: applicationName,
             width: size.width,
             height: size.height
         )
         finish(.success(ResolvedTarget(filter: filter,
                                        descriptor: descriptor,
-                                       reference: nil,
+                                       reference: reference,
                                        provenance: .picker)))
     }
 

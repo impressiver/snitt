@@ -10,7 +10,7 @@ public enum ResolverChoice: Equatable, Sendable {
 }
 
 public enum CoordinatorOutcome: Equatable, Sendable {
-    case started(String)
+    case started(String, usedCache: Bool)
     case stopped(URL, copied: Bool)
     case cancelled
     case failed(String)
@@ -105,7 +105,8 @@ public actor RecordingCoordinator {
             let recorder = try Recorder(target: target, bundleURL: url)
             try await recorder.start()
             active = recorder
-            return .started(target.descriptor.title ?? "screen")
+            return .started(target.descriptor.title ?? "screen",
+                            usedCache: choice == .cache)
         } catch {
             return .failed("Could not start recording: \(error)")
         }

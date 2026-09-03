@@ -31,7 +31,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let monitor = HotkeyMonitor(combination: .defaultCombination) { [weak self] in
             self?.handleHotkey()
         }
-        try? monitor.start()
+        do {
+            try monitor.start()
+        } catch {
+            notify("Snitt could not register the ⌥⌘5 shortcut — another app may be "
+                 + "using it. You can still start and stop recording from the menu bar.")
+        }
         hotkey = monitor
 
         // §5.3's kill switch: clicking the menu-bar item does the same thing as
@@ -45,14 +50,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleHotkey() {
         guard let coordinator else { return }
         Task { @MainActor in
-            ConsentExplainer.showIfNeeded()
             let outcome = await coordinator.toggle()
             switch outcome {
-            case .started:
+            case .started(_, let usedCache):
                 statusItem.update(.recording(startedAt: Date()))
+                // The recurring macOS prompt is caused by the cached path only, so
+                // explain it at its first actual occurrence — not on the picker path.
+                if usedCache { ConsentExplainer.showIfNeeded() }
             case .stopped(let url, let copied):
                 statusItem.update(.idle)
-                notify(copied ? "Copied to clipboard" : "Saved to \(url.lastPathComponent)")
+                if !copied {
+                    notify("Recording saved to \(url.lastPathComponent), but it could "
+                         + "not be copied to the clipboard.")
+                }
             case .cancelled:
                 statusItem.update(.idle)
             case .failed(let message):
@@ -67,6 +77,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func notify(_ message: String) {
+        NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = message
         alert.addButton(withTitle: "OK")

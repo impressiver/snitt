@@ -37,3 +37,20 @@ func earlyOutcomeIsHeldUntilArmed() async throws {
         }
     }
 }
+
+@Test("The outcome box can serve a second picker session after being reset")
+func boxIsReusableAcrossSessions() async throws {
+    let box = PickerOutcomeBox()
+
+    // First session completes.
+    _ = await box.deliver(.failure(.cancelled))
+    #expect(await box.hasCompleted == true)
+
+    // Without reset the box is latched and a second session could never resume.
+    await box.reset()
+    #expect(await box.hasCompleted == false)
+
+    // Second session must now be able to complete on its own.
+    let accepted = await box.deliver(.failure(.unavailable))
+    #expect(accepted == true, "a reset box must accept a new session's outcome")
+}
