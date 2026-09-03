@@ -8,7 +8,11 @@ set -euo pipefail
 
 IDENTITY_NAME="Snitt Development"
 
-if security find-identity -v -p codesigning | grep -q "\"$IDENTITY_NAME\""; then
+# Note: NO -v flag. `-v` lists "valid identities only", which EXCLUDES a
+# self-signed root because nothing vouches for it — the exact kind of
+# certificate the instructions below tell you to create. codesign signs with an
+# untrusted certificate perfectly well; trust governs verification, not signing.
+if security find-identity -p codesigning | grep -q "\"$IDENTITY_NAME\""; then
   echo "$IDENTITY_NAME"
   exit 0
 fi
