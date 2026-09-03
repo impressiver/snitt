@@ -139,6 +139,27 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
         return CMTimeGetSeconds(CMTimeSubtract(now, first))
     }
 
+    /// Falls back to wall clock when the media offset is implausible.
+    ///
+    /// The media offset assumes SCStream's presentation timestamps are on the
+    /// host clock. That holds today, but it is an assumption no test can check
+    /// without a live display — and when it is wrong the failure is silent and
+    /// total: every marker lands at "seconds since boot" and chapters inherit
+    /// it. A generous slack keeps the precise media offset in the normal case
+    /// while turning a catastrophic mismatch into a slightly imprecise marker.
+    ///
+    /// The 5-second slack is deliberately generous and must never fire on a
+    /// real recording — SCStream's startup latency is hundreds of
+    /// milliseconds, not seconds — while still catching a clock-base
+    /// mismatch, which is off by orders of magnitude, not seconds. Do not
+    /// tighten this: a smaller slack risks firing on legitimate recordings
+    /// under system load, which is worse than the imprecision it would save.
+    static func plausibleOffset(media: Double?, wallClock: Double?) -> Double? {
+        guard let media else { return wallClock }
+        guard let wallClock else { return media >= 0 ? media : nil }
+        return abs(media - wallClock) <= 5.0 ? media : wallClock
+    }
+
     // MARK: - SCStreamOutput
 
     public func stream(_ stream: SCStream,

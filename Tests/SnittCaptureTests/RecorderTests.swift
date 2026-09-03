@@ -153,7 +153,9 @@ func markJustBeforeStopSurvives() async throws {
     try await recorder.startForTesting()
     recorder.feedForTesting(makeVideoBuffer(at: 0, size: size), .screen)
 
-    _ = await recorder.mark(label: "last thing")
+    let offset = await recorder.mark(label: "last thing")
+    #expect(offset >= 0 && offset < 60,
+            "a marker offset must be seconds into the recording, not seconds since boot")
     let bundle = try await recorder.stop()
 
     let events = try EventLog.read(from: bundle).events

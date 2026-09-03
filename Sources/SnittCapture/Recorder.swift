@@ -102,16 +102,24 @@ public actor Recorder {
     /// before `session.start()` even runs, so it precedes the first frame's
     /// presentation timestamp by however long SCStream takes to come up. A
     /// marker on the wrong clock points a reviewer at the wrong moment
-    /// (§4.12). The wall-clock fallback covers only a mark issued before the
-    /// first frame arrives, where there is no video time base yet — 0 is the
-    /// honest answer there, since the recording has no content yet.
+    /// (§4.12).
+    ///
+    /// Guarded by `CaptureSession.plausibleOffset`: the media offset assumes
+    /// SCStream's presentation timestamps are on the host clock, which holds
+    /// today but is untestable without a live display. If that assumption is
+    /// ever wrong, the failure would otherwise be silent and total — every
+    /// marker at "seconds since boot" — so the wall-clock elapsed is always
+    /// computed too and used whenever the two disagree by more than the
+    /// guard's slack. The same wall-clock value is also what is used when
+    /// there is no video time base yet (a mark before the first frame), where
+    /// 0 is the honest answer since the recording has no content yet.
     ///
     /// Returns the offset so the caller can report it — an agent that just
     /// marked "ran the tests" wants to know where that fell.
     public func mark(label: String?) async -> Double {
-        let offset = session.mediaOffsetNow()
-            ?? startedAt.map { Date().timeIntervalSince($0) }
-            ?? 0
+        let wallClock = startedAt.map { Date().timeIntervalSince($0) } ?? 0
+        let offset = CaptureSession.plausibleOffset(
+            media: session.mediaOffsetNow(), wallClock: wallClock) ?? wallClock
         await markers.add(at: offset, label: label)
         return offset
     }

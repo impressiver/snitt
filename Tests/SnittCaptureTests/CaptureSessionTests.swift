@@ -92,3 +92,21 @@ func mediaOffsetIsRelativeToFirstFrame() {
 func noOffsetBeforeFirstFrame() {
     #expect(CaptureSession.mediaOffset(from: nil, to: CMTime(seconds: 5, preferredTimescale: 600)) == nil)
 }
+
+@Test("An implausible media offset falls back to wall clock")
+func implausibleMediaOffsetFallsBack() {
+    // The 1.6-million-second case: a media clock that is not the host clock.
+    #expect(CaptureSession.plausibleOffset(media: 1_644_292, wallClock: 3.0) == 3.0)
+}
+
+@Test("A plausible media offset is preferred over wall clock")
+func plausibleMediaOffsetWins() {
+    // The whole point of the media clock: it is the accurate one, differing
+    // from wall clock by the stream's startup latency.
+    #expect(CaptureSession.plausibleOffset(media: 3.3, wallClock: 3.0) == 3.3)
+}
+
+@Test("With no media clock yet, wall clock is used")
+func noMediaClockUsesWallClock() {
+    #expect(CaptureSession.plausibleOffset(media: nil, wallClock: 2.0) == 2.0)
+}
