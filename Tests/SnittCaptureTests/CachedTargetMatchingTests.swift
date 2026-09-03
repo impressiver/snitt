@@ -125,3 +125,31 @@ func equalAreasAreStable() {
     #expect(found?.windowID == 7,
             "identical areas must not make the choice depend on how max(by:) breaks ties")
 }
+
+@Test("An app with only tiny windows is reported as too small, not as gone")
+func tooSmallIsNotTheSameAsGone() {
+    // `bestMatch` returns nil for both, and folding them together told an agent
+    // that its RUNNING application "may not be running" — so it retried or gave
+    // up instead of resizing the window or recording a display.
+    let ref = TargetReference.window(bundleIdentifier: "com.example.Editor",
+                                     titleHint: nil)
+    let onlyTiny = CachedTargetResolver.failure(for: ref, among: [
+        sized(1, "com.example.Editor", "Toolbar", 60, 800),
+    ])
+    #expect(onlyTiny == .targetTooSmall("com.example.Editor"))
+
+    let absent = CachedTargetResolver.failure(for: ref, among: [
+        sized(1, "com.example.Other", "Window", 900, 700),
+    ])
+    #expect(absent == .targetGone("com.example.Editor"))
+}
+
+@Test("A reference with no bundle identifier is gone, not too small")
+func noBundleIdentifierIsGone() {
+    // Guards against `$0.bundleIdentifier == nil` matching every window that
+    // happens to carry no owning application.
+    let ref = TargetReference.display(id: 3)
+    #expect(CachedTargetResolver.failure(for: ref, among: [
+        sized(1, nil, "Unowned", 900, 700),
+    ]) == .targetGone("unknown application"))
+}

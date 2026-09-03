@@ -23,6 +23,10 @@ public enum FailureReason: Equatable, Sendable {
     case alreadyRecording
     /// The named window/display could not be resolved on screen.
     case targetUnavailable
+    /// The application is on screen, but every window of it is too small to be
+    /// worth recording. Separate from `targetUnavailable` because the remedy is
+    /// different: resize the window, or record a display.
+    case targetTooSmall
     /// Anything else: writer setup, finalization, unexpected errors.
     case internalError
 }
@@ -254,6 +258,15 @@ public actor RecordingCoordinator: AgentRecordingControlling {
             if forcedResolver == nil { try? store.clear() }
             return .failed("\(app) is no longer available. Press again to pick a new target.",
                            reason: .targetUnavailable)
+        } catch TargetResolutionError.targetTooSmall(let app) {
+            // Deliberately does NOT clear the store: the target is not gone, it
+            // is just unusably small, so the human's cached reference is still
+            // the best guess for their next press.
+            return .failed(
+                "\(app) has no window larger than "
+                    + "\(CachedTargetResolver.minimumWindowEdge)×"
+                    + "\(CachedTargetResolver.minimumWindowEdge) to record.",
+                reason: .targetTooSmall)
         } catch {
             return .failed(Self.explain(error), reason: Self.reason(for: error))
         }

@@ -43,7 +43,7 @@ public struct CachedTargetResolver: TargetResolver {
     /// with a floating inspector could silently capture a 60×200 strip and be
     /// told it succeeded. Refusing is better: `target_not_found` is a fact the
     /// agent can act on, an unusable recording is not.
-    static let minimumWindowEdge = 100
+    public static let minimumWindowEdge = 100
 
     /// Chooses the window that best matches a stored reference.
     ///
@@ -75,6 +75,17 @@ public struct CachedTargetResolver: TargetResolver {
             candidate.width * candidate.height > best.width * best.height
                 ? candidate : best
         }
+    }
+
+    /// Why `bestMatch` found nothing — the two reasons need opposite advice.
+    ///
+    /// Pure, so the distinction is testable without a screen.
+    static func failure(for reference: TargetReference,
+                        among candidates: [WindowCandidate]) -> TargetResolutionError {
+        let name = reference.bundleIdentifier ?? "unknown application"
+        guard let bundleID = reference.bundleIdentifier else { return .targetGone(name) }
+        let appIsOnScreen = candidates.contains { $0.bundleIdentifier == bundleID }
+        return appIsOnScreen ? .targetTooSmall(name) : .targetGone(name)
     }
 
     public func resolve() async throws -> ResolvedTarget {
@@ -119,9 +130,7 @@ public struct CachedTargetResolver: TargetResolver {
             guard let match = Self.bestMatch(for: reference, among: candidates),
                   let window = content.windows.first(where: { $0.windowID == match.windowID })
             else {
-                throw TargetResolutionError.targetGone(
-                    reference.bundleIdentifier ?? "unknown application"
-                )
+                throw Self.failure(for: reference, among: candidates)
             }
 
             let filter = SCContentFilter(desktopIndependentWindow: window)
