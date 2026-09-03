@@ -19,8 +19,12 @@ func cachedTargetIsNotReusedForTheHotkey() {
 
 @Test("Outcomes distinguish cancellation from failure")
 func outcomesAreDistinguishable() {
-    #expect(CoordinatorOutcome.cancelled != CoordinatorOutcome.failed("x"))
-    #expect(CoordinatorOutcome.failed("a") != CoordinatorOutcome.failed("b"))
+    #expect(CoordinatorOutcome.cancelled != CoordinatorOutcome.failed("x", reason: .internalError))
+    #expect(CoordinatorOutcome.failed("a", reason: .internalError)
+            != CoordinatorOutcome.failed("b", reason: .internalError))
+    #expect(CoordinatorOutcome.failed("a", reason: .permissionDenied)
+            != CoordinatorOutcome.failed("a", reason: .alreadyRecording),
+            "the reason is part of the outcome — an agent branches on it")
 }
 
 @Test("A stopped outcome reports whether the copy succeeded")
@@ -123,10 +127,11 @@ func agentStartsWithAnEmptyStore() async throws {
     // no way to do without live enumeration (see the task report). What this
     // DOES prove, unambiguously: the forced resolver's `resolve()` ran at all,
     // which is exactly the step the bug skipped.
-    guard case .failed(let message) = outcome else {
+    guard case .failed(let message, _) = outcome else {
         Issue.record("expected a failure surfaced from MarkerResolver, got \(outcome)")
         return
     }
     #expect(!message.contains("cached target could not be read"),
             "an agent's forced resolver must run instead of hitting the empty-store cache guard — got: \(message)")
 }
+

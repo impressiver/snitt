@@ -94,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             case .cancelled:
                 statusItem.update(.idle)
-            case .failed(let message):
+            case .failed(let message, _):
                 statusItem.update(.idle)
                 notify(message)
             case .ignored:

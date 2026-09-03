@@ -9,11 +9,29 @@ public enum ResolverChoice: Equatable, Sendable {
     case cache
 }
 
+/// Why a coordinator operation failed, in a form a caller can branch on.
+///
+/// The `failed` message strings are UI text for the hotkey path — a person reads
+/// them in an alert. An agent must never parse those; §10's contract is a code.
+/// This carries the machine-readable half alongside the human-readable one, so
+/// `AutomationHost` can map a failure to the right `AutomationError.Code`
+/// instead of collapsing every outcome into `target_not_found`.
+public enum FailureReason: Equatable, Sendable {
+    /// Screen Recording is not granted (or was granted to a stale signature).
+    case permissionDenied
+    /// A recording is already running — including a human's hotkey recording.
+    case alreadyRecording
+    /// The named window/display could not be resolved on screen.
+    case targetUnavailable
+    /// Anything else: writer setup, finalization, unexpected errors.
+    case internalError
+}
+
 public enum CoordinatorOutcome: Equatable, Sendable {
     case started(String, usedCache: Bool)
     case stopped(URL, copied: Bool)
     case cancelled
-    case failed(String)
+    case failed(String, reason: FailureReason)
     /// A press arrived while a start or stop was already in flight; ignored.
     case ignored
 }
@@ -35,6 +53,7 @@ public actor RecordingCoordinator {
     /// Checking `active` alone is not enough, because it is not assigned until
     /// after the awaits complete.
     private var isTransitioning = false
+
 
     public init(pickerResolver: TargetResolver,
                 cachedResolverFactory: @escaping @Sendable (TargetReference) -> TargetResolver,
@@ -91,7 +110,7 @@ public actor RecordingCoordinator {
         isTransitioning = true
         defer { isTransitioning = false }
         guard active == nil else {
-            return .failed("A recording is already in progress.")
+            return .failed("A recording is already in progress.", reason: .alreadyRecording)
         }
         return await startRecording(forcedResolver: cachedResolverFactory(reference))
     }
@@ -119,7 +138,9 @@ public actor RecordingCoordinator {
         let granted = await MainActor.run {
             ScreenRecordingAccess.ensureGranted()
         }
-        guard granted else { return .failed(Self.screenRecordingDeniedMessage) }
+        guard granted else {
+            return .failed(Self.screenRecordingDeniedMessage, reason: .permissionDenied)
+        }
 
         // An agent names its target explicitly, so there is no picker to show and
         // no cache to consult — and consulting one is actively wrong: the store is
@@ -143,7 +164,8 @@ public actor RecordingCoordinator {
             switch choice {
             case .cache:
                 guard let stored, let reference = Self.reference(from: stored) else {
-                    return .failed("The cached target could not be read.")
+                    return .failed("The cached target could not be read.",
+                                   reason: .targetUnavailable)
                 }
                 resolver = cachedResolverFactory(reference)
             case .picker:
@@ -160,9 +182,10 @@ public actor RecordingCoordinator {
             // The cached app is gone. Clear the stale cache so the next press
             // offers the picker rather than failing again.
             try? store.clear()
-            return .failed("\(app) is no longer available. Press again to pick a new target.")
+            return .failed("\(app) is no longer available. Press again to pick a new target.",
+                           reason: .targetUnavailable)
         } catch {
-            return .failed(Self.explain(error))
+            return .failed(Self.explain(error), reason: Self.reason(for: error))
         }
 
         // Deliberately skipped for agent recordings: the store is the human's
@@ -187,12 +210,14 @@ public actor RecordingCoordinator {
             return .started(target.descriptor.title ?? "screen",
                             usedCache: choice == .cache)
         } catch {
-            return .failed("Could not start recording: \(error)")
+            return .failed("Could not start recording: \(error)", reason: .internalError)
         }
     }
 
     private func stopRecording() async -> CoordinatorOutcome {
-        guard let recorder = active else { return .failed("Not recording.") }
+        guard let recorder = active else {
+            return .failed("Not recording.", reason: .internalError)
+        }
         active = nil
         do {
             let bundle = try await recorder.stop()
@@ -200,7 +225,7 @@ public actor RecordingCoordinator {
                                                    to: .general)
             return .stopped(bundle.url, copied: copied)
         } catch {
-            return .failed("Recording failed to finalize: \(error)")
+            return .failed("Recording failed to finalize: \(error)", reason: .internalError)
         }
     }
 
@@ -233,6 +258,19 @@ public actor RecordingCoordinator {
     /// silently invalidates the old grant while System Settings still shows the
     /// stale entry as enabled. That case looks identical to a denial and is the
     /// one most likely to confuse, so the message names it explicitly.
+    /// The machine-readable twin of `explain(_:)`.
+    ///
+    /// Kept beside it so the two can never disagree: the -3801 case whose text
+    /// says "does not have permission" must also report `.permissionDenied`.
+    static func reason(for error: Error) -> FailureReason {
+        let nsError = error as NSError
+        if nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+           nsError.code == -3801 {
+            return .permissionDenied
+        }
+        return .internalError
+    }
+
     static func explain(_ error: Error) -> String {
         let nsError = error as NSError
         if nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
