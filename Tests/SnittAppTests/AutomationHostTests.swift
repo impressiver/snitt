@@ -198,6 +198,73 @@ func watchdogDoesNotStopSomeoneElsesRecording() async throws {
             "the watchdog must not blank the indicator over a human's recording")
 }
 
+@MainActor
+@Test("A watchdog stop that fails to finalize still clears the indicator")
+func expiryWithFailedFinalizeClearsTheIndicator() async throws {
+    // A regression this fix wave introduced, caught in re-review. `.failed` from
+    // `stopForAgent` still means the recording is OVER — `stopRecording()` sets
+    // `active = nil` before `recorder.stop()` can throw, so only finalization
+    // failed. Gating the idle push on `.stopped` alone left the menu bar lit
+    // with nothing running: a person clicks it to stop what looks live,
+    // `toggle()` sees `active == nil`, and STARTS a new recording through the
+    // picker. Worse than the defect the watchdog exists to fix.
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let host = makeHost(coordinator: coordinator, recorder: recorder)
+
+    let started = await host.handle(startBody(maxDuration: 0.2))
+    guard case .started(let sessionID, _) = started else {
+        Issue.record("expected a started response, got \(started)")
+        return
+    }
+    await coordinator.setStopOverride(.failed("writer would not finalize"))
+
+    for _ in 0..<40 {
+        try await Task.sleep(for: .milliseconds(50))
+        if await !coordinator.stopCalls.isEmpty { break }
+    }
+    #expect(await coordinator.stopCalls == [sessionID])
+    #expect(recorder.states.last == .idle,
+            "an unfinalized recording is still a STOPPED recording; a lit indicator now means the kill switch starts a new one")
+
+    let status = await host.handle(.status)
+    #expect(status == .status(StatusInfo(recording: false, sessionID: nil,
+                                         elapsedSeconds: nil)))
+}
+
+@MainActor
+@Test("A watchdog that finds the coordinator busy keeps the session and its cap")
+func expiryWhileBusyPreservesTheSession() async throws {
+    // Matches `stop()`, which preserves the session on `.busy` and has a test
+    // saying so. Nothing stopped, so nothing may be forgotten — dropping the
+    // registry entry here would abandon the cap on a recording still running.
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let host = makeHost(coordinator: coordinator, recorder: recorder)
+
+    let started = await host.handle(startBody(maxDuration: 0.2))
+    guard case .started(let sessionID, _) = started else {
+        Issue.record("expected a started response, got \(started)")
+        return
+    }
+    await coordinator.setStopOverride(.busy)
+
+    for _ in 0..<40 {
+        try await Task.sleep(for: .milliseconds(50))
+        if await !coordinator.stopCalls.isEmpty { break }
+    }
+    #expect(await coordinator.stopCalls == [sessionID])
+
+    let status = await host.handle(.status)
+    guard case .status(let info) = status else {
+        Issue.record("expected status")
+        return
+    }
+    #expect(info.recording && info.sessionID == sessionID,
+            "a stop that did not happen must not abandon the cap")
+    #expect(!recorder.states.contains(.idle))
+}
+
 // MARK: - Important 3: outcomes map to the agent-facing contract
 
 @Test("Each coordinator failure maps to its own error code")
@@ -214,6 +281,8 @@ func outcomesMapToCodes() {
         (.failed("gone", reason: .targetUnavailable), .targetNotFound),
         (.cancelled, .targetNotFound),
         (.failed("writer blew up", reason: .internalError), .internalError),
+        (.failed("Editor has no window larger than 100×100 to record.",
+                 reason: .targetTooSmall), .targetNotFound),
     ]
     for (outcome, expected) in cases {
         #expect(AutomationHost.error(for: outcome).code == expected,
@@ -227,6 +296,22 @@ func permissionDeniedCarriesTheRelaunchHint() {
     #expect(error.hint?.contains("relaunch") == true,
             "the grant does not take effect until Snitt is relaunched (spike S5)")
     #expect(AutomationError.exitCode[error.code] == 15)
+}
+
+@Test("A too-small window is not reported as an app that may not be running")
+func tooSmallCarriesItsOwnAdvice() {
+    // Folding this into the generic `targetUnavailable` arm reintroduced exactly
+    // what finding 3 removed: an agent told its running app is not running
+    // retries or gives up, instead of resizing the window.
+    let error = AutomationHost.error(
+        for: .failed("Editor has no window larger than 100×100 to record.",
+                     reason: .targetTooSmall))
+    #expect(error.code == .targetNotFound)
+    #expect(error.message.contains("no window larger than"),
+            "the agent must be told what is actually wrong")
+    #expect(error.hint?.contains("may not be running") != true,
+            "the application IS running — that hint is the wrong advice here")
+    #expect(error.hint?.contains("Resize") == true)
 }
 
 @MainActor

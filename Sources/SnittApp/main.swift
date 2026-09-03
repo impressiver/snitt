@@ -110,6 +110,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 statusItem.update(.idle)
             case .failed(let message, _):
                 statusItem.update(.idle)
+                // A press that stopped an agent recording but failed to
+                // FINALIZE it still ended that recording — `stopRecording()`
+                // clears `active` before it can throw. Without this the
+                // registry keeps claiming a session is live.
+                await automationHost?.clearAgentSession()
                 notify(message)
             case .ignored:
                 // A press landed mid-transition. Deliberately silent: the user

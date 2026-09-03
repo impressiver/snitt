@@ -228,6 +228,16 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                 message: "A recording is already in progress.",
                 hint: "Stop it first with `snitt record stop`, or check `snitt status`. "
                     + "It may have been started by a person from the menu bar.")
+        case .failed(let message, .targetTooSmall):
+            // Its own arm because the generic hint — "the application may not be
+            // running" — is exactly the wrong advice here: the app IS running.
+            return AutomationError(
+                code: .targetNotFound,
+                message: message,
+                hint: "Snitt will not record a window smaller than 100×100 on either "
+                    + "axis, because a palette or tooltip is never what was meant. "
+                    + "Resize the window, or record a display if a person has "
+                    + "allowed full-display agent recording.")
         case .failed(_, .targetUnavailable), .cancelled:
             return AutomationError(
                 code: .targetNotFound,
@@ -264,14 +274,27 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
 
     private func expire(_ sessionID: String) async {
         guard await registry.expiredSession(now: Date()) == sessionID else { return }
-        let result = await coordinator.stopForAgent(sessionID: sessionID)
-        // The registry entry is stale either way — the session is over, or it
-        // was never the thing recording any more.
-        try? await registry.close(sessionID)
-        // Only when WE stopped it. If a person is recording now, blanking the
-        // indicator would hide their own live recording.
-        if case .stopped = result {
+        switch await coordinator.stopForAgent(sessionID: sessionID) {
+        case .stopped, .failed:
+            // `.failed` still means the recording is OVER: `stopRecording()`
+            // clears `active` before `recorder.stop()` can throw, so only
+            // finalization failed. Leaving the indicator lit would be worse
+            // than the defect this watchdog exists to fix — a person clicks the
+            // menu bar to stop what looks like a live recording, `toggle()`
+            // sees `active == nil`, and STARTS a new one through the picker.
+            try? await registry.close(sessionID)
             await pushState(.idle)
+
+        case .notCurrentSession:
+            // Someone else's recording, or nothing at all. The registry entry
+            // is stale; the indicator is not ours to clear.
+            try? await registry.close(sessionID)
+
+        case .busy:
+            // Nothing stopped, so nothing may be forgotten — the cap must
+            // survive a transition that was merely in flight. Matches `stop()`,
+            // which preserves the session for the same reason.
+            break
         }
     }
 
