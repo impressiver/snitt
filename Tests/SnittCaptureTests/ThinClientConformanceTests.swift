@@ -71,6 +71,95 @@ func thinClientsDoNotImportCapture() throws {
             "§4.9: capture belongs to the resident app, because macOS attributes the grant to the responsible process — \(offenders)")
 }
 
+/// The modules a thin target may never DEPEND on, whether or not it imports them.
+///
+/// Separate from `forbiddenImports` because the original defect was a declared
+/// dependency that no file imported — SwiftPM links it regardless, so an
+/// import scan cannot see it. `SnittDocument` is permitted: it imports only
+/// Foundation and carries no capture stack.
+private let forbiddenDependencies = ["SnittCapture"]
+
+/// Extracts the text of one target's declaration from a `Package.swift`
+/// manifest, so `thinTargetsDoNotDependOnCapture` can check its dependency
+/// array without a real Swift parser.
+///
+/// Finds `name: "<target>"`, walks backward to the nearest preceding
+/// `.target(`/`.executableTarget(`/`.testTarget(` opener, then walks forward
+/// counting paren depth until it returns to zero — that closing paren ends
+/// the declaration. This assumes the manifest's dependency arrays contain no
+/// parentheses of their own, which holds today; if the manifest's formatting
+/// ever defeats this, say so rather than growing this into an ad hoc parser.
+///
+/// The name search is scoped to start AFTER the top-level `targets: [` array
+/// opens, matched as `"\n    targets: [\n"` rather than the bare substring
+/// `"targets: ["`. Two collisions would otherwise be possible: every target
+/// with a library product (`SnittAutomation` among them) also appears as
+/// `.library(name: "<target>", targets: [...])` earlier, in `products:` — and
+/// that same `.library(...)` call ALSO contains the bare substring
+/// `"targets: ["` inline, ahead of the real array. Either collision finds the
+/// wrong occurrence, and the product one has no enclosing `.target(`-family
+/// opener at all, so the backward search below would silently come up empty
+/// and the whole check would pass vacuously for exactly the target this test
+/// most needs to watch.
+func targetDeclaration(named target: String, in manifest: String) -> String? {
+    guard let targetsSection = manifest.range(of: "\n    targets: [\n") else { return nil }
+    let scope = targetsSection.upperBound..<manifest.endIndex
+
+    let needle = "name: \"\(target)\""
+    guard let nameRange = manifest.range(of: needle, range: scope) else { return nil }
+
+    let openers = [".target(", ".executableTarget(", ".testTarget("]
+    var openerStart: String.Index?
+    for opener in openers {
+        guard let range = manifest.range(
+            of: opener, options: .backwards,
+            range: scope.lowerBound..<nameRange.lowerBound
+        ) else { continue }
+        if openerStart == nil || range.lowerBound > openerStart! {
+            openerStart = range.lowerBound
+        }
+    }
+    guard let start = openerStart else { return nil }
+
+    var depth = 0
+    var index = start
+    while index < manifest.endIndex {
+        let character = manifest[index]
+        if character == "(" {
+            depth += 1
+        } else if character == ")" {
+            depth -= 1
+            if depth == 0 {
+                return String(manifest[start...index])
+            }
+        }
+        index = manifest.index(after: index)
+    }
+    return nil // unbalanced parens — the manifest is malformed, not just naive
+}
+
+@Test("No thin target declares a dependency on the capture stack")
+func thinTargetsDoNotDependOnCapture() throws {
+    // The import scan above cannot catch this: SwiftPM links a declared
+    // dependency whether or not any file imports it, which is exactly how
+    // snitt-cli and snitt-mcp came to link ScreenCaptureKit in the first place.
+    let manifest = try String(
+        contentsOf: repositoryRoot().appendingPathComponent("Package.swift"),
+        encoding: .utf8)
+
+    var offenders: [String] = []
+    for target in ["snitt-cli", "snitt-mcp", "SnittAutomation"] {
+        guard let declaration = targetDeclaration(named: target, in: manifest) else {
+            Issue.record("could not find the \(target) target in Package.swift")
+            continue
+        }
+        for module in forbiddenDependencies where declaration.contains("\"\(module)\"") {
+            offenders.append("\(target) declares a dependency on \(module)")
+        }
+    }
+    #expect(offenders.isEmpty, "\(offenders)")
+}
+
 @Test("The scanner sees a real import but not one that is only mentioned")
 func importScannerDistinguishesMentionsFromImports() {
     // Both directions matter. A comment naming an import must not FAIL the
