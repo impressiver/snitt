@@ -1,5 +1,4 @@
 import Foundation
-import CoreGraphics
 import AppKit
 import SnittCapture
 import SnittDocument
@@ -99,9 +98,8 @@ public actor RecordingCoordinator {
         // preflighted never prompted at all, and two runs were wasted before the
         // defect was found. The app had the same bug — it called SCShareableContent
         // and hoped, which is why it never appeared in System Settings.
-        let granted = await MainActor.run { () -> Bool in
-            if CGPreflightScreenCaptureAccess() { return true }
-            return CGRequestScreenCaptureAccess()
+        let granted = await MainActor.run {
+            ScreenRecordingAccess.ensureGranted()
         }
         guard granted else { return .failed(Self.screenRecordingDeniedMessage) }
 

@@ -9,7 +9,7 @@ import Foundation
 import ScreenCaptureKit
 import CoreMedia
 import CoreVideo
-import CoreGraphics
+import SnittCapture
 
 let socketPath = "/tmp/snitt-s5.sock"
 
@@ -42,16 +42,11 @@ struct S5Probe {
         // registers this app in System Settings. A probe that skips Request
         // measures nothing and silently reports failure — this exact defect has
         // now appeared three times in this project.
-        if !CGPreflightScreenCaptureAccess() {
-            log("Screen Recording not yet granted — requesting (a dialog should appear)")
-            let granted = CGRequestScreenCaptureAccess()
-            log("CGRequestScreenCaptureAccess() returned: \(granted)")
-            if !granted {
-                log("DENIED. Grant S5Server in System Settings > Privacy & Security >")
-                log("Screen & System Audio Recording, then relaunch this app.")
-            }
-        } else {
-            log("Screen Recording already granted at start")
+        let granted = ScreenRecordingAccess.ensureGranted()
+        log("ScreenRecordingAccess.ensureGranted() returned: \(granted)")
+        if !granted {
+            log("DENIED. Grant S5Server in System Settings > Privacy & Security >")
+            log("Screen & System Audio Recording, then relaunch this app.")
         }
 
         unlink(socketPath)
