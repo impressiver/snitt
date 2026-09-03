@@ -2,7 +2,7 @@ import Testing
 import Foundation
 
 /// Locates the repository root from this file's own path.
-private func repositoryRoot() -> URL {
+func repositoryRoot() -> URL {
     URL(fileURLWithPath: #filePath)          // Tests/SnittCaptureTests/ThisFile.swift
         .deletingLastPathComponent()          // Tests/SnittCaptureTests
         .deletingLastPathComponent()          // Tests
@@ -57,7 +57,7 @@ private func repositoryRoot() -> URL {
 ///   unrelated identifier of the same name (e.g. a local variable or a
 ///   different type's member sharing the name `CGPreflightScreenCaptureAccess`),
 ///   so an offender name is a strong hint for a human to check, not a proof.
-private func strippingCommentsAndLiterals(_ source: String) -> String {
+func strippingCommentsAndLiterals(_ source: String) -> String {
     let chars = Array(source)
     let n = chars.count
     var out = ""

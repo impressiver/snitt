@@ -14,7 +14,14 @@ let package = Package(
         .target(name: "SnittDocument"),
         .target(name: "SnittCapture", dependencies: ["SnittDocument"]),
         .target(name: "SnittExport", dependencies: ["SnittDocument"]),
-        .target(name: "SnittAutomation", dependencies: ["SnittCapture", "SnittDocument"]),
+        // Deliberately depends on NOTHING: §4.9 forbids any frontend from calling
+        // ScreenCaptureKit, because macOS attributes the capture grant to the
+        // responsible process — a capturing CLI re-prompts for every new parent.
+        // It declared SnittCapture and SnittDocument and imported neither, which
+        // transitively linked ScreenCaptureKit into snitt-cli and snitt-mcp and
+        // left the invariant resting on prose comments. ThinClientConformanceTests
+        // is the enforcement; this is the fact it enforces.
+        .target(name: "SnittAutomation"),
         .executableTarget(
             name: "snitt-probe",
             dependencies: ["SnittCapture", "SnittDocument"],
