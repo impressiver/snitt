@@ -120,7 +120,8 @@ func agentStartsWithAnEmptyStore() async throws {
 
     let outcome = await coordinator.startForAgent(
         sessionID: "session-1",
-        reference: .window(bundleIdentifier: "com.example.Agent", titleHint: nil))
+        reference: .window(bundleIdentifier: "com.example.Agent", titleHint: nil),
+        git: nil)
 
     // `MarkerResolver.resolve()` always throws, so the coordinator can never
     // reach `.started` in this test — reaching a real `.started` would require
@@ -229,7 +230,8 @@ func agentFailureLeavesTheHumanStoreIntact() async throws {
 
     _ = await coordinator.startForAgent(
         sessionID: "s1",
-        reference: .window(bundleIdentifier: "com.example.Gone", titleHint: nil))
+        reference: .window(bundleIdentifier: "com.example.Gone", titleHint: nil),
+        git: nil)
 
     #expect(store.load() == storedSafari(),
             "an agent must not be able to erase the human's cached target")

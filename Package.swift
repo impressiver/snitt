@@ -32,7 +32,12 @@ let package = Package(
             dependencies: ["SnittCapture", "SnittDocument", "SnittExport", "SnittAutomation"]
         ),
         .executableTarget(name: "snitt-cli",
-                          dependencies: ["SnittAutomation"],
+                          // SnittDocument only, never SnittCapture: it declares
+                          // nothing that touches ScreenCaptureKit (see the
+                          // SnittAutomation comment above) and is needed here to
+                          // read back RecordingMetadata for `record stop`'s
+                          // health report.
+                          dependencies: ["SnittAutomation", "SnittDocument"],
                           path: "Sources/snitt-cli"),
         .executableTarget(name: "snitt-mcp",
                           dependencies: ["SnittAutomation"],

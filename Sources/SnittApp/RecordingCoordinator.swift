@@ -69,7 +69,8 @@ public enum AgentMarkResult: Equatable, Sendable {
 }
 
 public protocol AgentRecordingControlling: Sendable {
-    func startForAgent(sessionID: String, reference: TargetReference) async -> CoordinatorOutcome
+    func startForAgent(sessionID: String, reference: TargetReference,
+                       git: GitContext?) async -> CoordinatorOutcome
     func stopForAgent(sessionID: String) async -> AgentStopResult
     func markForAgent(sessionID: String, label: String?) async -> AgentMarkResult
 }
@@ -166,7 +167,8 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     /// entire duration, so `AutomationHost` pushes state through its
     /// `onRecordingState` sink around every call to this method.
     public func startForAgent(sessionID: String,
-                              reference: TargetReference) async -> CoordinatorOutcome {
+                              reference: TargetReference,
+                              git: GitContext?) async -> CoordinatorOutcome {
         guard !isTransitioning else { return .ignored }
         isTransitioning = true
         defer { isTransitioning = false }
@@ -176,7 +178,7 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         // An agent's demo is watched by a human too, so it auto-focuses just
         // like the hotkey path — there is no Shift key for an agent to hold.
         let outcome = await startRecording(forcedResolver: cachedResolverFactory(reference),
-                                           suppressFocus: false)
+                                           suppressFocus: false, git: git)
         if case .started = outcome { agentSessionID = sessionID }
         return outcome
     }
@@ -234,7 +236,8 @@ public actor RecordingCoordinator: AgentRecordingControlling {
 
     private func startRecording(
         forcedResolver: TargetResolver? = nil,
-        suppressFocus: Bool = false
+        suppressFocus: Bool = false,
+        git: GitContext? = nil
     ) async -> CoordinatorOutcome {
         // Screen Recording must be granted before ANY capture API returns real
         // content. Preflight only READS the current state; Request is what raises
@@ -332,7 +335,7 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         }
 
         let url = outputDirectory.appendingPathComponent(
-            "Snitt-\(Int(Date().timeIntervalSince1970)).snitt"
+            BundleNaming.filename(git: git, timestamp: Int(Date().timeIntervalSince1970))
         )
         do {
             // Provenance is the one metadata field whose entire purpose is
@@ -341,7 +344,8 @@ public actor RecordingCoordinator: AgentRecordingControlling {
             // nothing ever passed otherwise. `forcedResolver != nil` IS the
             // agent path — an agent names its target explicitly, a human picks.
             let recorder = try Recorder(target: target, bundleURL: url,
-                                        initiator: Self.initiator(isAgent: forcedResolver != nil))
+                                        initiator: Self.initiator(isAgent: forcedResolver != nil),
+                                        git: git)
             try await recorder.start()
             active = recorder
             return .started(target.descriptor.title ?? "screen",

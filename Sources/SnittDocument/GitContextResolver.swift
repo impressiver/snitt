@@ -18,8 +18,23 @@ public struct CommandRunner: Sendable {
 
     public static let git = CommandRunner { tool, arguments, directory in
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = [tool] + arguments
+        // `Snitt.app`'s only production caller of this resolver runs with the
+        // minimal PATH LaunchServices gives a launched .app — no Homebrew, no
+        // shell profile (`launchctl getenv PATH` is empty in that context).
+        // `/usr/bin/env git` would resolve through that empty PATH and fail
+        // silently, which means every bundle would have no git context in
+        // exactly the configuration Snitt ships in. `/usr/bin/git` is Apple's
+        // Git and always present on macOS, so it is tried first; falling back
+        // to `env` only if that path is somehow missing keeps this working in
+        // non-standard environments (e.g. tests that swap `tool`).
+        let directPath = "/usr/bin/\(tool)"
+        if FileManager.default.isExecutableFile(atPath: directPath) {
+            process.executableURL = URL(fileURLWithPath: directPath)
+            process.arguments = arguments
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [tool] + arguments
+        }
         process.currentDirectoryURL = directory
         let pipe = Pipe()
         process.standardOutput = pipe

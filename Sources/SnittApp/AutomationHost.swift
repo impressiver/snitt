@@ -1,6 +1,7 @@
 import Foundation
 import SnittAutomation
 import SnittCapture
+import SnittDocument
 
 /// Bridges automation requests to the same recording machinery the hotkey uses.
 ///
@@ -197,8 +198,15 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                                             message: "No target was specified."))
         }
 
+        // Resolved here, not in the coordinator: only the CLIENT knows which
+        // repository a recording is about (§7). Snitt.app's own cwd is "/".
+        let git = options.workingDirectory
+            .map { URL(fileURLWithPath: $0) }
+            .flatMap { GitContextResolver.resolve(in: $0) }
+
         let outcome = await coordinator.startForAgent(sessionID: sessionID,
-                                                      reference: reference)
+                                                      reference: reference,
+                                                      git: git)
         switch outcome {
         case .started(let name, _):
             await pushState(.recording(startedAt: Date()))

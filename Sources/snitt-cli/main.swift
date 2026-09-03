@@ -6,6 +6,7 @@
 // new parent (spec §4.9). Snitt.app holds the grant; this asks it to act.
 import Foundation
 import SnittAutomation
+import SnittDocument
 
 func emit(_ value: some Encodable) {
     let encoder = JSONEncoder()
@@ -14,6 +15,15 @@ func emit(_ value: some Encodable) {
        let text = String(data: data, encoding: .utf8) {
         print(text)
     }
+}
+
+/// Emits a heterogeneous payload. `emit` takes an `Encodable`; the stop response
+/// mixes a string path with optional numbers, so it goes through JSONSerialization.
+func emitObject(_ value: [String: Any]) {
+    guard let data = try? JSONSerialization.data(
+            withJSONObject: value, options: [.prettyPrinted, .sortedKeys]),
+          let text = String(data: data, encoding: .utf8) else { return }
+    print(text)
 }
 
 func note(_ message: String) {
@@ -55,7 +65,9 @@ if case .help = command {
 let body: AutomationRequest.Body
 switch command {
 case .targetsList:              body = .listTargets
-case .recordStart(let options): body = .startRecording(options)
+case .recordStart(var options):
+    options.workingDirectory = FileManager.default.currentDirectoryPath
+    body = .startRecording(options)
 case .recordStop(let session):  body = .stopRecording(sessionID: session)
 case .recordMark(let session, let label): body = .mark(sessionID: session, label: label)
 case .status:                   body = .status
@@ -74,7 +86,20 @@ do {
         emit(["sessionId": id, "target": target])
         note("Recording \(target). Stop with: snitt record stop \(id)")
     case .stopped(let path):
-        emit(["bundlePath": path])
+        var payload: [String: Any] = ["bundlePath": path]
+        // `init(opening:)` throws if the bundle is not there — the health block
+        // is best-effort reporting, so a failure to read it must not turn a
+        // successful recording into a CLI error.
+        if let bundle = try? SnittBundle(opening: URL(fileURLWithPath: path)),
+           let meta = try? RecordingMetadata.read(from: bundle),
+           let health = meta.health {
+            var block: [String: Any] = [:]
+            if let v = health.meanFrameVariance { block["meanFrameVariance"] = v }
+            if let m = health.micRMS { block["micRMS"] = m }
+            if let s = health.systemAudioRMS { block["systemAudioRMS"] = s }
+            if !block.isEmpty { payload["health"] = block }
+        }
+        emitObject(payload)
         note("Saved \(path)")
     case .status(let info):            emit(info)
     case .handshake(let info):         emit(info)

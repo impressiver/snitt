@@ -19,6 +19,7 @@ public actor Recorder {
     private let session: CaptureSession
     private let sink: AssetWriterSink
     private let initiator: Initiator
+    private let git: GitContext?
 
     private var startedAt: Date?
     private var isFinished = false
@@ -32,7 +33,8 @@ public actor Recorder {
     public init(target: ResolvedTarget,
                 bundleURL: URL,
                 options: CaptureOptions = CaptureOptions(),
-                initiator: Initiator) throws {
+                initiator: Initiator,
+                git: GitContext? = nil) throws {
         let bundle = try SnittBundle(creatingAt: bundleURL)
         let descriptor = target.descriptor
         let sink = try AssetWriterSink(
@@ -42,17 +44,20 @@ public actor Recorder {
         self.bundle = bundle
         self.sink = sink
         self.initiator = initiator
+        self.git = git
         self.session = CaptureSession(target: target, sink: sink, options: options)
     }
 
     private init(bundle: SnittBundle,
                  sink: AssetWriterSink,
                  session: CaptureSession,
-                 initiator: Initiator) {
+                 initiator: Initiator,
+                 git: GitContext? = nil) {
         self.bundle = bundle
         self.sink = sink
         self.session = session
         self.initiator = initiator
+        self.git = git
     }
 
     public func start() async throws {
@@ -127,11 +132,11 @@ public actor Recorder {
     private func writeSidecars(stoppedAt: Date, collectedMarkers: [LoggedEvent]) throws {
         let duration = startedAt.map { stoppedAt.timeIntervalSince($0) }
         let metadata = RecordingMetadata(
-            createdAt: startedAt ?? Date(),
+            createdAt: startedAt ?? stoppedAt,
             initiator: initiator,
             durationSeconds: duration,
-            git: nil,      // populated in M2
-            health: nil    // populated in M2
+            git: git,
+            health: session.health()
         )
         try metadata.write(to: bundle)
         try EventLog(events: collectedMarkers).write(to: bundle)

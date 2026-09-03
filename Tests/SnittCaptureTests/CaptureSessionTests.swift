@@ -10,6 +10,7 @@ final class SpySink: SampleBufferSink, @unchecked Sendable {
     var beginCount = 0
     var appended: [(TrackKind, Double)] = []
     var finishedURL = URL(fileURLWithPath: "/tmp/spy.mov")
+    let health = HealthSampler()
     private let lock = NSLock()
 
     func begin(at startTime: CMTime) throws {

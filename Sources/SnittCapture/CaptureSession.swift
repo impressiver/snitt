@@ -1,6 +1,7 @@
 import Foundation
 import ScreenCaptureKit
 import CoreMedia
+import SnittDocument
 
 public struct CaptureOptions: Sendable {
     public var captureMicrophone: Bool
@@ -114,6 +115,9 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
         try await stream.stopCapture()
         self.stream = nil
     }
+
+    /// §12.1's metrics, gathered by the sink during the writer pass.
+    func health() -> CaptureHealth { sink.health.result() }
 
     /// Seconds from the video's t=0 to now, in the SAME time base the video
     /// track uses.

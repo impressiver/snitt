@@ -2,6 +2,7 @@ import Testing
 import Foundation
 import SnittAutomation
 import SnittCapture
+import SnittDocument
 @testable import SnittApp
 
 /// Tests for the seam that had none.
@@ -43,7 +44,8 @@ actor FakeCoordinator: AgentRecordingControlling {
     func humanStops() { activeSession = nil }
 
     func startForAgent(sessionID: String,
-                       reference: TargetReference) async -> CoordinatorOutcome {
+                       reference: TargetReference,
+                       git: GitContext?) async -> CoordinatorOutcome {
         startCalls.append(sessionID)
         if case .started = startOutcome { activeSession = sessionID }
         return startOutcome
