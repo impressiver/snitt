@@ -78,3 +78,17 @@ func beginsExactlyOnce() throws {
     #expect(sink.begun == true)
     #expect(sink.beginCount == 1)
 }
+
+@Test("A media offset is measured from the video's first frame, not from wall clock")
+func mediaOffsetIsRelativeToFirstFrame() {
+    // A marker's offset must land in the same time base as the video track, or
+    // it points a reviewer at the wrong moment (§4.12).
+    let first = CMTime(seconds: 1000.0, preferredTimescale: 600)
+    let now = CMTime(seconds: 1012.5, preferredTimescale: 600)
+    #expect(abs((CaptureSession.mediaOffset(from: first, to: now) ?? -1) - 12.5) < 0.001)
+}
+
+@Test("A marker before the first frame has no media offset")
+func noOffsetBeforeFirstFrame() {
+    #expect(CaptureSession.mediaOffset(from: nil, to: CMTime(seconds: 5, preferredTimescale: 600)) == nil)
+}

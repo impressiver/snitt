@@ -40,6 +40,11 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
     private let lock = NSLock()
     private var didBegin = false
 
+    /// The presentation timestamp of the first delivered buffer — the video
+    /// track's t=0, on SCStream's host/mach clock. Guarded by `lock` alongside
+    /// `didBegin`, since both are set together in `handle(_:of:)`.
+    private var firstPresentationTime: CMTime?
+
     public init(target: ResolvedTarget,
                 sink: SampleBufferSink,
                 options: CaptureOptions = CaptureOptions()) {
@@ -110,6 +115,30 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
         self.stream = nil
     }
 
+    /// Seconds from the video's t=0 to now, in the SAME time base the video
+    /// track uses.
+    ///
+    /// Markers must not use wall-clock time: `Recorder.startedAt` is stamped
+    /// before the stream starts delivering, so it precedes the first frame's
+    /// presentation timestamp by however long SCStream takes to come up. A
+    /// marker on the wrong clock points at the wrong moment (§4.12).
+    ///
+    /// Returns nil before the first buffer arrives, when there is no video
+    /// time base to be relative to yet.
+    func mediaOffsetNow() -> Double? {
+        lock.lock()
+        let first = firstPresentationTime
+        lock.unlock()
+        return Self.mediaOffset(from: first, to: CMClockGetTime(CMClockGetHostTimeClock()))
+    }
+
+    /// The pure arithmetic behind `mediaOffsetNow()`, factored out because the
+    /// host clock itself cannot be driven from a test.
+    static func mediaOffset(from first: CMTime?, to now: CMTime) -> Double? {
+        guard let first else { return nil }
+        return CMTimeGetSeconds(CMTimeSubtract(now, first))
+    }
+
     // MARK: - SCStreamOutput
 
     public func stream(_ stream: SCStream,
@@ -147,6 +176,7 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
             if !didBegin {
                 try sink.begin(at: buffer.presentationTimeStamp)
                 didBegin = true
+                firstPresentationTime = buffer.presentationTimeStamp
             }
             try sink.append(buffer, to: track)
         } catch {
