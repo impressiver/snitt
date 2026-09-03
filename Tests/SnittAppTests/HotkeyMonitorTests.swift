@@ -19,13 +19,17 @@ func combinationsCompareOnBothFields() {
     #expect(a == c)
 }
 
-@Test("Each registration gets a distinct hotkey id")
-func registrationsGetDistinctIDs() {
-    // Two monitors sharing an id is half of why a second hotkey fires both
-    // callbacks; the other half is the handler not checking which id fired.
-    let first = HotkeyMonitor.nextHotKeyID()
-    let second = HotkeyMonitor.nextHotKeyID()
-    #expect(first != second)
+@Test("A monitor registers under its own instance id, not a constant")
+func registrationUsesTheInstanceID() {
+    // The original defect was a hard-coded id in start(). A correct allocator
+    // did not prevent it, so assert the registration itself.
+    let first = HotkeyMonitor(combination: .defaultCombination) {}
+    let second = HotkeyMonitor(combination: .markerCombination) {}
+
+    #expect(first.registrationID.id == first.hotKeyID)
+    #expect(second.registrationID.id == second.hotKeyID)
+    #expect(first.registrationID.id != second.registrationID.id,
+            "two monitors registering the same id is half of the cross-firing bug")
 }
 
 @Test("The marker combination differs from the record combination")

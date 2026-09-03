@@ -72,6 +72,16 @@ public final class HotkeyMonitor {
         onFire()
     }
 
+    /// The identifier this monitor registers with Carbon.
+    ///
+    /// Extracted so a test can assert the registration uses the INSTANCE id.
+    /// The original defect was a hard-coded `id: 1` here, which the allocator
+    /// being correct did nothing to prevent — two monitors then registered the
+    /// same identifier and each fired on the other's keypress.
+    var registrationID: EventHotKeyID {
+        EventHotKeyID(signature: OSType(0x534E_5454), id: hotKeyID) // 'SNTT'
+    }
+
     public func start() throws {
         guard !isRegistered else { return }
 
@@ -80,9 +90,14 @@ public final class HotkeyMonitor {
         let callback: EventHandlerUPP = { _, event, userData in
             guard let userData, let event else { return noErr }
             var firedID = EventHotKeyID()
-            GetEventParameter(event, EventParamName(kEventParamDirectObject),
-                              EventParamType(typeEventHotKeyID), nil,
-                              MemoryLayout<EventHotKeyID>.size, nil, &firedID)
+            let status = GetEventParameter(event, EventParamName(kEventParamDirectObject),
+                                           EventParamType(typeEventHotKeyID), nil,
+                                           MemoryLayout<EventHotKeyID>.size, nil, &firedID)
+            // Without this, a failed read leaves firedID zero-initialised and the
+            // routing below would depend on ids never being 0 — true today only
+            // because nextHotKeyID() pre-increments. Depend on the check, not on
+            // that coincidence.
+            guard status == noErr else { return noErr }
             let monitor = Unmanaged<HotkeyMonitor>
                 .fromOpaque(userData).takeUnretainedValue()
             monitor.handle(hotKeyID: firedID.id)
@@ -95,9 +110,8 @@ public final class HotkeyMonitor {
         )
         guard status == noErr else { throw HotkeyError.registrationFailed(status) }
 
-        let hotKeyID = EventHotKeyID(signature: OSType(0x534E_5454), id: self.hotKeyID) // 'SNTT'
         let registerStatus = RegisterEventHotKey(
-            combination.keyCode, combination.modifiers, hotKeyID,
+            combination.keyCode, combination.modifiers, registrationID,
             GetApplicationEventTarget(), 0, &hotKeyRef
         )
         guard registerStatus == noErr else {
