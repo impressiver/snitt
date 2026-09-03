@@ -41,6 +41,16 @@ public actor SessionRegistry {
         session = nil
     }
 
+    /// Forgets whatever session is open, if any. Never throws.
+    ///
+    /// For the case where something OUTSIDE the automation surface ended the
+    /// recording — a person pressing the hotkey or the menu-bar kill switch. The
+    /// session is over whether or not the agent ever asks, and leaving the entry
+    /// behind would make `snitt status` report a recording that is not running.
+    public func closeAny() {
+        session = nil
+    }
+
     public func current(now: Date) -> StatusInfo {
         guard let session else {
             return StatusInfo(recording: false, sessionID: nil, elapsedSeconds: nil)
@@ -53,8 +63,10 @@ public actor SessionRegistry {
     /// The id of a session that has outlived its cap, if any.
     ///
     /// Reporting rather than acting: the registry does not own the `Recorder`, so
-    /// the host decides what stopping means. §5.3 requires only that something
-    /// notices.
+    /// the host decides what stopping means. `AutomationHost.expire(_:)` is the
+    /// production caller — it arms a watchdog per session and consults this
+    /// before stopping anything, so the cap is enforced and not merely
+    /// queryable (§5.3).
     public func expiredSession(now: Date) -> String? {
         guard let session else { return nil }
         return now.timeIntervalSince(session.startedAt) > session.maxDuration

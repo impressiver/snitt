@@ -6,18 +6,50 @@ import SnittCapture
 ///
 /// Requests arrive off the main actor; anything touching the coordinator or the
 /// status item hops to it. Agent recordings go through the SAME coordinator as
-/// hotkey presses, so M2a's transition guard, visible indicator and kill switch
-/// all apply to them without a second implementation (§5.3).
+/// hotkey presses, so M2a's transition guard and kill switch apply to them
+/// without a second implementation (§5.3).
+///
+/// The menu-bar INDICATOR is not free that way: it is driven by whoever calls
+/// the coordinator, and the hotkey handler in `AppDelegate` is the only such
+/// caller that updates it. So this host pushes recording state through
+/// `onRecordingState` on every agent start and stop, which `AppDelegate` wires
+/// to the same `StatusItemController.update(_:)` the hotkey uses. Without it an
+/// agent recording runs with the menu bar showing idle, and §5.3's kill switch
+/// is a control nobody has a reason to click.
 final class AutomationHost: AutomationHandling, @unchecked Sendable {
-    private let coordinator: RecordingCoordinator
+    /// Pushes recording state at the menu bar. `@MainActor` because that is
+    /// where `StatusItemController` lives; deliberately not `@Sendable`, so it
+    /// can capture the main-actor-isolated app delegate directly.
+    typealias RecordingStateSink = @MainActor (RecordingState) -> Void
+
+    private let coordinator: any AgentRecordingControlling
     private let settings: @Sendable () -> AgentSettings
+    private let onRecordingState: RecordingStateSink
     private let registry = SessionRegistry()
     private var server: AutomationServer?
 
-    init(coordinator: RecordingCoordinator,
-         settings: @escaping @Sendable () -> AgentSettings) {
+
+    init(coordinator: any AgentRecordingControlling,
+         settings: @escaping @Sendable () -> AgentSettings,
+         onRecordingState: @escaping RecordingStateSink = { _ in }) {
         self.coordinator = coordinator
         self.settings = settings
+        self.onRecordingState = onRecordingState
+    }
+
+    private func pushState(_ state: RecordingState) async {
+        let sink = onRecordingState
+        await MainActor.run { sink(state) }
+    }
+
+    /// Forgets any agent session, without touching the coordinator.
+    ///
+    /// Called by `AppDelegate` whenever a HUMAN starts or stops a recording. The
+    /// coordinator already invalidates the agent's session id on any stop; this
+    /// is the registry's half, so `snitt status` stops claiming a recording that
+    /// a person ended from the menu bar.
+    func clearAgentSession() async {
+        await registry.closeAny()
     }
 
     func start() {
@@ -139,34 +171,93 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                                             message: "No target was specified."))
         }
 
-        let outcome = await coordinator.startForAgent(reference: reference)
+        let outcome = await coordinator.startForAgent(sessionID: sessionID,
+                                                      reference: reference)
         switch outcome {
         case .started(let name, _):
+            await pushState(.recording(startedAt: Date()))
             return .started(sessionID: sessionID, target: name)
         default:
             try? await registry.close(sessionID)
-            return .failure(AutomationError(
-                code: .targetNotFound,
-                message: "Could not start recording that target.",
-                hint: "Check `snitt targets list` — the application may not be running."))
+            return .failure(Self.error(for: outcome))
         }
     }
 
-    private func stop(_ sessionID: String) async -> AutomationResponse {
-        do {
-            try await registry.close(sessionID)
-        } catch let error as AutomationError {
-            return .failure(error)
-        } catch {
-            return .failure(AutomationError(code: .internalError,
-                                            message: "Could not close the session."))
+    /// Maps a coordinator outcome to the agent-facing contract (§10).
+    ///
+    /// Every non-started outcome used to become `target_not_found`/14 with the
+    /// hint "the application may not be running". Two of them were actively
+    /// misleading: a missing Screen Recording grant — the ordinary first-run
+    /// state — sent an agent chasing a process that was running fine, and a
+    /// human's hotkey recording in progress read as a missing window instead of
+    /// `already_recording`.
+    static func error(for outcome: CoordinatorOutcome) -> AutomationError {
+        switch outcome {
+        case .failed(_, .permissionDenied):
+            return permissionDeniedError
+        case .ignored, .failed(_, .alreadyRecording):
+            // `.ignored` means a start or stop was already in flight — from the
+            // agent's side that is indistinguishable from, and remediated the
+            // same way as, a recording already running.
+            return AutomationError(
+                code: .alreadyRecording,
+                message: "A recording is already in progress.",
+                hint: "Stop it first with `snitt record stop`, or check `snitt status`. "
+                    + "It may have been started by a person from the menu bar.")
+        case .failed(_, .targetUnavailable), .cancelled:
+            return AutomationError(
+                code: .targetNotFound,
+                message: "Could not start recording that target.",
+                hint: "Check `snitt targets list` — the application may not be running.")
+        case .failed(let message, .internalError):
+            return AutomationError(code: .internalError,
+                                   message: "Could not start recording that target.",
+                                   hint: message)
+        case .started, .stopped:
+            return AutomationError(code: .internalError,
+                                   message: "Could not start recording that target.")
         }
+    }
 
-        guard let outcome = await coordinator.stopIfRecording(),
-              case .stopped(let url, _) = outcome else {
+    /// Stops the agent's OWN session.
+    ///
+    /// Order matters: the registry entry is closed only after the coordinator
+    /// confirms it stopped that session. The previous order closed the registry
+    /// first and then stopped "whatever is recording", which meant this
+    /// interleaving handed an agent a path to someone else's recording: agent
+    /// starts S, a person stops S with the kill switch, the person starts their
+    /// own recording R, the agent calls `record stop S` — and got R's bundle.
+    private func stop(_ sessionID: String) async -> AutomationResponse {
+        let result = await coordinator.stopForAgent(sessionID: sessionID)
+        switch result {
+        case .stopped(let url, _):
+            try? await registry.close(sessionID)
+            await pushState(.idle)
+            return .stopped(bundlePath: url.path)
+
+        case .notCurrentSession:
+            // Either the id was never valid, or a person already ended it. Drop
+            // the registry entry if it names this session so `snitt status` and
+            // the next `record start` agree with reality — but stop nothing.
+            try? await registry.close(sessionID)
+            return .failure(AutomationError(
+                code: .noSuchSession,
+                message: "No recording with that session id.",
+                hint: "It may have been stopped from Snitt's menu bar. "
+                    + "Check `snitt status` for the current session."))
+
+        case .busy:
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "Snitt is busy starting or stopping a recording.",
+                hint: "Try `snitt record stop` again in a moment."))
+
+        case .failed(let message):
+            try? await registry.close(sessionID)
+            await pushState(.idle)
             return .failure(AutomationError(code: .internalError,
-                                            message: "The recording did not finalize."))
+                                            message: "The recording did not finalize.",
+                                            hint: message))
         }
-        return .stopped(bundlePath: url.path)
     }
 }

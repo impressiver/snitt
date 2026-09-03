@@ -36,8 +36,31 @@ public enum CoordinatorOutcome: Equatable, Sendable {
     case ignored
 }
 
+/// The outcome of an agent's request to stop ITS OWN session.
+public enum AgentStopResult: Equatable, Sendable {
+    case stopped(URL, copied: Bool)
+    /// Nothing is recording, or what IS recording is not that agent's session —
+    /// typically because a person already stopped it with the kill switch and
+    /// started their own. Never stop it: the bundle is not the agent's to take.
+    case notCurrentSession
+    /// A start or stop was already in flight; the caller may retry.
+    case busy
+    case failed(String)
+}
+
+/// The slice of `RecordingCoordinator` the automation surface actually uses.
+///
+/// Exists so `AutomationHost` can be tested without a live `SCContentFilter`,
+/// which ScreenCaptureKit offers no way to construct off a real screen. Declared
+/// here and adopted in `RecordingCoordinator`'s own declaration — not a
+/// retroactive conformance.
+public protocol AgentRecordingControlling: Sendable {
+    func startForAgent(sessionID: String, reference: TargetReference) async -> CoordinatorOutcome
+    func stopForAgent(sessionID: String) async -> AgentStopResult
+}
+
 /// Drives one recording from hotkey press to clipboard.
-public actor RecordingCoordinator {
+public actor RecordingCoordinator: AgentRecordingControlling {
     private let pickerResolver: TargetResolver
     private let cachedResolverFactory: @Sendable (TargetReference) -> TargetResolver
     private let store: TargetStore
@@ -54,6 +77,14 @@ public actor RecordingCoordinator {
     /// after the awaits complete.
     private var isTransitioning = false
 
+    /// The agent session that owns `active`, if an agent started it.
+    ///
+    /// Load-bearing for correctness, not bookkeeping. Without it, `record stop
+    /// <id>` meant "stop whatever is recording": a person could stop the agent's
+    /// recording with the kill switch, start their own, and the agent's stop
+    /// would hand it their bundle path. Cleared by EVERY stop, so a
+    /// human-initiated stop makes the id stale immediately.
+    private var agentSessionID: String?
 
     public init(pickerResolver: TargetResolver,
                 cachedResolverFactory: @escaping @Sendable (TargetReference) -> TargetResolver,
@@ -101,18 +132,52 @@ public actor RecordingCoordinator {
 
     /// Starts a recording on behalf of an agent, against an explicit target.
     ///
-    /// Deliberately shares `startRecording()` and the same `isTransitioning`
-    /// guard as the hotkey path: an agent request arriving mid-hotkey-press must
-    /// not start a second recording, and the visible indicator and kill switch
-    /// then apply to agent sessions for free (§5.3).
-    public func startForAgent(reference: TargetReference) async -> CoordinatorOutcome {
+    /// Shares `startRecording()` and the same `isTransitioning` guard as the
+    /// hotkey path: an agent request arriving mid-hotkey-press must not start a
+    /// second recording, and one `Recorder` at a time is enforced in one place.
+    ///
+    /// What is shared: the transition guard, the coordinator, the permission
+    /// preflight, the `Recorder`, and the kill switch (`toggle()` stops an agent
+    /// recording exactly as it stops a human one).
+    ///
+    /// What is NOT shared, and what the caller must therefore still do: the
+    /// menu-bar indicator. It is driven by the CALLER — `AppDelegate` updates
+    /// `StatusItemController` from its own hotkey handler — so a caller that
+    /// starts a recording here and does nothing else leaves the menu bar showing
+    /// idle for the whole recording. §5.3 requires a visible indicator for the
+    /// entire duration, so `AutomationHost` pushes state through its
+    /// `onRecordingState` sink around every call to this method.
+    public func startForAgent(sessionID: String,
+                              reference: TargetReference) async -> CoordinatorOutcome {
         guard !isTransitioning else { return .ignored }
         isTransitioning = true
         defer { isTransitioning = false }
         guard active == nil else {
             return .failed("A recording is already in progress.", reason: .alreadyRecording)
         }
-        return await startRecording(forcedResolver: cachedResolverFactory(reference))
+        let outcome = await startRecording(forcedResolver: cachedResolverFactory(reference))
+        if case .started = outcome { agentSessionID = sessionID }
+        return outcome
+    }
+
+    /// Stops a recording ONLY if it is the named agent session.
+    ///
+    /// The session check happens inside the actor, in the same critical section
+    /// as the stop, so no interleaving can slip a human recording in between a
+    /// caller's "is this still mine?" check and the stop itself.
+    public func stopForAgent(sessionID: String) async -> AgentStopResult {
+        guard !isTransitioning else { return .busy }
+        guard agentSessionID == sessionID, active != nil else { return .notCurrentSession }
+        isTransitioning = true
+        defer { isTransitioning = false }
+        switch await stopRecording() {
+        case .stopped(let url, let copied):
+            return .stopped(url, copied: copied)
+        case .failed(let message, _):
+            return .failed(message)
+        default:
+            return .failed("The recording did not finalize.")
+        }
     }
 
     public func toggle() async -> CoordinatorOutcome {
@@ -215,6 +280,10 @@ public actor RecordingCoordinator {
     }
 
     private func stopRecording() async -> CoordinatorOutcome {
+        // Cleared for EVERY stop, whatever initiated it. This is what makes a
+        // kill-switch press invalidate the agent's session id rather than
+        // leaving it pointing at whatever records next.
+        agentSessionID = nil
         guard let recorder = active else {
             return .failed("Not recording.", reason: .internalError)
         }

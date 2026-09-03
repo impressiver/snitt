@@ -119,6 +119,7 @@ func agentStartsWithAnEmptyStore() async throws {
     )
 
     let outcome = await coordinator.startForAgent(
+        sessionID: "session-1",
         reference: .window(bundleIdentifier: "com.example.Agent", titleHint: nil))
 
     // `MarkerResolver.resolve()` always throws, so the coordinator can never
@@ -135,3 +136,23 @@ func agentStartsWithAnEmptyStore() async throws {
             "an agent's forced resolver must run instead of hitting the empty-store cache guard — got: \(message)")
 }
 
+@Test("A coordinator that never started an agent session refuses to stop one")
+func stopForAgentRefusesUnknownSession() async {
+    // The cheap half of Important 4's guarantee that IS reachable in a test.
+    // `.started` is not: it needs a real `SCContentFilter`, which
+    // ScreenCaptureKit will not construct without live screen enumeration. So
+    // the positive path (start as agent, human stops, agent's id goes stale) is
+    // covered against a modelled coordinator in `AutomationHostTests`; what is
+    // provable here is that ownership is checked at all.
+    let store = TargetStore(fileURL: FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString))
+    let coordinator = RecordingCoordinator(
+        pickerResolver: MarkerResolver(),
+        cachedResolverFactory: { _ in MarkerResolver() },
+        store: store,
+        outputDirectory: FileManager.default.temporaryDirectory
+    )
+    let result = await coordinator.stopForAgent(sessionID: "never-started")
+    #expect(result == .notCurrentSession,
+            "an agent must not be able to stop a recording it does not own")
+}

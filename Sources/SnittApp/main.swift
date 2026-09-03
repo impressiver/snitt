@@ -37,8 +37,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.statusItem.agentRecordingEnabled = enabled
         }
 
-        let host = AutomationHost(coordinator: coordinator,
-                                  settings: { AgentSettings.load() })
+        // §5.3 requires a visible indicator for the WHOLE duration of a
+        // recording, agent-initiated ones included. The indicator is driven by
+        // whoever calls the coordinator, and until this sink existed only
+        // `handleHotkey()` did — so an agent recording ran with the menu bar
+        // showing idle and the kill switch looking like it had nothing to stop.
+        let host = AutomationHost(
+            coordinator: coordinator,
+            settings: { AgentSettings.load() },
+            onRecordingState: { [weak self] state in self?.statusItem.update(state) })
         host.start()
         automationHost = host
 
@@ -83,11 +90,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             switch outcome {
             case .started(_, let usedCache):
                 statusItem.update(.recording(startedAt: Date()))
+                // A human recording supersedes any agent session the registry
+                // still remembers — see AutomationHost.stop().
+                await automationHost?.clearAgentSession()
                 // The recurring macOS prompt is caused by the cached path only, so
                 // explain it at its first actual occurrence — not on the picker path.
                 if usedCache { ConsentExplainer.showIfNeeded() }
             case .stopped(let url, let copied):
                 statusItem.update(.idle)
+                // This press may have been the kill switch ending an AGENT
+                // recording. Clearing the registry here is what stops a later
+                // `record stop <id>` from believing that session is still live.
+                await automationHost?.clearAgentSession()
                 if !copied {
                     notify("Recording saved to \(url.lastPathComponent), but it could "
                          + "not be copied to the clipboard.")
