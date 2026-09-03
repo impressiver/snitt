@@ -48,6 +48,9 @@ func expiredSessionIsReported() async throws {
     let id = try await registry.open(maxDuration: 30, now: start)
 
     #expect(await registry.expiredSession(now: start.addingTimeInterval(29)) == nil)
+    // Exactly at the cap is NOT yet expired — the comparison is strict. Without
+    // this sample the test cannot tell `>` from `>=` and a mutant survives.
+    #expect(await registry.expiredSession(now: start.addingTimeInterval(30)) == nil)
     #expect(await registry.expiredSession(now: start.addingTimeInterval(31)) == id)
 }
 
