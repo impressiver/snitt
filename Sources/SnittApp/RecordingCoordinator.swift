@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 import AppKit
 import SnittCapture
 import SnittDocument
@@ -66,6 +67,20 @@ public actor RecordingCoordinator {
     }
 
     private func startRecording() async -> CoordinatorOutcome {
+        // Screen Recording must be granted before ANY capture API returns real
+        // content. Preflight only READS the current state; Request is what raises
+        // the prompt and registers the app in System Settings' list.
+        //
+        // Spike S1 established this distinction the hard way: a probe that only
+        // preflighted never prompted at all, and two runs were wasted before the
+        // defect was found. The app had the same bug — it called SCShareableContent
+        // and hoped, which is why it never appeared in System Settings.
+        let granted = await MainActor.run { () -> Bool in
+            if CGPreflightScreenCaptureAccess() { return true }
+            return CGRequestScreenCaptureAccess()
+        }
+        guard granted else { return .failed(Self.screenRecordingDeniedMessage) }
+
         let stored = store.load()
         let choice = Self.resolverChoice(hasCachedTarget: stored != nil)
 
@@ -124,6 +139,23 @@ public actor RecordingCoordinator {
             return .failed("Recording failed to finalize: \(error)")
         }
     }
+
+    /// Shown when Screen Recording is not granted.
+    ///
+    /// macOS cannot grant this permission from the prompt itself — the dialog only
+    /// offers to open System Settings — and the grant does not take effect until
+    /// the app is RELAUNCHED. Saying so is the difference between a user who
+    /// succeeds and one who toggles the switch, sees it still fail, and concludes
+    /// the app is broken.
+    static let screenRecordingDeniedMessage = """
+        Snitt needs permission to record the screen.
+
+        1. Open System Settings › Privacy & Security › Screen & System Audio Recording
+        2. Switch Snitt on (if it is already listed and on, remove it with “−” and add it back — \
+        macOS ties this permission to the app's signature, which changes when the app is rebuilt \
+        with a different signing identity)
+        3. Quit Snitt and open it again — macOS does not apply this permission until the app restarts
+        """
 
     /// Turns an opaque capture failure into something a person can act on.
     ///
