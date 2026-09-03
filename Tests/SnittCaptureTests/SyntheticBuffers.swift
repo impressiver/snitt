@@ -4,15 +4,16 @@ import CoreVideo
 
 /// Builds a solid-grey video sample buffer. Used to drive the capture
 /// pipeline in tests without a real screen.
-func makeVideoBuffer(at seconds: Double, size: CGSize) -> CMSampleBuffer {
+func makeVideoBuffer(at seconds: Double, size: CGSize,
+                      pixelFormat: OSType = kCVPixelFormatType_32BGRA) -> CMSampleBuffer {
     var pixelBuffer: CVPixelBuffer?
     CVPixelBufferCreate(kCFAllocatorDefault,
                         Int(size.width), Int(size.height),
-                        kCVPixelFormatType_32BGRA, nil, &pixelBuffer)
+                        pixelFormat, nil, &pixelBuffer)
     let buffer = pixelBuffer!
 
     CVPixelBufferLockBaseAddress(buffer, [])
-    if let base = CVPixelBufferGetBaseAddress(buffer) {
+    if pixelFormat == kCVPixelFormatType_32BGRA, let base = CVPixelBufferGetBaseAddress(buffer) {
         memset(base, 128,
                CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer))
     }

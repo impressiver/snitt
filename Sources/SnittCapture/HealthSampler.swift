@@ -66,6 +66,14 @@ public final class HealthSampler: @unchecked Sendable {
         let height = CVPixelBufferGetHeight(pixels)
         let width = CVPixelBufferGetWidth(pixels)
 
+        // The offset arithmetic below assumes chunky BGRA at 4 bytes per pixel.
+        // True today because CaptureSession never sets configuration.pixelFormat
+        // and BGRA is the default. If that ever changes to a planar format,
+        // CVPixelBufferGetBytesPerRow returns 0, every sample is skipped, and
+        // this would report variance 0 — indistinguishable from a black
+        // capture. Skip explicitly rather than reporting a false measurement.
+        guard CVPixelBufferGetPixelFormatType(pixels) == kCVPixelFormatType_32BGRA else { return }
+
         // BGRA: take the green channel as a luma proxy. Cheap, and green
         // carries most of perceived luminance.
         var samples: [Double] = []
@@ -98,24 +106,36 @@ public final class HealthSampler: @unchecked Sendable {
             blockBufferMemoryAllocator: kCFAllocatorDefault,
             flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
             blockBufferOut: &blockBuffer)
+        // Only the first AudioBuffer is read. Correct today because
+        // CaptureSession forces channelCount = 1 for both audio tracks; must
+        // be revisited if/when stereo (non-interleaved) capture lands, since
+        // that would silently under-measure or make this call return
+        // non-noErr with a single-buffer bufferListSize.
         guard status == noErr, let data = list.mBuffers.mData else { return }
 
         let count = Int(list.mBuffers.mDataByteSize) / MemoryLayout<Float>.size
         guard count > 0 else { return }
-        let pointer = data.assumingMemoryBound(to: Float.self)
-        var sum = 0.0
-        for index in 0..<count {
-            let sample = Double(pointer[index])
-            sum += sample * sample
-        }
 
-        lock.lock()
-        switch track {
-        case .microphone: micSumOfSquares += sum; micSampleCount += count
-        case .systemAudio: systemSumOfSquares += sum; systemSampleCount += count
-        case .video: break
+        // The block buffer OWNS the samples `mData` points at, and ARC cannot
+        // see that dependency — the pointer is not syntactically derived from
+        // it — so without this the optimiser may release it before the loop
+        // reads. This is the documented hazard of the RetainedBlockBuffer API.
+        withExtendedLifetime(blockBuffer) {
+            let pointer = data.assumingMemoryBound(to: Float.self)
+            var sum = 0.0
+            for index in 0..<count {
+                let sample = Double(pointer[index])
+                sum += sample * sample
+            }
+
+            lock.lock()
+            switch track {
+            case .microphone: micSumOfSquares += sum; micSampleCount += count
+            case .systemAudio: systemSumOfSquares += sum; systemSampleCount += count
+            case .video: break
+            }
+            lock.unlock()
         }
-        lock.unlock()
     }
 
     public func result() -> CaptureHealth {
