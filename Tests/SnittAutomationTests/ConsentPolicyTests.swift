@@ -14,6 +14,7 @@ func disabledRefusesEverything() {
     let error = policy(enabled: false)
         .evaluate(StartOptions(bundleIdentifier: "com.apple.Safari"))
     #expect(error?.code == .consentRequired)
+    #expect(error?.hint != nil, "an automated caller cannot act on a refusal with no next step")
 }
 
 @Test("A window request is allowed when agent recording is enabled")
@@ -37,14 +38,31 @@ func displayAllowedWhenGranted() {
 
 @Test("A request naming neither a window nor a display is refused")
 func targetlessRequestRefused() {
-    #expect(policy().evaluate(StartOptions())?.code == .targetNotFound)
+    let error = policy().evaluate(StartOptions())
+    #expect(error?.code == .targetNotFound)
+    #expect(error?.hint != nil, "an automated caller cannot act on a refusal with no next step")
 }
 
 @Test("An over-long requested duration is capped, not honoured")
 func durationIsCapped() {
     // §5.3: a hung agent must not be able to fill the disk, so the cap is a
     // ceiling rather than a default an agent can raise.
-    #expect(policy(maxSeconds: 600).effectiveMaxDuration(99_999) == 600)
-    #expect(policy(maxSeconds: 600).effectiveMaxDuration(30) == 30)
-    #expect(policy(maxSeconds: 600).effectiveMaxDuration(nil) == 600)
+    let policy = policy(maxSeconds: 600)
+    #expect(policy.effectiveMaxDuration(99_999) == 600)
+    #expect(policy.effectiveMaxDuration(30) == 30)
+    #expect(policy.effectiveMaxDuration(nil) == 600)
+    #expect(policy.effectiveMaxDuration(600) == 600, "exactly at the cap is allowed")
+}
+
+@Test("Degenerate durations fall back to the cap rather than slipping past it")
+func degenerateDurationsFallBackToTheCap() {
+    // A negative or zero request must not become an instant stop, and NaN must
+    // not slip through min() — NaN compares false against everything, so a
+    // guard written as `requested < max` would let it through where
+    // `requested > 0` does not.
+    let policy = policy(maxSeconds: 600)
+    #expect(policy.effectiveMaxDuration(0) == 600)
+    #expect(policy.effectiveMaxDuration(-5) == 600)
+    #expect(policy.effectiveMaxDuration(.nan) == 600)
+    #expect(policy.effectiveMaxDuration(.infinity) == 600)
 }
