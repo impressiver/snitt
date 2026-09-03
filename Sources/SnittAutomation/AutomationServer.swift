@@ -136,9 +136,14 @@ public final class AutomationServer: @unchecked Sendable {
         var tv = timeval()
         tv.tv_sec = Int(Self.connectionReadTimeout)
         tv.tv_usec = 0
-        withUnsafeBytes(of: &tv) { raw in
-            _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, raw.baseAddress, socklen_t(MemoryLayout<timeval>.size))
+        // As on the client, the whole point is this call actually applying —
+        // an ignored failure would serve the connection unbounded while
+        // looking bounded. Close this one connection rather than take down
+        // the listener or serve it without a timeout.
+        let timeoutApplied = withUnsafeBytes(of: &tv) { raw -> Bool in
+            setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, raw.baseAddress, socklen_t(MemoryLayout<timeval>.size)) == 0
         }
+        guard timeoutApplied else { return }
 
         var framer = LineFramer()
         var readBuffer = [UInt8](repeating: 0, count: 65_536)

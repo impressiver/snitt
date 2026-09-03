@@ -13,6 +13,10 @@ public enum ClientError: Error, Equatable {
     /// `notRunning` on purpose: "Snitt is not running" and "Snitt is wedged"
     /// need different things from whoever reads it.
     case timedOut
+    /// The socket could not be given a timeout, so a wedged app could hang this
+    /// call forever. Refuse to proceed rather than make an unbounded call that
+    /// looks bounded (§11).
+    case timeoutUnavailable
 }
 
 /// The client half, shared by the CLI and the MCP server.
@@ -71,9 +75,18 @@ public struct AutomationClient: Sendable {
         var tv = timeval()
         tv.tv_sec = Int(timeout)
         tv.tv_usec = Int32((timeout - Double(Int(timeout))) * 1_000_000)
-        withUnsafeBytes(of: &tv) { raw in
-            _ = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, raw.baseAddress, socklen_t(MemoryLayout<timeval>.size))
-            _ = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, raw.baseAddress, socklen_t(MemoryLayout<timeval>.size))
+        // The whole §11 guarantee rests on these two calls actually applying.
+        // A silently-ignored failure would leave the socket blocking forever
+        // while looking, to the next reader, like it was bounded — refuse to
+        // proceed rather than make an unbounded call that looks bounded.
+        let timeoutsApplied = withUnsafeBytes(of: &tv) { raw -> Bool in
+            let rcv = setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, raw.baseAddress, socklen_t(MemoryLayout<timeval>.size))
+            let snd = setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, raw.baseAddress, socklen_t(MemoryLayout<timeval>.size))
+            return rcv == 0 && snd == 0
+        }
+        guard timeoutsApplied else {
+            box.fail(ClientError.timeoutUnavailable)
+            return
         }
 
         var addr = sockaddr_un()

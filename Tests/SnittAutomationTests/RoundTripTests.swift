@@ -130,6 +130,22 @@ final class SilentPeer: @unchecked Sendable {
     }
 }
 
+/// Resumes at most once with whichever task finishes first. Deliberately NOT
+/// `withTaskGroup`: that API waits for every child task to finish before
+/// returning, even after `cancelAll()` — and a task blocked in a raw,
+/// non-cancellable POSIX `read()` never finishes, so the group itself would
+/// hang. An unstructured race avoids that: the loser is simply abandoned
+/// rather than awaited.
+private final class RaceBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<String, Never>?
+    init(_ continuation: CheckedContinuation<String, Never>) { self.continuation = continuation }
+    func resume(_ value: String) {
+        lock.lock(); let c = continuation; continuation = nil; lock.unlock()
+        c?.resume(returning: value)
+    }
+}
+
 @Test("A server that accepts but never answers times out instead of hanging forever")
 func wedgedServerTimesOut() async throws {
     // §11: an agent must never block on something it cannot see. A process that
@@ -142,6 +158,22 @@ func wedgedServerTimesOut() async throws {
     try silent.start()
     defer { silent.stop() }
 
-    let client = AutomationClient(socketURL: url, timeout: 1)
-    await #expect(throws: ClientError.timedOut) { _ = try await client.send(.status) }
+    // The watchdog is deliberately independent of the socket timeout under test.
+    // Without it this test is bounded only by the mechanism it is testing, so a
+    // regression would wedge the whole suite instead of failing this one case.
+    let outcome = await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
+        let box = RaceBox(continuation)
+        Task {
+            let client = AutomationClient(socketURL: url, timeout: 1)
+            do { _ = try await client.send(.status); box.resume("returned") }
+            catch ClientError.timedOut { box.resume("timedOut") }
+            catch { box.resume("other:\(error)") }
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(10))
+            box.resume("watchdog")
+        }
+    }
+    #expect(outcome == "timedOut",
+            "expected a bounded timeout; 'watchdog' means the call hung")
 }
