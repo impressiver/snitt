@@ -32,10 +32,37 @@ public struct CaptureHealth: Codable, Sendable {
     }
 }
 
+/// The sidecar written beside `capture.mov` (spec section 7).
+///
+/// **Two clocks live in a bundle, and they are not the same one.**
+///
+/// - `durationSeconds` here is WALL time: stamped when `Recorder.start()` is
+///   called — before `SCStream.startCapture()` — to when `stop()` runs. It
+///   therefore OVERSTATES the length of `capture.mov` by however long the
+///   stream took to come up (hundreds of milliseconds, typically).
+/// - Marker offsets in `events.json` are MEDIA time: seconds from the first
+///   delivered frame's presentation timestamp, which is `capture.mov`'s own
+///   t=0. That is the clock a player, a scrubber, or an M3b chapter list
+///   works in.
+///
+/// So a consumer must not mix them. `marker / durationSeconds` is not a
+/// fraction of the movie, and `durationSeconds` is not a chapter's end time —
+/// use the asset's own duration (`AVAsset.duration`) for anything positioned
+/// against the media. A marker can never EXCEED `durationSeconds`, since the
+/// media clock starts later and stops earlier, so nothing falls outside its
+/// recording; the skew is a small overstatement at the tail.
+///
+/// `durationSeconds`' meaning is deliberately NOT changed: "how long the
+/// recording ran" is what a human reading meta.json expects, and it has
+/// consumers already.
 public struct RecordingMetadata: Codable, Sendable {
     public var schemaVersion: Int
+    /// Wall-clock instant `Recorder.start()` was called.
     public var createdAt: Date
     public var initiator: Initiator
+    /// WALL-clock seconds from `start()` to `stop()` — see the note above.
+    /// Not the duration of `capture.mov`, which is shorter by the stream's
+    /// startup latency, and not the clock marker offsets are on.
     public var durationSeconds: Double?
     public var git: GitContext?
     public var health: CaptureHealth?

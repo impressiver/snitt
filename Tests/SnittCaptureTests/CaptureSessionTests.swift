@@ -104,7 +104,14 @@ func implausibleMediaOffsetFallsBack() {
 func plausibleMediaOffsetWins() {
     // The whole point of the media clock: it is the accurate one, differing
     // from wall clock by the stream's startup latency.
-    #expect(CaptureSession.plausibleOffset(media: 3.3, wallClock: 3.0) == 3.3)
+    //
+    // The values are one-sided on purpose. The media clock starts at the first
+    // FRAME and the wall clock is stamped before `startCapture()`, so a
+    // legitimate media offset is always slightly SMALLER. This case used to
+    // read `media: 3.3, wallClock: 3.0`, pinning an impossible sign as
+    // canonical — harmless today because the 5-second slack absorbs it, but
+    // exactly the wrong example for whoever tightens the guard.
+    #expect(CaptureSession.plausibleOffset(media: 2.7, wallClock: 3.0) == 2.7)
 }
 
 @Test("With no media clock yet, wall clock is used")

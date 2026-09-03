@@ -158,6 +158,14 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
     /// mismatch, which is off by orders of magnitude, not seconds. Do not
     /// tighten this: a smaller slack risks firing on legitimate recordings
     /// under system load, which is worse than the imprecision it would save.
+    ///
+    /// The comparison is symmetric where the physics is one-sided. The media
+    /// clock starts at the FIRST FRAME and the wall clock starts before
+    /// `startCapture()`, so a legitimate `media` is always slightly LESS than
+    /// `wallClock`; `media > wallClock` by any real margin is already a
+    /// mismatch. The slack absorbs that today, so this is not a live defect —
+    /// but anyone tightening the guard should make it one-sided rather than
+    /// halving the 5.0.
     static func plausibleOffset(media: Double?, wallClock: Double?) -> Double? {
         guard let media else { return wallClock }
         guard let wallClock else { return media >= 0 ? media : nil }
