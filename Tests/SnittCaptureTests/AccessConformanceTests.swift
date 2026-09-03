@@ -26,12 +26,37 @@ private func repositoryRoot() -> URL {
 /// - `/* ... */` block comments, with a nesting depth counter — Swift allows
 ///   `/* /* */ */`, and a scanner that closes on the first `*/` mishandles it
 /// - `"..."` string literals, respecting `\"` escapes
+/// - string INTERPOLATION (`\( ... )`): unlike an escape, `\(...)` runs at
+///   runtime, so its contents are kept visible rather than dropped — a third
+///   review round found that `"\(CGPreflightScreenCaptureAccess())"` is a real
+///   call site the earlier version silently erased. Parenthesis depth is
+///   tracked so `\(a(b(c())))` resumes string scanning at the LAST `)`, not
+///   the first.
 /// - `"""..."""` multiline string literals
 /// - raw strings: any `#"` is treated as opening a literal that runs to the
 ///   next `"#`. This under-counts delimiters for `##"..."##` and deeper, but
 ///   that only means it can stop stripping early inside an unusual raw
 ///   string — a false positive risk, not a false negative one — so it is the
 ///   safe direction and not worth the extra complexity here.
+///
+/// Known limitations (documented rather than chased further, after three
+/// review rounds — a hand-rolled lexer will never be complete, and a written
+/// blind spot is safer than an implied absence of one):
+/// - A string literal NESTED inside an interpolation, e.g. `\(foo(")"))`, is
+///   not lexed as a string — the paren-depth counter just counts characters,
+///   so a `)` inside that inner literal can close the interpolation early.
+///   The tail after that point re-enters plain string-scanning, which is
+///   still net-safe (worst case: some later code is wrongly treated as string
+///   body, a false positive), but the boundary is not exact.
+/// - `##"..."##`-and-deeper raw strings are not delimiter-counted (noted
+///   above); a `"#` occurring inside such a literal before the real close
+///   would truncate it early.
+/// - No attempt is made to understand `#if`/`#endif` conditional compilation:
+///   code inside a disabled branch is scanned exactly like live code.
+/// - This is a text scanner, not a parser: it cannot tell a call site from an
+///   unrelated identifier of the same name (e.g. a local variable or a
+///   different type's member sharing the name `CGPreflightScreenCaptureAccess`),
+///   so an offender name is a strong hint for a human to check, not a proof.
 private func strippingCommentsAndLiterals(_ source: String) -> String {
     let chars = Array(source)
     let n = chars.count
@@ -92,6 +117,23 @@ private func strippingCommentsAndLiterals(_ source: String) -> String {
         if chars[i] == "\"" {
             i += 1
             while i < n, chars[i] != "\"" {
+                if chars[i] == "\\", i + 1 < n, chars[i + 1] == "(" {
+                    // String interpolation. Unlike a plain escape, this is
+                    // code that runs at call time, so keep it instead of
+                    // dropping it. Track paren depth so `\(a(b(c())))`
+                    // resumes string scanning at the LAST `)`, not the first.
+                    i += 2
+                    var depth = 1
+                    out.append("(")
+                    while i < n, depth > 0 {
+                        let c = chars[i]
+                        if c == "(" { depth += 1 }
+                        else if c == ")" { depth -= 1 }
+                        out.append(c)
+                        i += 1
+                    }
+                    continue
+                }
                 if chars[i] == "\\", i + 1 < n { i += 2; continue }
                 if chars[i] == "\n" { out.append("\n") }
                 i += 1
@@ -189,9 +231,20 @@ func scannerRemovesMentionsNotCalls() {
         ("let s = \"an escaped \\\" quote\" ; CGRequestScreenCaptureAccess()",
          true, "a call after a literal containing an escaped quote must survive"),
         (##"let s = #"CGRequestScreenCaptureAccess()"#"##, false, "raw string"),
+        ("let s = \"\\(CGRequestScreenCaptureAccess())\"", true,
+         "interpolation EXECUTES its expression — the call must survive"),
+        ("let s = \"granted: \\(CGPreflightScreenCaptureAccess())\"", true,
+         "the idiomatic logging shape this codebase already uses"),
+        ("let s = \"\\(a(b(CGRequestScreenCaptureAccess())))\"", true,
+         "nested parens — string mode must resume at the LAST paren"),
     ]
+    // Checks whichever of the two access-API names the fixture actually
+    // names (most cases use CGRequestScreenCaptureAccess; the interpolated
+    // "idiomatic logging shape" fixture above names CGPreflightScreenCaptureAccess).
+    let identifiers = ["CGRequestScreenCaptureAccess", "CGPreflightScreenCaptureAccess"]
     for (source, shouldSurvive, why) in cases {
         let stripped = strippingCommentsAndLiterals(source)
-        #expect(stripped.contains("CGRequestScreenCaptureAccess") == shouldSurvive, "\(why): \(source)")
+        let name = identifiers.first(where: source.contains) ?? identifiers[0]
+        #expect(stripped.contains(name) == shouldSurvive, "\(why): \(source)")
     }
 }
