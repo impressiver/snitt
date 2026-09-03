@@ -91,7 +91,7 @@ public actor RecordingCoordinator {
             try? store.clear()
             return .failed("\(app) is no longer available. Press again to pick a new target.")
         } catch {
-            return .failed("Could not resolve a target: \(error)")
+            return .failed(Self.explain(error))
         }
 
         if let reference = target.reference, let stored = Self.stored(from: reference) {
@@ -123,6 +123,38 @@ public actor RecordingCoordinator {
         } catch {
             return .failed("Recording failed to finalize: \(error)")
         }
+    }
+
+    /// Turns an opaque capture failure into something a person can act on.
+    ///
+    /// ScreenCaptureKit reports a missing Screen Recording grant as -3801 with the
+    /// text "The user declined TCCs for application, window, display capture" —
+    /// alarming, and unactionable for someone who has already granted it.
+    ///
+    /// It also appears when the grant EXISTS but was issued to a different code
+    /// identity. TCC keys permission to the app's signature, so any change of
+    /// signing identity — ad-hoc to a certificate, or one certificate to another —
+    /// silently invalidates the old grant while System Settings still shows the
+    /// stale entry as enabled. That case looks identical to a denial and is the
+    /// one most likely to confuse, so the message names it explicitly.
+    static func explain(_ error: Error) -> String {
+        let nsError = error as NSError
+        if nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+           nsError.code == -3801 {
+            return """
+                Snitt does not have permission to record the screen.
+
+                Open System Settings › Privacy & Security › Screen & System Audio \
+                Recording and enable Snitt.
+
+                If Snitt is already listed and switched on, remove it with the \
+                “−” button and add it back. macOS ties this permission to the \
+                app's signature, so a rebuild with a different signing identity \
+                leaves the old entry looking enabled while the new build has no \
+                access.
+                """
+        }
+        return "Could not start recording: \(error.localizedDescription)"
     }
 
     static func reference(from stored: StoredTargetReference) -> TargetReference? {
