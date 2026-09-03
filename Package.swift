@@ -24,6 +24,9 @@ let package = Package(
             name: "SnittApp",
             dependencies: ["SnittCapture", "SnittDocument", "SnittExport", "SnittAutomation"]
         ),
+        .executableTarget(name: "snitt-cli",
+                          dependencies: ["SnittAutomation"],
+                          path: "Sources/snitt-cli"),
         .testTarget(name: "SnittDocumentTests", dependencies: ["SnittDocument"]),
         .testTarget(name: "SnittCaptureTests", dependencies: ["SnittCapture"]),
         .testTarget(name: "SnittExportTests", dependencies: ["SnittExport"]),
