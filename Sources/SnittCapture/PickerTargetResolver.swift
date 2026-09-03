@@ -125,11 +125,18 @@ extension PickerTargetResolver: SCContentSharingPickerObserver {
         var reference: TargetReference?
         var title: String?
         var applicationName: String?
+        var processID: pid_t?
 
         // Derive a durable reference so the hotkey can reuse this target later.
         // Gated: these properties require macOS 15.2 and the floor is 15.0. Below
         // that the reference stays nil and every press shows the picker — degraded
         // but correct.
+        //
+        // The pid is read here for the same reason and with the same gate: it is
+        // what `WindowFocuser` activates before capture starts (§4.13). Below
+        // 15.2 there is no way to learn it from the filter, so the picker path
+        // stays unfocusable there — the same degradation `reference` already
+        // accepts.
         if #available(macOS 15.2, *) {
             if let window = filter.includedWindows.first {
                 title = window.title
@@ -141,6 +148,10 @@ extension PickerTargetResolver: SCContentSharingPickerObserver {
                 applicationName = app.applicationName
                 reference = .window(bundleIdentifier: app.bundleIdentifier, titleHint: nil)
             }
+            // One expression for both picker shapes — a single window, or a
+            // whole application — so neither can be wired up without the other.
+            processID = filter.includedWindows.first?.owningApplication?.processID
+                ?? filter.includedApplications.first?.processID
         }
 
         // The picker hands back a finished filter but no descriptor, so the
@@ -152,7 +163,8 @@ extension PickerTargetResolver: SCContentSharingPickerObserver {
             title: title,
             applicationName: applicationName,
             width: size.width,
-            height: size.height
+            height: size.height,
+            processID: processID
         )
         finish(.success(ResolvedTarget(filter: filter,
                                        descriptor: descriptor,

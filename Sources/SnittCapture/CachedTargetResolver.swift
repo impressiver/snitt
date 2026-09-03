@@ -8,17 +8,28 @@ import ScreenCaptureKit
 public struct WindowCandidate: Sendable, Equatable {
     public var windowID: UInt32
     public var bundleIdentifier: String?
+    public var applicationName: String?
     public var title: String?
     public var width: Int
     public var height: Int
+    /// The owning application's pid. Carried here rather than re-read from the
+    /// `SCWindow` at descriptor time so that the descriptor a recording is
+    /// started with can be built — and checked — without a live display.
+    public var processID: pid_t?
 
+    /// `applicationName` and `processID` deliberately have NO defaults: the
+    /// whole reason auto-focus was dead code is that a descriptor was built
+    /// without a pid and nothing failed.
     public init(windowID: UInt32, bundleIdentifier: String?,
-                title: String?, width: Int, height: Int) {
+                applicationName: String?, title: String?,
+                width: Int, height: Int, processID: pid_t?) {
         self.windowID = windowID
         self.bundleIdentifier = bundleIdentifier
+        self.applicationName = applicationName
         self.title = title
         self.width = width
         self.height = height
+        self.processID = processID
     }
 }
 
@@ -88,6 +99,27 @@ public struct CachedTargetResolver: TargetResolver {
         return appIsOnScreen ? .targetTooSmall(name) : .targetGone(name)
     }
 
+    /// Builds the descriptor for a matched window.
+    ///
+    /// Pure, and separate from `resolve()`, because one of its fields has no
+    /// other evidence of correctness: `processID` is the ONLY thing
+    /// `WindowFocuser.focus(descriptor:)` acts on, and it was omitted at both
+    /// sites that feed `RecordingCoordinator.startRecording` — so auto-focus
+    /// (§4.13) never fired anywhere in production while every focuser test
+    /// passed against hand-built descriptors carrying a pid.
+    static func descriptor(for candidate: WindowCandidate,
+                           pixelSize: (width: Int, height: Int)) -> CaptureTargetDescriptor {
+        CaptureTargetDescriptor(
+            id: candidate.windowID,
+            kind: CaptureTargetDescriptor.Kind.window.rawValue,
+            title: candidate.title,
+            applicationName: candidate.applicationName,
+            width: pixelSize.width,
+            height: pixelSize.height,
+            processID: candidate.processID
+        )
+    }
+
     public func resolve() async throws -> ResolvedTarget {
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true
@@ -113,7 +145,8 @@ public struct CachedTargetResolver: TargetResolver {
                     title: "Display \(display.displayID)",
                     applicationName: nil,
                     width: size.width,
-                    height: size.height
+                    height: size.height,
+                    processID: nil
                 ),
                 reference: reference,
                 provenance: .cache
@@ -123,9 +156,11 @@ public struct CachedTargetResolver: TargetResolver {
             let candidates = content.windows.map {
                 WindowCandidate(windowID: $0.windowID,
                                 bundleIdentifier: $0.owningApplication?.bundleIdentifier,
+                                applicationName: $0.owningApplication?.applicationName,
                                 title: $0.title,
                                 width: Int($0.frame.width),
-                                height: Int($0.frame.height))
+                                height: Int($0.frame.height),
+                                processID: $0.owningApplication?.processID)
             }
             guard let match = Self.bestMatch(for: reference, among: candidates),
                   let window = content.windows.first(where: { $0.windowID == match.windowID })
@@ -134,17 +169,10 @@ public struct CachedTargetResolver: TargetResolver {
             }
 
             let filter = SCContentFilter(desktopIndependentWindow: window)
-            let size = filter.pixelDimensions
             return ResolvedTarget(
                 filter: filter,
-                descriptor: CaptureTargetDescriptor(
-                    id: window.windowID,
-                    kind: CaptureTargetDescriptor.Kind.window.rawValue,
-                    title: window.title,
-                    applicationName: window.owningApplication?.applicationName,
-                    width: size.width,
-                    height: size.height
-                ),
+                descriptor: Self.descriptor(for: match,
+                                            pixelSize: filter.pixelDimensions),
                 reference: reference,
                 provenance: .cache
             )

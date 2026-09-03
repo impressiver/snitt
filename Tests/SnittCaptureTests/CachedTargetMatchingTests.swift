@@ -1,9 +1,12 @@
+import Foundation
 import Testing
 @testable import SnittCapture
 
-private func candidate(_ id: UInt32, _ bundle: String?, _ title: String?) -> WindowCandidate {
+private func candidate(_ id: UInt32, _ bundle: String?, _ title: String?,
+                       pid: pid_t? = 4242) -> WindowCandidate {
     WindowCandidate(windowID: id, bundleIdentifier: bundle,
-                    title: title, width: 800, height: 600)
+                    applicationName: "App", title: title,
+                    width: 800, height: 600, processID: pid)
 }
 
 @Test("Matches the only window of the referenced application")
@@ -70,7 +73,8 @@ func ignoresWindowIDs() {
 private func sized(_ id: UInt32, _ bundle: String?, _ title: String?,
                    _ width: Int, _ height: Int) -> WindowCandidate {
     WindowCandidate(windowID: id, bundleIdentifier: bundle,
-                    title: title, width: width, height: height)
+                    applicationName: "App", title: title,
+                    width: width, height: height, processID: 4242)
 }
 
 @Test("With no title hint, the LARGEST window of the app wins")
@@ -152,4 +156,33 @@ func noBundleIdentifierIsGone() {
     #expect(CachedTargetResolver.failure(for: ref, among: [
         sized(1, nil, "Unowned", 900, 700),
     ]) == .targetGone("unknown application"))
+}
+
+@Test("A resolved window descriptor carries the pid auto-focus needs")
+func resolvedWindowDescriptorCarriesProcessID() {
+    // The discriminating check for the dead auto-focus. `processID` was added to
+    // `CaptureTargetDescriptor` and wired at exactly one site —
+    // `CaptureTarget.descriptor`, which only ever serves `listTargets()` — so
+    // every descriptor that reached `RecordingCoordinator.startRecording` had a
+    // nil pid, `WindowFocuser.focus(descriptor:)` returned false at its first
+    // guard, and the coordinator discarded that with `_ =`. Auto-focus (§4.13)
+    // never fired, while `WindowFocuserTests` passed against hand-built
+    // descriptors that carried a pid.
+    //
+    // This asserts the seam that IS reachable without a live display: the
+    // descriptor `CachedTargetResolver.resolve()` returns is built by this
+    // function, from the matched candidate. The one hop it cannot cover is the
+    // SCWindow → WindowCandidate map inside `resolve()`, which needs real
+    // screen enumeration; the pid is read there on the same line as the bundle
+    // identifier the matching already depends on.
+    let match = candidate(7, "com.example.App", "Main")
+    let descriptor = CachedTargetResolver.descriptor(for: match,
+                                                     pixelSize: (width: 1920, height: 1080))
+    #expect(descriptor.processID == 4242,
+            "without a pid the focuser cannot activate anything and §4.13 is dead code")
+    // Both halves of what the focuser checks, so this cannot pass against a
+    // descriptor that carries a pid but is not a window target.
+    #expect(descriptor.kind == CaptureTargetDescriptor.Kind.window.rawValue)
+    #expect(descriptor.title == "Main")
+    #expect(descriptor.applicationName == "App")
 }

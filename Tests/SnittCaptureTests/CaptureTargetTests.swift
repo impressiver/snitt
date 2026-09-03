@@ -6,7 +6,8 @@ import Foundation
 func descriptorEncodesStably() throws {
     let descriptor = CaptureTargetDescriptor(
         id: 42, kind: "window", title: "Safari",
-        applicationName: "Safari", width: 1440, height: 900
+        applicationName: "Safari", width: 1440, height: 900,
+        processID: 4242
     )
     let data = try JSONEncoder().encode(descriptor)
     let decoded = try JSONDecoder().decode(CaptureTargetDescriptor.self, from: data)
@@ -15,6 +16,8 @@ func descriptorEncodesStably() throws {
     #expect(decoded.kind == "window")
     #expect(decoded.title == "Safari")
     #expect(decoded.width == 1440)
+    #expect(decoded.processID == 4242,
+            "the pid crosses the wire too — it is what auto-focus acts on")
 }
 
 @Test("Descriptor kind is constrained to display or window")

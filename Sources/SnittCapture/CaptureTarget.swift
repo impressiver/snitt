@@ -21,9 +21,14 @@ public struct CaptureTargetDescriptor: Codable, Sendable, Equatable {
     /// activate the app before capture starts (§4.13); nil for displays.
     public var processID: pid_t?
 
+    /// - Parameter processID: Deliberately has NO default. A default of `nil`
+    ///   is what made auto-focus (§4.13) dead code: both resolvers that feed a
+    ///   recording simply never passed one, `WindowFocuser` returned false at
+    ///   its first guard, and nothing failed. Every caller must now decide —
+    ///   `nil` for a display, which has no process to activate.
     public init(id: UInt32, kind: String, title: String?,
                 applicationName: String?, width: Int, height: Int,
-                processID: pid_t? = nil) {
+                processID: pid_t?) {
         self.id = id
         self.kind = kind
         self.title = title
@@ -55,7 +60,8 @@ public enum CaptureTarget: @unchecked Sendable {
                 title: "Display \(display.displayID)",
                 applicationName: nil,
                 width: display.width,
-                height: display.height
+                height: display.height,
+                processID: nil
             )
         case .window(let window):
             return CaptureTargetDescriptor(
