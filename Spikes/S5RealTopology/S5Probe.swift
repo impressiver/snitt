@@ -9,14 +9,16 @@ import Foundation
 import ScreenCaptureKit
 import CoreMedia
 import CoreVideo
+import CoreGraphics
 
 let socketPath = "/tmp/snitt-s5.sock"
 
 /// `serve` runs inside an app bundle launched via LaunchServices, so it has no
 /// terminal to print to. Append to a file the human can read instead.
+/// Log to /tmp instead of ~/Desktop: the latter is TCC-protected by the Files-and-Folders
+/// service, silently defeating reads from both shell and the app. /tmp is unrestricted.
 func log(_ message: String) {
-    let url = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Desktop/S5-server.log")
+    let url = URL(fileURLWithPath: "/tmp/snitt-s5.log")
     let line = Data((message + "\n").utf8)
     if let handle = try? FileHandle(forWritingTo: url) {
         handle.seekToEndOfFile(); handle.write(line); try? handle.close()
@@ -36,6 +38,22 @@ struct S5Probe {
 
     /// Listens on a Unix socket; on any byte, captures and reports frame counts.
     static func serve() async {
+        // Preflight only READS the grant; Request is what raises the dialog and
+        // registers this app in System Settings. A probe that skips Request
+        // measures nothing and silently reports failure — this exact defect has
+        // now appeared three times in this project.
+        if !CGPreflightScreenCaptureAccess() {
+            log("Screen Recording not yet granted — requesting (a dialog should appear)")
+            let granted = CGRequestScreenCaptureAccess()
+            log("CGRequestScreenCaptureAccess() returned: \(granted)")
+            if !granted {
+                log("DENIED. Grant S5Server in System Settings > Privacy & Security >")
+                log("Screen & System Audio Recording, then relaunch this app.")
+            }
+        } else {
+            log("Screen Recording already granted at start")
+        }
+
         unlink(socketPath)
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         var addr = sockaddr_un()
