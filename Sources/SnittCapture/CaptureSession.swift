@@ -7,13 +7,18 @@ public struct CaptureOptions: Sendable {
     public var captureMicrophone: Bool
     public var captureSystemAudio: Bool
     public var maxDuration: Duration?
+    /// Log the fact of clicks and keystrokes (§4.2). Off by default: it costs
+    /// the user a third TCC dialog (§4.10).
+    public var logInputEvents: Bool
 
     public init(captureMicrophone: Bool = false,
                 captureSystemAudio: Bool = true,
-                maxDuration: Duration? = nil) {
+                maxDuration: Duration? = nil,
+                logInputEvents: Bool = false) {
         self.captureMicrophone = captureMicrophone
         self.captureSystemAudio = captureSystemAudio
         self.maxDuration = maxDuration
+        self.logInputEvents = logInputEvents
     }
 }
 

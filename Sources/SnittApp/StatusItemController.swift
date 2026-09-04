@@ -95,6 +95,13 @@ final class StatusItemController: NSObject {
         agentItem.target = self
         agentItem.state = agentRecordingEnabled ? .on : .off
         menu.addItem(agentItem)
+
+        let eventsItem = NSMenuItem(title: "Log input events",
+                                    action: #selector(toggleEventLogging),
+                                    keyEquivalent: "")
+        eventsItem.target = self
+        eventsItem.state = eventLoggingEnabled ? .on : .off
+        menu.addItem(eventsItem)
         menu.addItem(.separator())
 
         let quitItem = NSMenuItem(title: "Quit Snitt",
@@ -120,6 +127,16 @@ final class StatusItemController: NSObject {
 
     @objc private func toggleAgentRecording() {
         onToggleAgentRecording?(!agentRecordingEnabled)
+    }
+
+    /// Mirrors the persisted setting so the menu can show a checkmark.
+    var eventLoggingEnabled = false
+
+    /// Invoked when the user toggles input-event logging from the menu.
+    var onToggleEventLogging: ((Bool) -> Void)?
+
+    @objc private func toggleEventLogging() {
+        onToggleEventLogging?(!eventLoggingEnabled)
     }
 
     func update(_ newState: RecordingState) {

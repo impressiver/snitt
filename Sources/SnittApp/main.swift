@@ -38,6 +38,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.statusItem.agentRecordingEnabled = enabled
         }
 
+        statusItem.eventLoggingEnabled = EventLoggingSettings.load().enabled
+        statusItem.onToggleEventLogging = { [weak self] enabled in
+            guard let self else { return }
+            if enabled {
+                // First use of the feature that needs it — never at launch.
+                guard PermissionOnboarding.preExplain(.inputMonitoring) else { return }
+                if !InputMonitoringAccess.ensureGranted() {
+                    // Same shape as Screen Recording: a request returns false
+                    // even while the user is granting, so this is "relaunch",
+                    // not "denied".
+                    PermissionOnboarding.showAlreadyDenied(.inputMonitoring)
+                }
+            }
+            var settings = EventLoggingSettings.load()
+            settings.enabled = enabled
+            settings.save()
+            self.statusItem.eventLoggingEnabled = enabled
+        }
+
         // §5.3 requires a visible indicator for the WHOLE duration of a
         // recording, agent-initiated ones included. The indicator is driven by
         // whoever calls the coordinator, and until this sink existed only

@@ -218,8 +218,11 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         // The agent's audio choices, which used to stop at the wire: nothing
         // read `options.microphone`, so `--mic` was a no-op end to end and
         // `health.micRMS` could only ever be nil.
+        // Read at record time rather than cached at launch, so toggling the
+        // menu item takes effect on the next recording without a relaunch.
         let captureOptions = CaptureOptions(captureMicrophone: options.microphone,
-                                            captureSystemAudio: options.systemAudio)
+                                            captureSystemAudio: options.systemAudio,
+                                            logInputEvents: EventLoggingSettings.load().enabled)
 
         let outcome = await coordinator.startForAgent(sessionID: sessionID,
                                                       reference: reference,

@@ -11,11 +11,13 @@ public enum PermissionOnboarding {
     public enum Service: String, CaseIterable, Sendable {
         case screenRecording
         case microphone
+        case inputMonitoring
 
         var displayName: String {
             switch self {
             case .screenRecording: return "Screen Recording"
             case .microphone: return "Microphone"
+            case .inputMonitoring: return "Input Monitoring"
             }
         }
 
@@ -27,6 +29,11 @@ public enum PermissionOnboarding {
             case .microphone:
                 return "You turned on voiceover, so Snitt needs the microphone. "
                      + "Recordings without voiceover never use it."
+            case .inputMonitoring:
+                return "You turned on input logging, so Snitt can record WHEN "
+                     + "you click and type — never which keys. Recordings mark "
+                     + "the moments activity happened, so dead air can be "
+                     + "trimmed later."
             }
         }
     }
@@ -99,6 +106,9 @@ public enum PermissionOnboarding {
         case .microphone:
             return URL(string: "x-apple.systempreferences:com.apple.preference.security"
                              + "?Privacy_Microphone")!
+        case .inputMonitoring:
+            return URL(string: "x-apple.systempreferences:com.apple.preference.security"
+                             + "?Privacy_ListenEvent")!
         }
     }
 

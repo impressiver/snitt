@@ -270,10 +270,14 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         // when someone deliberately turns it on. Git context is nil because
         // Snitt.app's own working directory is "/"; only a client knows which
         // repository a recording is about (§7).
+        var options = CaptureOptions()
+        // Read at record time rather than cached at launch, so toggling the
+        // menu item takes effect on the next recording without a relaunch.
+        options.logInputEvents = EventLoggingSettings.load().enabled
         return await startRecording(forcedResolver: nil,
                                     suppressFocus: suppressFocus,
                                     git: nil,
-                                    options: CaptureOptions())
+                                    options: options)
     }
 
     /// No parameter has a default, deliberately, and for the reason

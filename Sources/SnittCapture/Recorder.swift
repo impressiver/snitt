@@ -25,6 +25,9 @@ public actor Recorder {
     private var isFinished = false
     private let eventLog = SessionEventLog()
 
+    private let logInputEvents: Bool
+    private var inputEvents: InputEventMonitor?
+
     /// - Parameter initiator: Deliberately has NO default. A default of
     ///   `.human` is what let every agent recording ship mislabelled: the
     ///   argument was simply never passed, and nothing failed. Provenance is
@@ -49,6 +52,7 @@ public actor Recorder {
         self.sink = sink
         self.initiator = initiator
         self.git = git
+        self.logInputEvents = options.logInputEvents
         self.session = CaptureSession(target: target, sink: sink, options: options)
     }
 
@@ -62,11 +66,23 @@ public actor Recorder {
         self.session = session
         self.initiator = initiator
         self.git = git
+        self.logInputEvents = false
     }
 
     public func start() async throws {
         startedAt = Date()
         try await session.start()
+
+        // Started only when asked, and only after capture is running, so a
+        // failed recording never leaves a tap installed.
+        if logInputEvents {
+            let monitor = InputEventMonitor { [weak self] kind in
+                guard let self else { return }
+                Task { await self.recordInputEvent(kind) }
+            }
+            _ = monitor.start()
+            inputEvents = monitor
+        }
     }
 
     /// The metrics gathered during the writer pass (§12.1).
@@ -88,6 +104,14 @@ public actor Recorder {
 
         let stoppedAt = Date()
         isFinished = true
+
+        // Torn down before any finalization step that could throw, so every
+        // path out of this function — success or failure — leaves the tap
+        // uninstalled. `stop()` is mandatory on the monitor: a dropped
+        // reference while a callback is in flight is a use-after-free, and
+        // the monitor's own `stop()` is what prevents that.
+        inputEvents?.stop()
+        inputEvents = nil
 
         // Swallowed deliberately: on the testing path there is no live stream,
         // and a stream-stop failure does not corrupt the written movie.
@@ -138,6 +162,14 @@ public actor Recorder {
             media: session.mediaOffsetNow(), wallClock: wallClock) ?? wallClock
         await eventLog.add(at: offset, kind: .marker, label: label)
         return offset
+    }
+
+    /// Records that input happened, on the same media clock markers use.
+    private func recordInputEvent(_ kind: EventKind) async {
+        let wallClock = startedAt.map { Date().timeIntervalSince($0) }
+        let offset = CaptureSession.plausibleOffset(
+            media: session.mediaOffsetNow(), wallClock: wallClock) ?? wallClock ?? 0
+        await eventLog.add(at: offset, kind: kind, label: nil)
     }
 
     private func writeSidecars(stoppedAt: Date, collectedEvents: [LoggedEvent]) throws {
