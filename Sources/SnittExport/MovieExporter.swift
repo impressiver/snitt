@@ -5,6 +5,12 @@ import SnittDocument
 public enum ExportError: Error, Equatable {
     case noExportSession
     case sessionFailed(String)
+    /// `NSFileManager`'s `.size` attribute came back as something other than
+    /// an `NSNumber`. Unreachable on macOS in practice, but this milestone's
+    /// own banned pattern is `(… as? T) ?? 0` — a failed cast silently
+    /// becoming 0 bytes would satisfy `byteSize <= maxSizeBytes` and report
+    /// `maxSizeMet == true` for a file whose size was never actually read.
+    case unreadableFileSize(String)
 }
 
 /// Writes a composition to an mp4, and assembles the manifest an agent uses
@@ -30,13 +36,22 @@ public enum MovieExporter {
     /// walks `SizeLadder` down from it.
     public static let defaultGIFFrameRate = 15.0
 
+    /// A same-directory sibling of `url` the export writes to before it is
+    /// known to have succeeded (finding #4, mirroring `GIFExporter`'s
+    /// helper of the same name): `AVAssetExportSession` can throw partway
+    /// through a rung in the ladder below, and a rung that throws must not
+    /// disturb whatever a PREVIOUS, successful rung already left at `url` —
+    /// otherwise the manifest can end up describing a byte size and
+    /// dimensions for a path with no file on it at all.
+    private static func temporaryURL(near url: URL) -> URL {
+        url.deletingLastPathComponent()
+            .appendingPathComponent(".snitt-tmp-\(UUID().uuidString)")
+            .appendingPathExtension(url.pathExtension)
+    }
+
     public static func exportMovie(_ built: BuiltComposition,
                                    to url: URL,
                                    maxSizeBytes: Int? = nil) async throws {
-        // Re-exporting after a tweak is the normal loop; a stale file from
-        // the previous run must not fail the next one.
-        try? FileManager.default.removeItem(at: url)
-
         guard let session = AVAssetExportSession(
             asset: built.composition, presetName: AVAssetExportPresetHighestQuality)
         else { throw ExportError.noExportSession }
@@ -49,15 +64,45 @@ public enum MovieExporter {
             session.fileLengthLimit = Int64(maxSizeBytes)
         }
 
+        let tempURL = temporaryURL(near: url)
+        // A stale temp file from an earlier crashed run must not fail this
+        // one; `AVAssetExportSession` refuses to write over an existing file.
+        try? FileManager.default.removeItem(at: tempURL)
         do {
-            try await session.export(to: url, as: .mp4)
+            // Deliberately retained even though `fileLengthLimit` is now
+            // known (measured, not assumed) to shrink toward a floor rather
+            // than throw: floor behaviour is undocumented and can plausibly
+            // vary across encoders and OS releases, and the cost of this
+            // catch is a few lines against losing an entire long export to
+            // an unhandled throw if it ever does misbehave. Currently
+            // untestable through the public API — nothing observed drives
+            // `AVAssetExportSession.export` to throw here — except that the
+            // cleanup on the line right below (finding #4) now runs inside
+            // it, which makes this branch partly exercisable after all: a
+            // constructed throw here is exactly what proves that cleanup
+            // doesn't clobber a previous rung's good file.
+            try await session.export(to: tempURL, as: .mp4)
         } catch {
+            try? FileManager.default.removeItem(at: tempURL)
             throw ExportError.sessionFailed(String(describing: error))
         }
+
+        // Only now — with a complete file sitting at `tempURL` — does
+        // whatever was previously at `url` get replaced. Re-exporting after
+        // a tweak is the normal loop, so a stale file from a previous run at
+        // `url` must not fail this one; deferring the removal to here (as
+        // opposed to up front, before the export even ran) is what keeps a
+        // throwing rung from destroying a previously good file.
+        try? FileManager.default.removeItem(at: url)
+        try FileManager.default.moveItem(at: tempURL, to: url)
     }
 
     private static func fileByteSize(at url: URL) throws -> Int {
-        (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
+        guard let size = try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int
+        else {
+            throw ExportError.unreadableFileSize(url.path)
+        }
+        return size
     }
 
     /// GIF's size-targeting path. Mirrors the shape of the mp4 ladder above
@@ -67,27 +112,34 @@ public enum MovieExporter {
     /// primitive to try before re-encoding, so the ladder IS the whole
     /// mechanism here, not a fallback after one.
     ///
-    /// Returns the composition actually written, the scale it was written
-    /// at, the resulting file's byte size, and whether `maxSizeBytes` (if
-    /// any) was met.
+    /// Returns the composition actually written, the scale and frame rate it
+    /// was written at, the resulting file's byte size, and whether
+    /// `maxSizeBytes` (if any) was met.
+    ///
+    /// The frame rate is part of this return value, not an afterthought: the
+    /// ladder drops fps before scale, so a GIF that hit its budget by
+    /// dropping to 5fps looks — absent this — identical in the manifest to
+    /// one that hit it untouched. `effectiveFPS` is what makes that
+    /// distinguishable.
     private static func exportGIF(bundle: SnittBundle,
                                   edl: EditDecisionList,
                                   scale: Double,
                                   to outputURL: URL,
                                   maxSizeBytes: Int?) async throws
-        -> (built: BuiltComposition, scale: Double, byteSize: Int, sizeMet: Bool) {
+        -> (built: BuiltComposition, scale: Double, fps: Double, byteSize: Int, sizeMet: Bool) {
         guard let maxSizeBytes else {
             // No target: one GIF at the base frame rate and the requested
             // scale, no ladder walked at all.
             let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: scale)
             try await GIFExporter.write(built, to: outputURL, framesPerSecond: defaultGIFFrameRate)
             let byteSize = try fileByteSize(at: outputURL)
-            return (built, scale, byteSize, false)
+            return (built, scale, defaultGIFFrameRate, byteSize, false)
         }
 
         let rungs = SizeLadder.rungs(baseFPS: defaultGIFFrameRate)
         var lastSuccessfulBuilt: BuiltComposition?
         var lastSuccessfulScale = scale
+        var lastSuccessfulFPS = defaultGIFFrameRate
         var byteSize = 0
         var met = false
         for rung in rungs {
@@ -100,17 +152,23 @@ public enum MovieExporter {
             } catch {
                 // Same contract as the mp4 ladder: a rung that fails to
                 // encode does not abort the whole export, it just isn't
-                // this rung's answer.
+                // this rung's answer. `outputURL` is untouched by a throwing
+                // rung (GIFExporter.write writes to a temp path and only
+                // moves it into place on success), so it still holds
+                // whatever the LAST successful rung wrote — matching the
+                // `lastSuccessfulBuilt`/`byteSize`/fps this loop is about to
+                // report (finding #4).
                 continue
             }
             lastSuccessfulBuilt = rungBuilt
             lastSuccessfulScale = rungScale
+            lastSuccessfulFPS = rung.framesPerSecond
             byteSize = try fileByteSize(at: outputURL)
             if byteSize <= maxSizeBytes { met = true; break }
         }
 
         if let lastSuccessfulBuilt {
-            return (lastSuccessfulBuilt, lastSuccessfulScale, byteSize, met)
+            return (lastSuccessfulBuilt, lastSuccessfulScale, lastSuccessfulFPS, byteSize, met)
         }
 
         // Every rung threw. The honesty contract still requires a file at
@@ -125,7 +183,7 @@ public enum MovieExporter {
         let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: smallestScale)
         try await GIFExporter.write(built, to: outputURL, framesPerSecond: smallest.framesPerSecond)
         byteSize = try fileByteSize(at: outputURL)
-        return (built, smallestScale, byteSize, byteSize <= maxSizeBytes)
+        return (built, smallestScale, smallest.framesPerSecond, byteSize, byteSize <= maxSizeBytes)
     }
 
     /// The full pipeline: build the composition, write the mp4, map markers
@@ -146,13 +204,17 @@ public enum MovieExporter {
                               maxSizeBytes: Int? = nil) async throws -> ExportManifest {
         var built: BuiltComposition
         var effectiveScale: Double
+        var effectiveFPS: Double?
         var byteSize: Int
         var sizeMet = false
 
         if format == "gif" {
-            (built, effectiveScale, byteSize, sizeMet) = try await exportGIF(
+            var fps: Double
+            (built, effectiveScale, fps, byteSize, sizeMet) = try await exportGIF(
                 bundle: bundle, edl: edl, scale: scale, to: outputURL, maxSizeBytes: maxSizeBytes)
+            effectiveFPS = fps
         } else {
+            effectiveFPS = nil
             built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: scale)
             effectiveScale = scale
             byteSize = 0
@@ -237,6 +299,7 @@ public enum MovieExporter {
             scale: effectiveScale,
             maxSizeBytes: maxSizeBytes,
             maxSizeMet: maxSizeBytes == nil ? nil : sizeMet,
+            effectiveFPS: effectiveFPS,
             chaptersPath: chaptersURL?.path,
             chapters: chapters)
     }

@@ -25,6 +25,20 @@ public enum GIFError: Error, Equatable {
 /// A GIF carries no audio. That is the format, not an omission, but callers
 /// must say so rather than let a user discover a silent demo.
 public enum GIFExporter {
+    /// A same-directory sibling of `url`, used so the write lands atomically
+    /// (finding #4): `CGImageDestination` only materialises bytes at
+    /// `finalize`, so a rung that throws partway through — a per-frame
+    /// failure, a finalize failure — must not touch whatever a PREVIOUS,
+    /// successful rung already wrote to `url`. Writing here first and moving
+    /// into place only after `finalize` succeeds means a throwing rung
+    /// leaves the last good file exactly as it was, and the manifest is
+    /// never built from a byte size that describes a path with no file.
+    private static func temporaryURL(near url: URL) -> URL {
+        url.deletingLastPathComponent()
+            .appendingPathComponent(".snitt-tmp-\(UUID().uuidString)")
+            .appendingPathExtension(url.pathExtension)
+    }
+
     public static func write(_ built: BuiltComposition,
                              to url: URL,
                              framesPerSecond: Double) async throws {
@@ -67,9 +81,10 @@ public enum GIFExporter {
             CMTime(seconds: Double($0) * interval, preferredTimescale: 600)
         }
 
-        try? FileManager.default.removeItem(at: url)
+        let tempURL = temporaryURL(near: url)
+        try? FileManager.default.removeItem(at: tempURL)
         guard let destination = CGImageDestinationCreateWithURL(
-            url as CFURL, UTType.gif.identifier as CFString, times.count, nil)
+            tempURL as CFURL, UTType.gif.identifier as CFString, times.count, nil)
         else { throw GIFError.destinationUnavailable }
 
         CGImageDestinationSetProperties(destination, [
@@ -90,15 +105,23 @@ public enum GIFExporter {
                 // Per-frame failures are DELIVERED, not thrown. Skipping them
                 // writes a GIF that is quietly missing frames — §11 is
                 // explicit that corrupt output is the worst outcome.
+                try? FileManager.default.removeItem(at: tempURL)
                 throw GIFError.frameGenerationFailed(
                     "frame at \(CMTimeGetSeconds(time))s: \(error.localizedDescription)")
             @unknown default:
+                try? FileManager.default.removeItem(at: tempURL)
                 throw GIFError.frameGenerationFailed("unknown result case")
             }
         }
 
         guard CGImageDestinationFinalize(destination) else {
+            try? FileManager.default.removeItem(at: tempURL)
             throw GIFError.finalizeFailed
         }
+
+        // Only now — with a complete, finalized GIF sitting at `tempURL` —
+        // does whatever was previously at `url` get touched.
+        try? FileManager.default.removeItem(at: url)
+        try FileManager.default.moveItem(at: tempURL, to: url)
     }
 }

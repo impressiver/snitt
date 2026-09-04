@@ -62,6 +62,31 @@ func nilHealthYieldsNoFields() {
     #expect(healthFields(nil).isEmpty)
 }
 
+@Test("sizeBudgetNote reports a missed budget with both numbers")
+func sizeBudgetNoteReportsAMiss() {
+    let manifest = ExportManifest(outputPath: "/tmp/a.mp4", format: "mp4", byteSize: 9_000_000,
+                                  durationSeconds: 1, width: 2, height: 2, scale: 1,
+                                  maxSizeBytes: 5_000_000, maxSizeMet: false)
+    let note = sizeBudgetNote(manifest)
+    #expect(note?.contains("9.0 MB") == true)
+    #expect(note?.contains("5.0 MB") == true)
+}
+
+@Test("sizeBudgetNote is nil when no target was requested")
+func sizeBudgetNoteNilWithNoTarget() {
+    let manifest = ExportManifest(outputPath: "/tmp/a.mp4", format: "mp4", byteSize: 9_000_000,
+                                  durationSeconds: 1, width: 2, height: 2, scale: 1)
+    #expect(sizeBudgetNote(manifest) == nil)
+}
+
+@Test("sizeBudgetNote is nil when the target was met")
+func sizeBudgetNoteNilWhenMet() {
+    let manifest = ExportManifest(outputPath: "/tmp/a.mp4", format: "mp4", byteSize: 3_000_000,
+                                  durationSeconds: 1, width: 2, height: 2, scale: 1,
+                                  maxSizeBytes: 5_000_000, maxSizeMet: true)
+    #expect(sizeBudgetNote(manifest) == nil)
+}
+
 @Test("Error codes are stable strings — agents branch on these, not on prose")
 func errorCodesAreStable() {
     #expect(AutomationError.Code.consentRequired.rawValue == "consent_required")

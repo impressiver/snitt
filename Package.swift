@@ -44,10 +44,10 @@ let package = Package(
         // SnittAutomation alone (which itself depends on SnittDocument, for
         // CaptureHealth) is enough.
         .executableTarget(name: "snitt-cli",
-                          dependencies: ["SnittAutomation"],
+                          dependencies: ["SnittAutomation", "SnittDocument"],
                           path: "Sources/snitt-cli"),
         .executableTarget(name: "snitt-mcp",
-                          dependencies: ["SnittAutomation"],
+                          dependencies: ["SnittAutomation", "SnittDocument"],
                           path: "Sources/snitt-mcp"),
         .testTarget(name: "SnittDocumentTests", dependencies: ["SnittDocument"]),
         .testTarget(name: "SnittCaptureTests", dependencies: ["SnittCapture"]),
@@ -55,6 +55,10 @@ let package = Package(
         .testTarget(name: "SnittAutomationTests", dependencies: ["SnittAutomation", "SnittDocument"]),
         .testTarget(name: "SnittAppTests",
                     dependencies: ["SnittApp", "SnittCapture", "SnittDocument", "SnittAutomation"]),
+        .testTarget(name: "SnittCLITests",
+                    dependencies: ["snitt-cli", "SnittAutomation", "SnittDocument"]),
+        .testTarget(name: "SnittMCPTests",
+                    dependencies: ["snitt-mcp", "SnittAutomation", "SnittDocument"]),
         // THROWAWAY SPIKE CODE — spec section 14, S1/S3/S4/S5. Not for production use.
         .executableTarget(name: "S1KeystrokeProbe", path: "Spikes/S1KeystrokeProbe"),
         .executableTarget(name: "S3IPCCaptureProbe", path: "Spikes/S3IPCCaptureProbe"),

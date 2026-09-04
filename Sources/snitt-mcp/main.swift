@@ -7,6 +7,7 @@
 // it — this only asks it to act (§4.9).
 import Foundation
 import SnittAutomation
+import SnittDocument
 
 func respond(_ object: [String: Any]) {
     guard let data = try? JSONSerialization.data(withJSONObject: object),
@@ -38,6 +39,25 @@ func textContent(_ text: String) -> [String: Any] {
 /// unsupported method, or a message that cannot be parsed as JSON-RPC at all.
 func toolError(id: Any?, _ text: String) {
     result(id: id, ["content": [["type": "text", "text": text]], "isError": true])
+}
+
+/// Renders `.exported`'s manifest as the text an agent reads back.
+///
+/// A separate function, not inlined into `describe`'s switch, so it can be
+/// exercised directly by a test without driving the whole JSON-RPC loop —
+/// and so its budget-miss wording is verifiably the same sentence `emit`'s
+/// note in the CLI produces (§4.8), both built from the shared
+/// `sizeBudgetNote` in `SnittAutomation`.
+func exportSummary(_ manifest: ExportManifest) -> String {
+    let megabytes = Double(manifest.byteSize) / 1_000_000
+    let chapters = manifest.chapters.map(\.title).joined(separator: ", ")
+    var text = "Exported \(Int(manifest.durationSeconds))s to \(manifest.outputPath) "
+             + "(\(String(format: "%.1f", megabytes)) MB)"
+    if let note = sizeBudgetNote(manifest) {
+        text += " — \(note)"
+    }
+    text += chapters.isEmpty ? "" : ", chapters: \(chapters)"
+    return text
 }
 
 /// Renders a response as the text an agent reads back.
@@ -83,11 +103,7 @@ func describe(_ response: AutomationResponse) -> String {
         return "Kept \(Int(summary.keptSeconds))s, cut \(Int(summary.cutSeconds))s"
              + (cuts.isEmpty ? "" : " (\(cuts))")
     case .exported(let manifest):
-        let megabytes = Double(manifest.byteSize) / 1_000_000
-        let chapters = manifest.chapters.map(\.title).joined(separator: ", ")
-        return "Exported \(Int(manifest.durationSeconds))s to \(manifest.outputPath) "
-             + "(\(String(format: "%.1f", megabytes)) MB)"
-             + (chapters.isEmpty ? "" : ", chapters: \(chapters)")
+        return exportSummary(manifest)
     }
 }
 

@@ -152,3 +152,70 @@ func wallAndMediaDurationsDisagreeButTrimAndExportMustAgree() async throws {
     #expect(abs(summary.keptSeconds - manifest.durationSeconds) < 0.1,
             "trim reported \(summary.keptSeconds)s kept, but the exported file is \(manifest.durationSeconds)s — the agent was told a number the file does not have")
 }
+
+@Test("A corrupt edit.json fails export explicitly rather than silently exporting the full range")
+func exportWithCorruptEDLFailsExplicitly() async throws {
+    // Guards finding #6 of the M3d fix wave: `AutomationHost.export` used to
+    // read the EDL with `(try? EditDecisionList.read(from: bundle)) ??
+    // .fullRange()`, which collapses "no edit.json" (legitimate — nothing
+    // has trimmed this recording yet) and "edit.json exists but is corrupt"
+    // (a real failure) into the same "export the whole recording" outcome.
+    // The same collapse `MovieExporter.readBundleEvents` was fixed to avoid
+    // for `events.json`, two files away. A corrupt EDL exporting the full
+    // recording and reporting success would silently discard whatever trim
+    // the recording actually had.
+    let bundle = try await bundleWithMetadata(duration: 4, events: [])
+    // Overwrite the well-formed edit.json `bundleWithMetadata` wrote with
+    // something that is present but not valid EditDecisionList JSON.
+    try Data("{ not valid json".utf8).write(to: bundle.editURL)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+    let output = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
+    defer { try? FileManager.default.removeItem(at: output) }
+
+    let host = AutomationHost.forTesting()
+    let response = await host.handle(
+        .export(bundlePath: bundle.url.path, format: "mp4", outputPath: output.path,
+               scale: 1.0, chapters: false, maxSizeBytes: nil))
+
+    guard case .failure(let error) = response else {
+        Issue.record("export with a corrupt edit.json must fail, not silently export the full range"); return
+    }
+    #expect(error.hint != nil, "an agent needs to know why, and that its trim was not silently discarded")
+    #expect(!FileManager.default.fileExists(atPath: output.path),
+            "a refused export must not have written a file")
+}
+
+@Test("A missing edit.json still exports cleanly at the full range")
+func exportWithNoEDLFileExportsFullRange() async throws {
+    // The companion case to the corrupt-EDL test above: "no edit.json at
+    // all" is legitimate (a fresh recording nobody has trimmed yet) and
+    // must not be treated as a failure — the same "absent is not corrupt"
+    // distinction `MovieExporter`'s events.json handling draws.
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension(SnittBundle.fileExtension)
+    let bundle = try SnittBundle(creatingAt: url)
+    try await writeSyntheticMovie(to: bundle.captureURL, seconds: 2)
+    try RecordingMetadata(createdAt: Date(), initiator: .agent,
+                          durationSeconds: 2).write(to: bundle)
+    // Deliberately no `EditDecisionList.write(to:)` call — edit.json does
+    // not exist on disk.
+    #expect(!FileManager.default.fileExists(atPath: bundle.editURL.path))
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+    let output = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
+    defer { try? FileManager.default.removeItem(at: output) }
+
+    let host = AutomationHost.forTesting()
+    let response = await host.handle(
+        .export(bundlePath: bundle.url.path, format: "mp4", outputPath: output.path,
+               scale: 1.0, chapters: false, maxSizeBytes: nil))
+
+    guard case .exported(let manifest) = response else {
+        Issue.record("expected exported, got \(response)"); return
+    }
+    #expect(abs(manifest.durationSeconds - 2.0) < 0.2)
+}

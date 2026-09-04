@@ -154,3 +154,57 @@ func unfulfillableFrameFailsExport() async throws {
         try await GIFExporter.write(inflated, to: out, framesPerSecond: 5)
     }
 }
+
+@Test("A throwing write leaves a previously-written good file at the same path untouched")
+func throwingWriteDoesNotDestroyAPreviousGoodFile() async throws {
+    // Guards finding #4 of the M3d fix wave: before the fix, `write` did
+    // `try? removeItem(at: url)` up front and only produced bytes at
+    // `finalize` — so a write that threw partway through (a per-frame
+    // failure, a finalize failure) had already deleted whatever GOOD file a
+    // previous, successful write left at that same path. In `exportMovie`'s
+    // and `exportGIF`'s size ladders, that meant a rung that failed after an
+    // earlier rung succeeded left the manifest describing a byte size and
+    // dimensions for a path with no file on it at all — exactly the
+    // scenario a reviewer proved by hand with a scratch test (a good 543
+    // -byte GIF, then a throwing write leaving `fileExists == false`) but
+    // could not trigger naturally through `MovieExporter`'s public API.
+    // This test constructs the same shape directly against `GIFExporter`,
+    // the actual site of the bug, rather than trying to thread it through
+    // the ladder.
+    let bundle = try await makeTestBundle(seconds: 1)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+    let built = try await CompositionBuilder.build(
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0)
+    let out = FileManager.default.temporaryDirectory
+        .appendingPathComponent("keep-\(UUID().uuidString).gif")
+    defer { try? FileManager.default.removeItem(at: out) }
+
+    // A good write first — this is the "previous successful rung".
+    try await GIFExporter.write(built, to: out, framesPerSecond: 5)
+    #expect(FileManager.default.fileExists(atPath: out.path))
+    let goodSize = try #require(
+        FileManager.default.attributesOfItem(atPath: out.path)[.size] as? Int)
+    #expect(goodSize > 0)
+
+    // Now a write to the SAME path that is guaranteed to throw — the
+    // "failing later rung" — using the same inflated-duration trick as
+    // `unfulfillableFrameFailsExport` above.
+    let inflated = BuiltComposition(
+        composition: built.composition,
+        videoComposition: built.videoComposition,
+        duration: built.duration + 5,
+        keptRanges: built.keptRanges)
+    await #expect(throws: (any Error).self) {
+        try await GIFExporter.write(inflated, to: out, framesPerSecond: 5)
+    }
+
+    // The discriminating assertions: the file must still be there, and it
+    // must still be the GOOD one — not deleted, and not partially
+    // overwritten by whatever the throwing write got through before it
+    // failed. Pre-fix, `fileExists` here was false.
+    #expect(FileManager.default.fileExists(atPath: out.path),
+            "a throwing write must not delete a previously-successful file at the same path")
+    let sizeAfter = try FileManager.default.attributesOfItem(atPath: out.path)[.size] as? Int
+    #expect(sizeAfter == goodSize,
+            "the surviving file must be byte-for-byte the earlier good write, not a partial one")
+}

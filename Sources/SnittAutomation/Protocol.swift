@@ -170,6 +170,27 @@ public func healthFields(_ health: CaptureHealth?) -> [String: Double] {
     return fields
 }
 
+/// Renders `ExportManifest`'s size-budget honesty for display — the same
+/// property this milestone spent its whole effort making `maxSizeMet` report
+/// truthfully, one layer up: a human-readable summary is not "the JSON has
+/// the field," it is a sentence a reader (or an agent) actually sees.
+///
+/// Shared by both frontends (§4.8, same reasoning as `healthFields`): if the
+/// CLI and the MCP server each wrote their own wording, one of them would
+/// eventually drift into announcing success sentences for a file that
+/// missed its budget, silently. Returns `nil` when there is nothing to say —
+/// no target was requested, or the target was met — so a caller appends this
+/// only when it is non-nil rather than always emitting a trailing clause.
+public func sizeBudgetNote(_ manifest: ExportManifest) -> String? {
+    guard manifest.maxSizeMet == false, let maxSizeBytes = manifest.maxSizeBytes else {
+        return nil
+    }
+    let actualMB = Double(manifest.byteSize) / 1_000_000
+    let requestedMB = Double(maxSizeBytes) / 1_000_000
+    return "over budget: \(String(format: "%.1f", actualMB)) MB > "
+         + "\(String(format: "%.1f", requestedMB)) MB requested"
+}
+
 public enum AutomationResponse: Codable, Sendable, Equatable {
     case handshake(HandshakeInfo)
     case targets([TargetSummary])

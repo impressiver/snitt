@@ -6,6 +6,7 @@
 // new parent (spec §4.9). Snitt.app holds the grant; this asks it to act.
 import Foundation
 import SnittAutomation
+import SnittDocument
 
 func emit(_ value: some Encodable) {
     let encoder = JSONEncoder()
@@ -27,6 +28,22 @@ func emitObject(_ value: [String: Any]) {
 
 func note(_ message: String) {
     FileHandle.standardError.write(Data((message + "\n").utf8))
+}
+
+/// The human-readable line printed to stderr for `.exported`.
+///
+/// A separate, testable function for the same reason `emit(manifest)` above
+/// it is not enough: `emit` prints the JSON, where `maxSizeMet: false` is
+/// present and honest, but a script reading only this stderr line — the
+/// text a person actually sees — got no mention of the miss at all. Built
+/// from the shared `sizeBudgetNote` (`SnittAutomation`) so this and the MCP
+/// frontend's `exportSummary` cannot drift apart (§4.8).
+func exportNote(_ manifest: ExportManifest) -> String {
+    var text = "Exported \(manifest.outputPath) (\(manifest.byteSize) bytes)"
+    if let note = sizeBudgetNote(manifest) {
+        text += " — \(note)"
+    }
+    return text
 }
 
 let helpText = """
@@ -132,7 +149,7 @@ do {
         note("Kept \(Int(summary.keptSeconds))s, cut \(Int(summary.cutSeconds))s")
     case .exported(let manifest):
         emit(manifest)
-        note("Exported \(manifest.outputPath) (\(manifest.byteSize) bytes)")
+        note(exportNote(manifest))
     }
 } catch ClientError.notRunning {
     note("Snitt is not running. Open Snitt and try again.")

@@ -218,6 +218,22 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         }
     }
 
+    /// Reads a bundle's `edit.json`, treating "no file" and "unreadable
+    /// file" as two different outcomes rather than collapsing both into "no
+    /// trims" — the same distinction `MovieExporter.readBundleEvents` draws
+    /// for `events.json`, and for the same reason (§8, plus one file over):
+    /// a corrupt `edit.json` exporting the whole recording as if it had
+    /// never been trimmed is the exact "success" that quietly discards real
+    /// work, one step removed from `readBundleEvents`'s chapters case. A
+    /// missing file is legitimate — a fresh recording nobody has trimmed
+    /// yet — and must still export cleanly at the full range.
+    private static func readEDL(for bundle: SnittBundle) throws -> EditDecisionList {
+        guard FileManager.default.fileExists(atPath: bundle.editURL.path) else {
+            return .fullRange()
+        }
+        return try EditDecisionList.read(from: bundle)
+    }
+
     /// Reads `capture.mov` and writes the trimmed mp4 (plus, optionally, its
     /// chapters sidecar) IN THE APP, not the client, for the same reason
     /// `trim` does (§4.9): the CLI cannot read `capture.mov` out of the
@@ -247,7 +263,17 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                 hint: "Use the path `snitt record stop` printed."))
         }
 
-        let edl = (try? EditDecisionList.read(from: bundle)) ?? .fullRange()
+        let edl: EditDecisionList
+        do {
+            edl = try Self.readEDL(for: bundle)
+        } catch {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "Could not read this recording's edit.json.",
+                hint: "The file exists but is not valid — exporting the whole "
+                    + "recording without applying it would silently discard trims "
+                    + "the recording actually has: \(String(describing: error))"))
+        }
         let outputURL = URL(fileURLWithPath: outputPath)
         // Beside the output, not beside the bundle: an agent that asked for
         // `~/exports/demo.mp4` expects `~/exports/demo.vtt`, not a sidecar

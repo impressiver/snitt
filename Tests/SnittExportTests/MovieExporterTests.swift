@@ -405,6 +405,77 @@ func gifImpossibleTargetReportsMiss() async throws {
             "an impossible target should exhaust the ladder down to its smallest rung")
 }
 
+@Test("fileLengthLimit alone shrinks the file below an unconstrained export, at the same scale")
+func fileLengthLimitAloneShrinksTheFile() async throws {
+    // Guards finding #2 of the M3d fix wave: `session.fileLengthLimit =
+    // Int64(maxSizeBytes)` in `exportMovie` was, at review time, entirely
+    // untested — every SnittExport test that exercised size targeting was
+    // satisfied by the scale ladder alone in `MovieExporter.export`, so
+    // replacing the assignment with `_ = maxSizeBytes` (a no-op) left the
+    // whole suite green. That is load-bearing code indistinguishable from
+    // dead code to a future reader.
+    //
+    // This calls `exportMovie` DIRECTLY rather than going through
+    // `MovieExporter.export`'s size ladder — measurement (see the sweep
+    // below) showed that route cannot isolate this line. Mapped on this
+    // fixture (2s of 320x240 noise @ 30fps):
+    //   maxSizeBytes: nil      -> 706244 bytes (natural size)
+    //   maxSizeBytes: 500_000  -> 706244 bytes (fileLengthLimit had NO
+    //                             effect — it does not engage at all until
+    //                             the request drops below roughly 300-325K
+    //                             on this fixture)
+    //   maxSizeBytes: 300_000  -> 680258 bytes (barely engaged — still far
+    //                             over the requested target)
+    //   maxSizeBytes: 10_000   -> 560337 bytes (the floor: reproduced
+    //                             identically across three repeated runs)
+    // So there is no target that both (a) sits strictly between the floor
+    // and the natural size, AND (b) is actually met by fileLengthLimit at
+    // scale 1.0 on this fixture — for every target in that band,
+    // fileLengthLimit either does nothing (target too close to natural) or
+    // overshoots it (target too aggressive), so `MovieExporter.export`'s
+    // ladder never breaks out of its loop at rung 1 and always walks on to
+    // a smaller scale, which would make `manifest.scale == 1.0` unreachable
+    // through that path for any target where fileLengthLimit visibly did
+    // something. That mismatch between the review's expected middle ground
+    // and the measured all-or-nothing behaviour is itself part of the
+    // finding. What IS reliably true, and is what this test pins: requesting
+    // an aggressively low limit drives the file to that floor — reliably,
+    // repeatably, at the SAME scale (1.0, since `exportMovie` never touches
+    // scale; that is `CompositionBuilder`'s job, called identically for both
+    // exports below) — which is exactly the behaviour a no-op assignment
+    // could never produce.
+    let bundle = try await makeTestBundle(seconds: 2, content: .noise)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+    let built = try await CompositionBuilder.build(bundle: bundle, edl: .fullRange(), scale: 1.0)
+
+    let unconstrainedOut = FileManager.default.temporaryDirectory
+        .appendingPathComponent("fll-unc-\(UUID().uuidString).mp4")
+    defer { try? FileManager.default.removeItem(at: unconstrainedOut) }
+    try await MovieExporter.exportMovie(built, to: unconstrainedOut)
+    let unconstrainedSize = try #require(
+        FileManager.default.attributesOfItem(atPath: unconstrainedOut.path)[.size] as? Int)
+
+    let constrainedOut = FileManager.default.temporaryDirectory
+        .appendingPathComponent("fll-con-\(UUID().uuidString).mp4")
+    defer { try? FileManager.default.removeItem(at: constrainedOut) }
+    // Same `built` composition (scale 1.0, untouched) passed to both calls:
+    // any size difference below can only come from `fileLengthLimit`, not
+    // from a different composition being encoded.
+    try await MovieExporter.exportMovie(built, to: constrainedOut, maxSizeBytes: 200)
+    let constrainedSize = try #require(
+        FileManager.default.attributesOfItem(atPath: constrainedOut.path)[.size] as? Int)
+
+    // Relative, not absolute (the hardware H.264 encoder is not
+    // deterministic under load — the same caution `scaleReductionActually
+    // ShrinksTheFile` documents). The measured ratio was a reproducible
+    // ~0.79 across three runs; 0.9 leaves ample margin against encoder
+    // variance while still failing hard against a no-op, which would
+    // produce a ratio of (approximately) 1.0.
+    #expect(Double(constrainedSize) < Double(unconstrainedSize) * 0.9,
+            "fileLengthLimit should have measurably shrunk the file toward its floor")
+    #expect(constrainedSize < unconstrainedSize)
+}
+
 @Test("A generous GIF size target is met on the first rung at full quality")
 func gifGenerousTargetMetAtFullQuality() async throws {
     let bundle = try await makeTestBundle(seconds: 1)
@@ -417,4 +488,81 @@ func gifGenerousTargetMetAtFullQuality() async throws {
     // Discriminating: an implementation that always walks the whole ladder,
     // or that starts partway down it, degrades a file that already fit.
     #expect(manifest.scale == 1.0)
+}
+
+@Test("An unconstrained GIF export reports the base frame rate, and mp4 reports none at all")
+func effectiveFPSReflectsFormat() async throws {
+    // Guards finding #3: without `effectiveFPS` on the manifest, a GIF
+    // silently degraded from 15fps to 5fps looked identical to an untouched
+    // export (both report `scale: 1.0`). This is the baseline half of that
+    // coverage — the degraded case is `gifSizeTargetMetByDroppingFPSAlone`
+    // below.
+    let bundle = try await makeTestBundle(seconds: 1)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+    let gifOut = FileManager.default.temporaryDirectory
+        .appendingPathComponent("fps-base-\(UUID().uuidString).gif")
+    defer { try? FileManager.default.removeItem(at: gifOut) }
+    let gifManifest = try await MovieExporter.export(
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0, to: gifOut, format: "gif")
+    #expect(gifManifest.effectiveFPS == MovieExporter.defaultGIFFrameRate)
+
+    let mp4Out = FileManager.default.temporaryDirectory
+        .appendingPathComponent("fps-base-\(UUID().uuidString).mp4")
+    defer { try? FileManager.default.removeItem(at: mp4Out) }
+    let mp4Manifest = try await MovieExporter.export(
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0, to: mp4Out, format: "mp4")
+    #expect(mp4Manifest.effectiveFPS == nil,
+            "frame rate is not an axis mp4 export touches; reporting one would be fabricated")
+}
+
+@Test("A GIF size target reachable by dropping frame rate alone is met without touching scale")
+func gifSizeTargetMetByDroppingFPSAlone() async throws {
+    // Guards finding #3 of the M3d fix wave: `SizeLadder` drops frame rate
+    // BEFORE resolution, but before this fix `ExportManifest` had no
+    // frame-rate field at all — a GIF that hit its budget by dropping from
+    // 15fps to (say) 8fps reported `scale: 1.0`, indistinguishable from an
+    // export the ladder never touched. `SizeLadderTests` only covers rung
+    // STRUCTURE; no integration test before this one ever drove an actual
+    // fps rung end-to-end.
+    //
+    // The target is derived from a measured baseline taken in THIS run
+    // (60% of the natural, untouched 15fps size) rather than a literal
+    // constant, because GIF byte size scales close to linearly with frame
+    // count on the noise fixture (measured: 15fps ~2.79MB, 10fps ~1.87MB
+    // [67%], 8fps ~1.49MB [53%], 5fps ~0.93MB [33%] on a 2s clip) but the
+    // exact bytes still depend on the PRNG-seeded noise content and are not
+    // worth hard-coding. 60% sits strictly between the measured 10fps
+    // (67%) and 8fps (53%) ratios, so meeting it requires dropping AT LEAST
+    // to 8fps — one fps rung is not enough, and no scale rung is needed at
+    // all (scale rungs only begin after frame rate is exhausted down to
+    // 5fps in `SizeLadder`).
+    let bundle = try await makeTestBundle(seconds: 2, content: .noise)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+    let naturalOut = FileManager.default.temporaryDirectory
+        .appendingPathComponent("fps-nat-\(UUID().uuidString).gif")
+    defer { try? FileManager.default.removeItem(at: naturalOut) }
+    let natural = try await MovieExporter.export(
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0, to: naturalOut, format: "gif")
+    #expect(natural.effectiveFPS == MovieExporter.defaultGIFFrameRate)
+
+    let target = Int(Double(natural.byteSize) * 0.6)
+    let targetedOut = FileManager.default.temporaryDirectory
+        .appendingPathComponent("fps-tgt-\(UUID().uuidString).gif")
+    defer { try? FileManager.default.removeItem(at: targetedOut) }
+    let targeted = try await MovieExporter.export(
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0, to: targetedOut,
+        format: "gif", maxSizeBytes: target)
+
+    #expect(targeted.maxSizeMet == true)
+    // The discriminating pair: a manifest with no `effectiveFPS` field (or
+    // one that always reports the base rate regardless of what was
+    // actually written) fails the first; an implementation that dropped
+    // scale instead of — or in addition to — frame rate fails the second.
+    let effectiveFPS = try #require(targeted.effectiveFPS)
+    #expect(effectiveFPS < MovieExporter.defaultGIFFrameRate,
+            "the target is unreachable at 15fps on this fixture, so meeting it requires a frame-rate drop")
+    #expect(targeted.scale == 1.0,
+            "the target is reachable by dropping frame rate alone; scale must not have moved")
 }

@@ -34,6 +34,14 @@ public struct ExportManifest: Codable, Sendable, Equatable {
     /// tried every setting in its ladder and the file is still over budget.
     /// `byteSize` says how far over.
     public var maxSizeMet: Bool?
+    /// The frame rate the written file actually plays at. Nil for mp4 (frame
+    /// rate is not an axis the size ladder touches there); for gif, the rate
+    /// the size ladder settled on — which may be below the 15fps the export
+    /// started from. Without this, a GIF silently degraded from 15fps to
+    /// 5fps reports `scale: 1.0` and is indistinguishable from an untouched
+    /// export: frame rate is an axis `SizeLadder` walks before scale, and
+    /// this is the only place that choice becomes visible to a caller.
+    public var effectiveFPS: Double?
     public var chaptersPath: String?
     public var chapters: [Chapter]
 
@@ -46,6 +54,7 @@ public struct ExportManifest: Codable, Sendable, Equatable {
                 scale: Double,
                 maxSizeBytes: Int? = nil,
                 maxSizeMet: Bool? = nil,
+                effectiveFPS: Double? = nil,
                 chaptersPath: String? = nil,
                 chapters: [Chapter] = []) {
         self.outputPath = outputPath
@@ -57,6 +66,7 @@ public struct ExportManifest: Codable, Sendable, Equatable {
         self.scale = scale
         self.maxSizeBytes = maxSizeBytes
         self.maxSizeMet = maxSizeMet
+        self.effectiveFPS = effectiveFPS
         self.chaptersPath = chaptersPath
         self.chapters = chapters
     }
