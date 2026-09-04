@@ -633,14 +633,17 @@ public enum GIFExporter {
         generator.videoComposition = built.videoComposition
         generator.requestedTimeToleranceBefore = .zero
         generator.requestedTimeToleranceAfter = .zero
-        generator.maximumSize = renderSize
+        // NOT `generator.maximumSize = renderSize` — that independently
+        // forces the output dimensions, so `gifHonoursScale` would still
+        // pass with the videoComposition assignment deleted, and the test
+        // could not catch the bug it exists to catch.
 
         let interval = 1.0 / framesPerSecond
-        var times: [CMTime] = []
-        var t = 0.0
-        while t < built.duration {
-            times.append(CMTime(seconds: t, preferredTimescale: 600))
-            t += interval
+        // Index-based, NOT `while t < duration { t += interval }` —
+        // accumulating a Double produces 11 frames for a 2s clip at 5fps.
+        let frameCount = Int((built.duration * framesPerSecond).rounded(.down))
+        let times: [CMTime] = (0..<frameCount).map {
+            CMTime(seconds: Double($0) * interval, preferredTimescale: 600)
         }
         guard !times.isEmpty else { throw GIFError.degenerateRenderSize }
 
