@@ -21,7 +21,7 @@ public enum ParsedCommand: Equatable {
     case inspect(bundlePath: String)
     case trim(bundlePath: String, start: Double?, end: Double?, auto: Bool)
     case export(bundlePath: String, format: String, outputPath: String,
-                scale: Double, chapters: Bool)
+                scale: Double, chapters: Bool, maxSizeBytes: Int?)
 }
 
 /// Parses the CLI's arguments. Pure, so the whole surface is testable without a
@@ -190,6 +190,7 @@ public enum CommandLineParser {
         var outputPath: String?
         var scale = 1.0
         var chapters = false
+        var maxSizeBytes: Int?
         var index = 0
         while index < args.count {
             switch args[index] {
@@ -209,20 +210,30 @@ public enum CommandLineParser {
                 scale = value
             case "--chapters":
                 chapters = true
+            case "--max-size":
+                index += 1
+                guard index < args.count else { return .failure(ParseFailure("--max-size needs a value")) }
+                let raw = args[index]
+                // A present-but-unparseable --max-size must fail the call by
+                // name, not silently become "no limit" — that would export
+                // an oversized file and report success (§8).
+                guard let bytes = ByteSize.parse(raw) else {
+                    return .failure(ParseFailure(
+                        "--max-size needs a size like 10MB, got \"\(raw)\""))
+                }
+                maxSizeBytes = bytes
             default:
                 return .failure(ParseFailure("Unknown option: \(args[index])"))
             }
             index += 1
         }
         guard let format else {
-            return .failure(ParseFailure("`export` needs --format mp4"))
+            return .failure(ParseFailure("`export` needs --format mp4|gif"))
         }
-        // gif is M3d — a separate encoder entirely. Accepting it here would
-        // silently write an mp4 to a path that says .gif.
-        guard format == "mp4" else {
+        // Opening the gif seam must not open it to everything else.
+        guard format == "mp4" || format == "gif" else {
             return .failure(ParseFailure(
-                "Unsupported export format: \(format). Only mp4 is supported in this "
-              + "milestone; gif is planned for a later release."))
+                "Unsupported export format: \(format). Only mp4 and gif are supported."))
         }
         guard let outputPath else {
             return .failure(ParseFailure("`export` needs --out <path>"))
@@ -234,6 +245,6 @@ public enum CommandLineParser {
             return .failure(ParseFailure("--scale must be greater than 0, got \(scale)"))
         }
         return .success(.export(bundlePath: path, format: format, outputPath: outputPath,
-                                 scale: scale, chapters: chapters))
+                                 scale: scale, chapters: chapters, maxSizeBytes: maxSizeBytes))
     }
 }

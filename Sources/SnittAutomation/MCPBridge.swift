@@ -211,7 +211,9 @@ public enum MCPBridge {
                 name: "snitt_export",
                 description: "Render the trimmed recording to a movie file and return a "
                            + "manifest — duration, dimensions, byte size, chapters — that "
-                           + "an agent can quote without watching the file.",
+                           + "an agent can quote without watching the file. gif output has "
+                           + "no audio track: a silent demo is inherent to the format, not "
+                           + "a bug, so say so rather than let a viewer discover it.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -221,13 +223,19 @@ public enum MCPBridge {
                         ],
                         "format": [
                             "type": "string",
-                            "description": "Only \"mp4\" is supported in this milestone.",
+                            "description": "\"mp4\" or \"gif\". gif carries no audio track.",
                         ],
                         "outputPath": ["type": "string", "description": "Where to write the movie"],
                         "scale": ["type": "number", "default": 1.0,
                                   "description": "Pixel-dimension multiplier"],
                         "chapters": ["type": "boolean", "default": false,
                                      "description": "Write a .vtt beside the output from the bundle's markers"],
+                        "maxSize": [
+                            "type": "string",
+                            "description": "A byte budget like \"10MB\". The exporter walks "
+                                + "down scale/quality until the file fits, or reports it "
+                                + "could not.",
+                        ],
                     ],
                     "required": ["bundlePath", "format", "outputPath"],
                 ]),
@@ -338,12 +346,10 @@ public enum MCPBridge {
             guard let format = arguments["format"] as? String else {
                 return .failure(MCPBridgeError("snitt_export requires format"))
             }
-            // gif is M3d — a separate encoder entirely. Accepting it here
-            // would silently write an mp4 to a path that says .gif.
-            guard format == "mp4" else {
+            // Opening the gif seam must not open it to everything else.
+            guard format == "mp4" || format == "gif" else {
                 return .failure(MCPBridgeError(
-                    "Unsupported export format: \(format). Only mp4 is supported in this "
-                  + "milestone; gif is planned for a later release."))
+                    "Unsupported export format: \(format). Only mp4 and gif are supported."))
             }
             guard let outputPath = arguments["outputPath"] as? String else {
                 return .failure(MCPBridgeError("snitt_export requires outputPath"))
@@ -365,8 +371,25 @@ public enum MCPBridge {
             case .success(let value): chapters = value ?? false
             case .failure(let error): return .failure(error)
             }
+            // maxSize arrives as a JSON STRING ("10MB"), unlike scale — a
+            // number. Absent keeps no limit; present-but-unparseable fails
+            // the call by name rather than silently exporting unbounded
+            // (§8) — a `?? nil` fallback here would make an oversized
+            // export look like a success.
+            var maxSizeBytes: Int?
+            if let rawMaxSize = arguments["maxSize"] {
+                guard let text = rawMaxSize as? String else {
+                    return .failure(MCPBridgeError(
+                        "snitt_export requires maxSize to be a string like \"10MB\", got \(rawMaxSize)"))
+                }
+                guard let bytes = ByteSize.parse(text) else {
+                    return .failure(MCPBridgeError(
+                        "snitt_export requires maxSize to look like \"10MB\", got \"\(text)\""))
+                }
+                maxSizeBytes = bytes
+            }
             return .success(.export(bundlePath: path, format: format, outputPath: outputPath,
-                                     scale: scale, chapters: chapters))
+                                     scale: scale, chapters: chapters, maxSizeBytes: maxSizeBytes))
 
         default:
             return .failure(MCPBridgeError("Unknown tool: \(name)"))

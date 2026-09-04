@@ -130,7 +130,7 @@ func integerScaleOfOneAcceptedFromRealJSON() {
         forTool: "snitt_export",
         arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
             + #""outputPath": "/tmp/demo.mp4", "scale": 1}"#))
-    guard case .success(.export(_, _, _, let scale, _)) = mapped else {
+    guard case .success(.export(_, _, _, let scale, _, _)) = mapped else {
         Issue.record("scale: 1, decoded from JSON, must be accepted as a number"); return
     }
     #expect(scale == 1.0)
@@ -330,10 +330,48 @@ func numericChaptersOneAcceptedAsTrue() {
         forTool: "snitt_export",
         arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
             + #""outputPath": "/tmp/demo.mp4", "chapters": 1}"#))
-    guard case .success(.export(_, _, _, _, let chapters)) = mapped else {
+    guard case .success(.export(_, _, _, _, let chapters, _)) = mapped else {
         Issue.record("chapters: 1, decoded from JSON, must be accepted as true"); return
     }
     #expect(chapters == true)
+}
+
+@Test("snitt_export accepts gif and a string maxSize")
+func mcpAcceptsGifAndMaxSize() {
+    let args = jsonArguments("""
+    {"bundlePath":"/tmp/b.snitt","format":"gif","outputPath":"/tmp/o.gif","maxSize":"5MB"}
+    """)
+    guard case .success(let request) = MCPBridge.request(forTool: "snitt_export", arguments: args),
+          case .export(_, let format, _, _, _, let maxSize) = request else {
+        Issue.record("expected a successful export request"); return
+    }
+    #expect(format == "gif")
+    #expect(maxSize == 5_000_000)
+}
+
+@Test("A malformed maxSize fails the call by name rather than exporting unbounded")
+func mcpMalformedMaxSizeFails() {
+    let args = jsonArguments("""
+    {"bundlePath":"/tmp/b.snitt","format":"mp4","outputPath":"/tmp/o.mp4","maxSize":"lots"}
+    """)
+    guard case .failure(let error) = MCPBridge.request(forTool: "snitt_export", arguments: args) else {
+        Issue.record("expected failure"); return
+    }
+    #expect(error.message.contains("maxSize"))
+}
+
+@Test("An absent maxSize means no limit, not a zero limit")
+func mcpAbsentMaxSizeIsNoLimit() {
+    let args = jsonArguments("""
+    {"bundlePath":"/tmp/b.snitt","format":"mp4","outputPath":"/tmp/o.mp4"}
+    """)
+    guard case .success(let request) = MCPBridge.request(forTool: "snitt_export", arguments: args),
+          case .export(_, _, _, _, _, let maxSize) = request else {
+        Issue.record("expected success"); return
+    }
+    // A `?? 0` default would make every export target zero bytes and walk
+    // the whole ladder before reporting a miss.
+    #expect(maxSize == nil)
 }
 
 @Test("autoTrim: true, decoded from real JSON, is still accepted")

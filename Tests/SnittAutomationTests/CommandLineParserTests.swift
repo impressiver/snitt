@@ -87,7 +87,7 @@ func trimNeedsSomething() {
 
 @Test("export parses its format, output and scale")
 func parsesExport() {
-    guard case .success(.export(let path, let format, let out, let scale, let chapters)) =
+    guard case .success(.export(let path, let format, let out, let scale, let chapters, _)) =
         CommandLineParser.parse(["export", "/tmp/x.snitt", "--format", "mp4",
                                  "--out", "/tmp/demo.mp4", "--scale", "0.5", "--chapters"])
     else { Issue.record("parse failed"); return }
@@ -100,19 +100,58 @@ func parsesExport() {
 
 @Test("export defaults to full scale and no chapters")
 func exportDefaults() {
-    guard case .success(.export(_, _, _, let scale, let chapters)) =
+    guard case .success(.export(_, _, _, let scale, let chapters, let maxSizeBytes)) =
         CommandLineParser.parse(["export", "/tmp/x.snitt", "--format", "mp4",
                                  "--out", "/tmp/demo.mp4"])
     else { Issue.record("parse failed"); return }
     #expect(scale == 1.0)
     #expect(chapters == false)
+    #expect(maxSizeBytes == nil)
 }
 
-@Test("export rejects a format this milestone cannot write")
-func exportRejectsGif() {
-    // gif is M3d. Accepting it here would produce an mp4 with a .gif name.
-    #expect(CommandLineParser.parse(["export", "/tmp/x.snitt", "--format", "gif",
-                                     "--out", "/tmp/demo.gif"]).isFailure)
+@Test("export accepts gif")
+func exportAcceptsGif() {
+    let result = CommandLineParser.parse(
+        ["export", "/tmp/b.snitt", "--format", "gif", "--out", "/tmp/o.gif"])
+    guard case .success(.export(_, let format, _, _, _, _)) = result else {
+        Issue.record("expected success, got \(result)"); return
+    }
+    #expect(format == "gif")
+}
+
+@Test("--max-size is parsed into bytes")
+func maxSizeParsed() {
+    let result = CommandLineParser.parse(
+        ["export", "/tmp/b.snitt", "--format", "mp4", "--out", "/tmp/o.mp4",
+         "--max-size", "10MB"])
+    guard case .success(.export(_, _, _, _, _, let maxSize)) = result else {
+        Issue.record("expected success, got \(result)"); return
+    }
+    // Asserts the VALUE reached the command, not merely that parsing
+    // succeeded. A parser that accepts the flag and drops it passes a
+    // success-only assertion.
+    #expect(maxSize == 10_000_000)
+}
+
+@Test("A malformed --max-size is refused, not ignored")
+func malformedMaxSizeRefused() {
+    let result = CommandLineParser.parse(
+        ["export", "/tmp/b.snitt", "--format", "mp4", "--out", "/tmp/o.mp4",
+         "--max-size", "ten megabytes"])
+    guard case .failure(let failure) = result else {
+        Issue.record("expected failure, got \(result)"); return
+    }
+    #expect(failure.message.contains("--max-size"))
+}
+
+@Test("An unknown format is still refused")
+func unknownFormatRefused() {
+    // Opening the gif seam must not open it to everything.
+    let result = CommandLineParser.parse(
+        ["export", "/tmp/b.snitt", "--format", "webm", "--out", "/tmp/o.webm"])
+    guard case .failure = result else {
+        Issue.record("expected failure for webm"); return
+    }
 }
 
 @Test("export rejects a zero or negative scale")

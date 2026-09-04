@@ -43,8 +43,11 @@ snitt — record a window and hand back a .snitt bundle
   snitt trim <bundle> --auto-trim        trim bookends from a human recording's
                                           input events; refused on recordings
                                           with none
-  snitt export <bundle> --format mp4 --out <path>   render a movie
-        [--scale <factor>] [--chapters]    scale pixels; write a .vtt from markers
+  snitt export <bundle> --format mp4|gif --out <path>   render a movie
+        [--scale <factor>] [--chapters] [--max-size 10MB]
+                                          scale pixels; write a .vtt from markers;
+                                          walk down quality to hit a byte budget
+                                          (gif has no audio track)
   snitt status                           whether a recording is running
 
 Output is JSON on stdout and human text on stderr, so a script can parse one
@@ -80,9 +83,9 @@ case .status:                   body = .status
 case .inspect(let path):        body = .inspect(bundlePath: PathResolver.resolve(path))
 case .trim(let path, let start, let end, let auto):
     body = .trim(bundlePath: PathResolver.resolve(path), start: start, end: end, auto: auto)
-case .export(let path, let format, let out, let scale, let chapters):
+case .export(let path, let format, let out, let scale, let chapters, let maxSizeBytes):
     body = .export(bundlePath: PathResolver.resolve(path), format: format, outputPath: PathResolver.resolve(out),
-                    scale: scale, chapters: chapters)
+                    scale: scale, chapters: chapters, maxSizeBytes: maxSizeBytes)
 case .help:                     body = .status  // unreachable; handled above
 }
 

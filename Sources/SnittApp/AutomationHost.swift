@@ -126,9 +126,9 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         case .trim(let bundlePath, let start, let end, let auto):
             return await trim(bundlePath: bundlePath, start: start, end: end, auto: auto)
 
-        case .export(let bundlePath, let format, let outputPath, let scale, let chapters):
+        case .export(let bundlePath, let format, let outputPath, let scale, let chapters, let maxSizeBytes):
             return await export(bundlePath: bundlePath, format: format, outputPath: outputPath,
-                                scale: scale, chapters: chapters)
+                                scale: scale, chapters: chapters, maxSizeBytes: maxSizeBytes)
         }
     }
 
@@ -225,12 +225,16 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// Files-and-Folders TCC service — so it cannot build the composition
     /// itself, only ask the app to.
     private func export(bundlePath: String, format: String, outputPath: String,
-                        scale: Double, chapters: Bool) async -> AutomationResponse {
-        guard format == "mp4" else {
+                        scale: Double, chapters: Bool, maxSizeBytes: Int?) async -> AutomationResponse {
+        // Opening the gif seam must not open it to everything else. The CLI
+        // and MCP frontends refuse anything else with matching wording
+        // (§8) — this must match too, or a client could send a format the
+        // frontends already accepted only to have the app refuse it here.
+        guard format == "mp4" || format == "gif" else {
             return .failure(AutomationError(
                 code: .internalError,
                 message: "Unsupported export format \"\(format)\".",
-                hint: "Snitt currently exports mp4 only. Omit --format or pass \"mp4\"."))
+                hint: "Snitt exports mp4 or gif. Omit --format or pass \"mp4\" or \"gif\"."))
         }
 
         let bundle: SnittBundle
@@ -254,7 +258,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
 
         do {
             let manifest = try await MovieExporter.export(
-                bundle: bundle, edl: edl, scale: scale, to: outputURL, chaptersURL: chaptersURL)
+                bundle: bundle, edl: edl, scale: scale, to: outputURL, chaptersURL: chaptersURL,
+                format: format, maxSizeBytes: maxSizeBytes)
             return .exported(manifest)
         } catch CompositionError.everythingCut {
             return .failure(AutomationError(

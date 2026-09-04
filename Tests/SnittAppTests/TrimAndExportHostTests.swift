@@ -141,7 +141,7 @@ func wallAndMediaDurationsDisagreeButTrimAndExportMustAgree() async throws {
     defer { try? FileManager.default.removeItem(at: output) }
     let exportResponse = await host.handle(
         .export(bundlePath: bundle.url.path, format: "mp4", outputPath: output.path,
-               scale: 1.0, chapters: false))
+               scale: 1.0, chapters: false, maxSizeBytes: nil))
     guard case .exported(let manifest) = exportResponse else {
         Issue.record("expected exported, got \(exportResponse)"); return
     }

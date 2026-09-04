@@ -22,6 +22,9 @@ public enum AutomationProtocol {
     /// client. Trim and export run in the app rather than the CLI, for the
     /// same reason `.inspect` does — the client cannot read the bundle
     /// (§4.9, TCC-gated by default under `~/Desktop`).
+    ///
+    /// v2 was amended a fourth time to add `maxSizeBytes` to `.export`
+    /// (M3d), for the same reason: still no released v2 client.
     public static let version = 2
 }
 
@@ -65,7 +68,7 @@ public struct AutomationRequest: Codable, Sendable {
         case inspect(bundlePath: String)
         case trim(bundlePath: String, start: Double?, end: Double?, auto: Bool)
         case export(bundlePath: String, format: String, outputPath: String,
-                    scale: Double, chapters: Bool)
+                    scale: Double, chapters: Bool, maxSizeBytes: Int?)
     }
 
     public var protocolVersion: Int
