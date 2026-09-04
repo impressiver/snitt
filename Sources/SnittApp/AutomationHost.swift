@@ -175,11 +175,11 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         }
 
         do {
-            let existing = (try? EditDecisionList.read(from: bundle)) ?? .fullRange()
+            let existing = try Self.readEDL(for: bundle)
 
             let cuts: [TimeRange]
             if auto {
-                let events = (try? EventLog.read(from: bundle))?.events ?? []
+                let events = try Self.readEventsForAutoTrim(for: bundle)
                 cuts = try EditDecisionList.autoTrimCuts(events: events, duration: duration)
             } else {
                 let keep = TimeRange(start: start ?? 0, end: end ?? duration)
@@ -227,11 +227,39 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// work, one step removed from `readBundleEvents`'s chapters case. A
     /// missing file is legitimate — a fresh recording nobody has trimmed
     /// yet — and must still export cleanly at the full range.
+    ///
+    /// Shared by BOTH `export` and `trim`: the whole-branch review named the
+    /// export call site specifically, but the collapsing `try? ... ??
+    /// .fullRange()` was the SAME line, verbatim, in `trim` too — trim is
+    /// arguably the worse instance, since a corrupt EDL there doesn't just
+    /// export the wrong range, it WRITES the wrong range back to
+    /// `edit.json`, permanently discarding whatever trim the file actually
+    /// had. The defect is the pattern, not the one site a reviewer happened
+    /// to trip over.
     private static func readEDL(for bundle: SnittBundle) throws -> EditDecisionList {
         guard FileManager.default.fileExists(atPath: bundle.editURL.path) else {
             return .fullRange()
         }
         return try EditDecisionList.read(from: bundle)
+    }
+
+    /// Reads a bundle's `events.json` for auto-trim, with the identical
+    /// absent-vs-unreadable distinction `readEDL` draws above and
+    /// `MovieExporter.readBundleEvents` draws for export: this is the SAME
+    /// class of bug the whole-branch review named at the export site (§8),
+    /// not a defect specific to `edit.json`. Auto-trim's own `try? ...
+    /// ?? []` used to turn a corrupt `events.json` into "zero events",
+    /// which `autoTrimCuts` then reports as `AutoTrimError.noInputEvents` —
+    /// a plausible-sounding but WRONG refusal ("this recording has no
+    /// input") for what is actually "this recording's event log is
+    /// damaged and unreadable". A missing file is legitimate (no logging,
+    /// or nothing recorded yet) and must still auto-trim-refuse honestly
+    /// against a genuinely empty log.
+    private static func readEventsForAutoTrim(for bundle: SnittBundle) throws -> [LoggedEvent] {
+        guard FileManager.default.fileExists(atPath: bundle.eventsURL.path) else {
+            return []
+        }
+        return try EventLog.read(from: bundle).events
     }
 
     /// Reads `capture.mov` and writes the trimmed mp4 (plus, optionally, its

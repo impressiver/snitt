@@ -219,3 +219,60 @@ func exportWithNoEDLFileExportsFullRange() async throws {
     }
     #expect(abs(manifest.durationSeconds - 2.0) < 0.2)
 }
+
+@Test("A corrupt edit.json fails trim explicitly rather than silently trimming from a fresh full range")
+func trimWithCorruptEDLFailsExplicitly() async throws {
+    // Same class of bug as `exportWithCorruptEDLFailsExplicitly` above, at
+    // the sibling call site the whole-branch review did not name — `trim`
+    // had the identical `(try? EditDecisionList.read(from: bundle)) ??
+    // .fullRange()` line as `export`. Arguably worse here: a corrupt EDL at
+    // export merely renders the wrong range once, but trim WRITES the
+    // reconstructed-from-scratch range back to edit.json, permanently
+    // discarding whatever real trim state the file had.
+    let bundle = try await bundleWithMetadata(duration: 10, events: [])
+    try Data("{ not valid json".utf8).write(to: bundle.editURL)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+    let host = AutomationHost.forTesting()
+    let response = await host.handle(
+        .trim(bundlePath: bundle.url.path, start: 2, end: 8, auto: false))
+
+    guard case .failure(let error) = response else {
+        Issue.record("trim with a corrupt edit.json must fail, not silently trim from a fresh full range"); return
+    }
+    #expect(error.hint != nil, "an agent needs to know why, and that its existing trim state was not silently discarded")
+
+    // The strongest form of the assertion: the corrupt file must be left
+    // exactly as it was, byte for byte — not overwritten with a
+    // reconstructed-from-.fullRange() result.
+    let onDisk = try String(contentsOf: bundle.editURL, encoding: .utf8)
+    #expect(onDisk == "{ not valid json",
+            "a refused trim must not have touched the corrupt edit.json it could not read")
+}
+
+@Test("A corrupt events.json fails auto-trim explicitly rather than refusing as if the log were merely empty")
+func autoTrimWithCorruptEventsFailsExplicitly() async throws {
+    // Same class again, at the third and last site in this file: auto-trim
+    // used to fold a corrupt `events.json` into "zero events" via `(try?
+    // EventLog.read(from: bundle))?.events ?? []`, which `autoTrimCuts`
+    // then reports as `AutoTrimError.noInputEvents` — a plausible-sounding
+    // but WRONG explanation ("this recording has no input") for what is
+    // actually "this recording's event log is damaged". Discriminates
+    // against the `try? ... ?? []` form, which passes this bundle through
+    // to the noInputEvents refusal instead of surfacing the read failure.
+    let bundle = try await bundleWithMetadata(duration: 10, events: [])
+    try Data("{ not valid json".utf8).write(to: bundle.eventsURL)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+    let host = AutomationHost.forTesting()
+    let response = await host.handle(
+        .trim(bundlePath: bundle.url.path, start: nil, end: nil, auto: true))
+
+    guard case .failure(let error) = response else {
+        Issue.record("auto-trim with a corrupt events.json must fail, not report a misleading 'no input events'"); return
+    }
+    #expect(error.message != "This recording logged no input events, so there is nothing "
+                            + "to auto-trim against.",
+            "a corrupt log must not be reported as an empty one — those are different failures with different fixes")
+    #expect(error.hint != nil)
+}
