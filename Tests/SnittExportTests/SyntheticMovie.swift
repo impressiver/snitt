@@ -167,7 +167,18 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
                     // collapse a repeated noise frame just as flatly as a
                     // solid color). This is what makes bitrate limits and
                     // scale reduction actually change the encoded size.
-                    arc4random_buf(base, byteCount)
+                    //
+                    // Seeded, not `arc4random_buf`: an unseeded fill makes
+                    // every run's frame content — and therefore its encoded
+                    // size — different, which is fatal for a test that
+                    // asserts a byte threshold. `scaleReductionActuallyShrinksTheFile`
+                    // measurably flaked from exactly this (340,083 and
+                    // 362,233 bytes against a 300,000-byte target in two of
+                    // three full-suite runs). A fixed-seed generator keeps
+                    // the noise just as incompressible while making the
+                    // output byte-for-byte reproducible across runs.
+                    fillWithSeededNoise(base, byteCount: byteCount,
+                                        seed: UInt64(videoProgress.value) &+ 1)
                 }
             }
             CVPixelBufferUnlockBaseAddress(buffer, [])
@@ -232,6 +243,39 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
                     continuation.resume()
                 }
             }
+        }
+    }
+}
+
+/// Fills `byteCount` bytes at `base` with high-entropy, deterministic noise.
+///
+/// Backed by SplitMix64, seeded per call (typically per frame) so content
+/// stays reproducible run to run — a fixed input to `writeSyntheticMovie`
+/// always encodes to the same byte size — while remaining just as
+/// incompressible as `arc4random_buf` was: every output bit is a fresh
+/// avalanche of the counter, not a repeating or structured pattern an
+/// encoder could exploit.
+private func fillWithSeededNoise(_ base: UnsafeMutableRawPointer, byteCount: Int, seed: UInt64) {
+    var state = seed
+    func next() -> UInt64 {
+        state &+= 0x9E37_79B9_7F4A_7C15
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+        z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+        return z ^ (z >> 31)
+    }
+    let buffer = base.assumingMemoryBound(to: UInt64.self)
+    let wordCount = byteCount / MemoryLayout<UInt64>.size
+    for i in 0..<wordCount {
+        buffer[i] = next()
+    }
+    let remainder = byteCount - wordCount * MemoryLayout<UInt64>.size
+    if remainder > 0 {
+        let tail = base.advanced(by: wordCount * MemoryLayout<UInt64>.size)
+            .assumingMemoryBound(to: UInt8.self)
+        let value = next()
+        withUnsafeBytes(of: value) { bytes in
+            for i in 0..<remainder { tail[i] = bytes[i] }
         }
     }
 }
