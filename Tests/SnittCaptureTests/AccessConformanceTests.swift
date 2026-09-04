@@ -162,6 +162,32 @@ private func swiftSources() -> [URL] {
     return found
 }
 
+/// The TCC services this guard polices.
+///
+/// Named as a constant, and exercised through `preflightOffenders` by a
+/// behavioural test in `InputMonitoringAccessTests`, so that dropping one is a
+/// test failure rather than a silent end to the policing.
+let policedAccessServices = ["ScreenCapture", "ListenEvent"]
+
+/// Names every policed service `source` preflights without also requesting.
+///
+/// Extracted from the test below so it can be exercised against fixtures. The
+/// previous guard against this list being gutted read this very file as raw
+/// text and looked for the string `"ListenEvent"` — which a doc comment
+/// mentioning the name satisfies. That is exactly the false negative
+/// `strippingCommentsAndLiterals` exists to close, reintroduced one layer up.
+func preflightOffenders(in source: String, fileName: String) -> [String] {
+    let stripped = strippingCommentsAndLiterals(source)
+    var offenders: [String] = []
+    for service in policedAccessServices {
+        if stripped.contains("CGPreflight\(service)Access"),
+           !stripped.contains("CGRequest\(service)Access") {
+            offenders.append("\(fileName): preflights \(service) but never requests it")
+        }
+    }
+    return offenders
+}
+
 @Test("No file preflights a TCC grant without also requesting it")
 func noPreflightWithoutRequest() throws {
     // The recurrence, stated as a rule. Preflight READS the current grant;
@@ -169,13 +195,9 @@ func noPreflightWithoutRequest() throws {
     // that only preflights silently measures nothing — three times now.
     var offenders: [String] = []
     for url in swiftSources() {
-        let source = strippingCommentsAndLiterals(try String(contentsOf: url, encoding: .utf8))
-        for service in ["ScreenCapture", "ListenEvent"] {
-            if source.contains("CGPreflight\(service)Access"),
-               !source.contains("CGRequest\(service)Access") {
-                offenders.append("\(url.lastPathComponent): preflights \(service) but never requests it")
-            }
-        }
+        offenders += preflightOffenders(
+            in: try String(contentsOf: url, encoding: .utf8),
+            fileName: url.lastPathComponent)
     }
     #expect(offenders.isEmpty, "\(offenders)")
 }
