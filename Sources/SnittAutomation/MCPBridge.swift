@@ -1,4 +1,5 @@
 import Foundation
+import CoreFoundation
 
 public struct ToolDefinition: Encodable, Sendable {
     public let name: String
@@ -366,13 +367,33 @@ public enum MCPBridge {
     /// Anything fractional or outside `UInt32`'s range is refused rather than
     /// silently truncated — a wrong display id would record the wrong thing.
     private static func displayID(from value: Any) -> UInt32? {
-        // Bool bridges to NSNumber too, and a stray `true`/`false` should be
-        // refused rather than read as 1/0.
-        guard !(value is Bool), let number = value as? NSNumber else { return nil }
+        // A stray `true`/`false` should be refused rather than read as 1/0.
+        // `isJSONBoolean` — not `value is Bool` — is what actually tells a
+        // real JSON boolean apart from an NSNumber holding 0 or 1: see its
+        // doc comment.
+        guard !isJSONBoolean(value), let number = value as? NSNumber else { return nil }
         let double = number.doubleValue
         guard double.truncatingRemainder(dividingBy: 1) == 0 else { return nil }
         guard double >= 0, double <= Double(UInt32.max) else { return nil }
         return UInt32(double)
+    }
+
+    /// Tells a genuine JSON boolean apart from an `NSNumber` that merely
+    /// holds `0` or `1`.
+    ///
+    /// `value is Bool` is the wrong tool for this: `JSONSerialization`
+    /// decodes every JSON number — including plain 64-bit integers like `1`
+    /// — to `NSNumber`, and Swift's dynamic cast from `Any` holding an
+    /// `NSNumber` to `Bool` **succeeds whenever the number's value is
+    /// exactly 0 or 1**, regardless of whether the underlying value came
+    /// from a JSON `true`/`false` or a JSON `1`. That made `numericValue`
+    /// reject the single most common value an agent sends — `"scale": 1` —
+    /// while accepting `"scale": 2`. `CFBooleanGetTypeID()` checks the
+    /// actual CoreFoundation type: a real JSON boolean decodes to the
+    /// `CFBoolean` singleton, an integer never does, so this discriminates
+    /// correctly regardless of the numeric value involved.
+    private static func isJSONBoolean(_ value: Any) -> Bool {
+        CFGetTypeID(value as CFTypeRef) == CFBooleanGetTypeID()
     }
 
     /// Converts an optional MCP argument value to a `Double`, distinguishing
@@ -385,15 +406,16 @@ public enum MCPBridge {
     /// decoder, and all three bridge to `NSNumber` on Darwin — the same
     /// reasoning as `displayID(from:)`. A JSON `bool` bridges to `NSNumber`
     /// too and must be rejected explicitly, or `true`/`false` would be read
-    /// as `1`/`0` instead of refused. NaN and infinity are rejected outright:
-    /// they cannot come from `JSONSerialization` today, but nothing stops a
-    /// future caller from constructing arguments directly, and a "valid"
-    /// non-finite scale or bound would be exactly this bug's failure mode
-    /// again.
+    /// as `1`/`0` instead of refused — see `isJSONBoolean` for why that
+    /// check cannot be `value is Bool`. NaN and infinity are rejected
+    /// outright: they cannot come from `JSONSerialization` today, but
+    /// nothing stops a future caller from constructing arguments directly,
+    /// and a "valid" non-finite scale or bound would be exactly this bug's
+    /// failure mode again.
     private static func numericValue(_ value: Any?,
                                      parameter: String) -> Result<Double?, MCPBridgeError> {
         guard let value else { return .success(nil) }
-        guard !(value is Bool), let number = value as? NSNumber else {
+        guard !isJSONBoolean(value), let number = value as? NSNumber else {
             return .failure(MCPBridgeError(
                 "\(parameter) must be a number, got \(value)"))
         }

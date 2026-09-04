@@ -2,18 +2,46 @@ import Testing
 import Foundation
 @testable import SnittAutomation
 
+/// Decodes MCP tool arguments from real JSON text, the same way `snitt-mcp`'s
+/// stdio loop does (`JSONSerialization.jsonObject`, `Sources/snitt-mcp/main.swift`).
+///
+/// A Swift dictionary literal like `["scale": 1]` boxes a native `Int` in
+/// `Any`; `JSONSerialization` never produces that — it always produces
+/// `NSNumber`. The two are not interchangeable for a check like `value is
+/// Bool`, which succeeds for an `NSNumber` holding exactly 0 or 1 but not for
+/// a native `Int`. A test built from a Swift literal cannot see that
+/// distinction and can pass while the shipped binary is broken — which is
+/// exactly what happened here. Every fixture in this file goes through real
+/// JSON decoding so the type reaching `MCPBridge.request` is the type
+/// production actually reaches it with.
+func jsonArguments(_ json: String) -> [String: Any] {
+    guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any]
+    else {
+        Issue.record("test fixture is not valid JSON: \(json)")
+        return [:]
+    }
+    return object
+}
+
 @Test("Every advertised tool maps to a request — none is decorative")
 func everyToolMaps() {
     for tool in MCPBridge.toolDefinitions() {
-        let args: [String: Any] = tool.name == "snitt_start_recording"
-            ? ["bundleIdentifier": "com.apple.Safari"]
-            : (tool.name == "snitt_stop_recording" || tool.name == "snitt_add_marker"
-                ? ["sessionId": "abc"]
-                : (tool.name == "snitt_inspect" ? ["bundlePath": "/tmp/x.snitt"]
-                : (tool.name == "snitt_trim" ? ["bundlePath": "/tmp/x.snitt", "autoTrim": true]
-                : (tool.name == "snitt_export" ? ["bundlePath": "/tmp/x.snitt", "format": "mp4",
-                                                   "outputPath": "/tmp/demo.mp4"] : [:]))))
-        let mapped = MCPBridge.request(forTool: tool.name, arguments: args)
+        let json: String
+        switch tool.name {
+        case "snitt_start_recording":
+            json = #"{"bundleIdentifier": "com.apple.Safari"}"#
+        case "snitt_stop_recording", "snitt_add_marker":
+            json = #"{"sessionId": "abc"}"#
+        case "snitt_inspect":
+            json = #"{"bundlePath": "/tmp/x.snitt"}"#
+        case "snitt_trim":
+            json = #"{"bundlePath": "/tmp/x.snitt", "autoTrim": true}"#
+        case "snitt_export":
+            json = #"{"bundlePath": "/tmp/x.snitt", "format": "mp4", "outputPath": "/tmp/demo.mp4"}"#
+        default:
+            json = "{}"
+        }
+        let mapped = MCPBridge.request(forTool: tool.name, arguments: jsonArguments(json))
         guard case .success = mapped else {
             Issue.record("advertised tool \(tool.name) does not map to a request"); return
         }
@@ -42,9 +70,9 @@ func frontendsAgreeOnTrim() {
     let cliBody = AutomationRequest.Body.trim(bundlePath: cliPath, start: cliStart,
                                                end: cliEnd, auto: cliAuto)
 
-    guard case .success(let mcpBody) =
-        MCPBridge.request(forTool: "snitt_trim",
-                          arguments: ["bundlePath": "/tmp/d.snitt", "start": 1, "end": 9])
+    guard case .success(let mcpBody) = MCPBridge.request(
+        forTool: "snitt_trim",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/d.snitt", "start": 1, "end": 9}"#))
     else { Issue.record("MCP could not express a trim"); return }
 
     guard case .trim(let cliBPath, let cliBStart, let cliBEnd, let cliBAuto) = cliBody else {
@@ -68,13 +96,13 @@ func nonNumericScaleRefused() {
     // this: a confidently-wrong result.
     guard case .failure(let error) = MCPBridge.request(
         forTool: "snitt_export",
-        arguments: ["bundlePath": "/tmp/x.snitt", "format": "mp4",
-                    "outputPath": "/tmp/demo.mp4", "scale": "0.5"])
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
+            + #""outputPath": "/tmp/demo.mp4", "scale": "0.5"}"#))
     else { Issue.record("a string scale must not be silently accepted"); return }
     #expect(error.message.contains("scale"))
 }
 
-@Test("A boolean start does not silently fall through while a valid end sails through")
+@Test("A real JSON boolean start does not silently fall through while a valid end sails through")
 func nonNumericStartRefusedEvenWithValidEnd() {
     // A plausible wrong implementation: numericValue correctly rejects the
     // bool for `start` by returning nil, but the caller cannot distinguish
@@ -83,22 +111,67 @@ func nonNumericStartRefusedEvenWithValidEnd() {
     // one requested goes out with no error at all.
     guard case .failure(let error) = MCPBridge.request(
         forTool: "snitt_trim",
-        arguments: ["bundlePath": "/tmp/x.snitt", "start": true, "end": 9])
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "start": true, "end": 9}"#))
     else { Issue.record("a boolean start must not be silently dropped"); return }
     #expect(error.message.contains("start"))
+}
+
+@Test("An integer scale of exactly 1, decoded from real JSON, is accepted — not misread as a boolean")
+func integerScaleOfOneAcceptedFromRealJSON() {
+    // Regression test. `JSONSerialization` decodes every JSON number —
+    // including a plain integer like `1` — to `NSNumber`. A discriminator
+    // written as `value is Bool` succeeds for an `NSNumber` holding exactly
+    // 0 or 1 regardless of whether it came from a JSON boolean or a JSON
+    // integer, so it rejected the single most common scale an agent sends.
+    // A Swift dictionary literal `["scale": 1]` cannot reproduce this: it
+    // boxes a native Int, which `is Bool` never misclassifies. Only a
+    // JSON-decoded fixture can catch this.
+    let mapped = MCPBridge.request(
+        forTool: "snitt_export",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
+            + #""outputPath": "/tmp/demo.mp4", "scale": 1}"#))
+    guard case .success(.export(_, _, _, let scale, _)) = mapped else {
+        Issue.record("scale: 1, decoded from JSON, must be accepted as a number"); return
+    }
+    #expect(scale == 1.0)
+}
+
+@Test("start/end of exactly 0 and 1, decoded from real JSON, are accepted — not misread as booleans")
+func integerBoundsOfZeroAndOneAcceptedFromRealJSON() {
+    let mapped = MCPBridge.request(
+        forTool: "snitt_trim",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "start": 0, "end": 1}"#))
+    guard case .success(.trim(_, let start, let end, _)) = mapped else {
+        Issue.record("start: 0, end: 1, decoded from JSON, must be accepted as numbers"); return
+    }
+    #expect(start == 0.0)
+    #expect(end == 1.0)
+}
+
+@Test("A real JSON boolean scale is still refused")
+func realJSONBooleanScaleRefused() {
+    // The flip side of the regression fix: a genuine JSON `true` must still
+    // be rejected, not accidentally accepted as `1.0` now that plain
+    // integers are let through.
+    guard case .failure(let error) = MCPBridge.request(
+        forTool: "snitt_export",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
+            + #""outputPath": "/tmp/demo.mp4", "scale": true}"#))
+    else { Issue.record("a real JSON boolean scale must not be accepted"); return }
+    #expect(error.message.contains("scale"))
 }
 
 @Test("snitt_export rejects a zero or negative scale")
 func mcpExportRejectsNonPositiveScale() {
     guard case .failure = MCPBridge.request(
         forTool: "snitt_export",
-        arguments: ["bundlePath": "/tmp/x.snitt", "format": "mp4",
-                    "outputPath": "/tmp/demo.mp4", "scale": 0])
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
+            + #""outputPath": "/tmp/demo.mp4", "scale": 0}"#))
     else { Issue.record("a zero scale must not be silently accepted"); return }
     guard case .failure = MCPBridge.request(
         forTool: "snitt_export",
-        arguments: ["bundlePath": "/tmp/x.snitt", "format": "mp4",
-                    "outputPath": "/tmp/demo.mp4", "scale": -0.5])
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
+            + #""outputPath": "/tmp/demo.mp4", "scale": -0.5}"#))
     else { Issue.record("a negative scale must not be silently accepted"); return }
 }
 
@@ -106,11 +179,11 @@ func mcpExportRejectsNonPositiveScale() {
 func mcpTrimRejectsInvertedRange() {
     guard case .failure = MCPBridge.request(
         forTool: "snitt_trim",
-        arguments: ["bundlePath": "/tmp/x.snitt", "start": 9, "end": 5])
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "start": 9, "end": 5}"#))
     else { Issue.record("an inverted range must not be silently accepted"); return }
     guard case .failure = MCPBridge.request(
         forTool: "snitt_trim",
-        arguments: ["bundlePath": "/tmp/x.snitt", "start": 5, "end": 5])
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "start": 5, "end": 5}"#))
     else { Issue.record("an empty range must not be silently accepted"); return }
 }
 
@@ -123,7 +196,7 @@ func frontendsAgreeOnMarkers() {
     }
     guard case .success(.mark(let mcpSession, let mcpLabel)) = MCPBridge.request(
         forTool: "snitt_add_marker",
-        arguments: ["sessionId": "s1", "label": "step two"]) else {
+        arguments: jsonArguments(#"{"sessionId": "s1", "label": "step two"}"#)) else {
         Issue.record("MCP could not express a marker"); return
     }
     #expect(cliSession == mcpSession)
@@ -138,7 +211,8 @@ func frontendsAgreeOnInspect() {
         Issue.record("CLI could not express an inspect"); return
     }
     guard case .success(.inspect(let mcpPath)) = MCPBridge.request(
-        forTool: "snitt_inspect", arguments: ["bundlePath": "/tmp/demo.snitt"]) else {
+        forTool: "snitt_inspect",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/demo.snitt"}"#)) else {
         Issue.record("MCP could not express an inspect"); return
     }
     #expect(cliPath == mcpPath)
@@ -146,7 +220,7 @@ func frontendsAgreeOnInspect() {
 
 @Test("Starting a recording without a target is refused before it reaches the app")
 func startNeedsATarget() {
-    let mapped = MCPBridge.request(forTool: "snitt_start_recording", arguments: [:])
+    let mapped = MCPBridge.request(forTool: "snitt_start_recording", arguments: jsonArguments("{}"))
     guard case .failure(let error) = mapped else {
         Issue.record("a targetless start must not be sent"); return
     }
@@ -155,7 +229,8 @@ func startNeedsATarget() {
 
 @Test("An unknown tool is refused rather than silently ignored")
 func unknownToolRefused() {
-    guard case .failure = MCPBridge.request(forTool: "snitt_do_magic", arguments: [:]) else {
+    guard case .failure = MCPBridge.request(forTool: "snitt_do_magic", arguments: jsonArguments("{}"))
+    else {
         Issue.record("unknown tools must fail"); return
     }
 }
@@ -164,7 +239,7 @@ func unknownToolRefused() {
 func micDefaultMatchesCLI() {
     guard case .success(.startRecording(let options)) = MCPBridge.request(
         forTool: "snitt_start_recording",
-        arguments: ["bundleIdentifier": "com.apple.Safari"]) else {
+        arguments: jsonArguments(#"{"bundleIdentifier": "com.apple.Safari"}"#)) else {
         Issue.record("mapping failed"); return
     }
     // §4.8: the two frontends must not diverge. This is the cheapest place for
@@ -183,7 +258,8 @@ func frontendsAgreeOnTargets() {
         Issue.record("CLI could not express a display target"); return
     }
     guard case .success(.startRecording(let mcpDisplay)) = MCPBridge.request(
-        forTool: "snitt_start_recording", arguments: ["displayID": 7]) else {
+        forTool: "snitt_start_recording",
+        arguments: jsonArguments(#"{"displayID": 7}"#)) else {
         Issue.record("MCP could not express a display target"); return
     }
     #expect(cliDisplay.displayID == mcpDisplay.displayID)
@@ -193,7 +269,8 @@ func frontendsAgreeOnTargets() {
 @Test("A non-integral displayID is refused rather than silently truncated")
 func nonIntegralDisplayIDRefused() {
     guard case .failure(let error) = MCPBridge.request(
-        forTool: "snitt_start_recording", arguments: ["displayID": 7.5]) else {
+        forTool: "snitt_start_recording",
+        arguments: jsonArguments(#"{"displayID": 7.5}"#)) else {
         Issue.record("a fractional displayID must not be sent"); return
     }
     #expect(error.message.contains("displayID"))
@@ -202,10 +279,23 @@ func nonIntegralDisplayIDRefused() {
 @Test("An out-of-range displayID is refused rather than silently truncated")
 func outOfRangeDisplayIDRefused() {
     guard case .failure(let error) = MCPBridge.request(
-        forTool: "snitt_start_recording", arguments: ["displayID": -1]) else {
+        forTool: "snitt_start_recording",
+        arguments: jsonArguments(#"{"displayID": -1}"#)) else {
         Issue.record("a negative displayID must not be sent"); return
     }
     #expect(error.message.contains("displayID"))
+}
+
+@Test("A displayID of exactly 1, decoded from real JSON, is accepted — not misread as a boolean")
+func displayIDOfOneAcceptedFromRealJSON() {
+    // Same regression class as the scale/start/end fix, applied to
+    // `displayID(from:)`, which used the same `is Bool` discriminator.
+    guard case .success(.startRecording(let options)) = MCPBridge.request(
+        forTool: "snitt_start_recording",
+        arguments: jsonArguments(#"{"displayID": 1}"#)) else {
+        Issue.record("displayID: 1, decoded from JSON, must be accepted as a number"); return
+    }
+    #expect(options.displayID == 1)
 }
 
 @Test("When both a window and a display are given, MCP agrees with ConsentPolicy's precedence")
@@ -217,7 +307,7 @@ func displayTakesPrecedenceOverBundleIdentifier() {
     // names.
     guard case .success(.startRecording(let options)) = MCPBridge.request(
         forTool: "snitt_start_recording",
-        arguments: ["bundleIdentifier": "com.apple.Safari", "displayID": 7]) else {
+        arguments: jsonArguments(#"{"bundleIdentifier": "com.apple.Safari", "displayID": 7}"#)) else {
         Issue.record("mapping failed"); return
     }
     #expect(options.displayID == 7)
