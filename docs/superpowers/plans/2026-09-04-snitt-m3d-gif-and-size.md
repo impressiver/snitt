@@ -183,8 +183,13 @@ public enum ByteSize {
         else { return nil }
 
         let bytes = value * multiplier
-        guard bytes <= Double(Int.max) else { return nil }
-        return Int(bytes)
+        // NOT `bytes <= Double(Int.max)`: Double(Int.max) is not exactly
+        // representable and rounds UP to 2^63, so that bound admits a value
+        // one greater than Int.max and the conversion below then traps on
+        // the literal value of Int.max. Ask whether the conversion is exact
+        // instead. `rounded(.down)` keeps `parse("1.1b") == 1`.
+        guard let result = Int(exactly: bytes.rounded(.down)) else { return nil }
+        return result
     }
 }
 ```
