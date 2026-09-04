@@ -43,12 +43,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             if enabled {
                 // First use of the feature that needs it — never at launch.
-                guard PermissionOnboarding.preExplain(.inputMonitoring) else { return }
+                guard PermissionOnboarding.preExplain(.inputMonitoring) else {
+                    self.statusItem.eventLoggingEnabled = false
+                    return
+                }
                 if !InputMonitoringAccess.ensureGranted() {
                     // Same shape as Screen Recording: a request returns false
                     // even while the user is granting, so this is "relaunch",
                     // not "denied".
                     PermissionOnboarding.showAlreadyDenied(.inputMonitoring)
+                    // Deliberately NOT persisted. Saving `enabled = true` here
+                    // left a checkmark on a feature that can never produce an
+                    // event — indistinguishable from "the user did not type" —
+                    // and left `Recorder` to meet the missing grant mid-
+                    // recording, where the TCC dialog it raises lands in frame
+                    // with no pre-explain (§4.10), or on the agent path with
+                    // nobody there to dismiss it.
+                    //
+                    // After a first-run grant this means one more toggle on the
+                    // next launch, which is the same "relaunch" the alert just
+                    // described, and is the honest state in the meantime.
+                    self.statusItem.eventLoggingEnabled = false
+                    return
                 }
             }
             var settings = EventLoggingSettings.load()
