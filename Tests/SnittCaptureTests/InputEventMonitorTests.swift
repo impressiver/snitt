@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 import CoreGraphics
 @testable import SnittCapture
 import SnittDocument
@@ -41,4 +42,67 @@ func maskMatchesTheMappedTypes() {
         #expect(InputEventMonitor.eventMask & (1 << type.rawValue) == 0,
                 "\(type) is in the mask but maps to no kind")
     }
+}
+
+// MARK: - Lifetime
+//
+// The Input Monitoring grant is per-machine, so these cover BOTH branches
+// rather than bailing out on one. An earlier round called them untestable;
+// they are not — what they cannot do is force the branch, so each says what it
+// expects in either state instead of silently inverting on a dev machine that
+// has granted the test runner.
+
+@Test("A monitor is released once its tap is gone, however start() went")
+func monitorIsReleasedAfterStop() {
+    // The tap holds a +1 on the monitor. A failed tapCreate that forgot to
+    // release it, or a stop() that forgot to, would keep the object alive
+    // forever with no way to reach it — deinit would never run, so the thread
+    // and the mach port would leak with it.
+    weak var weakMonitor: InputEventMonitor?
+    do {
+        let monitor = InputEventMonitor { _ in }
+        weakMonitor = monitor
+        let started = monitor.start()
+        #expect(started == InputMonitoringAccess.isGranted(),
+                "start() succeeds exactly when the grant is present")
+        monitor.stop()
+    }
+    #expect(weakMonitor == nil, "the tap's +1 must have been released")
+}
+
+@Test("stop() before start() is a no-op rather than a crash or a hang")
+func stopBeforeStartIsSafe() {
+    // stop() now WAITS for the tap thread before releasing the +1, because
+    // invalidating the mach port does not synchronise with a callback already
+    // running. Two things keep that wait from blocking on nothing: the
+    // `guard let tap` at the top of stop(), and the semaphore being nil until
+    // a thread is actually launched. This pins the observable half — a stop
+    // with no thread returns promptly — which is what a caller depends on.
+    // It does NOT discriminate the semaphore's shape: the tap guard alone
+    // would also make this path fast.
+    let monitor = InputEventMonitor { _ in }
+    let began = Date()
+    monitor.stop()
+    #expect(Date().timeIntervalSince(began) < 0.5,
+            "stop() with no thread must not wait on a semaphore nothing will signal")
+}
+
+@Test("stop() twice neither double-releases nor waits a second time")
+func stopTwiceIsSafe() {
+    // The second stop must find `tap` already nil and return immediately:
+    // releasing the +1 twice is an over-release, and the join must not be
+    // re-attempted against a thread that has already gone.
+    weak var weakMonitor: InputEventMonitor?
+    let began: Date
+    do {
+        let monitor = InputEventMonitor { _ in }
+        weakMonitor = monitor
+        _ = monitor.start()
+        monitor.stop()
+        began = Date()
+        monitor.stop()
+    }
+    #expect(Date().timeIntervalSince(began) < 0.5,
+            "a second stop must not wait again")
+    #expect(weakMonitor == nil)
 }
