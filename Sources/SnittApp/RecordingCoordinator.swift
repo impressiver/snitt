@@ -42,7 +42,11 @@ public enum CoordinatorOutcome: Equatable, Sendable {
 
 /// The outcome of an agent's request to stop ITS OWN session.
 public enum AgentStopResult: Equatable, Sendable {
-    case stopped(URL, copied: Bool)
+    /// `health` is read from the `Recorder` actor itself, not from the bundle
+    /// it just wrote: the CLI is a thin client (§4.9) and cannot read the
+    /// app's output directory, which is `~/Desktop` by default and gated by
+    /// the Files-and-Folders TCC service.
+    case stopped(URL, copied: Bool, health: CaptureHealth?)
     /// Nothing is recording, or what IS recording is not that agent's session —
     /// typically because a person already stopped it with the kill switch and
     /// started their own. Never stop it: the bundle is not the agent's to take.
@@ -208,12 +212,17 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     /// caller's "is this still mine?" check and the stop itself.
     public func stopForAgent(sessionID: String) async -> AgentStopResult {
         guard !isTransitioning else { return .busy }
-        guard agentSessionID == sessionID, active != nil else { return .notCurrentSession }
+        guard agentSessionID == sessionID, let recorder = active else { return .notCurrentSession }
         isTransitioning = true
         defer { isTransitioning = false }
         switch await stopRecording() {
         case .stopped(let url, let copied):
-            return .stopped(url, copied: copied)
+            // `recorder` was captured above, before `stopRecording()` clears
+            // `active` — this is the SAME actor instance that just finished
+            // writing the bundle, so its in-memory metrics are still the
+            // freshest source, and the only one the CLI can reach at all.
+            let health = await recorder.capturedHealth()
+            return .stopped(url, copied: copied, health: health)
         case .failed(let message, _):
             return .failed(message)
         default:

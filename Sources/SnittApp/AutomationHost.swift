@@ -354,11 +354,11 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     private func stop(_ sessionID: String) async -> AutomationResponse {
         let result = await coordinator.stopForAgent(sessionID: sessionID)
         switch result {
-        case .stopped(let url, _):
+        case .stopped(let url, _, let health):
             cancelWatchdog()
             try? await registry.close(sessionID)
             await pushState(.idle)
-            return .stopped(bundlePath: url.path)
+            return .stopped(bundlePath: url.path, health: health)
 
         case .notCurrentSession:
             // Either the id was never valid, or a person already ended it. Drop

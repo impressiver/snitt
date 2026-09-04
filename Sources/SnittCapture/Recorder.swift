@@ -69,6 +69,13 @@ public actor Recorder {
         try await session.start()
     }
 
+    /// The metrics gathered during the writer pass (§12.1).
+    ///
+    /// Read from the recorder rather than re-read from the written bundle: the
+    /// CLI is a thin client (§4.9) and cannot read the app's output directory,
+    /// which is `~/Desktop` and gated by the Files-and-Folders TCC service.
+    public func capturedHealth() -> CaptureHealth { session.health() }
+
     /// Stops capture, finalizes the movie, and completes the bundle.
     ///
     /// Sidecar files are written even when finalization fails, so the bundle on

@@ -65,7 +65,7 @@ actor FakeCoordinator: AgentRecordingControlling {
         if let stopOverride { return stopOverride }
         guard activeSession == sessionID else { return .notCurrentSession }
         activeSession = nil
-        return .stopped(URL(fileURLWithPath: "/tmp/agent-\(sessionID).snitt"), copied: true)
+        return .stopped(URL(fileURLWithPath: "/tmp/agent-\(sessionID).snitt"), copied: true, health: nil)
     }
 
     func markForAgent(sessionID: String, label: String?) async -> AgentMarkResult {
@@ -138,6 +138,40 @@ func agentStartAndStopDriveTheIndicator() async throws {
     }
     #expect(recorder.states.last == .idle,
             "the indicator must return to idle when the agent session ends")
+}
+
+@MainActor
+@Test("Stop reports health from the coordinator, not from the filesystem")
+func stopReportsHealthFromCoordinator() async throws {
+    // The discriminating check for the health-reporting regression found on a
+    // real machine: the CLI's default output directory (~/Desktop) is gated
+    // by the Files-and-Folders TCC service, so reading RecordingMetadata back
+    // off disk silently produced no health block at all — no test caught it
+    // because every existing test writes bundles to a temp directory it CAN
+    // read. Health must instead arrive through the coordinator's response;
+    // this asserts the host forwards it rather than dropping it on the floor.
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let host = makeHost(coordinator: coordinator, recorder: recorder)
+
+    let started = await host.handle(startBody())
+    guard case .started(let sessionID, _) = started else {
+        Issue.record("expected a started response, got \(started)")
+        return
+    }
+
+    let expectedHealth = CaptureHealth(meanFrameVariance: 42.0, micRMS: 0.1, systemAudioRMS: nil)
+    await coordinator.setStopOverride(
+        .stopped(URL(fileURLWithPath: "/tmp/agent-\(sessionID).snitt"),
+                copied: true, health: expectedHealth))
+
+    let stopped = await host.handle(.stopRecording(sessionID: sessionID))
+    guard case .stopped(_, let health) = stopped else {
+        Issue.record("expected a stopped response, got \(stopped)")
+        return
+    }
+    #expect(health == expectedHealth,
+            "AutomationHost must forward the coordinator's health, not discard it")
 }
 
 @MainActor

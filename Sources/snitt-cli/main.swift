@@ -6,7 +6,6 @@
 // new parent (spec §4.9). Snitt.app holds the grant; this asks it to act.
 import Foundation
 import SnittAutomation
-import SnittDocument
 
 func emit(_ value: some Encodable) {
     let encoder = JSONEncoder()
@@ -85,20 +84,15 @@ do {
     case .started(let id, let target):
         emit(["sessionId": id, "target": target])
         note("Recording \(target). Stop with: snitt record stop \(id)")
-    case .stopped(let path):
+    case .stopped(let path, let health):
+        // Rendered from the RESPONSE, never re-read from the bundle: the CLI
+        // is a thin client (§4.9) and cannot read the app's output
+        // directory — by default `~/Desktop`, gated by the Files-and-Folders
+        // TCC service, which made the filesystem-read version of this block
+        // silently omit health on every real machine.
         var payload: [String: Any] = ["bundlePath": path]
-        // `init(opening:)` throws if the bundle is not there — the health block
-        // is best-effort reporting, so a failure to read it must not turn a
-        // successful recording into a CLI error.
-        if let bundle = try? SnittBundle(opening: URL(fileURLWithPath: path)),
-           let meta = try? RecordingMetadata.read(from: bundle),
-           let health = meta.health {
-            var block: [String: Any] = [:]
-            if let v = health.meanFrameVariance { block["meanFrameVariance"] = v }
-            if let m = health.micRMS { block["micRMS"] = m }
-            if let s = health.systemAudioRMS { block["systemAudioRMS"] = s }
-            if !block.isEmpty { payload["health"] = block }
-        }
+        let block = healthFields(health)
+        if !block.isEmpty { payload["health"] = block }
         emitObject(payload)
         note("Saved \(path)")
     case .status(let info):            emit(info)

@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 @testable import SnittAutomation
+import SnittDocument
 
 @Test("A request round-trips through JSON with its protocol version intact")
 func requestRoundTrips() throws {
@@ -32,7 +33,9 @@ func responsesRoundTrip() throws {
                                 applicationName: "Safari",
                                 bundleIdentifier: "com.apple.Safari")]),
         .started(sessionID: "abc", target: "Safari"),
-        .stopped(bundlePath: "/tmp/x.snitt"),
+        .stopped(bundlePath: "/tmp/x.snitt", health: nil),
+        .stopped(bundlePath: "/tmp/y.snitt",
+                health: CaptureHealth(meanFrameVariance: 1.2, micRMS: 0.3, systemAudioRMS: nil)),
         .status(StatusInfo(recording: true, sessionID: "abc", elapsedSeconds: 4)),
         .failure(AutomationError(code: .consentRequired, message: "m", hint: "h")),
     ]
@@ -41,6 +44,22 @@ func responsesRoundTrip() throws {
         let back = try JSONDecoder().decode(AutomationResponse.self, from: data)
         #expect(back == value)
     }
+}
+
+@Test("healthFields omits an absent metric rather than reporting it as null or zero")
+func healthFieldsOmitsAbsentMetrics() {
+    let health = CaptureHealth(meanFrameVariance: 1.5, micRMS: nil, systemAudioRMS: 0.02)
+    let fields = healthFields(health)
+    #expect(fields["meanFrameVariance"] == 1.5)
+    #expect(fields["systemAudioRMS"] == 0.02)
+    #expect(fields["micRMS"] == nil,
+            "a nil metric must be an ABSENT key — an agent branching on key presence would otherwise read a dead microphone as a reported measurement")
+    #expect(fields.count == 2, "no extra key for the absent metric, however it might be encoded")
+}
+
+@Test("A nil CaptureHealth yields no fields at all")
+func nilHealthYieldsNoFields() {
+    #expect(healthFields(nil).isEmpty)
 }
 
 @Test("Error codes are stable strings — agents branch on these, not on prose")

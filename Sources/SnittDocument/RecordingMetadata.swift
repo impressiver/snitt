@@ -18,7 +18,7 @@ public struct GitContext: Codable, Sendable {
 
 /// Capture health metrics (spec section 12.1). Populated in M2; defined now
 /// so the meta.json schema does not change when M2 lands.
-public struct CaptureHealth: Codable, Sendable {
+public struct CaptureHealth: Codable, Sendable, Equatable {
     public var meanFrameVariance: Double?
     public var micRMS: Double?
     public var systemAudioRMS: Double?

@@ -50,8 +50,15 @@ func describe(_ response: AutomationResponse) -> String {
             ?? "[]"
     case .started(let id, let target):
         return "Recording \(target). Session id: \(id)"
-    case .stopped(let path):
-        return "Saved \(path)"
+    case .stopped(let path, let health):
+        // Same "absent means absent" rendering the CLI uses (§4.8: the two
+        // frontends must not diverge), via the shared `healthFields` helper.
+        let fields = healthFields(health)
+        guard !fields.isEmpty else { return "Saved \(path)" }
+        let metrics = fields.sorted { $0.key < $1.key }
+            .map { "\($0.key)=\($0.value)" }
+            .joined(separator: ", ")
+        return "Saved \(path) (\(metrics))"
     case .status(let info):
         return (try? encoder.encode(info)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     case .handshake(let info):

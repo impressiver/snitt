@@ -1,4 +1,5 @@
 import Foundation
+import SnittDocument
 
 public enum AutomationProtocol {
     /// Bumped whenever the wire format changes incompatibly. The server refuses
@@ -132,11 +133,35 @@ public struct AutomationError: Codable, Sendable, Equatable, Error {
     ]
 }
 
+/// Renders §12.1's health metrics for display, omitting any metric that is
+/// absent rather than reporting it as null or zero.
+///
+/// Shared by both frontends (§4.8: the CLI and the MCP server must not
+/// diverge) so "absent means absent" is enforced in exactly one place. A nil
+/// `CaptureHealth` — or a nil field within one — yields no key at all: an
+/// agent branching on key PRESENCE must see a dead microphone as absent, not
+/// as a reported measurement of zero or `null`.
+public func healthFields(_ health: CaptureHealth?) -> [String: Double] {
+    guard let health else { return [:] }
+    var fields: [String: Double] = [:]
+    if let v = health.meanFrameVariance { fields["meanFrameVariance"] = v }
+    if let m = health.micRMS { fields["micRMS"] = m }
+    if let s = health.systemAudioRMS { fields["systemAudioRMS"] = s }
+    return fields
+}
+
 public enum AutomationResponse: Codable, Sendable, Equatable {
     case handshake(HandshakeInfo)
     case targets([TargetSummary])
     case started(sessionID: String, target: String)
-    case stopped(bundlePath: String)
+    /// `health` was added to an already-Codable case without bumping
+    /// `AutomationProtocol.version`. That is correct, not an oversight: v2 has
+    /// never shipped — `main` has no `SnittAutomation` at all, and both PRs
+    /// that would introduce it are unmerged — so there is no released v2
+    /// client to stay compatible with. Amending an unreleased version is the
+    /// right move; bumping to 3 would falsely imply a compatibility break
+    /// against a version nobody has.
+    case stopped(bundlePath: String, health: CaptureHealth?)
     case status(StatusInfo)
     case failure(AutomationError)
     case marked(timeSeconds: Double)
