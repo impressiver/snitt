@@ -55,10 +55,28 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
     // than `group.wait()`/`DispatchSemaphore.wait()`: both block the calling
     // cooperative-pool thread and can deadlock the whole suite once enough
     // tests are blocked in here concurrently.
+    //
+    // NOTE: this file is deliberately duplicated in
+    // `Tests/SnittExportTests/SyntheticMovie.swift` (see that file's doc
+    // comment for why). Both copies must stay in step — in particular the
+    // `writer.status == .failed` check below, which guards against a
+    // use-after-free: if the writer fails mid-stream,
+    // `isReadyForMoreMediaData` can stay true while AVFoundation tears down
+    // the pixel buffer pool, so `adaptor.pixelBufferPool` returns a non-nil
+    // but dangling pool and `CVPixelBufferPoolCreatePixelBuffer` crashes
+    // dereferencing freed memory (SIGSEGV, confirmed via crash report). Fix
+    // this hazard in one copy, fix it in both.
     let group = DispatchGroup()
     group.enter()
     videoInput.requestMediaDataWhenReady(on: DispatchQueue(label: "synthetic-movie.video")) {
         while videoInput.isReadyForMoreMediaData {
+            if writer.status == .failed {
+                videoFinished.fireOnce {
+                    videoInput.markAsFinished()
+                    group.leave()
+                }
+                return
+            }
             guard videoProgress.value < frameCount else {
                 videoFinished.fireOnce {
                     videoInput.markAsFinished()

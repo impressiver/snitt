@@ -127,6 +127,18 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
     let packetFrameCount = 1024
     let totalAudioFrames = Int(seconds * audioSampleRate)
 
+    // NOTE: this file is deliberately duplicated in
+    // `Tests/SnittAppTests/SyntheticMovie.swift` (see this file's top-level
+    // doc comment for why the duplication itself is deliberate). Both
+    // copies must stay in step — in particular the `writer.status ==
+    // .failed` checks in the video and audio media-data loops below, which
+    // guard against a use-after-free: if the writer fails mid-stream,
+    // `isReadyForMoreMediaData` can stay true while AVFoundation tears down
+    // the pixel buffer pool, so `adaptor.pixelBufferPool` returns a
+    // non-nil but dangling pool and `CVPixelBufferPoolCreatePixelBuffer`
+    // crashes dereferencing freed memory (SIGSEGV, confirmed via crash
+    // report from the `SnittAppTests` copy). Fix this hazard in one copy,
+    // fix it in both.
     let group = DispatchGroup()
 
     group.enter()
@@ -142,6 +154,13 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
     let videoFinished = OnceFlag()
     videoInput.requestMediaDataWhenReady(on: DispatchQueue(label: "synthetic-movie.video")) {
         while videoInput.isReadyForMoreMediaData {
+            if writer.status == .failed {
+                videoFinished.fireOnce {
+                    videoInput.markAsFinished()
+                    group.leave()
+                }
+                return
+            }
             guard videoProgress.value < frameCount else {
                 videoFinished.fireOnce {
                     videoInput.markAsFinished()
@@ -197,6 +216,13 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
             let audioFinished = OnceFlag()
             input.requestMediaDataWhenReady(on: DispatchQueue(label: "synthetic-movie.audio.\(index)")) {
                 while input.isReadyForMoreMediaData {
+                    if writer.status == .failed {
+                        audioFinished.fireOnce {
+                            input.markAsFinished()
+                            group.leave()
+                        }
+                        return
+                    }
                     guard audioProgress.value < totalAudioFrames else {
                         audioFinished.fireOnce {
                             input.markAsFinished()
