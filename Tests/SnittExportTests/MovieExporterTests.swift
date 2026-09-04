@@ -363,3 +363,38 @@ func scaleReductionActuallyShrinksTheFile() async throws {
     #expect(constrained.scale < 1.0,
             "300_000 bytes is unreachable at scale 1.0 on this fixture; the ladder must have dropped scale")
 }
+
+@Test("An impossible GIF size target still writes a file and reports the miss")
+func gifImpossibleTargetReportsMiss() async throws {
+    let bundle = try await makeTestBundle(seconds: 2)
+    let out = FileManager.default.temporaryDirectory
+        .appendingPathComponent("gm-\(UUID().uuidString).gif")
+    let manifest = try await MovieExporter.export(
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0, to: out,
+        format: "gif", maxSizeBytes: 100)
+    #expect(manifest.format == "gif")
+    #expect(manifest.maxSizeMet == false)
+    #expect(manifest.byteSize > 100)
+    #expect(FileManager.default.fileExists(atPath: out.path))
+    // Discriminating: 100 bytes is unreachable even for a genuine no-op
+    // (one GIF at full scale, target ignored), so a no-op would ALSO
+    // report "miss" here and satisfy every assertion above. Only an
+    // implementation that actually walked the ladder down to its last rung
+    // ends up at a scale below what was requested.
+    #expect(manifest.scale < 1.0,
+            "an impossible target should exhaust the ladder down to its smallest rung")
+}
+
+@Test("A generous GIF size target is met on the first rung at full quality")
+func gifGenerousTargetMetAtFullQuality() async throws {
+    let bundle = try await makeTestBundle(seconds: 1)
+    let out = FileManager.default.temporaryDirectory
+        .appendingPathComponent("gg-\(UUID().uuidString).gif")
+    let manifest = try await MovieExporter.export(
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0, to: out,
+        format: "gif", maxSizeBytes: 50_000_000)
+    #expect(manifest.maxSizeMet == true)
+    // Discriminating: an implementation that always walks the whole ladder,
+    // or that starts partway down it, degrades a file that already fit.
+    #expect(manifest.scale == 1.0)
+}

@@ -18,7 +18,17 @@ public enum MovieExporter {
     /// `fileLengthLimit` cannot hit the target. Bounded deliberately: each
     /// rung is a full re-encode, and an unbounded search on a long recording
     /// would run for minutes with no way for the caller to see progress.
+    ///
+    /// mp4-only, deliberately: `fileLengthLimit` already handles bitrate for
+    /// mp4, so this ladder only needs to walk scale. GIF has no bitrate
+    /// primitive at all, so its ladder (`SizeLadder`) is a separate public
+    /// type walking frame rate and scale together — a different algorithm,
+    /// not a shared one with a dead axis for either caller.
     private static let sizeLadder: [Double] = [1.0, 0.75, 0.5, 0.35]
+
+    /// The frame rate GIF export starts from before size targeting (if any)
+    /// walks `SizeLadder` down from it.
+    public static let defaultGIFFrameRate = 15.0
 
     public static func exportMovie(_ built: BuiltComposition,
                                    to url: URL,
@@ -50,6 +60,74 @@ public enum MovieExporter {
         (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
     }
 
+    /// GIF's size-targeting path. Mirrors the shape of the mp4 ladder above
+    /// (build at a rung, write, measure, keep the last rung that succeeded)
+    /// but walks `SizeLadder` — frame rate first, then scale — because
+    /// ImageIO has no `fileLengthLimit` equivalent: there is no encoder
+    /// primitive to try before re-encoding, so the ladder IS the whole
+    /// mechanism here, not a fallback after one.
+    ///
+    /// Returns the composition actually written, the scale it was written
+    /// at, the resulting file's byte size, and whether `maxSizeBytes` (if
+    /// any) was met.
+    private static func exportGIF(bundle: SnittBundle,
+                                  edl: EditDecisionList,
+                                  scale: Double,
+                                  to outputURL: URL,
+                                  maxSizeBytes: Int?) async throws
+        -> (built: BuiltComposition, scale: Double, byteSize: Int, sizeMet: Bool) {
+        guard let maxSizeBytes else {
+            // No target: one GIF at the base frame rate and the requested
+            // scale, no ladder walked at all.
+            let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: scale)
+            try await GIFExporter.write(built, to: outputURL, framesPerSecond: defaultGIFFrameRate)
+            let byteSize = try fileByteSize(at: outputURL)
+            return (built, scale, byteSize, false)
+        }
+
+        let rungs = SizeLadder.rungs(baseFPS: defaultGIFFrameRate)
+        var lastSuccessfulBuilt: BuiltComposition?
+        var lastSuccessfulScale = scale
+        var byteSize = 0
+        var met = false
+        for rung in rungs {
+            let rungScale = scale * rung.scaleMultiplier
+            let rungBuilt = try await CompositionBuilder.build(
+                bundle: bundle, edl: edl, scale: rungScale)
+            do {
+                try await GIFExporter.write(
+                    rungBuilt, to: outputURL, framesPerSecond: rung.framesPerSecond)
+            } catch {
+                // Same contract as the mp4 ladder: a rung that fails to
+                // encode does not abort the whole export, it just isn't
+                // this rung's answer.
+                continue
+            }
+            lastSuccessfulBuilt = rungBuilt
+            lastSuccessfulScale = rungScale
+            byteSize = try fileByteSize(at: outputURL)
+            if byteSize <= maxSizeBytes { met = true; break }
+        }
+
+        if let lastSuccessfulBuilt {
+            return (lastSuccessfulBuilt, lastSuccessfulScale, byteSize, met)
+        }
+
+        // Every rung threw. The honesty contract still requires a file at
+        // the output path, so fall back to the smallest rung, unconditionally.
+        guard let smallest = rungs.last else {
+            // rungs is never empty (SizeLadder always returns at least the
+            // base rung), but hitting this would mean nothing was ever
+            // written — surface that rather than crash on an unwrap.
+            throw GIFError.destinationUnavailable
+        }
+        let smallestScale = scale * smallest.scaleMultiplier
+        let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: smallestScale)
+        try await GIFExporter.write(built, to: outputURL, framesPerSecond: smallest.framesPerSecond)
+        byteSize = try fileByteSize(at: outputURL)
+        return (built, smallestScale, byteSize, byteSize <= maxSizeBytes)
+    }
+
     /// The full pipeline: build the composition, write the mp4, map markers
     /// from bundle time into export time, optionally write a WebVTT chapters
     /// sidecar, and return the manifest.
@@ -64,62 +142,72 @@ public enum MovieExporter {
                               scale: Double,
                               to outputURL: URL,
                               chaptersURL: URL? = nil,
+                              format: String = "mp4",
                               maxSizeBytes: Int? = nil) async throws -> ExportManifest {
-        var built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: scale)
-        var effectiveScale = scale
-        var byteSize = 0
+        var built: BuiltComposition
+        var effectiveScale: Double
+        var byteSize: Int
         var sizeMet = false
 
-        if let maxSizeBytes {
-            var met = false
-            var lastSuccessfulBuilt: BuiltComposition?
-            var lastSuccessfulScale = effectiveScale
-            for rung in sizeLadder {
-                let rungScale = scale * rung
-                let rungBuilt = try await CompositionBuilder.build(
-                    bundle: bundle, edl: edl, scale: rungScale)
-                do {
-                    try await exportMovie(rungBuilt, to: outputURL, maxSizeBytes: maxSizeBytes)
-                } catch {
-                    // The session may throw rather than produce a
-                    // best-effort file when the limit is impossible. Either
-                    // way the contract is the same: keep the smallest
-                    // attempt that DID succeed and keep trying smaller
-                    // scales, rather than losing the whole export to one
-                    // rung's failure.
-                    continue
+        if format == "gif" {
+            (built, effectiveScale, byteSize, sizeMet) = try await exportGIF(
+                bundle: bundle, edl: edl, scale: scale, to: outputURL, maxSizeBytes: maxSizeBytes)
+        } else {
+            built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: scale)
+            effectiveScale = scale
+            byteSize = 0
+
+            if let maxSizeBytes {
+                var met = false
+                var lastSuccessfulBuilt: BuiltComposition?
+                var lastSuccessfulScale = effectiveScale
+                for rung in sizeLadder {
+                    let rungScale = scale * rung
+                    let rungBuilt = try await CompositionBuilder.build(
+                        bundle: bundle, edl: edl, scale: rungScale)
+                    do {
+                        try await exportMovie(rungBuilt, to: outputURL, maxSizeBytes: maxSizeBytes)
+                    } catch {
+                        // The session may throw rather than produce a
+                        // best-effort file when the limit is impossible. Either
+                        // way the contract is the same: keep the smallest
+                        // attempt that DID succeed and keep trying smaller
+                        // scales, rather than losing the whole export to one
+                        // rung's failure.
+                        continue
+                    }
+                    lastSuccessfulBuilt = rungBuilt
+                    lastSuccessfulScale = rungScale
+                    byteSize = try fileByteSize(at: outputURL)
+                    if byteSize <= maxSizeBytes { met = true; break }
                 }
-                lastSuccessfulBuilt = rungBuilt
-                lastSuccessfulScale = rungScale
-                byteSize = try fileByteSize(at: outputURL)
-                if byteSize <= maxSizeBytes { met = true; break }
-            }
-            // If no rung fit, the file on disk (from the last successful
-            // attempt, the smallest one tried) is kept and reported
-            // honestly rather than thrown away or misreported as a success.
-            sizeMet = met
-            if let lastSuccessfulBuilt {
-                built = lastSuccessfulBuilt
-                effectiveScale = lastSuccessfulScale
+                // If no rung fit, the file on disk (from the last successful
+                // attempt, the smallest one tried) is kept and reported
+                // honestly rather than thrown away or misreported as a success.
+                sizeMet = met
+                if let lastSuccessfulBuilt {
+                    built = lastSuccessfulBuilt
+                    effectiveScale = lastSuccessfulScale
+                } else {
+                    // Every rung's export threw — even the smallest one, which
+                    // is the caller's best shot at a small file. The honesty
+                    // contract still requires a file at the output path, so
+                    // fall back to an unconstrained export, but at the
+                    // SMALLEST rung's scale, not the originally requested one:
+                    // the caller asked for small, and handing back the largest
+                    // possible file (full scale, no limit) when every attempt
+                    // to shrink it failed would be the worst available choice.
+                    let smallestScale = scale * (sizeLadder.last ?? 1.0)
+                    built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: smallestScale)
+                    effectiveScale = smallestScale
+                    try await exportMovie(built, to: outputURL, maxSizeBytes: nil)
+                    byteSize = try fileByteSize(at: outputURL)
+                    sizeMet = byteSize <= maxSizeBytes
+                }
             } else {
-                // Every rung's export threw — even the smallest one, which
-                // is the caller's best shot at a small file. The honesty
-                // contract still requires a file at the output path, so
-                // fall back to an unconstrained export, but at the
-                // SMALLEST rung's scale, not the originally requested one:
-                // the caller asked for small, and handing back the largest
-                // possible file (full scale, no limit) when every attempt
-                // to shrink it failed would be the worst available choice.
-                let smallestScale = scale * (sizeLadder.last ?? 1.0)
-                built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: smallestScale)
-                effectiveScale = smallestScale
                 try await exportMovie(built, to: outputURL, maxSizeBytes: nil)
                 byteSize = try fileByteSize(at: outputURL)
-                sizeMet = byteSize <= maxSizeBytes
             }
-        } else {
-            try await exportMovie(built, to: outputURL, maxSizeBytes: nil)
-            byteSize = try fileByteSize(at: outputURL)
         }
 
         // `built.keptRanges` is the SAME set CompositionBuilder inserted
@@ -139,7 +227,7 @@ public enum MovieExporter {
 
         return ExportManifest(
             outputPath: outputURL.path,
-            format: "mp4",
+            format: format,
             byteSize: byteSize,
             durationSeconds: built.duration,
             width: Int(built.videoComposition.renderSize.width),
