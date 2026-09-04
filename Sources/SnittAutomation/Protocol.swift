@@ -16,6 +16,12 @@ public enum AutomationProtocol {
     /// no released v2 client whose compatibility a bump would protect. A future
     /// reader should not mistake this for a forgotten bump; it is deliberate,
     /// for the same reason `.stopped(health:)` amended v2 rather than bumping.
+    ///
+    /// v2 was amended a third time to add `.trim`/`.trimmed` and
+    /// `.export`/`.exported`, for the same reason: still no released v2
+    /// client. Trim and export run in the app rather than the CLI, for the
+    /// same reason `.inspect` does — the client cannot read the bundle
+    /// (§4.9, TCC-gated by default under `~/Desktop`).
     public static let version = 2
 }
 
@@ -57,6 +63,9 @@ public struct AutomationRequest: Codable, Sendable {
         case status
         case mark(sessionID: String, label: String?)
         case inspect(bundlePath: String)
+        case trim(bundlePath: String, start: Double?, end: Double?, auto: Bool)
+        case export(bundlePath: String, format: String, outputPath: String,
+                    scale: Double, chapters: Bool)
     }
 
     public var protocolVersion: Int
@@ -174,4 +183,20 @@ public enum AutomationResponse: Codable, Sendable, Equatable {
     case failure(AutomationError)
     case marked(timeSeconds: Double)
     case inspected(InspectReport)
+    case trimmed(TrimSummary)
+    case exported(ExportManifest)
+}
+
+/// What a trim produced, for a caller that cannot inspect `edit.json` itself
+/// (the same reason `ExportManifest` exists — see its doc comment).
+public struct TrimSummary: Codable, Sendable, Equatable {
+    public var keptSeconds: Double
+    public var cutSeconds: Double
+    public var cuts: [TimeRange]
+
+    public init(keptSeconds: Double, cutSeconds: Double, cuts: [TimeRange]) {
+        self.keptSeconds = keptSeconds
+        self.cutSeconds = cutSeconds
+        self.cuts = cuts
+    }
 }

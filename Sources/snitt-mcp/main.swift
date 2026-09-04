@@ -74,6 +74,13 @@ func describe(_ response: AutomationResponse) -> String {
         return "\(Int(report.durationSeconds ?? 0))s recording, "
              + "\(report.markerCount) markers, \(report.inputEventCount) input events"
              + (chapters.isEmpty ? "" : " — \(chapters)")
+    case .trimmed(let summary):
+        // No MCP tool builds a `.trim` request yet — trim and export land on
+        // the wire in this change, with their tool surface to follow. This
+        // case exists so `describe` stays exhaustive.
+        return (try? encoder.encode(summary)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+    case .exported(let manifest):
+        return (try? encoder.encode(manifest)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
     }
 }
 

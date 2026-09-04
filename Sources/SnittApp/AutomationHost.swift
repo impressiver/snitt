@@ -2,6 +2,7 @@ import Foundation
 import SnittAutomation
 import SnittCapture
 import SnittDocument
+import SnittExport
 
 /// Bridges automation requests to the same recording machinery the hotkey uses.
 ///
@@ -121,6 +122,123 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
 
         case .inspect(let path):
             return inspect(bundlePath: path)
+
+        case .trim(let bundlePath, let start, let end, let auto):
+            return trim(bundlePath: bundlePath, start: start, end: end, auto: auto)
+
+        case .export(let bundlePath, let format, let outputPath, let scale, let chapters):
+            return await export(bundlePath: bundlePath, format: format, outputPath: outputPath,
+                                scale: scale, chapters: chapters)
+        }
+    }
+
+    /// Mutates only `edit.json` — `capture.mov` is immutable (§7).
+    ///
+    /// Runs IN THE APP, not the client, for the same reason `inspect` does:
+    /// the CLI cannot read the bundle's `meta.json`/`events.json` to compute
+    /// cuts, because the default output directory is TCC-gated (§4.9).
+    private func trim(bundlePath: String, start: Double?, end: Double?,
+                      auto: Bool) -> AutomationResponse {
+        do {
+            let bundle = try SnittBundle(opening: URL(fileURLWithPath: bundlePath))
+            let meta = try RecordingMetadata.read(from: bundle)
+            let duration = meta.durationSeconds ?? 0
+            let existing = (try? EditDecisionList.read(from: bundle)) ?? .fullRange()
+
+            let cuts: [TimeRange]
+            if auto {
+                let events = (try? EventLog.read(from: bundle))?.events ?? []
+                cuts = try EditDecisionList.autoTrimCuts(events: events, duration: duration)
+            } else {
+                let keep = TimeRange(start: start ?? 0, end: end ?? duration)
+                cuts = existing.trimmed(keeping: keep, duration: duration).cuts
+            }
+
+            var updated = existing
+            updated.cuts = cuts
+            try updated.write(to: bundle)
+
+            let kept = KeptRanges.compute(duration: duration, cuts: cuts)
+            let keptSeconds = kept.reduce(0) { $0 + ($1.end - $1.start) }
+            return .trimmed(TrimSummary(keptSeconds: keptSeconds,
+                                        cutSeconds: duration - keptSeconds,
+                                        cuts: cuts))
+        } catch AutoTrimError.noInputEvents {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "This recording logged no input events, so there is nothing "
+                       + "to auto-trim against.",
+                hint: "Auto-trim clips dead air around clicks and keystrokes. An "
+                    + "agent-driven recording produces none. Use `snitt trim --start "
+                    + "<seconds> --end <seconds>` instead, or `snitt inspect` to see "
+                    + "the markers you can trim around."))
+        } catch {
+            return .failure(AutomationError(
+                code: .targetNotFound,
+                message: "Could not read a recording at that path.",
+                hint: "Use the path `snitt record stop` printed."))
+        }
+    }
+
+    /// Reads `capture.mov` and writes the trimmed mp4 (plus, optionally, its
+    /// chapters sidecar) IN THE APP, not the client, for the same reason
+    /// `trim` does (§4.9): the CLI cannot read `capture.mov` out of the
+    /// bundle directory — the default output directory is gated by the
+    /// Files-and-Folders TCC service — so it cannot build the composition
+    /// itself, only ask the app to.
+    private func export(bundlePath: String, format: String, outputPath: String,
+                        scale: Double, chapters: Bool) async -> AutomationResponse {
+        guard format == "mp4" else {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "Unsupported export format \"\(format)\".",
+                hint: "Snitt currently exports mp4 only. Omit --format or pass \"mp4\"."))
+        }
+
+        let bundle: SnittBundle
+        do {
+            bundle = try SnittBundle(opening: URL(fileURLWithPath: bundlePath))
+        } catch {
+            return .failure(AutomationError(
+                code: .targetNotFound,
+                message: "Could not read a recording at that path.",
+                hint: "Use the path `snitt record stop` printed."))
+        }
+
+        let edl = (try? EditDecisionList.read(from: bundle)) ?? .fullRange()
+        let outputURL = URL(fileURLWithPath: outputPath)
+        // Beside the output, not beside the bundle: an agent that asked for
+        // `~/exports/demo.mp4` expects `~/exports/demo.vtt`, not a sidecar
+        // buried back in the bundle it trimmed from.
+        let chaptersURL = chapters
+            ? outputURL.deletingPathExtension().appendingPathExtension("vtt")
+            : nil
+
+        do {
+            let manifest = try await MovieExporter.export(
+                bundle: bundle, edl: edl, scale: scale, to: outputURL, chaptersURL: chaptersURL)
+            return .exported(manifest)
+        } catch CompositionError.everythingCut {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "The current trim removes the entire recording.",
+                hint: "Widen the kept range with a `trim` request before exporting — "
+                    + "there is nothing left of this recording to write."))
+        } catch CompositionError.noVideoTrack {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "The recording has no video track to export.",
+                hint: "This bundle's capture.mov may be corrupt or incomplete."))
+        } catch let error as ExportError {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "The export failed.",
+                hint: String(describing: error)))
+        } catch {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "The export failed.",
+                hint: String(describing: error)))
         }
     }
 
@@ -414,5 +532,41 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                                             message: "The recording did not finalize.",
                                             hint: message))
         }
+    }
+}
+
+extension AutomationHost {
+    /// A host wired for tests that exercise `.trim`/`.export` only.
+    ///
+    /// Neither touches `coordinator` — they read and write a bundle already
+    /// on disk, not the live recording machinery — so this factory hands
+    /// them a coordinator that does nothing rather than forcing every such
+    /// test to build a `FakeCoordinator` it will never call. A test that
+    /// mixes trim/export with `.startRecording`/`.stopRecording`/`.mark`
+    /// must construct `AutomationHost` directly with a real fake, the way
+    /// `AutomationHostTests.swift` already does — `NullCoordinator` refuses
+    /// every one of those on purpose, so such a test fails loudly instead of
+    /// silently observing a no-op.
+    static func forTesting() -> AutomationHost {
+        AutomationHost(coordinator: NullCoordinator(),
+                      settings: { AgentSettings(agentRecordingEnabled: true,
+                                                fullDisplayAllowed: false) })
+    }
+}
+
+/// Refuses every call. See `AutomationHost.forTesting()`.
+private actor NullCoordinator: AgentRecordingControlling {
+    func startForAgent(sessionID: String, reference: TargetReference,
+                       git: GitContext?, options: CaptureOptions) async -> CoordinatorOutcome {
+        .failed("NullCoordinator does not record — use a real fake for this test.",
+               reason: .internalError)
+    }
+
+    func stopForAgent(sessionID: String) async -> AgentStopResult {
+        .notCurrentSession
+    }
+
+    func markForAgent(sessionID: String, label: String?) async -> AgentMarkResult {
+        .notRecording
     }
 }

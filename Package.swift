@@ -54,7 +54,7 @@ let package = Package(
         .testTarget(name: "SnittExportTests", dependencies: ["SnittExport"]),
         .testTarget(name: "SnittAutomationTests", dependencies: ["SnittAutomation", "SnittDocument"]),
         .testTarget(name: "SnittAppTests",
-                    dependencies: ["SnittApp", "SnittCapture", "SnittDocument"]),
+                    dependencies: ["SnittApp", "SnittCapture", "SnittDocument", "SnittAutomation"]),
         // THROWAWAY SPIKE CODE — spec section 14, S1/S3/S4/S5. Not for production use.
         .executableTarget(name: "S1KeystrokeProbe", path: "Spikes/S1KeystrokeProbe"),
         .executableTarget(name: "S3IPCCaptureProbe", path: "Spikes/S3IPCCaptureProbe"),

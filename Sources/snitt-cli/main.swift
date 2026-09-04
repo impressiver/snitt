@@ -106,6 +106,16 @@ do {
         emit(report)
         note("\(Int(report.durationSeconds ?? 0))s · \(report.markerCount) markers "
            + "· \(report.inputEventCount) input events")
+    case .trimmed(let summary):
+        // No CLI subcommand builds a `.trim` request yet — trim and export
+        // land on the wire in this change, with their command-line surface
+        // to follow. This case exists so the response switch stays
+        // exhaustive and the wire format is already rendered correctly.
+        emit(summary)
+        note("Kept \(Int(summary.keptSeconds))s, cut \(Int(summary.cutSeconds))s")
+    case .exported(let manifest):
+        emit(manifest)
+        note("Exported \(manifest.outputPath) (\(manifest.byteSize) bytes)")
     }
 } catch ClientError.notRunning {
     note("Snitt is not running. Open Snitt and try again.")
