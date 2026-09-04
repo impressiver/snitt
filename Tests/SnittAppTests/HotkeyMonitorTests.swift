@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Carbon.HIToolbox
 @testable import SnittApp
 
 @Test("The default combination is option-command-5")
@@ -45,6 +46,16 @@ func monitorIgnoresOtherHotkeys() {
     #expect(fired == 1)
     monitor.handle(hotKeyID: monitor.hotKeyID &+ 1)
     #expect(fired == 1, "a monitor must ignore a hotkey it did not register")
+}
+
+@Test("A monitor lets another monitor's hotkey propagate")
+func foreignHotkeyPropagates() {
+    // Returning noErr here would tell Carbon the event was handled and stop
+    // it reaching the other monitor — which silently broke ⌥⌘5 once the
+    // marker hotkey existed.
+    #expect(HotkeyMonitor.dispatchResult(firedID: 2, matching: 1)
+            == OSStatus(eventNotHandledErr))
+    #expect(HotkeyMonitor.dispatchResult(firedID: 1, matching: 1) == noErr)
 }
 
 // Both tests below register the real ⌥⌘5 combination with the window server.

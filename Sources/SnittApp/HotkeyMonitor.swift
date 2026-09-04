@@ -72,6 +72,19 @@ public final class HotkeyMonitor {
         onFire()
     }
 
+    /// What Carbon should be told after inspecting a fired hotkey id.
+    ///
+    /// `noErr` means "handled" and STOPS propagation to other handlers on the
+    /// same target. Two monitors share one application event target, so a
+    /// monitor that ignored an id must return eventNotHandledErr or it eats
+    /// the other monitor's hotkey — which is exactly how the marker hotkey
+    /// silently broke ⌥⌘5 once both were installed: the marker's handler ran
+    /// first, correctly did nothing for a foreign id, then returned noErr and
+    /// swallowed the press before the record handler ever saw it.
+    static func dispatchResult(firedID: UInt32, matching ownID: UInt32) -> OSStatus {
+        firedID == ownID ? noErr : OSStatus(eventNotHandledErr)
+    }
+
     /// The identifier this monitor registers with Carbon.
     ///
     /// Extracted so a test can assert the registration uses the INSTANCE id.
@@ -88,7 +101,13 @@ public final class HotkeyMonitor {
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
                                       eventKind: UInt32(kEventHotKeyPressed))
         let callback: EventHandlerUPP = { _, event, userData in
-            guard let userData, let event else { return noErr }
+            // Every early exit below returns eventNotHandledErr, never noErr.
+            // noErr tells Carbon "handled" and STOPS the event propagating to
+            // other handlers on the same application event target — where the
+            // other monitor's handler lives. Returning noErr for an event this
+            // handler didn't actually act on swallows it before the other
+            // monitor gets a turn.
+            guard let userData, let event else { return OSStatus(eventNotHandledErr) }
             var firedID = EventHotKeyID()
             let status = GetEventParameter(event, EventParamName(kEventParamDirectObject),
                                            EventParamType(typeEventHotKeyID), nil,
@@ -97,11 +116,12 @@ public final class HotkeyMonitor {
             // routing below would depend on ids never being 0 — true today only
             // because nextHotKeyID() pre-increments. Depend on the check, not on
             // that coincidence.
-            guard status == noErr else { return noErr }
+            guard status == noErr else { return OSStatus(eventNotHandledErr) }
             let monitor = Unmanaged<HotkeyMonitor>
                 .fromOpaque(userData).takeUnretainedValue()
+            let result = HotkeyMonitor.dispatchResult(firedID: firedID.id, matching: monitor.hotKeyID)
             monitor.handle(hotKeyID: firedID.id)
-            return noErr
+            return result
         }
 
         let status = InstallEventHandler(
