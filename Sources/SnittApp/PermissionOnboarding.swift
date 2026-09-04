@@ -30,10 +30,17 @@ public enum PermissionOnboarding {
                 return "You turned on voiceover, so Snitt needs the microphone. "
                      + "Recordings without voiceover never use it."
             case .inputMonitoring:
+                // Says "anywhere on this Mac" deliberately. The tap is a
+                // session-wide CGEventTap while the video is window-scoped, so
+                // the log also covers typing in windows kept out of frame —
+                // and the earlier copy, by naming only recordings, implied the
+                // recorded window. "Never which keys" stays: it is still true
+                // and it is the half that matters most.
                 return "You turned on input logging, so Snitt can record WHEN "
-                     + "you click and type — never which keys. Recordings mark "
-                     + "the moments activity happened, so dead air can be "
-                     + "trimmed later."
+                     + "you click and type — never which keys. This covers "
+                     + "activity anywhere on this Mac while recording, not "
+                     + "just the window being recorded. Times are rounded so "
+                     + "dead air can be trimmed later."
             }
         }
     }

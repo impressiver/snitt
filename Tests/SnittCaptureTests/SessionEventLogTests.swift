@@ -58,3 +58,34 @@ func snapshotIsACopy() async {
     await log.add(at: 2.0, kind: .click, label: nil)
     #expect(first.count == 1)
 }
+
+@Test("Input event times are quantised to 100ms; marker times are not")
+func inputTimesAreQuantisedButMarkersAreNot() async {
+    // The tap is session-wide (.cgSessionEventTap) while the video is
+    // window-scoped, so an event can describe typing in a window deliberately
+    // kept out of frame — a master password typed mid-recording, say. At full
+    // Double precision events.json then carries inter-keystroke intervals for
+    // text the video does not contain. --auto-trim reasons about dead air in
+    // seconds and loses nothing to 100ms.
+    //
+    // Markers keep full precision: their times are deliberate and a reviewer
+    // jumps straight to them.
+    let log = SessionEventLog()
+    await log.add(at: 1.23456, kind: .keystroke, label: nil)
+    await log.add(at: 2.06,    kind: .click,     label: nil)
+    await log.add(at: 3.14159, kind: .marker,    label: "deliberate")
+
+    let events = await log.snapshot()
+    #expect(events[0].timeSeconds == 1.2)
+    #expect(events[1].timeSeconds == 2.1)
+    #expect(events[2].timeSeconds == 3.14159,
+            "a marker's time is authored, not captured — it keeps its precision")
+}
+
+@Test("Quantisation yields short decimals, not floating-point noise")
+func quantisationIsClean() {
+    // events.json is read by humans; 0.30000000000000004 is not a timestamp.
+    #expect(SessionEventLog.quantised(0.28) == 0.3)
+    #expect(SessionEventLog.quantised(0.0) == 0.0)
+    #expect(SessionEventLog.quantised(12.34) == 12.3)
+}
