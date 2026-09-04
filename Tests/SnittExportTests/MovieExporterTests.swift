@@ -467,11 +467,14 @@ func fileLengthLimitAloneShrinksTheFile() async throws {
 
     // Relative, not absolute (the hardware H.264 encoder is not
     // deterministic under load — the same caution `scaleReductionActually
-    // ShrinksTheFile` documents). The measured ratio was a reproducible
-    // ~0.79 across three runs; 0.9 leaves ample margin against encoder
-    // variance while still failing hard against a no-op, which would
-    // produce a ratio of (approximately) 1.0.
-    #expect(Double(constrainedSize) < Double(unconstrainedSize) * 0.9,
+    // ShrinksTheFile` documents). The measured ratio is ~0.79 at rest, but
+    // 0.9 was NOT enough margin: one run in twelve crossed it under
+    // full-suite contention. 0.95 still fails hard against a no-op — two
+    // unconstrained encodes of the SAME composition differ by well under
+    // 5%, so a no-op lands at ~1.0 — while tolerating the variance that
+    // actually occurs. Tightening this back toward the measured 0.79 buys
+    // no discriminating power and reintroduces the flake.
+    #expect(Double(constrainedSize) < Double(unconstrainedSize) * 0.95,
             "fileLengthLimit should have measurably shrunk the file toward its floor")
     #expect(constrainedSize < unconstrainedSize)
 }
