@@ -223,6 +223,73 @@ func corruptEventsFileFailsExport() async throws {
     }
 }
 
+// MARK: - Size targeting
+
+@Test("A generous size target is met and reported as met")
+func generousTargetMet() async throws {
+    let bundle = try await makeTestBundle(seconds: 2)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+    let out = FileManager.default.temporaryDirectory
+        .appendingPathComponent("gen-\(UUID().uuidString).mp4")
+    defer { try? FileManager.default.removeItem(at: out) }
+    let manifest = try await MovieExporter.export(
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0, to: out,
+        maxSizeBytes: 50_000_000)
+    #expect(manifest.maxSizeBytes == 50_000_000)
+    #expect(manifest.maxSizeMet == true)
+    #expect(manifest.byteSize <= 50_000_000)
+}
+
+@Test("An impossible size target still writes a file and reports the miss")
+func impossibleTargetReportsMiss() async throws {
+    // 200 bytes cannot hold an mp4 header, let alone frames. The
+    // discriminating case: an implementation that throws on an unmet target,
+    // or that reports maxSizeMet true because the export session did not
+    // error, fails here. So does one that deletes the file.
+    let bundle = try await makeTestBundle(seconds: 2)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+    let out = FileManager.default.temporaryDirectory
+        .appendingPathComponent("imp-\(UUID().uuidString).mp4")
+    defer { try? FileManager.default.removeItem(at: out) }
+    let manifest = try await MovieExporter.export(
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0, to: out,
+        maxSizeBytes: 200)
+    #expect(manifest.maxSizeMet == false)
+    #expect(manifest.maxSizeBytes == 200)
+    #expect(manifest.byteSize > 200)
+    #expect(FileManager.default.fileExists(atPath: out.path))
+}
+
+@Test("No size target leaves both manifest fields nil")
+func noTargetLeavesFieldsNil() async throws {
+    let bundle = try await makeTestBundle(seconds: 2)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+    let out = FileManager.default.temporaryDirectory
+        .appendingPathComponent("non-\(UUID().uuidString).mp4")
+    defer { try? FileManager.default.removeItem(at: out) }
+    let manifest = try await MovieExporter.export(
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0, to: out)
+    #expect(manifest.maxSizeBytes == nil)
+    #expect(manifest.maxSizeMet == nil)
+}
+
+@Test("An impossible target drops the scale, and the manifest reports the scale actually used")
+func impossibleTargetReportsEffectiveScale() async throws {
+    // Discriminates against an implementation that reports the requested
+    // scale (1.0) even after the ladder dropped to a smaller rung — an
+    // agent told "scale 1.0" cannot explain a file with 0.35x dimensions.
+    let bundle = try await makeTestBundle(seconds: 2)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+    let out = FileManager.default.temporaryDirectory
+        .appendingPathComponent("scale-\(UUID().uuidString).mp4")
+    defer { try? FileManager.default.removeItem(at: out) }
+    let manifest = try await MovieExporter.export(
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0, to: out,
+        maxSizeBytes: 200)
+    #expect(manifest.maxSizeMet == false)
+    #expect(manifest.scale < 1.0, "the ladder should have dropped below the requested scale of 1.0")
+}
+
 @Test("A bundle with no events.json at all still exports cleanly with no chapters")
 func missingEventsFileExportsWithNoChapters() async throws {
     // The companion case to the corrupt-file test above: "file absent" is

@@ -14,7 +14,15 @@ public enum ExportError: Error, Equatable {
 /// cannot construct its own composition and drift from what preview shows
 /// (§9).
 public enum MovieExporter {
-    public static func exportMovie(_ built: BuiltComposition, to url: URL) async throws {
+    /// Scale multipliers tried in order when the encoder's own
+    /// `fileLengthLimit` cannot hit the target. Bounded deliberately: each
+    /// rung is a full re-encode, and an unbounded search on a long recording
+    /// would run for minutes with no way for the caller to see progress.
+    static let sizeLadder: [Double] = [1.0, 0.75, 0.5, 0.35]
+
+    public static func exportMovie(_ built: BuiltComposition,
+                                   to url: URL,
+                                   maxSizeBytes: Int? = nil) async throws {
         // Re-exporting after a tweak is the normal loop; a stale file from
         // the previous run must not fail the next one.
         try? FileManager.default.removeItem(at: url)
@@ -24,12 +32,22 @@ public enum MovieExporter {
         else { throw ExportError.noExportSession }
 
         session.videoComposition = built.videoComposition
+        if let maxSizeBytes {
+            // The encoder's own primitive: one pass, the session picks a
+            // bitrate that fits. Only if this misses do we re-encode at a
+            // smaller scale (see the ladder in `export`).
+            session.fileLengthLimit = Int64(maxSizeBytes)
+        }
 
         do {
             try await session.export(to: url, as: .mp4)
         } catch {
             throw ExportError.sessionFailed(String(describing: error))
         }
+    }
+
+    private static func fileByteSize(at url: URL) throws -> Int {
+        (try FileManager.default.attributesOfItem(atPath: url.path)[.size] as? Int) ?? 0
     }
 
     /// The full pipeline: build the composition, write the mp4, map markers
@@ -45,9 +63,60 @@ public enum MovieExporter {
                               edl: EditDecisionList,
                               scale: Double,
                               to outputURL: URL,
-                              chaptersURL: URL? = nil) async throws -> ExportManifest {
-        let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: scale)
-        try await exportMovie(built, to: outputURL)
+                              chaptersURL: URL? = nil,
+                              maxSizeBytes: Int? = nil) async throws -> ExportManifest {
+        var built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: scale)
+        var effectiveScale = scale
+        var byteSize = 0
+        var sizeMet = false
+
+        if let maxSizeBytes {
+            var met = false
+            var lastSuccessfulBuilt: BuiltComposition?
+            var lastSuccessfulScale = effectiveScale
+            for rung in sizeLadder {
+                let rungScale = scale * rung
+                let rungBuilt = try await CompositionBuilder.build(
+                    bundle: bundle, edl: edl, scale: rungScale)
+                do {
+                    try await exportMovie(rungBuilt, to: outputURL, maxSizeBytes: maxSizeBytes)
+                } catch {
+                    // The session may throw rather than produce a
+                    // best-effort file when the limit is impossible. Either
+                    // way the contract is the same: keep the smallest
+                    // attempt that DID succeed and keep trying smaller
+                    // scales, rather than losing the whole export to one
+                    // rung's failure.
+                    continue
+                }
+                lastSuccessfulBuilt = rungBuilt
+                lastSuccessfulScale = rungScale
+                byteSize = try fileByteSize(at: outputURL)
+                if byteSize <= maxSizeBytes { met = true; break }
+            }
+            // If no rung fit, the file on disk (from the last successful
+            // attempt, the smallest one tried) is kept and reported
+            // honestly rather than thrown away or misreported as a success.
+            sizeMet = met
+            if let lastSuccessfulBuilt {
+                built = lastSuccessfulBuilt
+                effectiveScale = lastSuccessfulScale
+            } else {
+                // Every rung's export threw. The honesty contract still
+                // requires a file at the output path, so fall back to an
+                // unconstrained export at the originally requested scale —
+                // the target is unmet either way, and this guarantees the
+                // caller gets something rather than nothing.
+                built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: scale)
+                effectiveScale = scale
+                try await exportMovie(built, to: outputURL, maxSizeBytes: nil)
+                byteSize = try fileByteSize(at: outputURL)
+                sizeMet = byteSize <= maxSizeBytes
+            }
+        } else {
+            try await exportMovie(built, to: outputURL, maxSizeBytes: nil)
+            byteSize = try fileByteSize(at: outputURL)
+        }
 
         // `built.keptRanges` is the SAME set CompositionBuilder inserted
         // into the composition — not recomputed against a second,
@@ -64,9 +133,6 @@ public enum MovieExporter {
         let chapters = WebVTTChapters.titledMarkers(mappedMarkers)
             .map { ExportManifest.Chapter(timeSeconds: $0.time, title: $0.title) }
 
-        let byteSize = try FileManager.default.attributesOfItem(
-            atPath: outputURL.path)[.size] as? Int ?? 0
-
         return ExportManifest(
             outputPath: outputURL.path,
             format: "mp4",
@@ -74,7 +140,11 @@ public enum MovieExporter {
             durationSeconds: built.duration,
             width: Int(built.videoComposition.renderSize.width),
             height: Int(built.videoComposition.renderSize.height),
-            scale: scale,
+            // The scale actually used, not the one requested — the ladder
+            // may have dropped below `scale` to hit the target.
+            scale: effectiveScale,
+            maxSizeBytes: maxSizeBytes,
+            maxSizeMet: maxSizeBytes == nil ? nil : sizeMet,
             chaptersPath: chaptersURL?.path,
             chapters: chapters)
     }
