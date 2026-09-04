@@ -18,6 +18,14 @@ public struct BuiltComposition: @unchecked Sendable {
     /// object a `customVideoCompositorClass` — nothing else changes.
     public let videoComposition: AVMutableVideoComposition
     public let duration: Double
+    /// The kept ranges (source-recording time) this composition was built
+    /// from — `KeptRanges.compute`'s output already filtered to drop
+    /// sub-frame slivers, i.e. exactly what `build` inserted into
+    /// `composition`. Carried here so a caller mapping something else in
+    /// source time (marker timestamps, for instance) into export time uses
+    /// the SAME set the composition used, rather than recomputing it against
+    /// a separately-loaded asset and hoping the two never disagree.
+    public let keptRanges: [TimeRange]
 }
 
 public enum CompositionError: Error, Equatable {
@@ -131,6 +139,7 @@ public enum CompositionBuilder {
 
         return BuiltComposition(composition: composition,
                                 videoComposition: videoComposition,
-                                duration: CMTimeGetSeconds(cursor))
+                                duration: CMTimeGetSeconds(cursor),
+                                keptRanges: kept)
     }
 }

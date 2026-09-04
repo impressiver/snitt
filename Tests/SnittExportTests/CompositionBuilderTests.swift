@@ -6,18 +6,18 @@ import SnittDocument
 
 /// A tiny real movie, so the builder is exercised against AVFoundation rather
 /// than a mock that cannot disagree with it.
-private func makeTestBundle(seconds: Double = 4, audioTrackCount: Int = 0) throws -> SnittBundle {
+private func makeTestBundle(seconds: Double = 4, audioTrackCount: Int = 0) async throws -> SnittBundle {
     let url = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
         .appendingPathExtension(SnittBundle.fileExtension)
     let bundle = try SnittBundle(creatingAt: url)
-    try writeSyntheticMovie(to: bundle.captureURL, seconds: seconds, audioTrackCount: audioTrackCount)
+    try await writeSyntheticMovie(to: bundle.captureURL, seconds: seconds, audioTrackCount: audioTrackCount)
     return bundle
 }
 
 @Test("A composition with no cuts spans the whole recording")
 func noCutsSpansEverything() async throws {
-    let bundle = try makeTestBundle(seconds: 4)
+    let bundle = try await makeTestBundle(seconds: 4)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
 
     let built = try await CompositionBuilder.build(
@@ -27,7 +27,7 @@ func noCutsSpansEverything() async throws {
 
 @Test("Cutting the head shortens the composition by that much")
 func headCutShortens() async throws {
-    let bundle = try makeTestBundle(seconds: 4)
+    let bundle = try await makeTestBundle(seconds: 4)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
 
     var edl = EditDecisionList.fullRange()
@@ -41,7 +41,7 @@ func videoCompositionIsExplicit() async throws {
     // §9: the passthrough slot must be a real object so that shipping overlays
     // means assigning a customVideoCompositorClass to it, not threading a new
     // argument through every call site.
-    let bundle = try makeTestBundle()
+    let bundle = try await makeTestBundle()
     defer { try? FileManager.default.removeItem(at: bundle.url) }
 
     let built = try await CompositionBuilder.build(
@@ -52,7 +52,7 @@ func videoCompositionIsExplicit() async throws {
 
 @Test("Scaling halves the render size but not the duration")
 func scaleAffectsSizeNotTime() async throws {
-    let bundle = try makeTestBundle(seconds: 4)
+    let bundle = try await makeTestBundle(seconds: 4)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
 
     let full = try await CompositionBuilder.build(
@@ -69,7 +69,7 @@ func scaleAffectsSizeNotTime() async throws {
 func cuttingEverythingThrows() async throws {
     // An empty export is worse than an error: it succeeds, writes a file, and
     // the agent attaches nothing to a pull request.
-    let bundle = try makeTestBundle(seconds: 4)
+    let bundle = try await makeTestBundle(seconds: 4)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
 
     var edl = EditDecisionList.fullRange()
@@ -87,7 +87,7 @@ func sliverKeptRangeThrows() async throws {
     // builder's job (at its own frame duration, 1/60s), and when nothing
     // survives the filter this must throw everythingCut, not build a
     // composition with a degenerate segment in it.
-    let bundle = try makeTestBundle(seconds: 4)
+    let bundle = try await makeTestBundle(seconds: 4)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
 
     var edl = EditDecisionList.fullRange()
@@ -109,7 +109,7 @@ func audioTracksPairBySourceNotFlattened() async throws {
     // content, so this also catches a pairing that is merely REVERSED (index
     // 0 gets source 1's samples and vice versa) as well as one that
     // flattens both sources into a single composition track.
-    let bundle = try makeTestBundle(seconds: 2, audioTrackCount: 2)
+    let bundle = try await makeTestBundle(seconds: 2, audioTrackCount: 2)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
 
     let sourceAsset = AVURLAsset(url: bundle.captureURL)

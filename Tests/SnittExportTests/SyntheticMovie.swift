@@ -22,6 +22,19 @@ import Foundation
 /// Handing each input its own callback and queue, coordinated by a
 /// `DispatchGroup`, is the pattern AVFoundation actually expects.
 ///
+/// `async`, and waits via `withCheckedContinuation`/`group.notify` rather
+/// than `DispatchGroup.wait()`/`DispatchSemaphore.wait()` — deliberately.
+/// swift-testing runs tests concurrently by default, and this function used
+/// to be synchronous, called from `async` tests. Both of its blocking waits
+/// parked the CALLING thread, which belongs to Swift's cooperative thread
+/// pool (one thread per core, not the unbounded thread pool GCD itself
+/// uses). Once enough concurrently-running tests were blocked in here at
+/// once, the pool was exhausted and the very callbacks needed to unblock
+/// them (queued as tasks, not free-running threads) could never be
+/// scheduled — the whole test run hung. `group.notify` and a completion
+/// handler both resume from a GCD callback, off the cooperative pool
+/// entirely, so nothing here parks a cooperative-pool thread.
+///
 /// - Parameter audioTrackCount: number of silent LPCM audio tracks to write,
 ///   in addition to the video track. Needed to exercise
 ///   `CompositionBuilder`'s per-source-track audio pairing, which a
@@ -29,17 +42,17 @@ import Foundation
 func writeSyntheticMovie(to url: URL, seconds: Double,
                          size: CGSize = CGSize(width: 320, height: 240),
                          fps: Int32 = 30,
-                         audioTrackCount: Int = 0) throws {
-    let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+                         audioTrackCount: Int = 0) async throws {
+    nonisolated(unsafe) let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
 
-    let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
+    nonisolated(unsafe) let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
         AVVideoCodecKey: AVVideoCodecType.h264,
         AVVideoWidthKey: size.width,
         AVVideoHeightKey: size.height,
     ])
     videoInput.expectsMediaDataInRealTime = false
 
-    let adaptor = AVAssetWriterInputPixelBufferAdaptor(
+    nonisolated(unsafe) let adaptor = AVAssetWriterInputPixelBufferAdaptor(
         assetWriterInput: videoInput,
         sourcePixelBufferAttributes: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
@@ -75,7 +88,7 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
             // format as-is (LPCM passthrough) rather than requiring a
             // compression settings dictionary — irrelevant for a silent test
             // fixture, and one less thing that can fail to encode.
-            let input = AVAssetWriterInput(mediaType: .audio, outputSettings: nil,
+            nonisolated(unsafe) let input = AVAssetWriterInput(mediaType: .audio, outputSettings: nil,
                                            sourceFormatHint: formatDescription)
             input.expectsMediaDataInRealTime = false
             guard writer.canAdd(input) else {
@@ -99,11 +112,22 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
 
     group.enter()
     let videoProgress = FrameCounter()
+    // `AVAssetWriterInput.markAsFinished()` documents that
+    // `requestMediaDataWhenReady`'s callback will not be invoked again
+    // afterwards, but that promise is about future READINESS callbacks —
+    // it says nothing about a callback already in flight, or about a
+    // spurious re-entrant call racing the first. `OnceFlag` makes the
+    // "finished" transition — and therefore `group.leave()` — idempotent
+    // regardless, because `DispatchGroup.leave()` called more times than
+    // `enter()` traps rather than warning.
+    let videoFinished = OnceFlag()
     videoInput.requestMediaDataWhenReady(on: DispatchQueue(label: "synthetic-movie.video")) {
         while videoInput.isReadyForMoreMediaData {
             guard videoProgress.value < frameCount else {
-                videoInput.markAsFinished()
-                group.leave()
+                videoFinished.fireOnce {
+                    videoInput.markAsFinished()
+                    group.leave()
+                }
                 return
             }
             guard let pool = adaptor.pixelBufferPool else { return }
@@ -125,14 +149,18 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
     }
 
     if let formatDescription = audioFormatDescription {
-        for (index, input) in audioInputs.enumerated() {
+        for (index, loopInput) in audioInputs.enumerated() {
+            nonisolated(unsafe) let input = loopInput
             group.enter()
             let audioProgress = FrameCounter()
+            let audioFinished = OnceFlag()
             input.requestMediaDataWhenReady(on: DispatchQueue(label: "synthetic-movie.audio.\(index)")) {
                 while input.isReadyForMoreMediaData {
                     guard audioProgress.value < totalAudioFrames else {
-                        input.markAsFinished()
-                        group.leave()
+                        audioFinished.fireOnce {
+                            input.markAsFinished()
+                            group.leave()
+                        }
                         return
                     }
                     let framesThisPacket = min(packetFrameCount, totalAudioFrames - audioProgress.value)
@@ -149,14 +177,32 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
         }
     }
 
-    group.wait()
+    // NOT group.wait(): see the doc comment above. group.notify's callback
+    // fires on a GCD-managed queue once every enter() has a matching
+    // leave(), so resuming the continuation there never parks a
+    // cooperative-pool thread the way group.wait() did.
+    await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+        group.notify(queue: .global()) {
+            continuation.resume()
+        }
+    }
 
-    let finishSemaphore = DispatchSemaphore(value: 0)
-    writer.finishWriting { finishSemaphore.signal() }
-    finishSemaphore.wait()
-
-    if writer.status == .failed {
-        throw writer.error ?? NSError(domain: "SyntheticMovie", code: 3)
+    // NOT a DispatchSemaphore.wait() for the same reason. finishWriting's
+    // completion handler is documented to run exactly once, but OnceFlag
+    // guards the continuation regardless — resuming a CheckedContinuation
+    // twice traps rather than warns, so "the callback runs once" is an
+    // invariant worth defending rather than trusting blindly.
+    let finishGuard = OnceFlag()
+    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+        writer.finishWriting {
+            finishGuard.fireOnce {
+                if writer.status == .failed {
+                    continuation.resume(throwing: writer.error ?? NSError(domain: "SyntheticMovie", code: 3))
+                } else {
+                    continuation.resume()
+                }
+            }
+        }
     }
 }
 
@@ -165,6 +211,25 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
 /// own dedicated queue. Never touched from more than one queue.
 private final class FrameCounter: @unchecked Sendable {
     var value = 0
+}
+
+/// Makes a state transition happen exactly once, even if the code path that
+/// triggers it runs more than once or races itself. Used to guard
+/// `group.leave()` (called more times than `enter()` traps) and
+/// `CheckedContinuation.resume()` (called twice traps) against AVFoundation
+/// completion handlers whose "exactly once" behaviour is documented but not
+/// contractually enforced from the caller's side.
+private final class OnceFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var fired = false
+
+    func fireOnce(_ body: () -> Void) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !fired else { return }
+        fired = true
+        body()
+    }
 }
 
 /// One packet of silent LPCM audio, timestamped by frame offset. Small,

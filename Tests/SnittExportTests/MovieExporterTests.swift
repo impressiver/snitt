@@ -12,18 +12,18 @@ import SnittDocument
 /// private helpers across files without a shared internal type), and
 /// `writeSyntheticMovie` in `SyntheticMovie.swift` already does the real
 /// work.
-private func makeTestBundle(seconds: Double = 4, audioTrackCount: Int = 0) throws -> SnittBundle {
+private func makeTestBundle(seconds: Double = 4, audioTrackCount: Int = 0) async throws -> SnittBundle {
     let url = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
         .appendingPathExtension(SnittBundle.fileExtension)
     let bundle = try SnittBundle(creatingAt: url)
-    try writeSyntheticMovie(to: bundle.captureURL, seconds: seconds, audioTrackCount: audioTrackCount)
+    try await writeSyntheticMovie(to: bundle.captureURL, seconds: seconds, audioTrackCount: audioTrackCount)
     return bundle
 }
 
 @Test("Exporting writes a playable movie whose duration matches the composition")
 func exportWritesAPlayableMovie() async throws {
-    let bundle = try makeTestBundle(seconds: 4)
+    let bundle = try await makeTestBundle(seconds: 4)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
     let output = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
@@ -48,7 +48,7 @@ func exportReplacesAnExistingFile() async throws {
     // Discriminates against an implementation that omits the
     // `removeItem(at:)` cleanup and lets `AVAssetExportSession` fail because
     // the destination already exists.
-    let bundle = try makeTestBundle(seconds: 2)
+    let bundle = try await makeTestBundle(seconds: 2)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
     let output = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
@@ -77,7 +77,7 @@ func markerAfterHeadCutIsShiftedInManifest() async throws {
     // untrimmed recording, because with no cuts raw-time and mapped-time are
     // the same number. This fixture has a cut BEFORE the marker specifically
     // so the two diverge.
-    let bundle = try makeTestBundle(seconds: 10)
+    let bundle = try await makeTestBundle(seconds: 10)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
     var edl = EditDecisionList.fullRange()
     edl.cuts = [TimeRange(start: 0, end: 5)]
@@ -104,7 +104,7 @@ func markerInsideCutIsDroppedFromManifest() async throws {
     // marker to the nearest surviving instant instead of dropping it — which
     // would invent a chapter at a moment the viewer never sees, and would
     // collapse several such markers onto the same timestamp.
-    let bundle = try makeTestBundle(seconds: 10)
+    let bundle = try await makeTestBundle(seconds: 10)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
     var edl = EditDecisionList.fullRange()
     edl.cuts = [TimeRange(start: 4, end: 6)]
@@ -133,7 +133,7 @@ func markerInsideCutIsDroppedFromManifest() async throws {
 func manifestReportsRealFileMetadata() async throws {
     // Discriminates against an implementation that fabricates byteSize (e.g.
     // hardcodes 0) instead of stat-ing the file it just wrote.
-    let bundle = try makeTestBundle(seconds: 3)
+    let bundle = try await makeTestBundle(seconds: 3)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
     let output = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
@@ -150,4 +150,73 @@ func manifestReportsRealFileMetadata() async throws {
     #expect(abs(manifest.durationSeconds - 3.0) < 0.2)
     #expect(manifest.width > 0)
     #expect(manifest.height > 0)
+}
+
+@Test("Passing chaptersURL writes a WebVTT sidecar an agent could actually read back")
+func chaptersSidecarIsWritten() async throws {
+    // Discriminates against an implementation that accepts chaptersURL but
+    // never writes to it (e.g. a missing `if let chaptersURL` branch, or one
+    // that only ever sets manifest.chaptersPath without doing the write).
+    let bundle = try await makeTestBundle(seconds: 6)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+    let events = EventLog(events: [LoggedEvent(timeSeconds: 1, kind: .marker, label: "start")])
+    try events.write(to: bundle)
+
+    let output = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
+    defer { try? FileManager.default.removeItem(at: output) }
+    let chaptersURL = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString).appendingPathExtension("vtt")
+    defer { try? FileManager.default.removeItem(at: chaptersURL) }
+
+    let manifest = try await MovieExporter.export(
+        bundle: bundle, edl: .fullRange(), scale: 1.0, to: output, chaptersURL: chaptersURL)
+
+    #expect(manifest.chaptersPath == chaptersURL.path)
+    #expect(FileManager.default.fileExists(atPath: chaptersURL.path))
+    let vttContent = try String(contentsOf: chaptersURL, encoding: .utf8)
+    #expect(vttContent.hasPrefix("WEBVTT\n"))
+    #expect(vttContent.contains("start"))
+    #expect(vttContent.contains("-->"))
+}
+
+@Test("A damaged events.json fails the export instead of silently exporting a chapter-less manifest")
+func corruptEventsFileFailsExport() async throws {
+    // §8: a manifest with no chapters must mean "genuinely no markers," not
+    // "the sidecar was unreadable and this code shrugged." Discriminates
+    // against `(try? EventLog.read(from: bundle))?.events ?? []`, which
+    // collapses "missing file" (legitimate — no logging) and "corrupt file"
+    // (a real failure) into the same silent empty-array outcome. Must fail
+    // against the CURRENT implementation before this fix round's change.
+    let bundle = try await makeTestBundle(seconds: 4)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+    try Data("{ not valid json".utf8).write(to: bundle.eventsURL)
+
+    let output = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
+    defer { try? FileManager.default.removeItem(at: output) }
+
+    await #expect(throws: (any Error).self) {
+        _ = try await MovieExporter.export(bundle: bundle, edl: .fullRange(), scale: 1.0, to: output)
+    }
+}
+
+@Test("A bundle with no events.json at all still exports cleanly with no chapters")
+func missingEventsFileExportsWithNoChapters() async throws {
+    // The companion case to the corrupt-file test above: "file absent" is
+    // legitimate (a recording predating M3b, or logging disabled) and must
+    // not be treated as a failure. Discriminates against an implementation
+    // that fixes the corrupt-file case by making ANY read failure fatal,
+    // including a simple "file does not exist" — which would break every
+    // export of an older bundle.
+    let bundle = try await makeTestBundle(seconds: 4)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+    #expect(!FileManager.default.fileExists(atPath: bundle.eventsURL.path))
+
+    let output = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
+    defer { try? FileManager.default.removeItem(at: output) }
+
+    let manifest = try await MovieExporter.export(bundle: bundle, edl: .fullRange(), scale: 1.0, to: output)
+    #expect(manifest.chapters.isEmpty)
 }
