@@ -27,6 +27,13 @@ public struct ExportManifest: Codable, Sendable, Equatable {
     public var width: Int
     public var height: Int
     public var scale: Double
+    /// The byte target the caller asked for, or nil if none was requested.
+    public var maxSizeBytes: Int?
+    /// Whether that target was met. Three states, deliberately: nil means no
+    /// target was requested, true means it was met, false means the exporter
+    /// tried every setting in its ladder and the file is still over budget.
+    /// `byteSize` says how far over.
+    public var maxSizeMet: Bool?
     public var chaptersPath: String?
     public var chapters: [Chapter]
 
@@ -37,6 +44,8 @@ public struct ExportManifest: Codable, Sendable, Equatable {
                 width: Int,
                 height: Int,
                 scale: Double,
+                maxSizeBytes: Int? = nil,
+                maxSizeMet: Bool? = nil,
                 chaptersPath: String? = nil,
                 chapters: [Chapter] = []) {
         self.outputPath = outputPath
@@ -46,6 +55,8 @@ public struct ExportManifest: Codable, Sendable, Equatable {
         self.width = width
         self.height = height
         self.scale = scale
+        self.maxSizeBytes = maxSizeBytes
+        self.maxSizeMet = maxSizeMet
         self.chaptersPath = chaptersPath
         self.chapters = chapters
     }
