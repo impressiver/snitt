@@ -73,3 +73,21 @@ func nothingToTrim() throws {
         events: [input(0), input(30)], duration: 30, padding: 0.5)
     #expect(cuts.isEmpty)
 }
+
+@Test("Auto-trim's first/last are the earliest/latest input event, not the first/last LOGGED")
+func autoTrimSortsBeforeTakingBookends() throws {
+    // `events.json` happens to always be written in timestamp order today,
+    // so every OTHER test here passes whether or not `autoTrimCuts` sorts
+    // its input — the `.sorted()` call in `EditDecisionList.autoTrimCuts`
+    // reads as redundant against every checked-in fixture and is one
+    // "cleanup" away from being deleted by a future reader. This fixture
+    // deliberately arrives with the LATEST event first and the EARLIEST
+    // event last, so it fails against an implementation that takes
+    // `events.first`/`events.last` (or otherwise skips sorting) instead of
+    // the true min/max by time: an unsorted read would compute bookends
+    // from event 20 first/last (whichever position "first"/"last" landed
+    // in), not the actual 5...20 span.
+    let cuts = try EditDecisionList.autoTrimCuts(
+        events: [input(20), input(5), input(10)], duration: 30, padding: 0.5)
+    #expect(cuts == [TimeRange(start: 0, end: 4.5), TimeRange(start: 20.5, end: 30)])
+}

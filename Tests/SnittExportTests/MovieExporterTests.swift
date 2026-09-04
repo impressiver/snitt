@@ -133,6 +133,20 @@ func markerInsideCutIsDroppedFromManifest() async throws {
 func manifestReportsRealFileMetadata() async throws {
     // Discriminates against an implementation that fabricates byteSize (e.g.
     // hardcodes 0) instead of stat-ing the file it just wrote.
+    //
+    // Uses scale: 0.5 on a known 320x240 source, and asserts against the
+    // EXPORTED file's own track size (`naturalSize`, read back with a fresh
+    // `AVURLAsset`) rather than `videoComposition.renderSize` — the
+    // requested render size, not a property of the file the manifest claims
+    // to describe. `renderSize > 0` alone is instance #12 of a review
+    // finding of the same shape as `CompositionBuilderTests`'
+    // `scaleAffectsSizeNotTime`: a fixture (or assertion) too weak to tell a
+    // correct implementation from one that reports the request instead of
+    // the result. This discriminates against an implementation that scales
+    // the render size in the manifest but never actually applies it to the
+    // written mp4 (e.g. a `layer.setTransform` that is a no-op), which
+    // `width > 0`/`height > 0` cannot catch since an un-scaled 320x240 file
+    // also satisfies it.
     let bundle = try await makeTestBundle(seconds: 3)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
     let output = FileManager.default.temporaryDirectory
@@ -140,7 +154,7 @@ func manifestReportsRealFileMetadata() async throws {
     defer { try? FileManager.default.removeItem(at: output) }
 
     let manifest = try await MovieExporter.export(
-        bundle: bundle, edl: .fullRange(), scale: 1.0, to: output)
+        bundle: bundle, edl: .fullRange(), scale: 0.5, to: output)
 
     let onDiskSize = try FileManager.default.attributesOfItem(atPath: output.path)[.size] as? Int
     #expect(manifest.byteSize == onDiskSize)
@@ -148,8 +162,16 @@ func manifestReportsRealFileMetadata() async throws {
     #expect(manifest.format == "mp4")
     #expect(manifest.outputPath == output.path)
     #expect(abs(manifest.durationSeconds - 3.0) < 0.2)
-    #expect(manifest.width > 0)
-    #expect(manifest.height > 0)
+
+    let exportedAsset = AVURLAsset(url: output)
+    let exportedTrack = try await exportedAsset.loadTracks(withMediaType: .video).first
+    let exportedTrackSize = try await exportedTrack?.load(.naturalSize) ?? .zero
+    // Source is 320x240; scale: 0.5 must produce a 160x120 FILE, not merely
+    // a manifest that says so.
+    #expect(abs(exportedTrackSize.width - 160) < 2)
+    #expect(abs(exportedTrackSize.height - 120) < 2)
+    #expect(manifest.width == Int(exportedTrackSize.width.rounded()))
+    #expect(manifest.height == Int(exportedTrackSize.height.rounded()))
 }
 
 @Test("Passing chaptersURL writes a WebVTT sidecar an agent could actually read back")
