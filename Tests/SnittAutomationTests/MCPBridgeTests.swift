@@ -30,17 +30,88 @@ func toolNamesAreStable() {
 
 @Test("Both frontends express a trim identically")
 func frontendsAgreeOnTrim() {
-    guard case .success(.trim(let cliPath, let cliStart, let cliEnd, let cliAuto)) =
+    guard case .success(let cliCommand) =
         CommandLineParser.parse(["trim", "/tmp/d.snitt", "--start", "1", "--end", "9"])
     else { Issue.record("CLI could not express a trim"); return }
-    guard case .success(.trim(let mcpPath, let mcpStart, let mcpEnd, let mcpAuto)) =
+    guard case .trim(let cliPath, let cliStart, let cliEnd, let cliAuto) = cliCommand else {
+        Issue.record("expected a trim command, got \(cliCommand)"); return
+    }
+    // Mirrors the mapping in Sources/snitt-cli/main.swift's switch over
+    // ParsedCommand, so this test exercises that mapping too — not only the
+    // parser — and would catch a future change that made the two diverge.
+    let cliBody = AutomationRequest.Body.trim(bundlePath: cliPath, start: cliStart,
+                                               end: cliEnd, auto: cliAuto)
+
+    guard case .success(let mcpBody) =
         MCPBridge.request(forTool: "snitt_trim",
                           arguments: ["bundlePath": "/tmp/d.snitt", "start": 1, "end": 9])
     else { Issue.record("MCP could not express a trim"); return }
-    #expect(cliPath == mcpPath)
-    #expect(cliStart == mcpStart)
-    #expect(cliEnd == mcpEnd)
-    #expect(cliAuto == mcpAuto)
+
+    guard case .trim(let cliBPath, let cliBStart, let cliBEnd, let cliBAuto) = cliBody else {
+        Issue.record("CLI body is not .trim"); return
+    }
+    guard case .trim(let mcpPath, let mcpStart, let mcpEnd, let mcpAuto) = mcpBody else {
+        Issue.record("MCP body is not .trim"); return
+    }
+    #expect(cliBPath == mcpPath)
+    #expect(cliBStart == mcpStart)
+    #expect(cliBEnd == mcpEnd)
+    #expect(cliBAuto == mcpAuto)
+}
+
+@Test("A non-numeric scale is refused, not silently defaulted to full scale")
+func nonNumericScaleRefused() {
+    // A plausible wrong implementation: numericValue returns nil for a
+    // string, and the caller treats nil as "absent" and falls back to the
+    // default 1.0 — silently exporting at full scale while reporting
+    // success, when the caller asked for half scale. §8 forbids exactly
+    // this: a confidently-wrong result.
+    guard case .failure(let error) = MCPBridge.request(
+        forTool: "snitt_export",
+        arguments: ["bundlePath": "/tmp/x.snitt", "format": "mp4",
+                    "outputPath": "/tmp/demo.mp4", "scale": "0.5"])
+    else { Issue.record("a string scale must not be silently accepted"); return }
+    #expect(error.message.contains("scale"))
+}
+
+@Test("A boolean start does not silently fall through while a valid end sails through")
+func nonNumericStartRefusedEvenWithValidEnd() {
+    // A plausible wrong implementation: numericValue correctly rejects the
+    // bool for `start` by returning nil, but the caller cannot distinguish
+    // that from "start absent" — so the guard (auto || start != nil || end
+    // != nil) is satisfied by the valid `end`, and a DIFFERENT trim than the
+    // one requested goes out with no error at all.
+    guard case .failure(let error) = MCPBridge.request(
+        forTool: "snitt_trim",
+        arguments: ["bundlePath": "/tmp/x.snitt", "start": true, "end": 9])
+    else { Issue.record("a boolean start must not be silently dropped"); return }
+    #expect(error.message.contains("start"))
+}
+
+@Test("snitt_export rejects a zero or negative scale")
+func mcpExportRejectsNonPositiveScale() {
+    guard case .failure = MCPBridge.request(
+        forTool: "snitt_export",
+        arguments: ["bundlePath": "/tmp/x.snitt", "format": "mp4",
+                    "outputPath": "/tmp/demo.mp4", "scale": 0])
+    else { Issue.record("a zero scale must not be silently accepted"); return }
+    guard case .failure = MCPBridge.request(
+        forTool: "snitt_export",
+        arguments: ["bundlePath": "/tmp/x.snitt", "format": "mp4",
+                    "outputPath": "/tmp/demo.mp4", "scale": -0.5])
+    else { Issue.record("a negative scale must not be silently accepted"); return }
+}
+
+@Test("snitt_trim rejects an end at or before start")
+func mcpTrimRejectsInvertedRange() {
+    guard case .failure = MCPBridge.request(
+        forTool: "snitt_trim",
+        arguments: ["bundlePath": "/tmp/x.snitt", "start": 9, "end": 5])
+    else { Issue.record("an inverted range must not be silently accepted"); return }
+    guard case .failure = MCPBridge.request(
+        forTool: "snitt_trim",
+        arguments: ["bundlePath": "/tmp/x.snitt", "start": 5, "end": 5])
+    else { Issue.record("an empty range must not be silently accepted"); return }
 }
 
 @Test("Both frontends express a marker identically")

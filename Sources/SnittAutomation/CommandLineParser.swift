@@ -147,14 +147,17 @@ public enum CommandLineParser {
             switch args[index] {
             case "--start":
                 index += 1
-                guard index < args.count, let value = Double(args[index]) else {
-                    return .failure(ParseFailure("--start needs a number of seconds"))
+                // `Double.init(String)` accepts "nan" and "inf" as valid
+                // finite-looking input; reject those explicitly rather than
+                // let a non-finite bound reach the trim request.
+                guard index < args.count, let value = Double(args[index]), value.isFinite else {
+                    return .failure(ParseFailure("--start needs a finite number of seconds"))
                 }
                 start = value
             case "--end":
                 index += 1
-                guard index < args.count, let value = Double(args[index]) else {
-                    return .failure(ParseFailure("--end needs a number of seconds"))
+                guard index < args.count, let value = Double(args[index]), value.isFinite else {
+                    return .failure(ParseFailure("--end needs a finite number of seconds"))
                 }
                 end = value
             case "--auto-trim":
@@ -171,6 +174,13 @@ public enum CommandLineParser {
             return .failure(ParseFailure(
                 "`trim` needs either --start/--end or --auto-trim. "
               + "Writing no cuts would silently do nothing."))
+        }
+        // A backwards or empty range is meaningless; catching it here, where
+        // the person can still fix their command, beats deferring to
+        // whatever AVFoundation does with a degenerate composition.
+        if let start, let end, start >= end {
+            return .failure(ParseFailure(
+                "--end (\(end)) must be after --start (\(start))"))
         }
         return .success(.trim(bundlePath: path, start: start, end: end, auto: auto))
     }
@@ -193,8 +203,8 @@ public enum CommandLineParser {
                 outputPath = args[index]
             case "--scale":
                 index += 1
-                guard index < args.count, let value = Double(args[index]) else {
-                    return .failure(ParseFailure("--scale needs a number"))
+                guard index < args.count, let value = Double(args[index]), value.isFinite else {
+                    return .failure(ParseFailure("--scale needs a finite number"))
                 }
                 scale = value
             case "--chapters":
@@ -216,6 +226,12 @@ public enum CommandLineParser {
         }
         guard let outputPath else {
             return .failure(ParseFailure("`export` needs --out <path>"))
+        }
+        // A zero or negative scale produces a degenerate composition; refuse
+        // it here rather than let AVFoundation fail (or worse, not fail)
+        // further down the pipe.
+        guard scale > 0 else {
+            return .failure(ParseFailure("--scale must be greater than 0, got \(scale)"))
         }
         return .success(.export(bundlePath: path, format: format, outputPath: outputPath,
                                  scale: scale, chapters: chapters))

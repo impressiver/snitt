@@ -292,8 +292,16 @@ public enum MCPBridge {
             guard let path = arguments["bundlePath"] as? String else {
                 return .failure(MCPBridgeError("snitt_trim requires bundlePath"))
             }
-            let start = numericValue(arguments["start"])
-            let end = numericValue(arguments["end"])
+            let start: Double?
+            switch numericValue(arguments["start"], parameter: "start") {
+            case .success(let value): start = value
+            case .failure(let error): return .failure(error)
+            }
+            let end: Double?
+            switch numericValue(arguments["end"], parameter: "end") {
+            case .success(let value): end = value
+            case .failure(let error): return .failure(error)
+            }
             let auto = arguments["autoTrim"] as? Bool ?? false
             // A trim with neither a range nor autoTrim would write an empty
             // edit and report success — the same confidently-wrong failure
@@ -302,6 +310,13 @@ public enum MCPBridge {
                 return .failure(MCPBridgeError(
                     "snitt_trim requires either start/end or autoTrim: true. "
                   + "Writing no cuts would silently do nothing."))
+            }
+            // A backwards or empty range is meaningless; catching it here,
+            // where the caller can still fix the request, beats deferring to
+            // whatever AVFoundation does with a degenerate composition.
+            if let start, let end, start >= end {
+                return .failure(MCPBridgeError(
+                    "snitt_trim requires end (\(end)) to be after start (\(start))"))
             }
             return .success(.trim(bundlePath: path, start: start, end: end, auto: auto))
 
@@ -322,7 +337,18 @@ public enum MCPBridge {
             guard let outputPath = arguments["outputPath"] as? String else {
                 return .failure(MCPBridgeError("snitt_export requires outputPath"))
             }
-            let scale = numericValue(arguments["scale"]) ?? 1.0
+            let scale: Double
+            switch numericValue(arguments["scale"], parameter: "scale") {
+            case .success(let value): scale = value ?? 1.0
+            case .failure(let error): return .failure(error)
+            }
+            // A zero or negative scale produces a degenerate composition;
+            // refuse it here rather than let AVFoundation fail (or worse,
+            // not fail) further down the pipe.
+            guard scale > 0 else {
+                return .failure(MCPBridgeError(
+                    "snitt_export requires scale to be greater than 0, got \(scale)"))
+            }
             let chapters = arguments["chapters"] as? Bool ?? false
             return .success(.export(bundlePath: path, format: format, outputPath: outputPath,
                                      scale: scale, chapters: chapters))
@@ -349,12 +375,33 @@ public enum MCPBridge {
         return UInt32(double)
     }
 
-    /// Converts an MCP argument value to a `Double`, the same way
-    /// `displayID(from:)` converts to `UInt32`: JSON numbers arrive as `Int`,
-    /// `Double`, or `NSNumber` depending on the decoder, and all three bridge
-    /// to `NSNumber` on Darwin.
-    private static func numericValue(_ value: Any?) -> Double? {
-        guard let value, !(value is Bool), let number = value as? NSNumber else { return nil }
-        return number.doubleValue
+    /// Converts an optional MCP argument value to a `Double`, distinguishing
+    /// "absent" (legitimate — the caller gets `nil` and keeps whatever
+    /// default applies) from "present but not a valid number" (a caller
+    /// error that must fail the whole request, not silently fall back to a
+    /// default).
+    ///
+    /// JSON numbers arrive as `Int`, `Double`, or `NSNumber` depending on the
+    /// decoder, and all three bridge to `NSNumber` on Darwin — the same
+    /// reasoning as `displayID(from:)`. A JSON `bool` bridges to `NSNumber`
+    /// too and must be rejected explicitly, or `true`/`false` would be read
+    /// as `1`/`0` instead of refused. NaN and infinity are rejected outright:
+    /// they cannot come from `JSONSerialization` today, but nothing stops a
+    /// future caller from constructing arguments directly, and a "valid"
+    /// non-finite scale or bound would be exactly this bug's failure mode
+    /// again.
+    private static func numericValue(_ value: Any?,
+                                     parameter: String) -> Result<Double?, MCPBridgeError> {
+        guard let value else { return .success(nil) }
+        guard !(value is Bool), let number = value as? NSNumber else {
+            return .failure(MCPBridgeError(
+                "\(parameter) must be a number, got \(value)"))
+        }
+        let double = number.doubleValue
+        guard double.isFinite else {
+            return .failure(MCPBridgeError(
+                "\(parameter) must be a finite number, got \(double)"))
+        }
+        return .success(double)
     }
 }

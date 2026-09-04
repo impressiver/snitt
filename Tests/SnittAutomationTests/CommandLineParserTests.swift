@@ -115,6 +115,24 @@ func exportRejectsGif() {
                                      "--out", "/tmp/demo.gif"]).isFailure)
 }
 
+@Test("export rejects a zero or negative scale")
+func exportRejectsNonPositiveScale() {
+    // A degenerate scale would reach AVFoundation instead of being refused
+    // where the person can still fix their command.
+    #expect(CommandLineParser.parse(["export", "/tmp/x.snitt", "--format", "mp4",
+                                     "--out", "/tmp/demo.mp4", "--scale", "0"]).isFailure)
+    #expect(CommandLineParser.parse(["export", "/tmp/x.snitt", "--format", "mp4",
+                                     "--out", "/tmp/demo.mp4", "--scale", "-0.5"]).isFailure)
+}
+
+@Test("trim rejects an end at or before start")
+func trimRejectsInvertedRange() {
+    #expect(CommandLineParser.parse(["trim", "/tmp/x.snitt", "--start", "9", "--end", "5"])
+            .isFailure)
+    #expect(CommandLineParser.parse(["trim", "/tmp/x.snitt", "--start", "5", "--end", "5"])
+            .isFailure)
+}
+
 private extension Result {
     var isFailure: Bool { if case .failure = self { return true }; return false }
 }
