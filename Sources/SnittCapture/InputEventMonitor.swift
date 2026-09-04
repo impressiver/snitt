@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import SnittDocument
+import os
 
 /// Logs THAT input happened, never what (§4.2, and this milestone's ruling).
 ///
@@ -13,11 +14,21 @@ import SnittDocument
 /// to the main run loop would stall event capture whenever the app shows a
 /// modal sheet, which the permission-onboarding flow legitimately does.
 ///
-/// `@unchecked Sendable`: `tap`, `runLoop`, and `thread` are written only from
-/// `start()`/`stop()`, both of which callers are expected to serialize (start
-/// then stop, not concurrently); the event-tap callback only reads `tap` (to
-/// re-enable it) and calls the `onEvent` closure, which is itself `@Sendable`.
-/// No mutable state is written from the tap's own thread.
+/// While the tap is installed it holds a strong (`Unmanaged.passRetained`)
+/// reference to `self` — see `retained` below. One consequence: `deinit` will
+/// not fire while the tap is running, so a caller that calls `start()` and
+/// never `stop()` leaks a thread and a mach port rather than crashing.
+/// `stop()` is therefore mandatory, not merely tidy — Task 4 wires this into
+/// `Recorder`, whose `stop()` always runs.
+///
+/// `@unchecked Sendable`: the tap's callback runs concurrently with whatever
+/// thread calls `start()`/`stop()`. `tap` is the only state the callback
+/// reads, and it is guarded by `tapLock` (`OSAllocatedUnfairLock`, matching
+/// `HotkeyMonitor`'s pattern) so a `stop()` racing an in-flight callback
+/// cannot observe a torn value. `retained`, `thread`, and `runLoop` are
+/// written only from `start()`/`stop()`, which callers are expected to
+/// serialize (start then stop, not concurrently) — same as before. `onEvent`
+/// is itself `@Sendable`.
 public final class InputEventMonitor: @unchecked Sendable {
     /// The types worth waking the callback for. Kept in lockstep with
     /// `kind(for:)` — a mask wider than the mapping wakes us for nothing on
@@ -42,16 +53,47 @@ public final class InputEventMonitor: @unchecked Sendable {
 
     private let onEvent: @Sendable (EventKind) -> Void
     private var thread: Thread?
-    private var tap: CFMachPort?
     private var runLoop: CFRunLoop?
     private let ready = DispatchSemaphore(value: 0)
+
+    /// `CFMachPort` isn't `Sendable`; this box is `@unchecked` because access
+    /// only ever happens through `tapLock`, which is the actual synchronization.
+    private struct TapBox: @unchecked Sendable {
+        var value: CFMachPort?
+    }
+
+    /// Guards `tap` against the tap-thread callback reading it while
+    /// `start()`/`stop()` write it from the caller's thread.
+    private let tapLock = OSAllocatedUnfairLock<TapBox>(initialState: TapBox(value: nil))
+    private var tap: CFMachPort? {
+        // The closure passed to `withLock` must capture and return only
+        // `Sendable` values — `TapBox` (not the raw `CFMachPort` inside it)
+        // is what crosses that boundary.
+        get { tapLock.withLock { $0 }.value }
+        set {
+            let box = TapBox(value: newValue)
+            tapLock.withLock { $0 = box }
+        }
+    }
+
+    /// The +1 the tap's `userInfo` holds on us.
+    ///
+    /// `passUnretained` would let the caller's last reference drop while an
+    /// event is in flight, and the callback would then resurrect a
+    /// deallocated object — a use-after-free, not a data race. The tap keeps
+    /// us alive for exactly as long as it is installed; `stop()` invalidates
+    /// the port first so no callback can be running, and only then releases.
+    private var retained: Unmanaged<InputEventMonitor>?
 
     public init(onEvent: @escaping @Sendable (EventKind) -> Void) {
         self.onEvent = onEvent
     }
 
     /// Returns false if the tap could not be created — which is what a missing
-    /// Input Monitoring grant looks like from here.
+    /// Input Monitoring grant looks like from here — or if the tap's run loop
+    /// never came up within the timeout, in which case whatever was created is
+    /// torn down before returning so a caller never has to guess whether
+    /// `start()` left something dangling.
     public func start() -> Bool {
         guard tap == nil else { return true }
 
@@ -75,16 +117,23 @@ public final class InputEventMonitor: @unchecked Sendable {
             return Unmanaged.passUnretained(event)
         }
 
+        // Hand the tap a +1 on us instead of an unretained pointer — see
+        // `retained`'s doc comment. Released below if tapCreate fails, and in
+        // `stop()` once the port is invalidated.
+        let retained = Unmanaged.passRetained(self)
+
         guard let tap = CGEvent.tapCreate(
             tap: .cgSessionEventTap,
             place: .headInsertEventTap,
             options: .listenOnly,
             eventsOfInterest: Self.eventMask,
             callback: callback,
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
+            userInfo: retained.toOpaque()
         ) else {
+            retained.release()   // a failed start must not leak the +1
             return false   // no Input Monitoring grant
         }
+        self.retained = retained
         self.tap = tap
 
         let thread = Thread { [weak self] in
@@ -101,17 +150,30 @@ public final class InputEventMonitor: @unchecked Sendable {
         self.thread = thread
 
         // Wait for the run loop to exist so a stop() immediately after start()
-        // has something to stop.
-        _ = ready.wait(timeout: .now() + .seconds(2))
+        // has something to stop. If it never shows up, don't hand back `true`
+        // with a dangling thread/tap/retain — tear down and report failure.
+        guard ready.wait(timeout: .now() + .seconds(2)) == .success else {
+            stop()
+            return false
+        }
         return true
     }
 
     public func stop() {
-        if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
+        // Order matters: invalidate the port FIRST so no further callback can
+        // begin, stop the run loop, and only then release the +1 the tap held.
+        // Releasing before invalidating is the use-after-free this fixes.
+        guard let tap else { return }
+        CGEvent.tapEnable(tap: tap, enable: false)
+        CFMachPortInvalidate(tap)
+        self.tap = nil
+
         if let runLoop { CFRunLoopStop(runLoop) }
-        tap = nil
         runLoop = nil
         thread = nil
+
+        retained?.release()
+        retained = nil
     }
 
     deinit { stop() }
