@@ -49,7 +49,11 @@ public enum ByteSize {
         else { return nil }
 
         let bytes = value * multiplier
-        guard bytes <= Double(Int.max) else { return nil }
-        return Int(bytes)
+        // `Double(Int.max)` rounds UP to 2^63, so `bytes <= Double(Int.max)`
+        // admits a value one greater than Int.max and the conversion below
+        // then traps. `Int(exactly:)` on a floored value asks the question
+        // that actually matters: does this fit?
+        guard let result = Int(exactly: bytes.rounded(.down)) else { return nil }
+        return result
     }
 }

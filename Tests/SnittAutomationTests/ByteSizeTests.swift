@@ -46,7 +46,24 @@ func nonFiniteRefused() {
     // forwards Double's result without a finiteness check accepts these and
     // produces a garbage Int conversion, which traps at runtime.
     #expect(ByteSize.parse("-10MB") == nil)
+
+    // Note: "nan", "infMB", and "1e400MB" are rejected by the character-class
+    // filter (`n`, `a`, `i`, `f`, `e` are neither digits nor dots) before
+    // Double() is reached — they do not test the isFinite guard directly.
+    // See intMaxBoundary for tests covering the actual overflow bound.
     #expect(ByteSize.parse("nan") == nil)
     #expect(ByteSize.parse("infMB") == nil)
     #expect(ByteSize.parse("1e400MB") == nil)
+}
+
+@Test("Values at and beyond Int.max are refused rather than trapping")
+func intMaxBoundary() {
+    // Near Int.max, but not exactly. Int.max requires 63 bits, but Double has
+    // only 53-bit mantissa. This input rounds to 2^63 - 1024 when parsed as a
+    // Double, which fits in Int and should parse, not trap.
+    #expect(ByteSize.parse("9223372036854775000") == 9_223_372_036_854_774_784)
+    // Well past Int.max, as literal — rounds to 2^63 or beyond.
+    #expect(ByteSize.parse("9223372036854775808") == nil)
+    // Comfortably past, via a unit multiplier rather than a literal.
+    #expect(ByteSize.parse("9999999999GB") == nil)
 }
