@@ -81,10 +81,39 @@ func unfinalizedFileHasBytesOnDisk() async throws {
     try sink.begin(at: .zero)
 
     // Write two seconds without ever calling finish(), simulating a crash.
-    for frame in 0..<120 {
+    //
+    // AVAssetWriterInput silently drops a buffer when it is not ready for
+    // more media data (§4.5 — capture delivery must never block on the
+    // encoder). Under CPU contention most appends can be refused, so a
+    // fixed count of `append` calls does not guarantee any particular
+    // amount of media time actually reaches the writer: far less than the
+    // 1s `movieFragmentInterval` can land, no fragment is ever flushed,
+    // and the file stays at 0 bytes forever — no amount of polling helps,
+    // because the flush this test waits for is never coming.
+    //
+    // Retry each frame until the sink's own accepted-frame counter
+    // confirms it was actually taken, so the media that lands always
+    // spans enough presentation time to cross the fragment interval,
+    // regardless of how many attempts that needs under load. This never
+    // blocks a thread: `Task.yield()` cooperatively suspends so the
+    // writer's internal queue gets a chance to drain and flip readiness
+    // back on.
+    var frame = 0
+    let retryDeadline = ContinuousClock.now + .seconds(10)
+    while sink.acceptedVideoFrameCount() < 120 {
+        if ContinuousClock.now >= retryDeadline { break }
+        let acceptedBefore = sink.acceptedVideoFrameCount()
         try sink.append(makeVideoBuffer(at: Double(frame) / 60.0, size: size),
                         to: .video)
+        if sink.acceptedVideoFrameCount() > acceptedBefore {
+            frame += 1
+        } else {
+            await Task.yield()
+        }
     }
+    #expect(sink.acceptedVideoFrameCount() >= 120,
+            "need ~2s of accepted media to reliably cross the 1s fragment interval")
+
     // A fragment flush happens asynchronously on the writer's own queue, so
     // "bytes are on disk" is not true at any deterministic moment right
     // after appending — poll for it instead of assuming a fixed delay

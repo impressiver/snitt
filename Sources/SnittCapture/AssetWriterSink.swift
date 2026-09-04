@@ -16,6 +16,17 @@ public final class AssetWriterSink: SampleBufferSink, @unchecked Sendable {
     /// §12.1: sampling rides the existing pass — there is no second decode.
     public let health = HealthSampler()
 
+    /// Count of video buffers the writer actually accepted (as opposed to
+    /// ones offered via `append` but silently dropped because the input
+    /// was not ready). Exists so callers — tests included — can tell how
+    /// much media time has actually landed, since `append` returning does
+    /// not mean the buffer was taken (see the comment at the drop site).
+    private var acceptedVideoFrames = 0
+    public func acceptedVideoFrameCount() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return acceptedVideoFrames
+    }
+
     public init(outputURL: URL, videoSize: CGSize) throws {
         writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
 
@@ -92,6 +103,7 @@ public final class AssetWriterSink: SampleBufferSink, @unchecked Sendable {
         // must never block ScreenCaptureKit's delivery queue.
         guard input.isReadyForMoreMediaData else { return }
         input.append(buffer)
+        if track == .video { acceptedVideoFrames += 1 }
     }
 
     /// Synchronous helper so the lock is never held across an `await`
