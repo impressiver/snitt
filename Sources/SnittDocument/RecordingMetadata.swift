@@ -6,7 +6,7 @@ public enum Initiator: String, Codable, Sendable {
 }
 
 /// Git provenance for a recording made inside a repository (spec section 7).
-public struct GitContext: Codable, Sendable {
+public struct GitContext: Codable, Sendable, Equatable {
     public var branch: String?
     public var commit: String?
 

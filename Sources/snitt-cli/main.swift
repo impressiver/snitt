@@ -100,6 +100,10 @@ do {
     case .marked(let timeSeconds):
         emit(["markedAt": timeSeconds])
         note("Marker placed at \(timeSeconds)s")
+    case .inspected:
+        // Rendered properly in the task that adds `snitt inspect` to the
+        // frontends. Present only so this switch stays exhaustive.
+        note("inspect is not wired up in this frontend yet")
     }
 } catch ClientError.notRunning {
     note("Snitt is not running. Open Snitt and try again.")

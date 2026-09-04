@@ -67,6 +67,10 @@ func describe(_ response: AutomationResponse) -> String {
         return "\(error.code.rawValue): \(error.message)" + (error.hint.map { "\n\($0)" } ?? "")
     case .marked(let timeSeconds):
         return "Marker placed at \(timeSeconds)s"
+    case .inspected:
+        // Rendered properly in the task that adds `snitt inspect` to the
+        // frontends. Present only so this switch stays exhaustive.
+        return "inspect is not wired up in this frontend yet"
     }
 }
 

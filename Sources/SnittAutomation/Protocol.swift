@@ -9,6 +9,13 @@ public enum AutomationProtocol {
     /// case is why this is a bump and not an additive change: an old app cannot
     /// decode `.mark` and would report `internal_error`, where §10 wants a
     /// refusal that says what to do.
+    ///
+    /// v2 was later amended again to add `.inspect`/`.inspected`, still without
+    /// a further bump: v2 has never shipped — `main` has no `SnittAutomation`
+    /// at all, and both PRs that would introduce it are unmerged — so there is
+    /// no released v2 client whose compatibility a bump would protect. A future
+    /// reader should not mistake this for a forgotten bump; it is deliberate,
+    /// for the same reason `.stopped(health:)` amended v2 rather than bumping.
     public static let version = 2
 }
 
@@ -49,6 +56,7 @@ public struct AutomationRequest: Codable, Sendable {
         case stopRecording(sessionID: String)
         case status
         case mark(sessionID: String, label: String?)
+        case inspect(bundlePath: String)
     }
 
     public var protocolVersion: Int
@@ -165,4 +173,5 @@ public enum AutomationResponse: Codable, Sendable, Equatable {
     case status(StatusInfo)
     case failure(AutomationError)
     case marked(timeSeconds: Double)
+    case inspected(InspectReport)
 }

@@ -118,6 +118,31 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
 
         case .mark(let sessionID, let label):
             return await mark(sessionID: sessionID, label: label)
+
+        case .inspect(let path):
+            return inspect(bundlePath: path)
+        }
+    }
+
+    /// Reads the bundle IN THE APP, not the client.
+    ///
+    /// The CLI cannot read `~/Desktop` — it is gated by the Files-and-Folders
+    /// TCC service, which is exactly how M3a's health block silently reported
+    /// nothing on every real machine. The app wrote the file and can read it.
+    ///
+    /// Deliberately NOT gated by `ConsentPolicy`: reading a bundle the agent
+    /// was handed the path to discloses nothing it did not already have, and
+    /// gating it would make an agent unable to describe its own recording.
+    private func inspect(bundlePath: String) -> AutomationResponse {
+        do {
+            let bundle = try SnittBundle(opening: URL(fileURLWithPath: bundlePath))
+            return .inspected(try InspectReport.report(for: bundle))
+        } catch {
+            return .failure(AutomationError(
+                code: .targetNotFound,
+                message: "Could not read a recording at that path.",
+                hint: "Check the path from `snitt record stop`. It must be a "
+                    + ".snitt bundle written by this app."))
         }
     }
 
