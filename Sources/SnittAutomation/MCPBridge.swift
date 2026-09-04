@@ -264,8 +264,14 @@ public enum MCPBridge {
                     "snitt_start_recording requires either bundleIdentifier or displayID"))
             }
 
-            if let mic = arguments["microphone"] as? Bool { options.microphone = mic }
-            if let sys = arguments["systemAudio"] as? Bool { options.systemAudio = sys }
+            switch booleanValue(arguments["microphone"], parameter: "microphone") {
+            case .success(let value): if let value { options.microphone = value }
+            case .failure(let error): return .failure(error)
+            }
+            switch booleanValue(arguments["systemAudio"], parameter: "systemAudio") {
+            case .success(let value): if let value { options.systemAudio = value }
+            case .failure(let error): return .failure(error)
+            }
             if let max = arguments["maxDurationSeconds"] as? Double {
                 options.maxDurationSeconds = max
             }
@@ -303,7 +309,11 @@ public enum MCPBridge {
             case .success(let value): end = value
             case .failure(let error): return .failure(error)
             }
-            let auto = arguments["autoTrim"] as? Bool ?? false
+            let auto: Bool
+            switch booleanValue(arguments["autoTrim"], parameter: "autoTrim") {
+            case .success(let value): auto = value ?? false
+            case .failure(let error): return .failure(error)
+            }
             // A trim with neither a range nor autoTrim would write an empty
             // edit and report success — the same confidently-wrong failure
             // the CLI's parser refuses (§8).
@@ -350,7 +360,11 @@ public enum MCPBridge {
                 return .failure(MCPBridgeError(
                     "snitt_export requires scale to be greater than 0, got \(scale)"))
             }
-            let chapters = arguments["chapters"] as? Bool ?? false
+            let chapters: Bool
+            switch booleanValue(arguments["chapters"], parameter: "chapters") {
+            case .success(let value): chapters = value ?? false
+            case .failure(let error): return .failure(error)
+            }
             return .success(.export(bundlePath: path, format: format, outputPath: outputPath,
                                      scale: scale, chapters: chapters))
 
@@ -425,5 +439,45 @@ public enum MCPBridge {
                 "\(parameter) must be a finite number, got \(double)"))
         }
         return .success(double)
+    }
+
+    /// Converts an optional MCP argument value to a `Bool`, with the same
+    /// absent-versus-invalid discipline `numericValue` applies to numbers.
+    ///
+    /// Two earlier fix rounds hardened `numericValue`/`displayID(from:)` to
+    /// tell "absent" (keep the default) apart from "present but not a valid
+    /// number" (fail the call), but `autoTrim` and `chapters` stayed on
+    /// `arguments["…"] as? Bool ?? false`. `JSONSerialization` decodes a
+    /// stray `"true"` (a JSON string, not a boolean) to an `NSString`, which
+    /// `as? Bool` fails on — silently, into the `?? false` default — so
+    /// `{"chapters": "true"}` exported successfully with no chapters and no
+    /// error, indistinguishable from a recording that genuinely had none.
+    /// `{"autoTrim": "true"}` alongside `start`/`end` silently ran a range
+    /// trim instead of auto-trim. Both are exactly the confidently-wrong
+    /// outcome §8 forbids.
+    ///
+    /// Leniency toward NUMBERS is kept deliberately: `chapters: 1` must keep
+    /// reading as `true`, the same way `scale: 1` reads as a number and not
+    /// a boolean (`isJSONBoolean` is what makes both directions correct at
+    /// once — a genuine JSON `bool` is never mistaken for the number `0`/`1`,
+    /// and a genuine `0`/`1` is never mistaken for a `bool`). What must NOT
+    /// be lenient is silence toward a value of some other type entirely.
+    private static func booleanValue(_ value: Any?,
+                                     parameter: String) -> Result<Bool?, MCPBridgeError> {
+        guard let value else { return .success(nil) }
+        if isJSONBoolean(value), let number = value as? NSNumber {
+            return .success(number.boolValue)
+        }
+        if let number = value as? NSNumber {
+            switch number.doubleValue {
+            case 0: return .success(false)
+            case 1: return .success(true)
+            default:
+                return .failure(MCPBridgeError(
+                    "\(parameter) must be a boolean, got \(number)"))
+            }
+        }
+        return .failure(MCPBridgeError(
+            "\(parameter) must be a boolean, got \(value)"))
     }
 }

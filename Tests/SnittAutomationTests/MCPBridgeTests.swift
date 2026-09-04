@@ -286,6 +286,67 @@ func outOfRangeDisplayIDRefused() {
     #expect(error.message.contains("displayID"))
 }
 
+@Test("A string \"true\" for autoTrim is refused, not silently ignored in favor of a plain range trim")
+func stringAutoTrimRefused() {
+    // Discriminates against `arguments["autoTrim"] as? Bool ?? false`: a JSON
+    // string decodes to `NSString`, which `as? Bool` fails on, so this value
+    // was silently swallowed into the `false` default. `start` is included
+    // here specifically so the old buggy path does not ALSO fail the
+    // "needs either start/end or autoTrim" guard for an unrelated reason —
+    // with a valid `start` present, the bug's actual failure mode is a
+    // silent SUCCESS mapping to a plain range trim, not the auto-trim the
+    // caller asked for. A test without `start` here would pass against the
+    // old code too, for the wrong reason (the guard rejects it either way),
+    // and prove nothing about the boolean discipline.
+    guard case .failure(let error) = MCPBridge.request(
+        forTool: "snitt_trim",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "start": 1, "autoTrim": "true"}"#))
+    else { Issue.record("a string autoTrim must not be silently accepted as a plain range trim"); return }
+    #expect(error.message.contains("autoTrim"))
+}
+
+@Test("A string \"true\" for chapters is refused, not silently read as absent")
+func stringChaptersRefused() {
+    // Same defect, the other reported instance: `{"chapters": "true"}` used
+    // to export successfully with chapters: false, chaptersPath: nil — a
+    // manifest indistinguishable from a recording with no markers at all,
+    // reported as success.
+    guard case .failure(let error) = MCPBridge.request(
+        forTool: "snitt_export",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
+            + #""outputPath": "/tmp/demo.mp4", "chapters": "true"}"#))
+    else { Issue.record("a string chapters must not be silently accepted"); return }
+    #expect(error.message.contains("chapters"))
+}
+
+@Test("chapters: 1, decoded from real JSON, is accepted as true — numeric leniency is kept")
+func numericChaptersOneAcceptedAsTrue() {
+    // The flip side of the string-rejection fix: `numericValue` already
+    // treats a JSON integer 0/1 as a legitimate number rather than a stray
+    // boolean, and booleans must extend the SAME leniency the other way —
+    // `chapters: 1` must keep reading as `true`, not be swept up by the
+    // stricter string handling and refused too.
+    let mapped = MCPBridge.request(
+        forTool: "snitt_export",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
+            + #""outputPath": "/tmp/demo.mp4", "chapters": 1}"#))
+    guard case .success(.export(_, _, _, _, let chapters)) = mapped else {
+        Issue.record("chapters: 1, decoded from JSON, must be accepted as true"); return
+    }
+    #expect(chapters == true)
+}
+
+@Test("autoTrim: true, decoded from real JSON, is still accepted")
+func realJSONBooleanAutoTrimAccepted() {
+    let mapped = MCPBridge.request(
+        forTool: "snitt_trim",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "autoTrim": true}"#))
+    guard case .success(.trim(_, _, _, let auto)) = mapped else {
+        Issue.record("autoTrim: true, decoded from JSON, must be accepted"); return
+    }
+    #expect(auto == true)
+}
+
 @Test("A displayID of exactly 1, decoded from real JSON, is accepted — not misread as a boolean")
 func displayIDOfOneAcceptedFromRealJSON() {
     // Same regression class as the scale/start/end fix, applied to
