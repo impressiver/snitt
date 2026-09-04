@@ -12,12 +12,14 @@ import SnittDocument
 /// private helpers across files without a shared internal type), and
 /// `writeSyntheticMovie` in `SyntheticMovie.swift` already does the real
 /// work.
-private func makeTestBundle(seconds: Double = 4, audioTrackCount: Int = 0) async throws -> SnittBundle {
+private func makeTestBundle(seconds: Double = 4, audioTrackCount: Int = 0,
+                             content: SyntheticFrameContent = .flat) async throws -> SnittBundle {
     let url = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
         .appendingPathExtension(SnittBundle.fileExtension)
     let bundle = try SnittBundle(creatingAt: url)
-    try await writeSyntheticMovie(to: bundle.captureURL, seconds: seconds, audioTrackCount: audioTrackCount)
+    try await writeSyntheticMovie(to: bundle.captureURL, seconds: seconds,
+                                  audioTrackCount: audioTrackCount, content: content)
     return bundle
 }
 
@@ -308,4 +310,56 @@ func missingEventsFileExportsWithNoChapters() async throws {
 
     let manifest = try await MovieExporter.export(bundle: bundle, edl: .fullRange(), scale: 1.0, to: output)
     #expect(manifest.chapters.isEmpty)
+}
+
+@Test("A size target reachable only by dropping scale is met, and the constrained file is substantially smaller than an unconstrained export of the same bundle")
+func scaleReductionActuallyShrinksTheFile() async throws {
+    // Uses NOISE content deliberately (see `SyntheticFrameContent` in
+    // SyntheticMovie.swift): flat gray frames compress to the encoder's
+    // floor regardless of bitrate or resolution, which made the original
+    // round of this test unable to tell "size targeting works" from "size
+    // targeting is a complete no-op" — a reviewer confirmed all four
+    // original tests kept passing with `fileLengthLimit` commented out
+    // entirely. Noise does not compress, so both `fileLengthLimit` and a
+    // scale drop measurably change the encoded size.
+    //
+    // Measured on this fixture (2s of 320x240 noise @ 30fps): unconstrained
+    // scale 1.0 is ~700KB; `fileLengthLimit` alone at scale 1.0 barely
+    // moves that (a 200-byte limit still produced ~578KB — fileLengthLimit
+    // has SOME effect but hits a floor far above tiny targets). Only
+    // dropping scale gets meaningfully smaller: 0.75->~386KB, 0.5->~311KB,
+    // 0.35->~263KB. A target of 300_000 is unreachable at scale 1.0
+    // (fileLengthLimit alone still produced ~700KB there) but reachable at
+    // the ladder's 0.35 rung (~280KB with the limit applied). That makes
+    // 300_000 the discriminating target: it can ONLY be met if the ladder
+    // actually drops scale and re-encodes, not by fileLengthLimit alone at
+    // the original scale.
+    let bundle = try await makeTestBundle(seconds: 2, content: .noise)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+    let unconstrainedOut = FileManager.default.temporaryDirectory
+        .appendingPathComponent("unc-\(UUID().uuidString).mp4")
+    defer { try? FileManager.default.removeItem(at: unconstrainedOut) }
+    let unconstrained = try await MovieExporter.export(
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0, to: unconstrainedOut)
+
+    let target = 300_000
+    let constrainedOut = FileManager.default.temporaryDirectory
+        .appendingPathComponent("con-\(UUID().uuidString).mp4")
+    defer { try? FileManager.default.removeItem(at: constrainedOut) }
+    let constrained = try await MovieExporter.export(
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0, to: constrainedOut,
+        maxSizeBytes: target)
+
+    #expect(constrained.byteSize <= target)
+    #expect(constrained.maxSizeMet == true)
+    // Proves work happened, not just that a number was reported: a no-op
+    // implementation would produce (approximately) the SAME size as the
+    // unconstrained export, since nothing would differ between the two
+    // calls. Half is a generous margin against the ~700KB vs ~280KB
+    // measured above.
+    #expect(constrained.byteSize < unconstrained.byteSize / 2,
+            "a real size target should shrink the file substantially, not just report success")
+    #expect(constrained.scale < 1.0,
+            "300_000 bytes is unreachable at scale 1.0 on this fixture; the ladder must have dropped scale")
 }

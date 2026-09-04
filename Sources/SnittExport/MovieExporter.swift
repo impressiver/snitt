@@ -18,7 +18,7 @@ public enum MovieExporter {
     /// `fileLengthLimit` cannot hit the target. Bounded deliberately: each
     /// rung is a full re-encode, and an unbounded search on a long recording
     /// would run for minutes with no way for the caller to see progress.
-    static let sizeLadder: [Double] = [1.0, 0.75, 0.5, 0.35]
+    private static let sizeLadder: [Double] = [1.0, 0.75, 0.5, 0.35]
 
     public static func exportMovie(_ built: BuiltComposition,
                                    to url: URL,
@@ -102,13 +102,17 @@ public enum MovieExporter {
                 built = lastSuccessfulBuilt
                 effectiveScale = lastSuccessfulScale
             } else {
-                // Every rung's export threw. The honesty contract still
-                // requires a file at the output path, so fall back to an
-                // unconstrained export at the originally requested scale —
-                // the target is unmet either way, and this guarantees the
-                // caller gets something rather than nothing.
-                built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: scale)
-                effectiveScale = scale
+                // Every rung's export threw — even the smallest one, which
+                // is the caller's best shot at a small file. The honesty
+                // contract still requires a file at the output path, so
+                // fall back to an unconstrained export, but at the
+                // SMALLEST rung's scale, not the originally requested one:
+                // the caller asked for small, and handing back the largest
+                // possible file (full scale, no limit) when every attempt
+                // to shrink it failed would be the worst available choice.
+                let smallestScale = scale * (sizeLadder.last ?? 1.0)
+                built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: smallestScale)
+                effectiveScale = smallestScale
                 try await exportMovie(built, to: outputURL, maxSizeBytes: nil)
                 byteSize = try fileByteSize(at: outputURL)
                 sizeMet = byteSize <= maxSizeBytes

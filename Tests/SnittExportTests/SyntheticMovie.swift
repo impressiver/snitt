@@ -39,10 +39,29 @@ import Foundation
 ///   in addition to the video track. Needed to exercise
 ///   `CompositionBuilder`'s per-source-track audio pairing, which a
 ///   video-only synthetic movie (`sourceAudio == []`) never runs.
+/// What pixels a synthetic frame is filled with.
+///
+/// `.flat` (the default) writes a solid gray frame: cheap to generate and
+/// fine for every test that only cares that a movie exists, plays, has the
+/// right duration, or has tracks paired correctly. But a flat frame
+/// compresses to almost nothing regardless of bitrate or resolution — H.264
+/// finds it trivial — so a fixture built entirely from flat frames sits at
+/// the encoder's floor (header plus minimal frame data) no matter what
+/// `fileLengthLimit` or scale is requested. Any test that needs the encoded
+/// size to actually RESPOND to a size target (bitrate limit, scale
+/// reduction) must use `.noise`: per-pixel random data that does not
+/// compress, so both a bitrate limit and a resolution drop measurably
+/// shrink the output.
+enum SyntheticFrameContent {
+    case flat
+    case noise
+}
+
 func writeSyntheticMovie(to url: URL, seconds: Double,
                          size: CGSize = CGSize(width: 320, height: 240),
                          fps: Int32 = 30,
-                         audioTrackCount: Int = 0) async throws {
+                         audioTrackCount: Int = 0,
+                         content: SyntheticFrameContent = .flat) async throws {
     nonisolated(unsafe) let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
 
     nonisolated(unsafe) let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
@@ -137,8 +156,19 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
 
             CVPixelBufferLockBaseAddress(buffer, [])
             if let base = CVPixelBufferGetBaseAddress(buffer) {
-                memset(base, 128,
-                       CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer))
+                let byteCount = CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer)
+                switch content {
+                case .flat:
+                    memset(base, 128, byteCount)
+                case .noise:
+                    // Per-pixel random bytes, regenerated every frame so
+                    // there is no exploitable redundancy across time either
+                    // (H.264's inter-frame prediction would otherwise
+                    // collapse a repeated noise frame just as flatly as a
+                    // solid color). This is what makes bitrate limits and
+                    // scale reduction actually change the encoded size.
+                    arc4random_buf(base, byteCount)
+                }
             }
             CVPixelBufferUnlockBaseAddress(buffer, [])
 
