@@ -61,29 +61,54 @@ public final class HealthSampler: @unchecked Sendable {
         defer { CVPixelBufferUnlockBaseAddress(pixels, .readOnly) }
         guard let base = CVPixelBufferGetBaseAddress(pixels) else { return }
 
-        let bytes = base.assumingMemoryBound(to: UInt8.self)
-        let rowBytes = CVPixelBufferGetBytesPerRow(pixels)
-        let height = CVPixelBufferGetHeight(pixels)
-        let width = CVPixelBufferGetWidth(pixels)
-
-        // The offset arithmetic below assumes chunky BGRA at 4 bytes per pixel.
-        // True today because CaptureSession never sets configuration.pixelFormat
-        // and BGRA is the default. If that ever changes to a planar format,
-        // CVPixelBufferGetBytesPerRow returns 0, every sample is skipped, and
-        // this would report variance 0 — indistinguishable from a black
-        // capture. Skip explicitly rather than reporting a false measurement.
-        guard CVPixelBufferGetPixelFormatType(pixels) == kCVPixelFormatType_32BGRA else { return }
-
-        // BGRA: take the green channel as a luma proxy. Cheap, and green
-        // carries most of perceived luminance.
+        let format = CVPixelBufferGetPixelFormatType(pixels)
         var samples: [Double] = []
-        for row in stride(from: 0, to: height, by: Self.pixelStride) {
-            for column in stride(from: 0, to: width, by: Self.pixelStride) {
-                let offset = row * rowBytes + column * 4 + 1
-                guard offset < rowBytes * height else { continue }
-                samples.append(Double(bytes[offset]))
+
+        switch format {
+        case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+             kCVPixelFormatType_420YpCbCr8BiPlanarFullRange:
+            // Plane 0 is luma at full resolution, one byte per pixel — exactly
+            // the quantity frame variance wants, and better than the BGRA
+            // path's green-channel proxy. This is what ScreenCaptureKit
+            // actually delivers when configuration.pixelFormat is unset
+            // (confirmed on-device: '420v', biplanar 4:2:0). Use the
+            // plane-scoped accessors throughout — GetBaseAddress /
+            // GetBytesPerRow without "OfPlane" read plane 0's header as if it
+            // were the whole chunky image and silently produce garbage.
+            guard let planeBase = CVPixelBufferGetBaseAddressOfPlane(pixels, 0) else { return }
+            let planeBytes = planeBase.assumingMemoryBound(to: UInt8.self)
+            let planeRowBytes = CVPixelBufferGetBytesPerRowOfPlane(pixels, 0)
+            let planeWidth = CVPixelBufferGetWidthOfPlane(pixels, 0)
+            let planeHeight = CVPixelBufferGetHeightOfPlane(pixels, 0)
+            for row in stride(from: 0, to: planeHeight, by: Self.pixelStride) {
+                for column in stride(from: 0, to: planeWidth, by: Self.pixelStride) {
+                    let offset = row * planeRowBytes + column
+                    guard offset < planeRowBytes * planeHeight else { continue }
+                    samples.append(Double(planeBytes[offset]))
+                }
             }
+
+        case kCVPixelFormatType_32BGRA:
+            // Chunky BGRA: take the green channel as a luma proxy. Cheap, and
+            // green carries most of perceived luminance. Reachable only if
+            // configuration.pixelFormat is ever set explicitly — SCK's
+            // observed default is the biplanar case above.
+            let bytes = base.assumingMemoryBound(to: UInt8.self)
+            let rowBytes = CVPixelBufferGetBytesPerRow(pixels)
+            let height = CVPixelBufferGetHeight(pixels)
+            let width = CVPixelBufferGetWidth(pixels)
+            for row in stride(from: 0, to: height, by: Self.pixelStride) {
+                for column in stride(from: 0, to: width, by: Self.pixelStride) {
+                    let offset = row * rowBytes + column * 4 + 1
+                    guard offset < rowBytes * height else { continue }
+                    samples.append(Double(bytes[offset]))
+                }
+            }
+
+        default:
+            return   // an unrecognised layout is skipped rather than measured wrongly
         }
+
         let variance = Self.variance(ofLuma: samples)
         lock.lock(); frameVariances.append(variance); lock.unlock()
     }

@@ -38,29 +38,40 @@ func rmsIsNotMeanAmplitude() {
     #expect(abs(HealthSampler.rms(ofFloatSamples: [1, 0]) - 0.70710678) < 0.0001)
 }
 
-@Test("A non-BGRA frame contributes no sample rather than a false measurement")
-func nonBGRAFrameContributesNoSample() {
-    // ScreenCaptureKit's default pixel format is BGRA — CaptureSession never
-    // overrides it — but the offset arithmetic in observeVideo assumes that
-    // format. Feeding a biplanar YUV buffer must not silently read garbage
-    // (or nothing, reported as a real "variance 0" black-frame measurement);
-    // it must be skipped, leaving result() with meanFrameVariance == nil.
+@Test("A biplanar 4:2:0 frame — ScreenCaptureKit's actual default — does contribute a sample")
+func biplanarFrameContributesASample() {
+    // ScreenCaptureKit's real default (confirmed on-device: '420v') is
+    // biplanar 4:2:0 YUV, not BGRA — CaptureSession never sets
+    // configuration.pixelFormat. Plane 0 is full-resolution luma, so this
+    // must be measured, not skipped: skipping it is exactly the bug that
+    // shipped, where meanFrameVariance was nil for every real recording.
     let sampler = HealthSampler()
     let buffer = makeVideoBuffer(at: 0, size: CGSize(width: 128, height: 128),
                                   pixelFormat: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
     sampler.observe(buffer, track: .video)
-    #expect(sampler.result().meanFrameVariance == nil)
+    #expect(sampler.result().meanFrameVariance != nil,
+            "a biplanar frame must be measured, not skipped")
 }
 
 @Test("A BGRA frame does contribute a sample")
 func bgraFrameContributesASample() {
-    // The negative test alone would pass against a guard written against the
-    // WRONG constant (32ARGB instead of 32BGRA) — a biplanar buffer is not
-    // 32ARGB either. That slip would skip every real frame and report a nil
-    // variance in every bundle, with nothing to catch it. This is the half
-    // that pins the accept path.
+    // The biplanar test alone would pass against a guard written against the
+    // WRONG constant. This is the half that pins the (secondary) BGRA path.
     let sampler = HealthSampler()
     sampler.observe(makeVideoBuffer(at: 0, size: CGSize(width: 320, height: 240)), track: .video)
     #expect(sampler.result().meanFrameVariance != nil,
             "a BGRA frame must be measured, not skipped")
+}
+
+@Test("An unrecognised pixel layout contributes no sample rather than a false measurement")
+func unknownFormatContributesNoSample() {
+    // Neither biplanar 4:2:0 nor chunky BGRA. Reading it with either plane
+    // or chunky arithmetic would misinterpret the memory layout and produce
+    // a plausible-looking but meaningless number; skipping and reporting nil
+    // ("we did not measure") is honest where a number would not be.
+    let sampler = HealthSampler()
+    let buffer = makeVideoBuffer(at: 0, size: CGSize(width: 128, height: 128),
+                                  pixelFormat: kCVPixelFormatType_16Gray)
+    sampler.observe(buffer, track: .video)
+    #expect(sampler.result().meanFrameVariance == nil)
 }
