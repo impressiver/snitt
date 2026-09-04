@@ -8,7 +8,8 @@ func everyToolMaps() {
         let args: [String: Any] = tool.name == "snitt_start_recording"
             ? ["bundleIdentifier": "com.apple.Safari"]
             : (tool.name == "snitt_stop_recording" || tool.name == "snitt_add_marker"
-                ? ["sessionId": "abc"] : [:])
+                ? ["sessionId": "abc"]
+                : (tool.name == "snitt_inspect" ? ["bundlePath": "/tmp/x.snitt"] : [:]))
         let mapped = MCPBridge.request(forTool: tool.name, arguments: args)
         guard case .success = mapped else {
             Issue.record("advertised tool \(tool.name) does not map to a request"); return
@@ -20,7 +21,8 @@ func everyToolMaps() {
 func toolNamesAreStable() {
     let names = Set(MCPBridge.toolDefinitions().map(\.name))
     #expect(names == ["snitt_list_targets", "snitt_start_recording",
-                      "snitt_stop_recording", "snitt_status", "snitt_add_marker"])
+                      "snitt_stop_recording", "snitt_status", "snitt_add_marker",
+                      "snitt_inspect"])
 }
 
 @Test("Both frontends express a marker identically")
@@ -37,6 +39,20 @@ func frontendsAgreeOnMarkers() {
     }
     #expect(cliSession == mcpSession)
     #expect(cliLabel == mcpLabel)
+}
+
+@Test("Both frontends express an inspect identically")
+func frontendsAgreeOnInspect() {
+    // §4.8: the CLI and the MCP server must be incapable of diverging.
+    guard case .success(.inspect(let cliPath)) =
+        CommandLineParser.parse(["inspect", "/tmp/demo.snitt"]) else {
+        Issue.record("CLI could not express an inspect"); return
+    }
+    guard case .success(.inspect(let mcpPath)) = MCPBridge.request(
+        forTool: "snitt_inspect", arguments: ["bundlePath": "/tmp/demo.snitt"]) else {
+        Issue.record("MCP could not express an inspect"); return
+    }
+    #expect(cliPath == mcpPath)
 }
 
 @Test("Starting a recording without a target is refused before it reaches the app")

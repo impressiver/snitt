@@ -38,6 +38,7 @@ snitt — record a window and hand back a .snitt bundle
         [--mic] [--no-system-audio]        parsed, not yet applied (M3)
   snitt record stop <session-id>         stop; prints the bundle path
   snitt record mark <session-id> [--label <text>]   drop a marker
+  snitt inspect <bundle>                 metadata as JSON, no GUI
   snitt status                           whether a recording is running
 
 Output is JSON on stdout and human text on stderr, so a script can parse one
@@ -70,6 +71,7 @@ case .recordStart(var options):
 case .recordStop(let session):  body = .stopRecording(sessionID: session)
 case .recordMark(let session, let label): body = .mark(sessionID: session, label: label)
 case .status:                   body = .status
+case .inspect(let path):        body = .inspect(bundlePath: path)
 case .help:                     body = .status  // unreachable; handled above
 }
 
@@ -100,10 +102,10 @@ do {
     case .marked(let timeSeconds):
         emit(["markedAt": timeSeconds])
         note("Marker placed at \(timeSeconds)s")
-    case .inspected:
-        // Rendered properly in the task that adds `snitt inspect` to the
-        // frontends. Present only so this switch stays exhaustive.
-        note("inspect is not wired up in this frontend yet")
+    case .inspected(let report):
+        emit(report)
+        note("\(Int(report.durationSeconds ?? 0))s · \(report.markerCount) markers "
+           + "· \(report.inputEventCount) input events")
     }
 } catch ClientError.notRunning {
     note("Snitt is not running. Open Snitt and try again.")

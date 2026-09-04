@@ -56,6 +56,17 @@ func recordMarkNeedsSession() {
     #expect(CommandLineParser.parse(["record", "mark"]).isFailure)
 }
 
+@Test("inspect parses a bundle path")
+func parsesInspect() {
+    #expect(CommandLineParser.parse(["inspect", "/tmp/x.snitt"])
+            == .success(.inspect(bundlePath: "/tmp/x.snitt")))
+}
+
+@Test("inspect without a path is refused")
+func inspectNeedsAPath() {
+    #expect(CommandLineParser.parse(["inspect"]).isFailure)
+}
+
 private extension Result {
     var isFailure: Bool { if case .failure = self { return true }; return false }
 }

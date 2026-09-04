@@ -18,6 +18,7 @@ public enum ParsedCommand: Equatable {
     case recordMark(sessionID: String, label: String?)
     case status
     case help
+    case inspect(bundlePath: String)
 }
 
 /// Parses the CLI's arguments. Pure, so the whole surface is testable without a
@@ -71,6 +72,14 @@ public enum CommandLineParser {
             default:
                 return .failure(ParseFailure("Unknown record subcommand: \(sub)"))
             }
+
+        case "inspect":
+            guard let path = args.first else {
+                return .failure(ParseFailure(
+                    "`inspect` needs a path to a .snitt bundle. "
+                  + "Use the path `snitt record stop` printed."))
+            }
+            return .success(.inspect(bundlePath: path))
 
         default:
             return .failure(ParseFailure("Unknown command: \(first). Try `snitt help`."))

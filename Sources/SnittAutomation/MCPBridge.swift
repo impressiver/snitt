@@ -167,6 +167,21 @@ public enum MCPBridge {
                     ],
                     "required": ["sessionId"],
                 ]),
+            ToolDefinition(
+                name: "snitt_inspect",
+                description: "Read a recording's metadata — duration, markers, capture "
+                           + "health, git context — without watching it. Use this to "
+                           + "describe a demo you made.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "bundlePath": [
+                            "type": "string",
+                            "description": "Path printed by snitt_stop_recording",
+                        ],
+                    ],
+                    "required": ["bundlePath"],
+                ]),
         ]
     }
 
@@ -218,6 +233,12 @@ public enum MCPBridge {
                 return .failure(MCPBridgeError("snitt_add_marker requires sessionId"))
             }
             return .success(.mark(sessionID: session, label: arguments["label"] as? String))
+
+        case "snitt_inspect":
+            guard let path = arguments["bundlePath"] as? String else {
+                return .failure(MCPBridgeError("snitt_inspect requires bundlePath"))
+            }
+            return .success(.inspect(bundlePath: path))
 
         default:
             return .failure(MCPBridgeError("Unknown tool: \(name)"))
