@@ -23,7 +23,7 @@ public actor Recorder {
 
     private var startedAt: Date?
     private var isFinished = false
-    private let markers = MarkerLog()
+    private let eventLog = SessionEventLog()
 
     /// - Parameter initiator: Deliberately has NO default. A default of
     ///   `.human` is what let every agent recording ship mislabelled: the
@@ -100,8 +100,8 @@ public actor Recorder {
             finishError = error
         }
 
-        let collectedMarkers = await markers.snapshot()
-        try writeSidecars(stoppedAt: stoppedAt, collectedMarkers: collectedMarkers)
+        let collectedEvents = await eventLog.snapshot()
+        try writeSidecars(stoppedAt: stoppedAt, collectedEvents: collectedEvents)
 
         if let finishError { throw finishError }
         return bundle
@@ -136,11 +136,11 @@ public actor Recorder {
         let wallClock = startedAt.map { Date().timeIntervalSince($0) } ?? 0
         let offset = CaptureSession.plausibleOffset(
             media: session.mediaOffsetNow(), wallClock: wallClock) ?? wallClock
-        await markers.add(at: offset, label: label)
+        await eventLog.add(at: offset, kind: .marker, label: label)
         return offset
     }
 
-    private func writeSidecars(stoppedAt: Date, collectedMarkers: [LoggedEvent]) throws {
+    private func writeSidecars(stoppedAt: Date, collectedEvents: [LoggedEvent]) throws {
         let duration = startedAt.map { stoppedAt.timeIntervalSince($0) }
         let metadata = RecordingMetadata(
             createdAt: startedAt ?? stoppedAt,
@@ -150,7 +150,7 @@ public actor Recorder {
             health: session.health()
         )
         try metadata.write(to: bundle)
-        try EventLog(events: collectedMarkers).write(to: bundle)
+        try EventLog(events: collectedEvents).write(to: bundle)
         try EditDecisionList.fullRange().write(to: bundle)
     }
 
