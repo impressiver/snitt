@@ -42,14 +42,20 @@ public enum CompositionError: Error, Equatable {
 /// attach to an `AVPlayerItem` (V5), so it would force two overlay
 /// implementations that can diverge.
 public enum CompositionBuilder {
+    /// The frame duration every `AVMutableVideoComposition` this builder
+    /// produces is set to. Also the basis for `minimumKeptDuration` — the two
+    /// used to be independent `1/60` literals that could drift apart, which
+    /// defeats the point of the threshold (it is only meaningful as "one
+    /// frame of THIS composition's frame duration").
+    static let compositionFrameDuration = CMTime(value: 1, timescale: 60)
+
     /// `KeptRanges.compute` is pure set subtraction: a cut ending a
     /// microsecond before the recording's end leaves a kept range that short.
     /// That is correct arithmetic, but a range that short is a degenerate
     /// segment once inserted into an `AVMutableComposition`, not a real one.
     /// Filtering it out is export-layer policy, so it lives here rather than
-    /// in `KeptRanges` — at one frame of this composition's own frame
-    /// duration (1/60s).
-    static let minimumKeptDuration: Double = 1.0 / 60.0
+    /// in `KeptRanges` — at one frame of `compositionFrameDuration`.
+    static let minimumKeptDuration: Double = CMTimeGetSeconds(compositionFrameDuration)
 
     public static func build(bundle: SnittBundle,
                              edl: EditDecisionList,
@@ -72,9 +78,22 @@ public enum CompositionBuilder {
 
         // One composition audio track per source track, so the EDL's per-track
         // mute and gain stay addressable in M4 rather than being flattened now.
-        let audioTracks = sourceAudio.compactMap { _ in
-            composition.addMutableTrack(withMediaType: .audio,
-                                        preferredTrackID: kCMPersistentTrackID_Invalid)
+        //
+        // Paired at creation time — (source, destination) tuples built in one
+        // pass — rather than building a `sourceAudio` array and an
+        // `addMutableTrack` array separately and trusting their indices to
+        // stay in lockstep. `compactMap` over the sources with `addMutableTrack`
+        // discarded on nil used to do exactly that: if `addMutableTrack` ever
+        // returned nil for a non-final track, the compacted array shortened
+        // and every subsequent source track silently paired with the wrong
+        // destination. Pairing here can't drift because there is only ever
+        // one array to walk.
+        var audioTrackPairs: [(source: AVAssetTrack, destination: AVMutableCompositionTrack)] = []
+        for source in sourceAudio {
+            guard let destination = composition.addMutableTrack(
+                withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid)
+            else { continue }
+            audioTrackPairs.append((source, destination))
         }
 
         var cursor = CMTime.zero
@@ -83,8 +102,8 @@ public enum CompositionBuilder {
                 start: CMTime(seconds: range.start, preferredTimescale: 600),
                 end: CMTime(seconds: range.end, preferredTimescale: 600))
             try videoTrack.insertTimeRange(timeRange, of: sourceVideo, at: cursor)
-            for (index, source) in sourceAudio.enumerated() where index < audioTracks.count {
-                try audioTracks[index].insertTimeRange(timeRange, of: source, at: cursor)
+            for pair in audioTrackPairs {
+                try pair.destination.insertTimeRange(timeRange, of: pair.source, at: cursor)
             }
             cursor = CMTimeAdd(cursor, timeRange.duration)
         }
@@ -96,7 +115,7 @@ public enum CompositionBuilder {
 
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
-        videoComposition.frameDuration = CMTime(value: 1, timescale: 60)
+        videoComposition.frameDuration = compositionFrameDuration
 
         let instruction = AVMutableVideoCompositionInstruction()
         instruction.timeRange = CMTimeRange(start: .zero, duration: cursor)

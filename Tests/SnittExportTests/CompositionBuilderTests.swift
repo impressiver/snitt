@@ -6,12 +6,12 @@ import SnittDocument
 
 /// A tiny real movie, so the builder is exercised against AVFoundation rather
 /// than a mock that cannot disagree with it.
-private func makeTestBundle(seconds: Double = 4) throws -> SnittBundle {
+private func makeTestBundle(seconds: Double = 4, audioTrackCount: Int = 0) throws -> SnittBundle {
     let url = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
         .appendingPathExtension(SnittBundle.fileExtension)
     let bundle = try SnittBundle(creatingAt: url)
-    try writeSyntheticMovie(to: bundle.captureURL, seconds: seconds)
+    try writeSyntheticMovie(to: bundle.captureURL, seconds: seconds, audioTrackCount: audioTrackCount)
     return bundle
 }
 
@@ -95,5 +95,38 @@ func sliverKeptRangeThrows() async throws {
     edl.cuts = [TimeRange(start: 0, end: 3.9999995)]
     await #expect(throws: CompositionError.everythingCut) {
         _ = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+    }
+}
+
+@Test("Each composition audio track carries only its own source track's samples")
+func audioTracksPairBySourceNotFlattened() async throws {
+    // Review finding: a video-only synthetic movie never exercises the
+    // per-source-track audio pairing (sourceAudio == [] in every other test
+    // here), so the pairing code has run only against a reviewer's throwaway
+    // fixture, not the checked-in suite. This is that missing coverage.
+    //
+    // Matched by sourceTrackID via AVCompositionTrackSegment rather than by
+    // content, so this also catches a pairing that is merely REVERSED (index
+    // 0 gets source 1's samples and vice versa) as well as one that
+    // flattens both sources into a single composition track.
+    let bundle = try makeTestBundle(seconds: 2, audioTrackCount: 2)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+    let sourceAsset = AVURLAsset(url: bundle.captureURL)
+    let sourceAudioTracks = try await sourceAsset.loadTracks(withMediaType: .audio)
+    #expect(sourceAudioTracks.count == 2)
+
+    let built = try await CompositionBuilder.build(
+        bundle: bundle, edl: .fullRange(), scale: 1.0)
+
+    let compositionAudioTracks = built.composition.tracks(withMediaType: .audio)
+    #expect(compositionAudioTracks.count == 2)
+
+    for (index, compositionTrack) in compositionAudioTracks.enumerated() {
+        let expectedSourceID = sourceAudioTracks[index].trackID
+        let segmentSourceIDs = compositionTrack.segments.compactMap(\.sourceTrackID)
+        #expect(!segmentSourceIDs.isEmpty)
+        #expect(segmentSourceIDs.allSatisfy { $0 == expectedSourceID },
+                "composition audio track \(index) should carry only source track \(expectedSourceID)'s samples, saw \(segmentSourceIDs)")
     }
 }
