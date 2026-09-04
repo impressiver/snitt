@@ -182,6 +182,54 @@ public enum MCPBridge {
                     ],
                     "required": ["bundlePath"],
                 ]),
+            ToolDefinition(
+                name: "snitt_trim",
+                description: "Cut dead time from a recording by editing its edit decision "
+                           + "list. Never touches capture.mov. Provide either an explicit "
+                           + "start/end range or autoTrim to trim bookends from a human "
+                           + "recording's input events.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "bundlePath": [
+                            "type": "string",
+                            "description": "Path printed by snitt_stop_recording",
+                        ],
+                        "start": ["type": "number", "description": "Seconds to cut from the start"],
+                        "end": ["type": "number", "description": "Seconds to cut from the end"],
+                        "autoTrim": [
+                            "type": "boolean",
+                            "description": "Trim bookends using recorded input events. Only "
+                                + "works on human recordings — agent recordings have no "
+                                + "input events and are refused.",
+                        ],
+                    ],
+                    "required": ["bundlePath"],
+                ]),
+            ToolDefinition(
+                name: "snitt_export",
+                description: "Render the trimmed recording to a movie file and return a "
+                           + "manifest — duration, dimensions, byte size, chapters — that "
+                           + "an agent can quote without watching the file.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "bundlePath": [
+                            "type": "string",
+                            "description": "Path printed by snitt_stop_recording",
+                        ],
+                        "format": [
+                            "type": "string",
+                            "description": "Only \"mp4\" is supported in this milestone.",
+                        ],
+                        "outputPath": ["type": "string", "description": "Where to write the movie"],
+                        "scale": ["type": "number", "default": 1.0,
+                                  "description": "Pixel-dimension multiplier"],
+                        "chapters": ["type": "boolean", "default": false,
+                                     "description": "Write a .vtt beside the output from the bundle's markers"],
+                    ],
+                    "required": ["bundlePath", "format", "outputPath"],
+                ]),
         ]
     }
 
@@ -240,6 +288,45 @@ public enum MCPBridge {
             }
             return .success(.inspect(bundlePath: path))
 
+        case "snitt_trim":
+            guard let path = arguments["bundlePath"] as? String else {
+                return .failure(MCPBridgeError("snitt_trim requires bundlePath"))
+            }
+            let start = numericValue(arguments["start"])
+            let end = numericValue(arguments["end"])
+            let auto = arguments["autoTrim"] as? Bool ?? false
+            // A trim with neither a range nor autoTrim would write an empty
+            // edit and report success — the same confidently-wrong failure
+            // the CLI's parser refuses (§8).
+            guard auto || start != nil || end != nil else {
+                return .failure(MCPBridgeError(
+                    "snitt_trim requires either start/end or autoTrim: true. "
+                  + "Writing no cuts would silently do nothing."))
+            }
+            return .success(.trim(bundlePath: path, start: start, end: end, auto: auto))
+
+        case "snitt_export":
+            guard let path = arguments["bundlePath"] as? String else {
+                return .failure(MCPBridgeError("snitt_export requires bundlePath"))
+            }
+            guard let format = arguments["format"] as? String else {
+                return .failure(MCPBridgeError("snitt_export requires format"))
+            }
+            // gif is M3d — a separate encoder entirely. Accepting it here
+            // would silently write an mp4 to a path that says .gif.
+            guard format == "mp4" else {
+                return .failure(MCPBridgeError(
+                    "Unsupported export format: \(format). Only mp4 is supported in this "
+                  + "milestone; gif is planned for a later release."))
+            }
+            guard let outputPath = arguments["outputPath"] as? String else {
+                return .failure(MCPBridgeError("snitt_export requires outputPath"))
+            }
+            let scale = numericValue(arguments["scale"]) ?? 1.0
+            let chapters = arguments["chapters"] as? Bool ?? false
+            return .success(.export(bundlePath: path, format: format, outputPath: outputPath,
+                                     scale: scale, chapters: chapters))
+
         default:
             return .failure(MCPBridgeError("Unknown tool: \(name)"))
         }
@@ -260,5 +347,14 @@ public enum MCPBridge {
         guard double.truncatingRemainder(dividingBy: 1) == 0 else { return nil }
         guard double >= 0, double <= Double(UInt32.max) else { return nil }
         return UInt32(double)
+    }
+
+    /// Converts an MCP argument value to a `Double`, the same way
+    /// `displayID(from:)` converts to `UInt32`: JSON numbers arrive as `Int`,
+    /// `Double`, or `NSNumber` depending on the decoder, and all three bridge
+    /// to `NSNumber` on Darwin.
+    private static func numericValue(_ value: Any?) -> Double? {
+        guard let value, !(value is Bool), let number = value as? NSNumber else { return nil }
+        return number.doubleValue
     }
 }

@@ -67,6 +67,54 @@ func inspectNeedsAPath() {
     #expect(CommandLineParser.parse(["inspect"]).isFailure)
 }
 
+@Test("trim parses a range")
+func parsesTrimRange() {
+    #expect(CommandLineParser.parse(["trim", "/tmp/x.snitt", "--start", "5", "--end", "25"])
+            == .success(.trim(bundlePath: "/tmp/x.snitt", start: 5, end: 25, auto: false)))
+}
+
+@Test("trim --auto-trim parses without a range")
+func parsesAutoTrim() {
+    #expect(CommandLineParser.parse(["trim", "/tmp/x.snitt", "--auto-trim"])
+            == .success(.trim(bundlePath: "/tmp/x.snitt", start: nil, end: nil, auto: true)))
+}
+
+@Test("trim with neither a range nor --auto-trim is refused")
+func trimNeedsSomething() {
+    // Writing an empty edit silently would look like it worked.
+    #expect(CommandLineParser.parse(["trim", "/tmp/x.snitt"]).isFailure)
+}
+
+@Test("export parses its format, output and scale")
+func parsesExport() {
+    guard case .success(.export(let path, let format, let out, let scale, let chapters)) =
+        CommandLineParser.parse(["export", "/tmp/x.snitt", "--format", "mp4",
+                                 "--out", "/tmp/demo.mp4", "--scale", "0.5", "--chapters"])
+    else { Issue.record("parse failed"); return }
+    #expect(path == "/tmp/x.snitt")
+    #expect(format == "mp4")
+    #expect(out == "/tmp/demo.mp4")
+    #expect(scale == 0.5)
+    #expect(chapters == true)
+}
+
+@Test("export defaults to full scale and no chapters")
+func exportDefaults() {
+    guard case .success(.export(_, _, _, let scale, let chapters)) =
+        CommandLineParser.parse(["export", "/tmp/x.snitt", "--format", "mp4",
+                                 "--out", "/tmp/demo.mp4"])
+    else { Issue.record("parse failed"); return }
+    #expect(scale == 1.0)
+    #expect(chapters == false)
+}
+
+@Test("export rejects a format this milestone cannot write")
+func exportRejectsGif() {
+    // gif is M3d. Accepting it here would produce an mp4 with a .gif name.
+    #expect(CommandLineParser.parse(["export", "/tmp/x.snitt", "--format", "gif",
+                                     "--out", "/tmp/demo.gif"]).isFailure)
+}
+
 private extension Result {
     var isFailure: Bool { if case .failure = self { return true }; return false }
 }

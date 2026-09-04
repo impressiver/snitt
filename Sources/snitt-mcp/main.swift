@@ -75,12 +75,19 @@ func describe(_ response: AutomationResponse) -> String {
              + "\(report.markerCount) markers, \(report.inputEventCount) input events"
              + (chapters.isEmpty ? "" : " — \(chapters)")
     case .trimmed(let summary):
-        // No MCP tool builds a `.trim` request yet — trim and export land on
-        // the wire in this change, with their tool surface to follow. This
-        // case exists so `describe` stays exhaustive.
-        return (try? encoder.encode(summary)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        // An MCP client reads text, not JSON structure — prose is the
+        // deliverable, same as every other case here.
+        let cuts = summary.cuts
+            .map { String(format: "%.0f-%.0fs", $0.start, $0.end) }
+            .joined(separator: ", ")
+        return "Kept \(Int(summary.keptSeconds))s, cut \(Int(summary.cutSeconds))s"
+             + (cuts.isEmpty ? "" : " (\(cuts))")
     case .exported(let manifest):
-        return (try? encoder.encode(manifest)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        let megabytes = Double(manifest.byteSize) / 1_000_000
+        let chapters = manifest.chapters.map(\.title).joined(separator: ", ")
+        return "Exported \(Int(manifest.durationSeconds))s to \(manifest.outputPath) "
+             + "(\(String(format: "%.1f", megabytes)) MB)"
+             + (chapters.isEmpty ? "" : ", chapters: \(chapters)")
     }
 }
 

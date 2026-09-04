@@ -39,6 +39,12 @@ snitt — record a window and hand back a .snitt bundle
   snitt record stop <session-id>         stop; prints the bundle path
   snitt record mark <session-id> [--label <text>]   drop a marker
   snitt inspect <bundle>                 metadata as JSON, no GUI
+  snitt trim <bundle> --start <s> --end <s>   cut a range (edit.json only)
+  snitt trim <bundle> --auto-trim        trim bookends from a human recording's
+                                          input events; refused on recordings
+                                          with none
+  snitt export <bundle> --format mp4 --out <path>   render a movie
+        [--scale <factor>] [--chapters]    scale pixels; write a .vtt from markers
   snitt status                           whether a recording is running
 
 Output is JSON on stdout and human text on stderr, so a script can parse one
@@ -72,11 +78,23 @@ case .recordStop(let session):  body = .stopRecording(sessionID: session)
 case .recordMark(let session, let label): body = .mark(sessionID: session, label: label)
 case .status:                   body = .status
 case .inspect(let path):        body = .inspect(bundlePath: path)
+case .trim(let path, let start, let end, let auto):
+    body = .trim(bundlePath: path, start: start, end: end, auto: auto)
+case .export(let path, let format, let out, let scale, let chapters):
+    body = .export(bundlePath: path, format: format, outputPath: out,
+                    scale: scale, chapters: chapters)
 case .help:                     body = .status  // unreachable; handled above
 }
 
+let isExport: Bool
+if case .export = command { isExport = true } else { isExport = false }
+
 do {
-    let response = try await AutomationClient().send(body)
+    // Encoding takes seconds to tens of seconds and the default client
+    // timeout is 120s. A job-id-and-poll protocol is complexity v0 does not
+    // need; if exports ever exceed ten minutes, that is the moment to add one.
+    let client = AutomationClient(timeout: isExport ? 600 : 120)
+    let response = try await client.send(body)
     switch response {
     case .failure(let error):
         emit(error)
@@ -107,10 +125,6 @@ do {
         note("\(Int(report.durationSeconds ?? 0))s · \(report.markerCount) markers "
            + "· \(report.inputEventCount) input events")
     case .trimmed(let summary):
-        // No CLI subcommand builds a `.trim` request yet — trim and export
-        // land on the wire in this change, with their command-line surface
-        // to follow. This case exists so the response switch stays
-        // exhaustive and the wire format is already rendered correctly.
         emit(summary)
         note("Kept \(Int(summary.keptSeconds))s, cut \(Int(summary.cutSeconds))s")
     case .exported(let manifest):

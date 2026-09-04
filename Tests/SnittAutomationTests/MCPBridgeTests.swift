@@ -9,7 +9,10 @@ func everyToolMaps() {
             ? ["bundleIdentifier": "com.apple.Safari"]
             : (tool.name == "snitt_stop_recording" || tool.name == "snitt_add_marker"
                 ? ["sessionId": "abc"]
-                : (tool.name == "snitt_inspect" ? ["bundlePath": "/tmp/x.snitt"] : [:]))
+                : (tool.name == "snitt_inspect" ? ["bundlePath": "/tmp/x.snitt"]
+                : (tool.name == "snitt_trim" ? ["bundlePath": "/tmp/x.snitt", "autoTrim": true]
+                : (tool.name == "snitt_export" ? ["bundlePath": "/tmp/x.snitt", "format": "mp4",
+                                                   "outputPath": "/tmp/demo.mp4"] : [:]))))
         let mapped = MCPBridge.request(forTool: tool.name, arguments: args)
         guard case .success = mapped else {
             Issue.record("advertised tool \(tool.name) does not map to a request"); return
@@ -22,7 +25,22 @@ func toolNamesAreStable() {
     let names = Set(MCPBridge.toolDefinitions().map(\.name))
     #expect(names == ["snitt_list_targets", "snitt_start_recording",
                       "snitt_stop_recording", "snitt_status", "snitt_add_marker",
-                      "snitt_inspect"])
+                      "snitt_inspect", "snitt_trim", "snitt_export"])
+}
+
+@Test("Both frontends express a trim identically")
+func frontendsAgreeOnTrim() {
+    guard case .success(.trim(let cliPath, let cliStart, let cliEnd, let cliAuto)) =
+        CommandLineParser.parse(["trim", "/tmp/d.snitt", "--start", "1", "--end", "9"])
+    else { Issue.record("CLI could not express a trim"); return }
+    guard case .success(.trim(let mcpPath, let mcpStart, let mcpEnd, let mcpAuto)) =
+        MCPBridge.request(forTool: "snitt_trim",
+                          arguments: ["bundlePath": "/tmp/d.snitt", "start": 1, "end": 9])
+    else { Issue.record("MCP could not express a trim"); return }
+    #expect(cliPath == mcpPath)
+    #expect(cliStart == mcpStart)
+    #expect(cliEnd == mcpEnd)
+    #expect(cliAuto == mcpAuto)
 }
 
 @Test("Both frontends express a marker identically")
