@@ -9,6 +9,27 @@ private func tempMovieURL() -> URL {
         .appendingPathExtension("mov")
 }
 
+/// `AVAssetWriter` flushes movie fragments to disk on its own internal
+/// queue; appending samples does not make the write happen synchronously,
+/// nor within any fixed wall-clock delay. There is no completion callback
+/// for this (the writer's fragment-flush is distinct from the segment-data
+/// delegate used for HLS-style fMP4 output), so the only honest way to
+/// observe "bytes eventually landed on disk" is to poll for the condition
+/// with a generous timeout rather than assume a fixed sleep is enough.
+/// This never blocks a thread — each iteration suspends via `Task.sleep`.
+private func waitUntil(
+    timeout: Duration = .seconds(5),
+    pollInterval: Duration = .milliseconds(20),
+    _ condition: () -> Bool
+) async -> Bool {
+    let deadline = ContinuousClock.now + timeout
+    while true {
+        if condition() { return true }
+        if ContinuousClock.now >= deadline { return condition() }
+        try? await Task.sleep(for: pollInterval)
+    }
+}
+
 @Test("Writes a movie containing one video and two audio tracks")
 func writesThreeTracks() async throws {
     let url = tempMovieURL()
@@ -64,11 +85,16 @@ func unfinalizedFileHasBytesOnDisk() async throws {
         try sink.append(makeVideoBuffer(at: Double(frame) / 60.0, size: size),
                         to: .video)
     }
-    try await Task.sleep(for: .milliseconds(500))
-
-    let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-    let size_ = attributes[.size] as! Int
-    #expect(size_ > 0, "a crash must leave bytes on disk, not an empty file")
+    // A fragment flush happens asynchronously on the writer's own queue, so
+    // "bytes are on disk" is not true at any deterministic moment right
+    // after appending — poll for it instead of assuming a fixed delay
+    // suffices (see `waitUntil`).
+    let sawBytesOnDisk = await waitUntil {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
+        let size = attributes?[.size] as? Int ?? 0
+        return size > 0
+    }
+    #expect(sawBytesOnDisk, "a crash must leave bytes on disk, not an empty file")
 }
 
 @Test("A rejected buffer is not folded into the health metrics")
