@@ -570,7 +570,10 @@ func degenerateRenderSizeRefused() async throws {
 }
 ```
 
-`makeTestBundle` currently takes `seconds:` and `audioTrackCount:`. Add a `size: CGSize = CGSize(width: 320, height: 240)` parameter and thread it into `writeSyntheticMovie`.
+**Two facts about the existing test helpers, verified — do not assume otherwise:**
+
+- `makeTestBundle` is declared `private` in `MovieExporterTests.swift`, so it is file-scoped and **not visible from `GIFExporterTests.swift`**. Either drop `private` and move it to a shared file in the same test target, or give `GIFExporterTests` its own. Do not duplicate `writeSyntheticMovie` — that helper is already shared and deliberately so.
+- `makeTestBundle` currently takes `seconds:` and `audioTrackCount:`. Add `size: CGSize = CGSize(width: 320, height: 240)` and thread it into `writeSyntheticMovie(to:seconds:size:fps:audioTrackCount:)`, which already accepts a `size`.
 
 - [ ] **Step 2: Run to verify it fails**
 
@@ -908,7 +911,7 @@ func mcpAcceptsGifAndMaxSize() {
     let args = jsonArguments("""
     {"bundlePath":"/tmp/b.snitt","format":"gif","outputPath":"/tmp/o.gif","maxSize":"5MB"}
     """)
-    guard case .success(let request) = MCPBridge.request(tool: "snitt_export", arguments: args),
+    guard case .success(let request) = MCPBridge.request(forTool: "snitt_export", arguments: args),
           case .export(_, let format, _, _, _, let maxSize) = request.body else {
         Issue.record("expected a successful export request"); return
     }
@@ -921,7 +924,7 @@ func mcpMalformedMaxSizeFails() {
     let args = jsonArguments("""
     {"bundlePath":"/tmp/b.snitt","format":"mp4","outputPath":"/tmp/o.mp4","maxSize":"lots"}
     """)
-    guard case .failure(let error) = MCPBridge.request(tool: "snitt_export", arguments: args) else {
+    guard case .failure(let error) = MCPBridge.request(forTool: "snitt_export", arguments: args) else {
         Issue.record("expected failure"); return
     }
     #expect(error.message.contains("maxSize"))
@@ -932,7 +935,7 @@ func mcpAbsentMaxSizeIsNoLimit() {
     let args = jsonArguments("""
     {"bundlePath":"/tmp/b.snitt","format":"mp4","outputPath":"/tmp/o.mp4"}
     """)
-    guard case .success(let request) = MCPBridge.request(tool: "snitt_export", arguments: args),
+    guard case .success(let request) = MCPBridge.request(forTool: "snitt_export", arguments: args),
           case .export(_, _, _, _, _, let maxSize) = request.body else {
         Issue.record("expected success"); return
     }
