@@ -68,27 +68,6 @@ if case .help = command {
     exit(0)
 }
 
-/// Resolves a client-supplied path against THIS process's working directory.
-///
-/// `AutomationHost` resolves `bundlePath`/`outputPath` with
-/// `URL(fileURLWithPath:)` against the APP's working directory, not the
-/// caller's — Snitt.app is a resident menu-bar app launched once, with no
-/// relationship to wherever an agent happens to be running. `snitt export
-/// --out demo.mp4` used to write beside the app (or fail outright) and hand
-/// back a manifest whose `outputPath` was the bare string `"demo.mp4"`,
-/// which the agent that asked for it cannot resolve either. Absolutizing
-/// here, in the client that actually knows the caller's directory, means the
-/// app never has to guess and the manifest always names a path the caller
-/// can open. `record start` already does the equivalent by sending
-/// `workingDirectory` for git resolution; this reaches the same fix for
-/// `inspect`/`trim`/`export` without extending the wire protocol.
-func resolvePath(_ path: String) -> String {
-    if path.hasPrefix("/") { return path }
-    return URL(fileURLWithPath: path,
-               relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath))
-        .standardizedFileURL.path
-}
-
 let body: AutomationRequest.Body
 switch command {
 case .targetsList:              body = .listTargets
@@ -98,11 +77,11 @@ case .recordStart(var options):
 case .recordStop(let session):  body = .stopRecording(sessionID: session)
 case .recordMark(let session, let label): body = .mark(sessionID: session, label: label)
 case .status:                   body = .status
-case .inspect(let path):        body = .inspect(bundlePath: resolvePath(path))
+case .inspect(let path):        body = .inspect(bundlePath: PathResolver.resolve(path))
 case .trim(let path, let start, let end, let auto):
-    body = .trim(bundlePath: resolvePath(path), start: start, end: end, auto: auto)
+    body = .trim(bundlePath: PathResolver.resolve(path), start: start, end: end, auto: auto)
 case .export(let path, let format, let out, let scale, let chapters):
-    body = .export(bundlePath: resolvePath(path), format: format, outputPath: resolvePath(out),
+    body = .export(bundlePath: PathResolver.resolve(path), format: format, outputPath: PathResolver.resolve(out),
                     scale: scale, chapters: chapters)
 case .help:                     body = .status  // unreachable; handled above
 }
