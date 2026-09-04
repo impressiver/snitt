@@ -65,11 +65,31 @@ public enum CompositionBuilder {
     /// in `KeptRanges` — at one frame of `compositionFrameDuration`.
     static let minimumKeptDuration: Double = CMTimeGetSeconds(compositionFrameDuration)
 
+    /// The MEDIA duration of `bundle.capture.mov`, loaded straight from the
+    /// asset — never `RecordingMetadata.durationSeconds`, which is WALL time
+    /// stamped around the capture and always longer (see that property's doc
+    /// comment in `SnittDocument`).
+    ///
+    /// This is the SAME call `build(bundle:edl:scale:)` below makes for its
+    /// own `assetDuration`. It is factored out, rather than left as two call
+    /// sites that happen to agree, specifically so a caller outside this
+    /// file — `AutomationHost.trim`, which computes `KeptRanges` and
+    /// `TrimSummary` before any composition exists — runs on the exact same
+    /// clock the export path does. Before this fix, trim used the wall clock
+    /// and export used this one; the two disagree on every real recording,
+    /// and an agent trimming `--start 1` on a 4.25s-wall/4.0s-media
+    /// recording was told `keptSeconds` on a clock the exported file does
+    /// not have.
+    public static func mediaDuration(of bundle: SnittBundle) async throws -> Double {
+        let asset = AVURLAsset(url: bundle.captureURL)
+        return CMTimeGetSeconds(try await asset.load(.duration))
+    }
+
     public static func build(bundle: SnittBundle,
                              edl: EditDecisionList,
                              scale: Double) async throws -> BuiltComposition {
         let asset = AVURLAsset(url: bundle.captureURL)
-        let assetDuration = CMTimeGetSeconds(try await asset.load(.duration))
+        let assetDuration = try await mediaDuration(of: bundle)
 
         guard let sourceVideo = try await asset.loadTracks(withMediaType: .video).first
         else { throw CompositionError.noVideoTrack }

@@ -124,7 +124,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             return inspect(bundlePath: path)
 
         case .trim(let bundlePath, let start, let end, let auto):
-            return trim(bundlePath: bundlePath, start: start, end: end, auto: auto)
+            return await trim(bundlePath: bundlePath, start: start, end: end, auto: auto)
 
         case .export(let bundlePath, let format, let outputPath, let scale, let chapters):
             return await export(bundlePath: bundlePath, format: format, outputPath: outputPath,
@@ -137,12 +137,44 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// Runs IN THE APP, not the client, for the same reason `inspect` does:
     /// the CLI cannot read the bundle's `meta.json`/`events.json` to compute
     /// cuts, because the default output directory is TCC-gated (§4.9).
+    ///
+    /// Duration comes from `CompositionBuilder.mediaDuration(of:)` — the
+    /// SAME clock `MovieExporter`/`CompositionBuilder` build the exported
+    /// file on — never from `RecordingMetadata.durationSeconds`, which is
+    /// WALL time (stamped around the capture, always the longer of the two;
+    /// see that property's doc comment) and was never equal to the media
+    /// clock on a real recording. Reporting `keptSeconds`/`cutSeconds` on
+    /// the wall clock while the export lands on the media clock told an
+    /// agent a number the exported file did not have — exactly the
+    /// confidently-wrong result §8 forbids. If `capture.mov` cannot be read
+    /// to answer that question, the trim is refused rather than falling
+    /// back to the wall clock: a refusal an agent can act on beats a number
+    /// that quietly does not describe the file it will get.
     private func trim(bundlePath: String, start: Double?, end: Double?,
-                      auto: Bool) -> AutomationResponse {
+                      auto: Bool) async -> AutomationResponse {
+        let bundle: SnittBundle
         do {
-            let bundle = try SnittBundle(opening: URL(fileURLWithPath: bundlePath))
-            let meta = try RecordingMetadata.read(from: bundle)
-            let duration = meta.durationSeconds ?? 0
+            bundle = try SnittBundle(opening: URL(fileURLWithPath: bundlePath))
+        } catch {
+            return .failure(AutomationError(
+                code: .targetNotFound,
+                message: "Could not read a recording at that path.",
+                hint: "Use the path `snitt record stop` printed."))
+        }
+
+        let duration: Double
+        do {
+            duration = try await CompositionBuilder.mediaDuration(of: bundle)
+        } catch {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "Could not determine the recording's duration from capture.mov.",
+                hint: "The bundle's capture.mov may be missing or unreadable, so trim "
+                    + "cannot compute a duration that will match an export: "
+                    + String(describing: error)))
+        }
+
+        do {
             let existing = (try? EditDecisionList.read(from: bundle)) ?? .fullRange()
 
             let cuts: [TimeRange]
@@ -173,10 +205,16 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                     + "<seconds> --end <seconds>` instead, or `snitt inspect` to see "
                     + "the markers you can trim around."))
         } catch {
+            // Was `code: .targetNotFound, "Could not read a recording at that
+            // path."` for EVERY error here, including a failed
+            // `updated.write(to: bundle)` (full disk, read-only bundle) —
+            // which has nothing to do with the path and sent an agent to fix
+            // the wrong thing. Mirrors `export`'s catch-all below, which
+            // already preserves the real error in the hint.
             return .failure(AutomationError(
-                code: .targetNotFound,
-                message: "Could not read a recording at that path.",
-                hint: "Use the path `snitt record stop` printed."))
+                code: .internalError,
+                message: "The trim could not be completed.",
+                hint: String(describing: error)))
         }
     }
 
