@@ -103,4 +103,29 @@ struct EditorWindowControllerTests {
         // window the user cannot see.
         #expect(controller.player.rate == 0)
     }
+
+    @Test("Closing by the window's own close button tears down like close() does")
+    func closeButtonPathTearsDown() async throws {
+        // The path a real user actually takes. `close()` is the programmatic
+        // door; clicking the window's close button arrives through
+        // `windowWillClose(_:)` instead, and if that path skips teardown the
+        // app strands a Dock icon with no windows and keeps playing audio the
+        // user cannot see.
+        //
+        // Task 4's report said this needed a live window server. It does not:
+        // `windowWillClose(_:)` is public and `teardown()` is idempotent, so
+        // the delegate callback can be invoked directly with a synthetic
+        // notification.
+        let controller = try await makePreviewController(seconds: 3)
+        let editor = EditorWindowController(controller: controller, title: "demo")
+        editor.show()
+        controller.play()
+        #expect(NSApp.activationPolicy() == .regular)
+
+        editor.windowWillClose(Notification(name: NSWindow.willCloseNotification))
+
+        #expect(EditorWindowController.openWindowCount == 0)
+        #expect(NSApp.activationPolicy() == .accessory)
+        #expect(controller.player.rate == 0)
+    }
 }
