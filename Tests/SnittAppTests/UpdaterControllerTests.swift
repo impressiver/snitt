@@ -41,14 +41,19 @@ func updaterHonoursTheSetting() {
     //
     // Verified against the exact wrong implementation this exists to catch:
     // an `UpdaterController` whose `automaticChecksEnabled` setter writes
-    // only to a private cached var and never forwards to
-    // `SPUUpdater.automaticallyChecksForUpdates` passes `off`/`on` above
-    // (they only construct and read back) AND is invisible to
-    // `turningOffCancelsAPendingCheck` (which drives a raw `SPUUpdater` and
-    // never touches `UpdaterController` at all) — the full suite reports
-    // 470 passing with that mutant in place. Against that mutant this
-    // assertion fails with `(… as? Bool → false) == true`; restoring the
-    // real forwarding passes both directions again.
+    // only to a private cached var (with `init` still forwarding to
+    // `SPUUpdater.automaticallyChecksForUpdates` directly, not through the
+    // setter) passes `off`/`on` above — `on` was constructed with `true`,
+    // so line 53 is satisfied by `init`'s own forwarding — AND is invisible
+    // to `turningOffCancelsAPendingCheck` (which drives a raw `SPUUpdater`
+    // and never touches `UpdaterController` at all). Re-ran this exact
+    // mutant to record real output rather than a different run's: full
+    // suite `Test run with 470 tests in 8 suites failed after 42.134
+    // seconds with 1 issue`, the one issue at THIS line —
+    // `Expectation failed: (UserDefaults.standard.object(forKey:
+    // "SUEnableAutomaticChecks") as? Bool → true) == false`, i.e. the
+    // `= false` write on the line below never reached Sparkle. Restoring
+    // the real forwarding passes both directions and the full 470 again.
     on.automaticChecksEnabled = true
     #expect(UserDefaults.standard.object(forKey: "SUEnableAutomaticChecks") as? Bool == true)
     on.automaticChecksEnabled = false
@@ -152,21 +157,67 @@ private struct SparkleFixture {
     private let root: URL
     private let defaultsSuite: String
 
-    /// Deletes any `com.snitt.test.fixture.*.plist` this test file's own
-    /// earlier runs left behind in `~/Library/Preferences`. `cleanUp()`'s
-    /// own best-effort retry closes the common case, but `cfprefsd` can
-    /// flush a domain's dirty state well after this process has already
-    /// exited — outside anything an in-process retry can catch (observed:
-    /// stray files still appear occasionally even with a bounded retry
-    /// under the full suite's parallel load). Without this sweep that is
-    /// unbounded growth, one file per leaked run, forever; with it, the
-    /// namespace is swept clean at the start of every run regardless of
-    /// what the previous run left behind.
+    /// Captured once, on first use — before either fixture-creating test
+    /// can possibly have written a plist — so the sweep below has a fixed
+    /// point to compare against rather than "now" (which would race
+    /// whichever fixture is concurrently live).
+    private static let processStartTime = Date()
+
+    /// Deletes any `com.snitt.test.fixture.*.plist` OLDER than this
+    /// process's own start time — i.e. left behind by an earlier `swift
+    /// test` invocation, never by this one — from `~/Library/Preferences`.
+    /// `cleanUp()`'s own best-effort retry closes the common case, but
+    /// `cfprefsd` can flush a domain's dirty state well after that process
+    /// has already exited — outside anything an in-process retry can catch
+    /// (observed: stray files still appear occasionally even with a
+    /// bounded retry under the full suite's parallel load). Without this
+    /// sweep that is unbounded growth, one file per leaked run, forever;
+    /// with it, the namespace is swept clean at the start of every run
+    /// regardless of what the previous run left behind.
+    ///
+    /// R24: the `processStartTime` cutoff (rather than sweeping
+    /// unconditionally) is what keeps this safe against the *other*
+    /// fixture-creating test's file being live in the SAME run. Both
+    /// `freshInstallSchedulesNoAutomaticCheck` and
+    /// `turningOffCancelsAPendingCheck` are `@MainActor` but both `await`
+    /// inside `waitUntil` (`Task.sleep`), which releases the main actor —
+    /// so `make()` from one can genuinely run while the other's fixture is
+    /// still live and polling. An unconditional sweep would be able to
+    /// delete the live fixture's `SULastCheckTime`-seeded suite out from
+    /// under it — the harm mode that matters is R19's: falling into
+    /// Sparkle's "overdue, check right now" branch, i.e. a real,
+    /// unrequested network request, the one thing this task exists to
+    /// prevent. A file this process itself creates always has a
+    /// modification date after `processStartTime` (captured before any
+    /// fixture in this process has been made), so it can never match
+    /// `< processStartTime` and can never be swept by either test in this
+    /// process, regardless of scheduling order. This closes the reachable,
+    /// same-process interleaving deterministically — it does not depend on
+    /// timing luck, only on `processStartTime` having been captured first,
+    /// which happens automatically. It does not close two literally
+    /// concurrent `swift test` PROCESSES on one machine: a second process
+    /// starting after the first has already written a fixture, but before
+    /// that fixture's owning test has finished, would see a file older
+    /// than ITS OWN `processStartTime` and could still sweep it. I did not
+    /// attempt to close that case — it needs a cross-process lock, which
+    /// is disproportionate here — and I did not reproduce it, so I am not
+    /// claiming it is fixed, only that the concretely reachable
+    /// same-process race is.
     private static func sweepStaleFixtureFiles() {
         guard let preferencesDirectory = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first?
             .appendingPathComponent("Preferences") else { return }
-        guard let contents = try? FileManager.default.contentsOfDirectory(at: preferencesDirectory, includingPropertiesForKeys: nil) else { return }
+        guard let contents = try? FileManager.default.contentsOfDirectory(
+            at: preferencesDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey]
+        ) else { return }
         for file in contents where file.lastPathComponent.hasPrefix("com.snitt.test.fixture.") {
+            let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+            // A file whose modification date can't be read is left alone,
+            // not swept: the asymmetry in R19 is that leaking a stray
+            // 42-byte plist is harmless, while deleting a live fixture's
+            // backing file risks the one thing this task exists to
+            // prevent, so an unreadable date errs toward not deleting.
+            guard let modified, modified < processStartTime else { continue }
             try? FileManager.default.removeItem(at: file)
         }
     }
