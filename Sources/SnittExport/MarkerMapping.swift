@@ -13,6 +13,10 @@ import SnittDocument
 /// `keptRanges` must be the SAME set `CompositionBuilder` used to build the
 /// composition — including its sub-frame-sliver filtering — or a marker can
 /// map to a position that does not exist in the export.
+///
+/// The range-walk itself lives in `SnittDocument.TimeRangeMapping`, shared
+/// with the preview's `MarkerJumpPoints` — this type only shapes the result
+/// into `LoggedEvent`s.
 public enum MarkerMapping {
     /// A marker whose raw timestamp falls inside a cut range is dropped, not
     /// clamped to the nearest kept boundary. Clamping would invent a chapter
@@ -23,23 +27,16 @@ public enum MarkerMapping {
 
         var mapped: [LoggedEvent] = []
         for marker in markers where marker.kind == .marker {
-            var cursor = 0.0
-            for (index, range) in keptRanges.enumerated() {
-                let isLastRange = index == keptRanges.count - 1
-                let withinRange = isLastRange
-                    ? (marker.timeSeconds >= range.start && marker.timeSeconds <= range.end)
-                    : (marker.timeSeconds >= range.start && marker.timeSeconds < range.end)
-                if withinRange {
-                    mapped.append(LoggedEvent(
-                        timeSeconds: cursor + (marker.timeSeconds - range.start),
-                        kind: .marker,
-                        label: marker.label))
-                    break
-                }
-                cursor += range.end - range.start
+            guard let timeSeconds = TimeRangeMapping.trimmedTime(
+                of: marker.timeSeconds, keptRanges: keptRanges) else {
+                // A marker that matched no range fell inside a cut (or a
+                // filtered sub-frame sliver) — dropped.
+                continue
             }
-            // A marker that matched no range fell inside a cut (or a
-            // filtered sub-frame sliver) — dropped by falling through.
+            mapped.append(LoggedEvent(
+                timeSeconds: timeSeconds,
+                kind: .marker,
+                label: marker.label))
         }
         return mapped.sorted { $0.timeSeconds < $1.timeSeconds }
     }
