@@ -16,16 +16,37 @@ import Foundation
 /// `AutomationHost.trim`/`.export` tests only need a real, readable movie
 /// with a known duration, not the per-source-track audio pairing that
 /// `SnittExportTests`' copy also exercises.
+///
+/// - Parameter maxKeyFrameInterval: opt-in `AVVideoMaxKeyFrameIntervalKey`.
+///   `nil` (the default) leaves the encoder's own keyframe placement alone —
+///   no existing test's fixture changes. With this left unset, the encoder
+///   places keyframes so densely on this fixture's low-motion content that a
+///   tolerant seek has nothing to snap to but the exact target, which is
+///   exactly the failure mode this parameter exists to let a test escape:
+///   pass a value large relative to the clip's total frame count (e.g. the
+///   frame count itself, forcing a single keyframe at the very start) to
+///   produce a movie where `AVPlayer.seek(to:)` WITHOUT
+///   `toleranceBefore/After: .zero` visibly lands somewhere other than the
+///   requested time, and where dropping those tolerances is therefore
+///   something a test can actually detect rather than something that quietly
+///   changes nothing.
 func writeSyntheticMovie(to url: URL, seconds: Double,
                          size: CGSize = CGSize(width: 320, height: 240),
-                         fps: Int32 = 30) async throws {
+                         fps: Int32 = 30,
+                         maxKeyFrameInterval: Int32? = nil) async throws {
     nonisolated(unsafe) let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
 
-    nonisolated(unsafe) let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
+    var videoOutputSettings: [String: Any] = [
         AVVideoCodecKey: AVVideoCodecType.h264,
         AVVideoWidthKey: size.width,
         AVVideoHeightKey: size.height,
-    ])
+    ]
+    if let maxKeyFrameInterval {
+        videoOutputSettings[AVVideoCompressionPropertiesKey] = [
+            AVVideoMaxKeyFrameIntervalKey: maxKeyFrameInterval,
+        ]
+    }
+    nonisolated(unsafe) let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoOutputSettings)
     videoInput.expectsMediaDataInRealTime = false
 
     let pixelBufferAttributes: [String: Any] = [

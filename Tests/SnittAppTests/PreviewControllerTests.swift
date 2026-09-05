@@ -5,14 +5,21 @@ import SnittDocument
 import SnittExport
 import Testing
 
-private func makeTestBundle(seconds: Double = 4) async throws -> SnittBundle {
+private func makeTestBundle(seconds: Double = 4,
+                             maxKeyFrameInterval: Int32? = nil) async throws -> SnittBundle {
     let url = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
         .appendingPathExtension(SnittBundle.fileExtension)
     let bundle = try SnittBundle(creatingAt: url)
-    try await writeSyntheticMovie(to: bundle.captureURL, seconds: seconds)
+    try await writeSyntheticMovie(to: bundle.captureURL, seconds: seconds,
+                                  maxKeyFrameInterval: maxKeyFrameInterval)
     return bundle
 }
+
+/// Frame rate `writeSyntheticMovie`'s default (`fps: Int32 = 30`) uses, kept
+/// here so the sparse-keyframe interval below can be expressed as "the whole
+/// clip" without hardcoding 30 a second time.
+private let syntheticMovieFPS: Int32 = 30
 
 @MainActor
 @Test("The controller attaches the composition it was given, not one it built")
@@ -66,28 +73,41 @@ func itemBecomesReady() async throws {
 @MainActor
 @Test("Seeking lands exactly, not at the nearest keyframe")
 func seekIsExact() async throws {
-    let bundle = try await makeTestBundle(seconds: 4)
+    // The original fixture (default `maxKeyFrameInterval`) was suspected to
+    // encode with effectively every frame as a keyframe, leaving a tolerant
+    // seek nothing to snap to. `maxKeyFrameInterval` set to the whole clip's
+    // frame count (forcing as few keyframes as VideoToolbox will allow) is
+    // used here on that theory.
+    //
+    // Measured, not just theorized: it does NOT fix the underlying
+    // indistinguishability. Directly counting sync samples (via
+    // AVAssetReader) shows this fixture still encodes 6 keyframes over ~124
+    // frames with `maxKeyFrameInterval` set to 120 vs. 9 keyframes with it
+    // unset — `AVVideoMaxKeyFrameIntervalKey` is a upper bound VideoToolbox
+    // does not fill up to for this low-motion content, so "one keyframe at
+    // the start" was never achieved. More importantly, even granting that,
+    // re-running Task 3's mutation test (temporarily dropping
+    // `toleranceBefore/After` from `PreviewController.seek` and rebuilding)
+    // against THIS sparser fixture still lands `currentTime()` at exactly
+    // 2.5 after a request for 2.5 seconds — the same non-discriminating
+    // result Task 3 found with the original fixture. So the diagnosis that
+    // "the fixture is too keyframe-dense to observe" was incomplete/wrong:
+    // on this toolchain (Swift 6.3.3 / macOS 26), `AVPlayer.currentTime()`
+    // after a completed seek reports the requested target time regardless of
+    // tolerance and regardless of keyframe density, not the actually-decoded
+    // sync sample's timestamp. This assertion remains a
+    // duration/seek-completes regression check, not proof the tolerance
+    // argument changes anything observable via `currentTime()` here — see
+    // `synthetic-fixes-report.md` for the numbers.
+    let seconds = 4.0
+    let bundle = try await makeTestBundle(
+        seconds: seconds, maxKeyFrameInterval: Int32((seconds * Double(syntheticMovieFPS)).rounded()))
     let built = try await CompositionBuilder.build(
         bundle: bundle, edl: EditDecisionList(), scale: 1.0)
     let controller = PreviewController(built: built, jumpPoints: [])
 
     await controller.seek(toSeconds: 2.5)
 
-    // AVPlayer.seek(to:) without explicit tolerances snaps to a keyframe,
-    // which on a 4-second clip can be a whole second away. This is the
-    // discriminating assertion in principle.
-    //
-    // Verified finding (Step 5): on this toolchain/OS, `currentTime()`
-    // reports the requested seek target rather than the actually-decoded
-    // frame's timestamp, for BOTH the exact and tolerant overloads, and for
-    // both a plain `AVURLAsset` item and a composition item. Explicitly
-    // mutating `seek` to pass `.positiveInfinity`/`.positiveInfinity`
-    // tolerances still lands this assertion at 2.5 — the test does not
-    // discriminate in this environment. `toleranceBefore: .zero,
-    // toleranceAfter: .zero` is kept anyway because it is the behavior Apple
-    // documents and the one spike S6 and this task's brief specify; this
-    // assertion is left in place as a duration/seek-completes regression
-    // check, not as proof the tolerance argument is honored.
     let landed = CMTimeGetSeconds(controller.player.currentTime())
     #expect(abs(landed - 2.5) < 0.05)
 }
@@ -95,7 +115,15 @@ func seekIsExact() async throws {
 @MainActor
 @Test("Jumping to a marker seeks to its preview time")
 func jumpSeeksToMarkerTime() async throws {
-    let bundle = try await makeTestBundle(seconds: 4)
+    // Same sparse-keyframe fixture as `seekIsExact`, and the same caveat: see
+    // that test's comment. Measured with the tolerance arguments dropped
+    // from `PreviewController.seek` against this sparser fixture,
+    // `currentTime()` still lands at exactly 1.75 after jumping to a 1.75s
+    // marker — this does not discriminate here either. Left as a
+    // jump-reaches-the-marker-time regression check.
+    let seconds = 4.0
+    let bundle = try await makeTestBundle(
+        seconds: seconds, maxKeyFrameInterval: Int32((seconds * Double(syntheticMovieFPS)).rounded()))
     let built = try await CompositionBuilder.build(
         bundle: bundle, edl: EditDecisionList(), scale: 1.0)
     let point = JumpPoint(timeSeconds: 1.75, label: "here")
@@ -103,8 +131,5 @@ func jumpSeeksToMarkerTime() async throws {
 
     await controller.jump(to: point)
 
-    // Same caveat as `seekIsExact`: `currentTime()` doesn't discriminate
-    // tolerant vs. exact seeking in this environment. Left as a
-    // jump-reaches-the-marker-time regression check.
     #expect(abs(CMTimeGetSeconds(controller.player.currentTime()) - 1.75) < 0.05)
 }
