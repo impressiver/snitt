@@ -1,4 +1,5 @@
 import CryptoKit
+import Security
 import Foundation
 import OSLog
 import SnittAutomation
@@ -67,7 +68,13 @@ public enum DiagnosticsBundle {
             protocolVersion: AutomationProtocol.version,
             generatedAt: Date(),
             permissions: permissions,
-            recentSessions: sessions.map(redactingTarget),
+            recentSessions: {
+                // One salt for the whole export: targets stay comparable
+                // WITHIN a bundle and are not comparable across bundles,
+                // which is exactly the scope a support engineer needs.
+                let salt = freshSalt()
+                return sessions.map { redactingTarget($0, salt: salt) }
+            }(),
             logLines: logLines
         )
 
@@ -99,10 +106,10 @@ public enum DiagnosticsBundle {
     /// `DiagnosticsReport`). A stable, non-reversible hash keeps the field
     /// present (so recurring targets are still recognisable to a support
     /// engineer as "the same one") without naming what was on screen.
-    private static func redactingTarget(_ record: AuditRecord) -> AuditRecord {
+    private static func redactingTarget(_ record: AuditRecord, salt: Data) -> AuditRecord {
         var redacted = AuditRecord(
             sessionID: record.sessionID,
-            target: hashedTarget(record.target),
+            target: hashedTarget(record.target, salt: salt),
             initiator: record.initiator,
             startedAt: record.startedAt
         )
@@ -116,10 +123,29 @@ public enum DiagnosticsBundle {
     /// this by eye for its entropy — only to see whether two sessions in the
     /// same bundle targeted the same window — and a full 64-character digest
     /// would just be more noise in a file a human has to read.
-    private static func hashedTarget(_ target: String) -> String {
-        let digest = SHA256.hash(data: Data(target.utf8))
+    ///
+    /// SALTED PER EXPORT, and that is the load-bearing part. An unsalted
+    /// digest is reversible by guessing: anyone holding the bundle can hash
+    /// a title they suspect and check for a match, and §5.1's own worked
+    /// example — a window titled "Mail Password Required" — is exactly the
+    /// kind of string someone would try. A fresh random salt per export
+    /// keeps the only property this field is FOR (two sessions in one
+    /// bundle sharing a target look alike) while making a guess
+    /// unverifiable. The salt is never written to the file, so it dies with
+    /// the export.
+    private static func hashedTarget(_ target: String, salt: Data) -> String {
+        var input = salt
+        input.append(Data(target.utf8))
+        let digest = SHA256.hash(data: input)
         let hex = digest.map { String(format: "%02x", $0) }.joined()
         return "target-" + hex.prefix(12)
+    }
+
+    /// 32 random bytes, generated once per `write` and discarded with it.
+    private static func freshSalt() -> Data {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        return Data(bytes)
     }
 
     /// Reads back this process's own `os_log` entries from the last

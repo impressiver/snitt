@@ -289,3 +289,39 @@ func bundleOmitsErrorFilePaths() async throws {
     // And the diagnosis survives: domain and code identify the fault exactly.
     #expect(written.contains("NSCocoaErrorDomain"))
 }
+
+@MainActor
+@Test("Target hashes are comparable within one export and not across exports")
+func targetHashesAreSaltedPerExport() throws {
+    // Two properties in tension, and the salt's scope is what balances them.
+    //
+    // WITHIN a bundle the hash must stay comparable, because that is the
+    // only thing this field is for once the title is gone: a support
+    // engineer seeing that two sessions targeted the same window.
+    //
+    // ACROSS bundles it must NOT be, because an unsalted digest is
+    // reversible by guessing -- anyone holding the file can hash a title
+    // they suspect and check for a match, and §5.1's own example is a
+    // window titled "Mail Password Required".
+    let auditURL = tempURL(); defer { try? FileManager.default.removeItem(at: auditURL) }
+    let started = Date()
+    for id in ["S1", "S2"] {
+        try AuditLog.append(AuditRecord(sessionID: id, target: "Mail Password Required",
+                                        initiator: "agent", startedAt: started), to: auditURL)
+    }
+
+    let outA = tempURL(); defer { try? FileManager.default.removeItem(at: outA) }
+    let outB = tempURL(); defer { try? FileManager.default.removeItem(at: outB) }
+    let a = try DiagnosticsBundle.write(to: outA, auditLogURL: auditURL, sinceMinutes: 5)
+    let b = try DiagnosticsBundle.write(to: outB, auditLogURL: auditURL, sinceMinutes: 5)
+
+    let targetsA = a.recentSessions.map(\.target)
+    #expect(targetsA.count == 2)
+    #expect(targetsA[0] == targetsA[1], "one export must keep identical targets comparable")
+    #expect(!targetsA[0].contains("Mail"), "the title itself must never appear")
+
+    // The discriminating half: an unsalted implementation produces the same
+    // digest in every bundle, so this passes only with a per-export salt.
+    #expect(targetsA[0] != b.recentSessions[0].target,
+            "a target hash must not be reproducible in another export")
+}
