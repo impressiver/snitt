@@ -52,17 +52,26 @@ public final class UpdaterController: NSObject {
         }
 
         /// §5's diagnostics posture: an update check failure must be
-        /// visible, not swallowed. Logs only `domain`, `code`, and
-        /// `localizedDescription` — never `String(describing:)` on the
-        /// `NSError` (its `userInfo` can carry `NSFilePath` or other
-        /// user-identifying detail) and never an interpolated URL or path,
-        /// per the two prior leaks through `os_log`.
+        /// visible, not swallowed. Logs `domain` and `code` at `.public` —
+        /// never `String(describing:)` on the `NSError` (its `userInfo` can
+        /// carry `NSFilePath` or other user-identifying detail). `domain`
+        /// and `code` alone are already enough to look up which of
+        /// Sparkle's own failures this is.
+        ///
+        /// `localizedDescription` is deliberately `.private`, not `.public`:
+        /// several of Sparkle's own error strings interpolate filesystem
+        /// paths (e.g. `SUInvalidUpdaterError`'s XPC-service message
+        /// includes the app bundle path), which for an app run from
+        /// `~/Desktop` would put a home directory in a public log entry —
+        /// the same shape as the two prior leaks through `os_log` this
+        /// project has already had, so it stays `.private` here rather than
+        /// becoming a third.
         func updater(_ updater: SPUUpdater,
                      didFinishUpdateCycleFor updateCheck: SPUUpdateCheck,
                      error: Error?) {
             guard let error else { return }
             let nsError = error as NSError
-            UpdaterController.log.error("update check failed domain: \(nsError.domain, privacy: .public) code: \(nsError.code, privacy: .public) reason: \(nsError.localizedDescription, privacy: .public)")
+            UpdaterController.log.error("update check failed domain: \(nsError.domain, privacy: .public) code: \(nsError.code, privacy: .public) reason: \(nsError.localizedDescription, privacy: .private)")
         }
     }
 

@@ -17,10 +17,14 @@ public enum DiagnosticCategory: String, Codable, Sendable, CaseIterable {
     case capture
     case compositor
     case automation
-    /// M5b: Sparkle update checks and installs (§13). A rejected update
-    /// (e.g. no `SUPublicEDKey` configured yet) or a failed network fetch
-    /// both land here rather than under `automation`, since neither has
-    /// anything to do with the agent-control socket.
+    /// M5b: Sparkle update checks and installs (§13). A failed network
+    /// fetch, a misconfigured feed, or (once Task 5 adds a real
+    /// `SUPublicEDKey`) a signature rejection all land here rather than
+    /// under `automation`, since none of them have anything to do with the
+    /// agent-control socket. Today, with no `SUPublicEDKey` configured yet,
+    /// a code-signed bundle on an https feed is validated by Apple's code
+    /// signature alone — Sparkle does not reject an update for the key's
+    /// absence.
     case updates
 
     /// Whether the person in front of the machine can do something about
