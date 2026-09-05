@@ -126,29 +126,25 @@ else
   echo "Run ./Scripts/signing-identity.sh for one-time setup instructions." >&2
 fi
 
-# Signing order is the whole risk here: codesign signs inner code before the
-# enclosing bundle. An unsigned (or wrongly-signed) framework inside a signed
-# app can launch fine from Finder on this machine and fail Gatekeeper or
-# notarization on someone else's, with no local reproduction.
-#
-# We deliberately do NOT use `--deep`. SPM's vendored Sparkle.framework
-# arrives from Sparkle's own build already signed (ad-hoc) WITH the hardened
-# runtime flag and entitlements on every nested item (the framework binary,
-# Autoupdate, Updater.app, and both XPC services). `--deep` re-signs all of
-# that nested code with a bare default signature, which strips the hardened
-# runtime flag and drops entitlements — confirmed by reading back
-# `codesign -dvv` flags before and after: 0x10002(adhoc,runtime) became
-# 0x0(none). That is a notarization rejection this task exists to prevent,
-# introduced by the very tool meant to prevent it.
+# We deliberately do NOT use `--deep` on the framework. SPM's vendored
+# Sparkle.framework arrives from Sparkle's own build already signed
+# (ad-hoc) WITH the hardened runtime flag and entitlements on every nested
+# item (the framework binary, Autoupdate, Updater.app, and both XPC
+# services). `--deep` re-signs all of that nested code with a bare default
+# signature, which strips the hardened runtime flag and drops entitlements
+# — confirmed by reading back `codesign -dvv` flags before and after:
+# 0x10002(adhoc,runtime) became 0x0(none). That is a notarization
+# rejection this task exists to prevent, introduced by the very tool meant
+# to prevent it.
 #
 # Instead we re-sign each nested code object explicitly, innermost first,
-# with our OWN identity (required — nested code left at the vendor's ad-hoc
-# signature would still fail notarization even with the runtime flag intact,
-# since ad-hoc isn't a Developer ID), and `--preserve-metadata=entitlements`
-# to carry over the entitlements each item already has from Sparkle's build
-# rather than guessing at .entitlements files we don't own. `--options
-# runtime` re-adds the hardened runtime flag our own signature would
-# otherwise omit.
+# with our OWN identity (required — nested code left at the vendor's
+# ad-hoc signature would still fail notarization even with the runtime
+# flag intact, since ad-hoc isn't a Developer ID), and
+# `--preserve-metadata=entitlements` to carry over the entitlements each
+# item already has from Sparkle's build rather than guessing at
+# .entitlements files we don't own. `--options runtime` re-adds the
+# hardened runtime flag our own signature would otherwise omit.
 sign_nested() {
   codesign --force --sign "$SIGN_ID" --options runtime --preserve-metadata=entitlements "$1"
 }
@@ -159,50 +155,15 @@ sign_nested "$FRAMEWORK_DEST/Versions/B/Updater.app"
 sign_nested "$FRAMEWORK_DEST/Versions/B/Autoupdate"
 sign_nested "$FRAMEWORK_DEST"
 
-# Hardened runtime on the app enables library validation: dyld will refuse
-# to load a dylib/framework whose signing Team ID doesn't match the main
-# executable's. Confirmed by direct reproduction: even signing the app and
-# every nested Sparkle item with the SAME identity ("Snitt Development",
-# self-signed, TeamIdentifier "not set" on both), the app failed to launch
-# with "different Team IDs" from dyld — a self-signed identity has no real
-# Team ID, so two separately-produced signatures are never treated as
-# matching, "not set" included.
-#
-# R9: this workaround must NOT ship unconditionally. Snitt holds Screen
-# Recording and Microphone TCC grants and embeds an updater that downloads
-# and runs code; com.apple.security.cs.disable-library-validation lets any
-# validly-signed dylib — signed by anyone, not just Snitt's team — load
-# into that process. A real Developer ID gives the app and its re-signed
-# nested Sparkle components one genuine, matching Team ID, so library
-# validation is satisfied without widening it. So: sign the app first
-# WITHOUT the entitlement, read back whether the identity that just signed
-# it has a real Team ID, and only add the entitlement (re-signing) when it
-# does not. `Scripts/lib/needs-teamless-workaround.sh` holds the actual
-# decision so it can be unit-tested with a synthetic TeamIdentifier line —
-# there's no real paid Developer ID in this repo to exercise the "has a
-# team, skip the entitlement" branch end-to-end.
-codesign --force --sign "$SIGN_ID" --options runtime "$APP"
-
-TEAM_LINE="$(codesign -dvv "$APP" 2>&1 | grep '^TeamIdentifier=' || true)"
-if [ "$(./Scripts/lib/needs-teamless-workaround.sh "$TEAM_LINE")" = "yes" ]; then
-  echo "No real Team ID ($TEAM_LINE) — adding disable-library-validation so the embedded framework can still load." >&2
-  ENTITLEMENTS_DIR="$(mktemp -d -t snitt-app-entitlements)"
-  ENTITLEMENTS="$ENTITLEMENTS_DIR/entitlements.plist"
-  cat > "$ENTITLEMENTS" <<ENTITLEMENTS_PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>com.apple.security.cs.disable-library-validation</key>
-  <true/>
-</dict>
-</plist>
-ENTITLEMENTS_PLIST
-  codesign --force --sign "$SIGN_ID" --options runtime --entitlements "$ENTITLEMENTS" "$APP"
-  rm -rf "$ENTITLEMENTS_DIR"
-else
-  echo "Real Team ID ($TEAM_LINE) — library validation satisfied without any extra entitlement."
-fi
+# Sign the app with hardened runtime, adding
+# com.apple.security.cs.disable-library-validation only if needed (R9) —
+# see Scripts/lib/sign-app-with-workaround.sh for the full rationale. That
+# script is also what BundleLayoutTests.swift exercises directly (with a
+# synthetic Developer-ID-shaped identity injected via
+# SNITT_FAKE_TEAM_IDENTIFIER_LINE) to prove the "has a real team, skip the
+# entitlement" branch actually works, since no real Developer ID exists in
+# this repo to produce that signature for real.
+./Scripts/lib/sign-app-with-workaround.sh "$APP" "$SIGN_ID"
 
 if [ "$STABLE_IDENTITY" = "1" ]; then
   echo "Signed with stable identity: $IDENTITY"

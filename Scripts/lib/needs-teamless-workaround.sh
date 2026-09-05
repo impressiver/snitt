@@ -30,7 +30,21 @@
 # doesn't need it.
 set -euo pipefail
 
-line="${1:-$(cat)}"
+# R15: `${1:-$(cat)}` fires on an EMPTY $1, not just a missing one — a
+# caller that passes "" (e.g. a `grep || true` that came up empty) would
+# fall through to reading stdin, which hangs on a terminal and silently
+# answers "no" under /dev/null. Distinguish "no argument given" ($# == 0)
+# from "given an empty string" explicitly instead.
+if [ $# -ge 1 ]; then
+  line="$1"
+else
+  line="$(cat)"
+fi
+
+if [ -z "$line" ]; then
+  echo "error: needs-teamless-workaround.sh got an empty TeamIdentifier line — refusing to guess" >&2
+  exit 1
+fi
 
 if [[ "$line" == "TeamIdentifier=not set" ]]; then
   echo "yes"

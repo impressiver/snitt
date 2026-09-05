@@ -351,10 +351,11 @@ private func entitlementsXML(of url: URL) -> String {
 
 /// The one property R9/R10 exist to guarantee: a build signed under a real
 /// (non-teamless) identity must not carry the library-validation
-/// workaround. Shared by the synthetic test (which can exercise the
-/// Developer-ID-shaped branch, since no real one exists in this repo) and
-/// the integration test (which exercises real `codesign` output, but can
-/// currently only ever hit the teamless branch).
+/// workaround. Used by `appEntitlementsCarryNoWorkaroundLeakUnderARealTeamID`
+/// below, which can currently only ever hit the teamless branch against the
+/// real production build — see
+/// `signingWithADeveloperIDShapedIdentityCarriesNoWorkaround` for the real,
+/// non-fixture exercise of the other branch.
 private func assertNoWorkaroundLeak(teamIdentifierLine: String, entitlementsXML: String) throws {
     let needsWorkaround = try needsTeamlessWorkaround(forTeamIdentifierLine: teamIdentifierLine) == "yes"
     if !needsWorkaround {
@@ -381,33 +382,59 @@ func teamlessWorkaroundScriptDecidesCorrectly() throws {
 }
 
 @Test(
-    "A Developer-ID-shaped identity signing with the leaked workaround entitlement is caught"
+    "Signing with a Developer-ID-shaped identity, via the real production script, carries no library-validation workaround",
+    .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason)
 )
-func leakedWorkaroundUnderARealTeamIDIsCaught() throws {
-    // R10 in full: there is no real paid Developer ID in this repo, so the
-    // "signed under a genuine Team ID" case can't be produced end-to-end —
-    // every codesign invocation available here prints "TeamIdentifier=not
-    // set" (self-signed and ad-hoc alike). So this test constructs the
-    // failure by hand: a Developer-ID-shaped TeamIdentifier string paired
-    // with entitlements as if the workaround had leaked into that build,
-    // fed through the exact same `assertNoWorkaroundLeak` the real
-    // integration test below uses. Verified this actually catches it by
-    // running it before writing the "no leak" guard into
-    // assertNoWorkaroundLeak — it failed with the message below;
-    // afterwards it fails with the SAME issue on this synthetic input,
-    // which is the expected behavior: this test is supposed to fail unless
-    // withKnownIssue wraps the known-bad fixture.
-    withKnownIssue("synthetic fixture deliberately represents a leaked entitlement") {
-        try assertNoWorkaroundLeak(
-            teamIdentifierLine: "TeamIdentifier=ABCDE12345TEAM",
-            entitlementsXML: """
-            <?xml version="1.0" encoding="UTF-8"?>
-            <plist version="1.0"><dict>
-              <key>com.apple.security.cs.disable-library-validation</key><true/>
-            </dict></plist>
-            """
-        )
-    }
+func signingWithADeveloperIDShapedIdentityCarriesNoWorkaround() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
+
+    // R13: the test this replaced asserted a string match against a
+    // literal it wrote itself, gated on a script answer
+    // teamlessWorkaroundScriptDecidesCorrectly already asserts. It never
+    // touched entitlementsXML(of:) — the only production-facing input —
+    // and never touched make-app.sh, so "the entitlement applied
+    // unconditionally" (the exact defect R9 exists to prevent) was
+    // invisible to it on every machine that can run this suite.
+    //
+    // This test instead runs the REAL production script,
+    // Scripts/lib/sign-app-with-workaround.sh (the one make-app.sh
+    // itself calls), against a real copy of the built app, injecting a
+    // Developer-ID-shaped TeamIdentifier via
+    // SNITT_FAKE_TEAM_IDENTIFIER_LINE — the one deliberate seam that
+    // exists only because no real paid Developer ID is available in this
+    // repo to produce that signature end-to-end — and inspects the REAL
+    // resulting signature and entitlements, not a fixture.
+    //
+    // Verified this fails against the wrong implementation it exists to
+    // catch: temporarily edited sign-app-with-workaround.sh to add the
+    // entitlement unconditionally (removing the `if`) and re-ran this
+    // test — it failed on the real re-signed copy's entitlements; reverting
+    // restored the pass. See task-2-report.md.
+    let tempDir = FileManager.default.temporaryDirectory.appending(path: "snitt-sign-test-\(UUID().uuidString)")
+    let copy = tempDir.appending(path: "Snitt.app")
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    try FileManager.default.copyItem(at: app, to: copy)
+
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "Scripts/lib/sign-app-with-workaround.sh")
+    process.arguments = [copy.path, "-"]
+    var environment = ProcessInfo.processInfo.environment
+    environment["SNITT_FAKE_TEAM_IDENTIFIER_LINE"] = "TeamIdentifier=ABCDE12345TEAM"
+    process.environment = environment
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    try process.run()
+    process.waitUntilExit()
+    let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    #expect(process.terminationStatus == 0, "sign-app-with-workaround.sh failed:\n\(output)")
+
+    let verify = codesignVerifies(copy)
+    #expect(verify.ok, "re-signed copy does not verify --deep --strict:\n\(verify.diagnostics)")
+
+    let xml = entitlementsXML(of: copy)
+    #expect(!hasDisableLibraryValidation(xml), "a Developer-ID-shaped identity (real signature) must not carry disable-library-validation:\n\(xml)")
 }
 
 @Test(
