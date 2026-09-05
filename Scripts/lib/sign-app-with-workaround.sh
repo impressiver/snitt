@@ -59,7 +59,23 @@ if [ -z "$TEAM_LINE" ]; then
   exit 1
 fi
 
-if [ "$("$SCRIPT_DIR/needs-teamless-workaround.sh" "$TEAM_LINE")" = "yes" ]; then
+# N8: this used to be `if [ "$("$SCRIPT_DIR/needs-teamless-workaround.sh" ...)" = "yes" ]`
+# directly inside the `[` test. Under `set -e`, a command substitution's
+# exit status is NOT propagated by the surrounding `[ ... ]` — if the
+# decision script can't even execute (not executable, missing, chmod'd
+# away), `$(...)` silently produces an empty string, `[ "" = "yes" ]` is
+# false, and this script took the ELSE branch: no entitlement applied, exit
+# 0, having decided "Real Team ID" without ever asking the question. A
+# signing script that fails OPEN — silently proceeding as if a real Team ID
+# were present — is the wrong failure direction for something this
+# security-relevant. Capture the decision and its exit status separately
+# so a failure to run is a hard, loud failure instead of a wrong answer.
+if ! DECISION="$("$SCRIPT_DIR/needs-teamless-workaround.sh" "$TEAM_LINE")"; then
+  echo "error: $SCRIPT_DIR/needs-teamless-workaround.sh failed to run against \"$TEAM_LINE\" — refusing to guess whether the workaround is needed" >&2
+  exit 1
+fi
+
+if [ "$DECISION" = "yes" ]; then
   echo "No real Team ID ($TEAM_LINE) — adding disable-library-validation so the embedded framework can still load." >&2
   ENTITLEMENTS_DIR="$(mktemp -d -t snitt-app-entitlements)"
   ENTITLEMENTS="$ENTITLEMENTS_DIR/entitlements.plist"
@@ -75,6 +91,9 @@ if [ "$("$SCRIPT_DIR/needs-teamless-workaround.sh" "$TEAM_LINE")" = "yes" ]; the
 ENTITLEMENTS_PLIST
   codesign --force --sign "$SIGN_ID" --options runtime --entitlements "$ENTITLEMENTS" "$APP"
   rm -rf "$ENTITLEMENTS_DIR"
-else
+elif [ "$DECISION" = "no" ]; then
   echo "Real Team ID ($TEAM_LINE) — library validation satisfied without any extra entitlement."
+else
+  echo "error: needs-teamless-workaround.sh returned an unexpected answer: \"$DECISION\" (expected yes/no) — refusing to guess" >&2
+  exit 1
 fi

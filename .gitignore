@@ -27,6 +27,13 @@ build/
 .env
 .env.*
 
+# Task 4 (notarize.sh): App Store Connect API keys download as
+# AuthKey_<KEYID>.p8 and are one of notarize.sh's two credential paths
+# (NOTARY_KEY). Ignore both Apple's default filename shape and any .p8
+# wherever it lands — nothing secret enters this repo.
+AuthKey_*.p8
+*.p8
+
 # Snitt working artifacts
 *.snitt/
 *.mov
