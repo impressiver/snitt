@@ -54,7 +54,7 @@ let package = Package(
         .testTarget(name: "SnittExportTests", dependencies: ["SnittExport"]),
         .testTarget(name: "SnittAutomationTests", dependencies: ["SnittAutomation", "SnittDocument"]),
         .testTarget(name: "SnittAppTests",
-                    dependencies: ["SnittApp", "SnittCapture", "SnittDocument", "SnittAutomation"]),
+                    dependencies: ["SnittApp", "SnittCapture", "SnittDocument", "SnittAutomation", "SnittExport"]),
         .testTarget(name: "SnittCLITests",
                     dependencies: ["snitt-cli", "SnittAutomation", "SnittDocument"]),
         .testTarget(name: "SnittMCPTests",
