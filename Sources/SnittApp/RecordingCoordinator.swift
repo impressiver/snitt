@@ -124,8 +124,7 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     /// `RecorderTests.finalizationFailureSurfaces`.
     private var corruptCaptureAfterStopForTesting = false
 
-    private static let log = Logger(subsystem: "com.impressiver.snitt",
-                                    category: "recording-coordinator")
+    private static let log = SnittLog.logger(.capture, target: "SnittApp")
 
     public init(pickerResolver: TargetResolver,
                 cachedResolverFactory: @escaping @Sendable (TargetReference) -> TargetResolver,

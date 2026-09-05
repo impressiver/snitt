@@ -32,8 +32,7 @@ public actor Recorder {
     /// was previously unreachable from any test at all.
     private(set) var inputEvents: InputEventMonitor?
 
-    private static let log = Logger(subsystem: "com.impressiver.snitt",
-                                    category: "recorder")
+    private static let log = SnittLog.logger(.permission, target: "SnittCapture")
 
     /// How the recorder READS the Input Monitoring grant.
     ///
