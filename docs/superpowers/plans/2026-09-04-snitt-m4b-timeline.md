@@ -26,7 +26,7 @@
 
 - **`swift test` exits 0 when the test bundle segfaults.** The crash is one inline `error: … signal code 11` line among hundreds of passing ones, and the run has **no summary line**. Verify with `swift test 2>&1 | grep -E "Test run with|signal code|error:"` and **treat a missing summary as failure**.
 - Piping to `grep` returns grep's exit status, so exit codes prove nothing.
-- A stale build after a struct-layout change produced a SIGSEGV. **Task 3 changes `BuiltComposition`** — `rm -rf .build` before verifying it.
+- A stale build after a struct-layout change produced a SIGSEGV. **Task 4 and Task 5 both touch `PreviewController` and rebuild `BuiltComposition`** — `rm -rf .build` before verifying either.
 - `.serialized` serialises **within** a suite, not across suites. Two suites touching the same globals still race.
 - When mutating to check a test discriminates: **assert the target string was found before writing**, and grep the mutated file before running. A mutation that does not fail is as likely to be a bad mutation as a bad test.
 
