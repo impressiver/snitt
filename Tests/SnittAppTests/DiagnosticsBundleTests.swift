@@ -73,3 +73,28 @@ func writtenFileParsesBack() throws {
     #expect(decoded.appVersion == report.appVersion)
     #expect(decoded.recentSessions.count == report.recentSessions.count)
 }
+
+@MainActor
+@Test("A support bundle carries no recording filename")
+func bundleOmitsRecordingFilenames() throws {
+    // §5: this file gets attached to support threads. BundleNaming derives a
+    // recording's filename from the git branch and commit, so a branch named
+    // for a customer or an unreleased feature is exactly the kind of thing
+    // that must not travel. `os_log` redacts interpolations by default, but
+    // `.public` is what people reach for when a message looks unhelpfully
+    // redacted — and one call site had already done so.
+    //
+    // This asserts on the WRITTEN FILE rather than the report struct,
+    // because the file is the artefact that leaves the machine.
+    let sentinel = "feat-acme-secret-\(UUID().uuidString.prefix(8))"
+    SnittLog.logger(.compositor, target: "SnittApp")
+        .error("probe with \(sentinel, privacy: .private)")
+
+    let auditURL = tempURL(); defer { try? FileManager.default.removeItem(at: auditURL) }
+    let out = tempURL(); defer { try? FileManager.default.removeItem(at: out) }
+    _ = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5)
+
+    let written = try String(contentsOf: out, encoding: .utf8)
+    #expect(!written.contains(sentinel),
+            "a value logged as .private must not reach an exported support bundle")
+}

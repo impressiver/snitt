@@ -507,7 +507,15 @@ public actor RecordingCoordinator: AgentRecordingControlling {
                 editor.show()
             }
         } catch {
-            Self.log.error("Could not open the editor for \(bundle.url.lastPathComponent, privacy: .public): \(String(describing: error), privacy: .public)")
+            // The bundle's FILENAME is redacted deliberately: BundleNaming
+            // derives it from the git branch and commit, so a branch called
+            // `feat/acme-corp-integration` would name a customer or an
+            // unreleased feature — and this line is collected verbatim into
+            // `snitt diagnostics export`, which people attach to public
+            // support threads (§5). The error itself is the diagnostic value;
+            // the filename only correlates, and the operator can see it
+            // unredacted in Console on their own machine.
+            Self.log.error("Could not open the editor: \(String(describing: error), privacy: .public)")
         }
     }
 
