@@ -52,7 +52,25 @@ struct TimelineGeometryTests {
         #expect(zeroDuration.x(atTime: 0).isFinite)
     }
 
-    @Test("Cut rectangles cover the cut ranges and nothing else")
+    @Test("A cut running past the end is clamped, not drawn off the edge")
+func cutPastEndIsClamped() {
+    // The only cut case in this file sits entirely inside the timeline, so
+    // clamping is never exercised — an implementation computing the span
+    // from RAW SECONDS ((end - start) / duration * width), bypassing the
+    // clamps, passes every other test here. A cut extending past `duration`
+    // is the case that separates them, and a stale EDL from a longer
+    // recording produces exactly that.
+    let g = TimelineGeometry(width: 800, duration: 20)
+    let rects = g.cutRects([TimeRange(start: 15, end: 40)])
+
+    #expect(rects.count == 1)
+    #expect(abs(rects[0].x - 600) < 0.001)
+    // 15s..20s of a 20s timeline is the last quarter: 200px, NOT the 1000px
+    // a raw-seconds span would give for a 25-second range.
+    #expect(abs(rects[0].width - 200) < 0.001)
+}
+
+@Test("Cut rectangles cover the cut ranges and nothing else")
     func cutRectsCoverCuts() {
         let g = TimelineGeometry(width: 800, duration: 20)
         let rects = g.cutRects([TimeRange(start: 5, end: 10)])
