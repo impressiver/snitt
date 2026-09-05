@@ -12,10 +12,14 @@ let package = Package(
     ],
     dependencies: [
         // M5b (§13): in-app updates via direct download (§4.3). Only SnittApp
-        // may depend on this — see the SnittApp target below and
-        // ThinClientConformanceTests / otool checks in make-app.sh's
-        // verification for the enforcement. snitt-cli and snitt-mcp must
-        // stay thin (§4.9) and never link Sparkle.
+        // may depend on this — see the SnittApp target below.
+        // `sparkleNeverLinksIntoThinClients` in BundleLayoutTests.swift runs
+        // `otool -L` against the built snitt-cli and snitt-mcp binaries and
+        // is the actual enforcement; snitt-cli and snitt-mcp must stay thin
+        // (§4.9) and never link Sparkle. (SnittAppTests also depends on the
+        // Sparkle product directly, purely to drive Sparkle's own
+        // configuration-validation API in tests — that import doesn't
+        // relax this rule, which is about the two client executables.)
         .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
     ],
     targets: [
@@ -65,7 +69,10 @@ let package = Package(
         .testTarget(name: "SnittExportTests", dependencies: ["SnittExport"]),
         .testTarget(name: "SnittAutomationTests", dependencies: ["SnittAutomation", "SnittDocument"]),
         .testTarget(name: "SnittAppTests",
-                    dependencies: ["SnittApp", "SnittCapture", "SnittDocument", "SnittAutomation", "SnittExport"]),
+                    dependencies: [
+                        "SnittApp", "SnittCapture", "SnittDocument", "SnittAutomation", "SnittExport",
+                        .product(name: "Sparkle", package: "Sparkle"),
+                    ]),
         .testTarget(name: "SnittCLITests",
                     dependencies: ["snitt-cli", "SnittAutomation", "SnittDocument"]),
         .testTarget(name: "SnittMCPTests",

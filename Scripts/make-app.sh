@@ -8,6 +8,19 @@ APP="build/Snitt.app"
 BUNDLE_ID="com.impressiver.snitt"
 VERSION_SOURCE="Sources/SnittDocument/AppVersion.swift"
 
+# A failed sign (or anything else that trips `set -e` after this point) must
+# not leave a half-built, unsigned bundle sitting in build/ looking like a
+# real artifact. Tests would fail on it, which is the safe direction, but
+# there's no reason to leave the debris.
+cleanup_on_failure() {
+  status=$?
+  if [ "$status" -ne 0 ] && [ -e "$APP" ]; then
+    echo "make-app.sh failed (exit $status) — removing incomplete $APP" >&2
+    rm -rf "$APP"
+  fi
+}
+trap cleanup_on_failure EXIT
+
 APP_VERSION="$(sed -nE 's/.*public static let fallback = "([^"]+)".*/\1/p' "$VERSION_SOURCE")"
 if [ -z "$APP_VERSION" ]; then
   echo "error: could not extract AppVersion.fallback from $VERSION_SOURCE" >&2
@@ -35,26 +48,43 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleName</key><string>Snitt</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
+  <!-- Sparkle's SUHost.validVersion reads ONLY CFBundleVersion (not
+       CFBundleShortVersionString above). Without it, SPUUpdater's own
+       checkIfConfiguredProperlyAndRequireFeedURL: bails immediately with
+       SUInvalidHostVersionError and the updater never starts — before any
+       of the SU* keys below are even consulted. AppVersion.swift's comment
+       about Sparkle comparing against CFBundleShortVersionString describes
+       appcast-item comparison once the updater IS running; this key is a
+       separate, earlier gate. Same value, same single source. -->
+  <key>CFBundleVersion</key><string>$APP_VERSION</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Snitt records your microphone when you enable it for a recording.</string>
+  <!-- PLACEHOLDER — Task 5's make-appcast.sh generates the real appcast.
+       GitHub's own releases.atom is Atom (<feed>/<entry>), not a Sparkle
+       appcast: SUAppcast.m parses /rss/channel/item and needs
+       <enclosure sparkle:version=…>, which an Atom feed never emits, so
+       pointing at releases.atom would make every check silently find zero
+       items. This URL is a stand-in with the same shape Task 5's output
+       will have (an appcast.xml release asset); replace it with the real
+       one when that task lands, the same way SUPublicEDKey below is a
+       stand-in for a real key. -->
   <key>SUFeedURL</key>
-  <string>https://github.com/impressiver/snitt/releases.atom</string>
-  <!-- Empty until the maintainer generates a real EdDSA keypair. Verified
-       against Sparkle 2.9.6 source (SUUpdateValidator.m): with no EdDSA key
-       configured, Sparkle does NOT accept arbitrary unsigned updates. For a
-       .app-bundle update it falls back to requiring the downloaded update be
-       Apple-code-signed by the SAME Developer ID team as the installed app
-       (passesBasicUpdatePolicy); if the old bundle has no DSA/EdDSA key and
-       is unsigned or ad-hoc signed, no rotation path exists at all and the
-       update is rejected. So an empty key here is not "accepts anything" —
-       it is "trust Apple's code-signing chain instead of Sparkle's own,"
-       which only works once Snitt ships under a real Developer ID identity.
-       Generate and ship a real EdDSA key before relying on this in
-       production; do not treat the code-signing fallback as sufficient
-       long-term. -->
-  <key>SUPublicEDKey</key>
-  <string></string>
+  <string>https://github.com/impressiver/snitt/releases/latest/download/appcast.xml</string>
+  <!-- No SUPublicEDKey key at all — not even an empty string. Verified
+       against Sparkle 2.9.6 source (SUSignatures.m/SUHost.m): an ABSENT key
+       reads back as nil, giving SUSigningInputStatusAbsent, which
+       SPUUpdater's config check treats as "no key yet" and falls back to
+       requiring the update be validly code-signed to match the installed
+       app (safe: HTTPS feed + this script always code-signs, so the
+       fallback never accepts an unsigned update). An EMPTY STRING is
+       different and worse for us right now: NSData(base64Encoded: "")
+       decodes to a valid zero-length NSData (confirmed by direct test, not
+       assumed), which SUPublicKeys treats as a PRESENT-but-wrong-length key
+       — SUSigningInputStatusInvalid — and SPUUpdater refuses to start at
+       all (SUNoPublicDSAFoundError) regardless of anything else being
+       correct. So: omit this key entirely until the maintainer generates a
+       real EdDSA keypair; do not "fill in" with an empty string. -->
   <!-- Ruling R3: false is the cold-start default for a fresh install that
        has no user setting yet. An update check is a network request telling
        a server this machine runs Snitt, at a moment the user did not choose
@@ -77,8 +107,9 @@ fi
 # Contents/Frameworks would need `install_name_tool -add_rpath
 # @executable_path/../Frameworks` for no offsetting benefit here.
 SPARKLE_SRC=".build/debug/Sparkle.framework"
+FRAMEWORK_DEST="$APP/Contents/MacOS/Sparkle.framework"
 if [ -d "$SPARKLE_SRC" ]; then
-  cp -R "$SPARKLE_SRC" "$APP/Contents/MacOS/Sparkle.framework"
+  cp -R "$SPARKLE_SRC" "$FRAMEWORK_DEST"
 else
   echo "error: $SPARKLE_SRC not found — did swift build produce it?" >&2
   exit 1
@@ -96,11 +127,63 @@ else
 fi
 
 # Signing order is the whole risk here: codesign signs inner code before the
-# enclosing bundle. An unsigned framework inside a signed app launches fine
-# from Finder on this machine and fails Gatekeeper on someone else's, with
-# no local reproduction. Sign the embedded framework FIRST, then the app.
-codesign --force --deep --sign "$SIGN_ID" "$APP/Contents/MacOS/Sparkle.framework"
-codesign --force --sign "$SIGN_ID" "$APP"
+# enclosing bundle. An unsigned (or wrongly-signed) framework inside a signed
+# app can launch fine from Finder on this machine and fail Gatekeeper or
+# notarization on someone else's, with no local reproduction.
+#
+# We deliberately do NOT use `--deep`. SPM's vendored Sparkle.framework
+# arrives from Sparkle's own build already signed (ad-hoc) WITH the hardened
+# runtime flag and entitlements on every nested item (the framework binary,
+# Autoupdate, Updater.app, and both XPC services). `--deep` re-signs all of
+# that nested code with a bare default signature, which strips the hardened
+# runtime flag and drops entitlements — confirmed by reading back
+# `codesign -dvv` flags before and after: 0x10002(adhoc,runtime) became
+# 0x0(none). That is a notarization rejection this task exists to prevent,
+# introduced by the very tool meant to prevent it.
+#
+# Instead we re-sign each nested code object explicitly, innermost first,
+# with our OWN identity (required — nested code left at the vendor's ad-hoc
+# signature would still fail notarization even with the runtime flag intact,
+# since ad-hoc isn't a Developer ID), and `--preserve-metadata=entitlements`
+# to carry over the entitlements each item already has from Sparkle's build
+# rather than guessing at .entitlements files we don't own. `--options
+# runtime` re-adds the hardened runtime flag our own signature would
+# otherwise omit.
+sign_nested() {
+  codesign --force --sign "$SIGN_ID" --options runtime --preserve-metadata=entitlements "$1"
+}
+
+sign_nested "$FRAMEWORK_DEST/Versions/B/XPCServices/Downloader.xpc"
+sign_nested "$FRAMEWORK_DEST/Versions/B/XPCServices/Installer.xpc"
+sign_nested "$FRAMEWORK_DEST/Versions/B/Updater.app"
+sign_nested "$FRAMEWORK_DEST/Versions/B/Autoupdate"
+sign_nested "$FRAMEWORK_DEST"
+
+# Hardened runtime on the app enables library validation: dyld will refuse
+# to load a dylib/framework whose signing Team ID doesn't match the main
+# executable's. Confirmed by direct reproduction: even signing the app and
+# every nested Sparkle item with the SAME identity ("Snitt Development",
+# self-signed, TeamIdentifier "not set" on both), the app failed to launch
+# with "different Team IDs" from dyld — a self-signed identity has no real
+# Team ID, so two separately-produced signatures are never treated as
+# matching, "not set" included. A real (paid) Developer ID would sign both
+# under one genuine Team ID and this would not trigger, but development
+# builds need to keep launching today. `disable-library-validation` widens
+# hardened runtime to accept a differently-signed-but-still-signed embedded
+# framework; it does not disable the runtime or its other protections.
+ENTITLEMENTS="$(mktemp -t snitt-app-entitlements).plist"
+cat > "$ENTITLEMENTS" <<ENTITLEMENTS_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.disable-library-validation</key>
+  <true/>
+</dict>
+</plist>
+ENTITLEMENTS_PLIST
+codesign --force --sign "$SIGN_ID" --options runtime --entitlements "$ENTITLEMENTS" "$APP"
+rm -f "$ENTITLEMENTS"
 
 if [ "$STABLE_IDENTITY" = "1" ]; then
   echo "Signed with stable identity: $IDENTITY"
