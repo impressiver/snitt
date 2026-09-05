@@ -124,7 +124,11 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     /// `RecorderTests.finalizationFailureSurfaces`.
     private var corruptCaptureAfterStopForTesting = false
 
-    private static let log = SnittLog.logger(.capture, target: "SnittApp")
+    // `.compositor`, not `.capture`: the only site using this logs a failure
+    // to BUILD THE PREVIEW after a recording finished successfully. Nothing
+    // was being captured when it happened, and telling a support engineer
+    // "capture fault" sends them to look at the recorder.
+    private static let log = SnittLog.logger(.compositor, target: "SnittApp")
 
     public init(pickerResolver: TargetResolver,
                 cachedResolverFactory: @escaping @Sendable (TargetReference) -> TargetResolver,
