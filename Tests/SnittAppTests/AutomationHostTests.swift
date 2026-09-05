@@ -949,3 +949,52 @@ func markIsGatedByConsent() async {
     #expect(error.code == .consentRequired)
     #expect(await coordinator.markCalls.isEmpty)
 }
+
+@MainActor
+@Test("A session ended by the human kill switch is audited as such")
+func killSwitchStopIsAudited() async throws {
+    // §5.3's kill switch is a person stopping agent work nobody was
+    // watching, and §12's audit exists so that incident is reconstructable.
+    // Before this, `clearAgentSession` forgot the session id without
+    // recording an end, so the trail showed a start and nothing after it —
+    // reading as PERMANENTLY IN-FLIGHT when in fact a human intervened,
+    // which is the opposite of what happened.
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let auditLogURL = scratchAuditLogURL()
+    let host = makeHost(coordinator: coordinator, recorder: recorder, auditLogURL: auditLogURL)
+
+    let started = await host.handle(startBody())
+    guard case .started(let sessionID, _) = started else {
+        Issue.record("expected a started response, got \(started)")
+        return
+    }
+
+    // What AppDelegate calls when a person stops from the menu bar.
+    await host.clearAgentSession()
+
+    let records = try AuditLog.read(from: auditLogURL)
+    let mine = records.filter { $0.sessionID == sessionID }
+    #expect(mine.count == 2, "a kill-switch stop must close the session, not leave it open")
+    // Distinct from `completed` deliberately: an incident review needs to
+    // see that a human intervened, not that the agent finished normally.
+    #expect(mine.last?.outcome == "stoppedByHuman")
+    #expect(mine.last?.endedAt != nil)
+}
+
+@MainActor
+@Test("Clearing with no agent session writes nothing")
+func clearWithoutAgentSessionWritesNothing() async throws {
+    // `clearAgentSession` also fires when a HUMAN starts or stops their own
+    // recording. §12 scopes the audit to agent-initiated work, so this path
+    // must stay silent — an implementation that writes unconditionally
+    // buries the agent entries the audit exists to surface.
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let auditLogURL = scratchAuditLogURL()
+    let host = makeHost(coordinator: coordinator, recorder: recorder, auditLogURL: auditLogURL)
+
+    await host.clearAgentSession()
+
+    #expect(try AuditLog.read(from: auditLogURL).isEmpty)
+}

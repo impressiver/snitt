@@ -113,6 +113,11 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         static let completed = "completed"
         static let capped = "capped"
         static let failed = "failed"
+        /// A person ended an agent's recording from the menu bar (§5.3's
+        /// kill switch). Distinct from `completed` on purpose: an incident
+        /// review needs to see that a human intervened, not that the agent
+        /// finished normally.
+        static let stoppedByHuman = "stoppedByHuman"
     }
 
     /// The clock the registry's expiry checks are measured against.
@@ -206,7 +211,15 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// a person ended from the menu bar.
     func clearAgentSession() async {
         cancelWatchdog()
-        await registry.closeAny()
+        // Record the end BEFORE forgetting the id: an agent session stopped
+        // from the menu bar is the human kill switch (§5.3) acting on work
+        // nobody was watching, and an audit that shows its start with no end
+        // reads as still running. `recordSessionEnd` is a no-op for a session
+        // that was never audited, so a human's own recording still writes
+        // nothing.
+        if let closed = await registry.closeAny() {
+            await recordSessionEnd(sessionID: closed, outcome: AuditOutcome.stoppedByHuman)
+        }
     }
 
     private func cancelWatchdog() {
