@@ -30,6 +30,29 @@ func updaterHonoursTheSetting() {
     #expect(off.automaticChecksEnabled == false)
     let on = UpdaterController(settings: UpdateSettings(automaticChecksEnabled: true))
     #expect(on.automaticChecksEnabled)
+
+    // R22: the two tests above are not complementary the way a first pass
+    // at this file claimed. `SPUStandardUpdaterController` always targets
+    // `Bundle.main`, and this process has no bundle identifier, so `SUHost`
+    // resolves to `NSUserDefaults.standardUserDefaults` here (same reason
+    // the `defer` above exists) — which makes Sparkle's own PERSISTED write
+    // directly observable, and that is what actually pins the setter, not
+    // a read-back through `UpdaterController` itself.
+    //
+    // Verified against the exact wrong implementation this exists to catch:
+    // an `UpdaterController` whose `automaticChecksEnabled` setter writes
+    // only to a private cached var and never forwards to
+    // `SPUUpdater.automaticallyChecksForUpdates` passes `off`/`on` above
+    // (they only construct and read back) AND is invisible to
+    // `turningOffCancelsAPendingCheck` (which drives a raw `SPUUpdater` and
+    // never touches `UpdaterController` at all) — the full suite reports
+    // 470 passing with that mutant in place. Against that mutant this
+    // assertion fails with `(… as? Bool → false) == true`; restoring the
+    // real forwarding passes both directions again.
+    on.automaticChecksEnabled = true
+    #expect(UserDefaults.standard.object(forKey: "SUEnableAutomaticChecks") as? Bool == true)
+    on.automaticChecksEnabled = false
+    #expect(UserDefaults.standard.object(forKey: "SUEnableAutomaticChecks") as? Bool == false)
 }
 
 /// A `SPUUserDriver` that does nothing. Duplicated from
@@ -129,6 +152,25 @@ private struct SparkleFixture {
     private let root: URL
     private let defaultsSuite: String
 
+    /// Deletes any `com.snitt.test.fixture.*.plist` this test file's own
+    /// earlier runs left behind in `~/Library/Preferences`. `cleanUp()`'s
+    /// own best-effort retry closes the common case, but `cfprefsd` can
+    /// flush a domain's dirty state well after this process has already
+    /// exited — outside anything an in-process retry can catch (observed:
+    /// stray files still appear occasionally even with a bounded retry
+    /// under the full suite's parallel load). Without this sweep that is
+    /// unbounded growth, one file per leaked run, forever; with it, the
+    /// namespace is swept clean at the start of every run regardless of
+    /// what the previous run left behind.
+    private static func sweepStaleFixtureFiles() {
+        guard let preferencesDirectory = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Preferences") else { return }
+        guard let contents = try? FileManager.default.contentsOfDirectory(at: preferencesDirectory, includingPropertiesForKeys: nil) else { return }
+        for file in contents where file.lastPathComponent.hasPrefix("com.snitt.test.fixture.") {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+
     /// `seedLastCheckTime`: when automatic checks will be turned on,
     /// Sparkle treats an absent `SULastCheckTime` as `NSDate.distantPast`
     /// and takes its "we're overdue, check right now" branch — a REAL
@@ -142,6 +184,7 @@ private struct SparkleFixture {
     /// makes the scheduled-for-later branch the one actually exercised,
     /// deterministically, on any machine.
     static func make(seedLastCheckTime: Bool) throws -> SparkleFixture {
+        sweepStaleFixtureFiles()
         let suite = "com.snitt.test.fixture.\(UUID().uuidString)"
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("SnittSparkleFixture-\(UUID().uuidString).app")
@@ -175,7 +218,37 @@ private struct SparkleFixture {
     }
 
     func cleanUp() {
-        UserDefaults().removePersistentDomain(forName: defaultsSuite)
+        // R23: `removePersistentDomain(forName:)` only empties the suite in
+        // memory — `NSUserDefaults`/`CFPreferences` flushes dirty domains to
+        // disk lazily, so deleting `<suite>.plist` right after
+        // `removePersistentDomain` races a pending flush of THIS fixture's
+        // own earlier `set(...)` call and can lose: the flush lands after
+        // the delete and leaves a fresh, empty 42-byte plist behind
+        // (observed accumulating, one per fixture, forever, on a persistent
+        // developer machine). `synchronize()` forces that flush to happen
+        // NOW, before we delete, closing the race — verified empirically:
+        // without it, files reliably survive a full `swift test` run;
+        // with it, they don't.
+        let defaults = UserDefaults(suiteName: defaultsSuite)
+        defaults?.removePersistentDomain(forName: defaultsSuite)
+        defaults?.synchronize()
+        if let preferencesURL = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first?
+            .appendingPathComponent("Preferences")
+            .appendingPathComponent("\(defaultsSuite).plist") {
+            // `synchronize()` returning is not a guarantee the write already
+            // landed on disk — `cfprefsd` can flush a couple of
+            // milliseconds later via its own XPC round trip, especially
+            // under the full suite's parallel load, occasionally recreating
+            // an empty file just after a single delete attempt (observed).
+            // A short bounded retry closes that window without adding
+            // meaningful time to the run.
+            for attempt in 0..<10 {
+                try? FileManager.default.removeItem(at: preferencesURL)
+                if attempt < 9 {
+                    Thread.sleep(forTimeInterval: 0.05)
+                }
+            }
+        }
         try? FileManager.default.removeItem(at: root)
     }
 }
