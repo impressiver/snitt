@@ -215,6 +215,123 @@ git commit -m "feat(export): carry the EDL's audio mix on BuiltComposition, so p
 
 ---
 
+### Task 1b: Match track states by name, not by position
+
+**Files:**
+- Create: `Sources/SnittDocument/AudioTrackOrder.swift`
+- Modify: `Sources/SnittExport/CompositionBuilder.swift`
+- Modify: `Sources/SnittCapture/AssetWriterSink.swift` (reference the shared order, do not change behaviour)
+- Test: `Tests/SnittExportTests/CompositionBuilderTests.swift`, `Tests/SnittDocumentTests/AudioTrackOrderTests.swift`
+
+**Interfaces:**
+- Produces: `public enum AudioTrackOrder { public static let canonical: [String] }` — the audio track names in the order the recorder writes them.
+
+**Why this exists.** Task 1 matched `trackStates` to composition audio tracks by index, on a convention that turns out to be false. Measured:
+
+- `EditDecisionList.fullRange()` emits `["video", "microphone", "systemAudio"]` — three states, the first of which is **not an audio track**.
+- `AssetWriterSink` calls `writer.add` in the order `[video, systemAudio, microphone]`, so a recording's audio tracks are `[systemAudio, microphone]`.
+
+Index-matching therefore gives audio track 0 (systemAudio) the state named `"video"`, gives microphone its own state by coincidence, and drops `"systemAudio"` off the end. **Muting system audio does nothing; muting "video" silences system audio.** No test in Task 1 catches this because its fixtures construct `trackStates` by hand in the order the assertion expects.
+
+This is §8's failure — a user mutes a track, is told it worked, and the audio is unchanged. It is latent today only because nothing writes `trackStates` yet; M4b's mute UI would make it immediately reachable.
+
+**The layering constraint that shapes the fix.** `SnittExport` cannot depend on `SnittCapture`, so the exporter cannot ask the recorder what order it wrote. Both depend on `SnittDocument`, so the canonical order belongs there and both sides reference it.
+
+- [ ] **Step 1: Write the failing tests**
+
+```swift
+@Test("Track states are matched by name, so system audio mutes system audio")
+func systemAudioStateMutesSystemAudio() async throws {
+    let bundle = try await makeTestBundle(seconds: 2, audioTrackCount: 2)
+    var edl = EditDecisionList.fullRange()
+    edl.trackStates = edl.trackStates.map {
+        $0.track == "systemAudio" ? TrackState(track: "systemAudio", muted: true, gain: 1.0) : $0
+    }
+
+    let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+
+    let mix = try #require(built.audioMix)
+    let tracks = built.composition.tracks(withMediaType: AVMediaType.audio)
+    // AudioTrackOrder.canonical is [systemAudio, microphone], so index 0 is
+    // the one that must be silenced. Index-matching against fullRange()
+    // silences this track for the state named "video" instead, and leaves
+    // this assertion reading 1.0.
+    let params = try #require(mix.inputParameters.first { $0.trackID == tracks[0].trackID })
+    var volume: Float = -1
+    #expect(params.getVolumeRamp(for: .zero, startVolume: &volume,
+                                 endVolume: nil, timeRange: nil))
+    #expect(volume == 0.0)
+}
+
+@Test("A state naming the video track never silences audio")
+func videoStateDoesNotSilenceAudio() async throws {
+    let bundle = try await makeTestBundle(seconds: 2, audioTrackCount: 2)
+    var edl = EditDecisionList.fullRange()
+    edl.trackStates = edl.trackStates.map {
+        $0.track == "video" ? TrackState(track: "video", muted: true, gain: 1.0) : $0
+    }
+
+    let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+
+    // "video" is not an audio track. Muting it must be a no-op for audio,
+    // not a mute of whichever audio track happens to sit at index 0.
+    // This is the exact bug positional matching produces.
+    #expect(built.audioMix == nil)
+}
+
+@Test("The canonical order matches what the recorder actually writes")
+func canonicalOrderMatchesTheRecorder() {
+    // AssetWriterSink adds inputs as [video, systemAudio, microphone], so a
+    // recording's AUDIO tracks are [systemAudio, microphone]. If someone
+    // reorders those `writer.add` calls, this is the test that fails —
+    // otherwise the mix silently addresses the wrong track again.
+    #expect(AudioTrackOrder.canonical == ["systemAudio", "microphone"])
+}
+```
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `swift test --filter "systemAudioState|videoState|canonicalOrder"`
+Expected: FAIL — `cannot find 'AudioTrackOrder' in scope`, and the mix silences the wrong track.
+
+- [ ] **Step 3: Implement**
+
+```swift
+/// The order in which a recording's AUDIO tracks appear, which is the order
+/// `AssetWriterSink` adds its inputs — video first, then system audio, then
+/// the microphone. Only the audio entries are listed: the video track is not
+/// addressable by an audio mix.
+///
+/// This lives in `SnittDocument` because both sides need it and neither can
+/// see the other: `SnittExport` must never depend on `SnittCapture` (§4.9's
+/// layering, enforced by the thin-client guard), so the exporter cannot ask
+/// the recorder what it wrote.
+public enum AudioTrackOrder {
+    public static let canonical = ["systemAudio", "microphone"]
+}
+```
+
+In `CompositionBuilder.audioMix(for:states:)`, resolve each composition audio track to its name via `AudioTrackOrder.canonical` by index, then look up the `TrackState` **by that name**. States naming something not in `canonical` — `"video"`, or anything from a stale EDL — are ignored. Recompute `needsMix` after filtering, so an EDL that only mutes `"video"` produces no mix at all.
+
+Add a comment in `AssetWriterSink` beside the `writer.add` loop pointing at `AudioTrackOrder.canonical` and saying the order is load-bearing.
+
+- [ ] **Step 4: Run to verify it passes**
+
+`rm -rf .build`, then a full unfiltered run; expect 356.
+
+- [ ] **Step 5: Verify the tests discriminate**
+
+Restore positional matching and confirm `systemAudioStateMutesSystemAudio` and `videoStateDoesNotSilenceAudio` both fail. Change `canonical` to `["microphone", "systemAudio"]` and confirm the first and third fail. Restore.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add Sources Tests
+git commit -m "fix(export): match track states by name, so muting addresses the right track"
+```
+
+---
+
 ### Task 2: Marker jump points
 
 **Files:**
