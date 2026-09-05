@@ -6,13 +6,15 @@ import SnittExport
 import Testing
 
 private func makeTestBundle(seconds: Double = 4,
-                             maxKeyFrameInterval: Int32? = nil) async throws -> SnittBundle {
+                             maxKeyFrameInterval: Int32? = nil,
+                             audioTrackCount: Int = 0) async throws -> SnittBundle {
     let url = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
         .appendingPathExtension(SnittBundle.fileExtension)
     let bundle = try SnittBundle(creatingAt: url)
     try await writeSyntheticMovie(to: bundle.captureURL, seconds: seconds,
-                                  maxKeyFrameInterval: maxKeyFrameInterval)
+                                  maxKeyFrameInterval: maxKeyFrameInterval,
+                                  audioTrackCount: audioTrackCount)
     return bundle
 }
 
@@ -24,9 +26,16 @@ private let syntheticMovieFPS: Int32 = 30
 @MainActor
 @Test("The controller attaches the composition it was given, not one it built")
 func attachesTheGivenComposition() async throws {
-    let bundle = try await makeTestBundle(seconds: 3)
+    let bundle = try await makeTestBundle(seconds: 3, audioTrackCount: 1)
+    // A muted track, so `built.audioMix` is non-nil (finding #1 of the M4a
+    // review): `AVAudioMix` is nil whenever nothing is muted and no gain
+    // differs from 1.0, and `nil === nil` would pass this assertion
+    // vacuously even against an implementation that drops the assignment
+    // entirely.
+    var edl = EditDecisionList()
+    edl.trackStates = [TrackState(track: "systemAudio", muted: true, gain: 1.0)]
     let built = try await CompositionBuilder.build(
-        bundle: bundle, edl: EditDecisionList(), scale: 0.5)
+        bundle: bundle, edl: edl, scale: 0.5)
 
     let controller = PreviewController(built: built, jumpPoints: [])
     let item = try #require(controller.player.currentItem)
@@ -49,6 +58,37 @@ func attachesTheGivenComposition() async throws {
     // reuse `built.composition`'s.
     #expect(item.asset === built.composition)
     #expect(item.videoComposition?.renderSize == built.videoComposition.renderSize)
+    // Finding #1 of the M4a review: `attachesTheGivenComposition` checked
+    // asset identity and render size but said nothing about `audioMix`, so a
+    // refactor dropping `item.audioMix = built.audioMix` in
+    // `PreviewController.init` left all 376 tests passing while silently
+    // un-muting the preview (export stays muted — §9's exact divergence).
+    //
+    // Deviation from the brief: identity on the READBACK (`item.audioMix
+    // === built.audioMix`) is unwinnable by any correct implementation, for
+    // the same reason `item.videoComposition === built.videoComposition` is
+    // above — measured here, not assumed: `AVPlayerItem`'s `audioMix` setter
+    // takes an immutable snapshot of whatever `AVAudioMix` it is handed, so
+    // the getter returns a distinct instance even right after assignment in
+    // this same init (confirmed by printing both objects' addresses). So
+    // this checks that the READ-BACK mix carries the same volume, for the
+    // same track, that `built.audioMix` does — which a controller that
+    // drops the assignment (leaving `item.audioMix` nil) fails outright, and
+    // one that reuses `built.audioMix` (however AVFoundation snapshots it)
+    // passes.
+    let mix = try #require(built.audioMix, "the fixture's muted track should produce a real mix")
+    let expectedParams = try #require(mix.inputParameters.first)
+    let attachedMix = try #require(item.audioMix)
+    let attachedParams = try #require(
+        attachedMix.inputParameters.first { $0.trackID == expectedParams.trackID })
+    var expectedVolume: Float = -1
+    var attachedVolume: Float = -1
+    #expect(expectedParams.getVolumeRamp(for: .zero, startVolume: &expectedVolume,
+                                         endVolume: nil, timeRange: nil))
+    #expect(attachedParams.getVolumeRamp(for: .zero, startVolume: &attachedVolume,
+                                         endVolume: nil, timeRange: nil))
+    #expect(attachedVolume == expectedVolume)
+    #expect(attachedVolume == 0.0, "the fixture muted this track; the attached mix should reflect that")
 }
 
 @MainActor

@@ -125,4 +125,23 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     private static func applyActivationPolicy() {
         NSApp.setActivationPolicy(count > 0 ? .regular : .accessory)
     }
+
+    // MARK: - Testing seam
+
+    /// Closes every editor `EditorWindowController` currently thinks is
+    /// open, exactly as if each had gone through `close()`.
+    ///
+    /// M4a review finding #3: a test that opens an editor through
+    /// `RecordingCoordinator.stopForTesting()` — which constructs the
+    /// `EditorWindowController` internally and never hands it back — has no
+    /// other way to tear it down, so it leaked a real window (and a bumped
+    /// `openWindowCount`) for the rest of the run. `close()` itself is
+    /// idempotent and per-instance; this just calls it for every instance
+    /// still in `open`, using a copy of the array since `close()` mutates
+    /// `open` as it runs.
+    static func closeAllForTesting() {
+        for editor in open {
+            editor.close()
+        }
+    }
 }

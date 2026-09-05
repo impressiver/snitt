@@ -180,6 +180,50 @@ func gainIsCarriedIntoTheMix() async throws {
     #expect(abs(volume - 0.25) < 0.001)
 }
 
+@Test("A negative gain from a hand-edited edit.json is clamped to silence, not passed through raw")
+func negativeGainIsClampedToZero() async throws {
+    // Finding #4 of the M4a review: `TrackState.gain` is a plain `Double`
+    // decoded straight from `edit.json`, with nothing rejecting a
+    // hand-edited or corrupted sidecar. `AVMutableAudioMixInputParameters
+    // .setVolume` does not document clamping its input, so a negative gain
+    // passed through raw is undefined rather than silenced. Discriminating
+    // against a raw pass-through: an unclamped implementation would hand
+    // AVFoundation -0.5 here, whatever that resolves to (not 0.0).
+    let bundle = try await makeTestBundle(seconds: 2, audioTrackCount: 1)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+    var edl = EditDecisionList()
+    edl.trackStates = [TrackState(track: "systemAudio", muted: false, gain: -0.5)]
+
+    let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+
+    let mix = try #require(built.audioMix)
+    let params = try #require(mix.inputParameters.first)
+    var volume: Float = -1
+    #expect(params.getVolumeRamp(for: .zero, startVolume: &volume,
+                                 endVolume: nil, timeRange: nil))
+    #expect(volume == 0.0)
+}
+
+@Test("A gain greater than 1 from a hand-edited edit.json is clamped to unity, not amplified")
+func excessiveGainIsClampedToOne() async throws {
+    // Same finding as `negativeGainIsClampedToZero`, the other side of the
+    // clamp. Discriminating against a raw pass-through: an unclamped
+    // implementation would report 2.5 here, not 1.0.
+    let bundle = try await makeTestBundle(seconds: 2, audioTrackCount: 1)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+    var edl = EditDecisionList()
+    edl.trackStates = [TrackState(track: "systemAudio", muted: false, gain: 2.5)]
+
+    let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+
+    let mix = try #require(built.audioMix)
+    let params = try #require(mix.inputParameters.first)
+    var volume: Float = -1
+    #expect(params.getVolumeRamp(for: .zero, startVolume: &volume,
+                                 endVolume: nil, timeRange: nil))
+    #expect(volume == 1.0)
+}
+
 @Test("A duplicate track name in the EDL does not crash the export")
 func duplicateTrackNameIsSurvivable() async throws {
     // `Dictionary(uniqueKeysWithValues:)` TRAPS on a repeated key — signal 5,

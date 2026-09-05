@@ -446,6 +446,19 @@ public actor RecordingCoordinator: AgentRecordingControlling {
                 corruptCaptureAfterStopForTesting = false
                 try? Data("not a movie".utf8).write(to: bundle.captureURL)
             }
+            // Finding #5 of the M4a review: this `await` sits in front of
+            // `.stopped` being returned, so a human hotkey stop now reports
+            // completion only after the WHOLE composition build finishes —
+            // `openEditorIfHuman` runs `CompositionBuilder.build`
+            // end-to-end before `openEditor` even shows the window. At 1.0
+            // scale on today's short clips that is unmeasurable, so it is
+            // harmless now. It stops being harmless the moment M4b makes
+            // builds heavier (scrubbing, overlays, longer recordings): the
+            // hotkey's perceived "stop" latency grows with the build, not
+            // with the actual stop. If that shows up, the fix is to let this
+            // race the return rather than gate it — kick the build off and
+            // resolve `.stopped` immediately — not to make the build itself
+            // faster.
             await openEditorIfHuman(for: bundle)
             return .stopped(bundle.url, copied: copied)
         } catch {

@@ -137,7 +137,22 @@ public enum CompositionBuilder {
         let mix = AVMutableAudioMix()
         mix.inputParameters = zip(tracks, matchedStates).map { track, state in
             let parameters = AVMutableAudioMixInputParameters(track: track)
-            let volume = state.map { $0.muted ? 0.0 : Float($0.gain) } ?? 1.0
+            // Clamped to `0...1`, not passed through raw. `TrackState.gain`
+            // is a plain `Double` decoded straight from `edit.json` — a
+            // human hand-editing that sidecar (or a bad merge, or a stale
+            // tool writing a different range) can put anything in it, and
+            // `AVMutableAudioMixInputParameters.setVolume` documents no
+            // clamping of its own. This milestone's ledger already has two
+            // "it's latent, nothing writes it yet" calls that turned out
+            // wrong — a deferred hazard came back as a SIGSEGV that silently
+            // truncated suite runs, and a deferred track-naming bug would
+            // have made muting system audio a silent no-op — so this is
+            // fixed here, where the value is actually consumed, rather than
+            // deferred to M4b's mute/gain UI. `TrackState.gain` itself stays
+            // an unclamped `Double` and the EDL is never rejected: a
+            // recording should still open with a strange sidecar.
+            let rawVolume = state.map { $0.muted ? 0.0 : Float($0.gain) } ?? 1.0
+            let volume = min(max(rawVolume, 0.0), 1.0)
             parameters.setVolume(volume, at: .zero)
             return parameters
         }

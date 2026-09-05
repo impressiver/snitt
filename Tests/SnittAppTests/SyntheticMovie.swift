@@ -12,10 +12,13 @@ import Foundation
 /// metadata-only bundle (no `capture.mov` at all) cannot exercise that bug,
 /// because there is no media duration to disagree with the wall-clock one.
 ///
-/// This is a smaller copy — video only, no audio tracks — since
-/// `AutomationHost.trim`/`.export` tests only need a real, readable movie
-/// with a known duration, not the per-source-track audio pairing that
-/// `SnittExportTests`' copy also exercises.
+/// Originally video-only, since `AutomationHost.trim`/`.export` tests only
+/// needed a real, readable movie with a known duration. `audioTrackCount`
+/// was added (silent LPCM only, no `.tone` option — `SnittExportTests`' copy
+/// has that for size-target tests, which don't live in this target) for
+/// `PreviewControllerTests.attachesTheGivenComposition`, which needs a
+/// fixture whose EDL can produce a non-nil `AVAudioMix` (a muted track) —
+/// `built.audioMix` is nil whenever there are no audio tracks at all.
 ///
 /// - Parameter maxKeyFrameInterval: opt-in `AVVideoMaxKeyFrameIntervalKey`.
 ///   `nil` (the default) leaves the encoder's own keyframe placement alone —
@@ -33,7 +36,8 @@ import Foundation
 func writeSyntheticMovie(to url: URL, seconds: Double,
                          size: CGSize = CGSize(width: 320, height: 240),
                          fps: Int32 = 30,
-                         maxKeyFrameInterval: Int32? = nil) async throws {
+                         maxKeyFrameInterval: Int32? = nil,
+                         audioTrackCount: Int = 0) async throws {
     nonisolated(unsafe) let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
 
     var videoOutputSettings: [String: Any] = [
@@ -80,11 +84,43 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
     }
     writer.add(videoInput)
 
+    let audioSampleRate = 48_000.0
+    var audioFormatDescription: CMAudioFormatDescription?
+    var audioInputs: [AVAssetWriterInput] = []
+    if audioTrackCount > 0 {
+        var asbd = AudioStreamBasicDescription(
+            mSampleRate: audioSampleRate,
+            mFormatID: kAudioFormatLinearPCM,
+            mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked,
+            mBytesPerPacket: 4, mFramesPerPacket: 1, mBytesPerFrame: 4,
+            mChannelsPerFrame: 1, mBitsPerChannel: 32, mReserved: 0)
+        var formatDescription: CMAudioFormatDescription?
+        CMAudioFormatDescriptionCreate(
+            allocator: kCFAllocatorDefault, asbd: &asbd,
+            layoutSize: 0, layout: nil, magicCookieSize: 0, magicCookie: nil,
+            extensions: nil, formatDescriptionOut: &formatDescription)
+        audioFormatDescription = formatDescription
+
+        for _ in 0..<audioTrackCount {
+            nonisolated(unsafe) let input = AVAssetWriterInput(mediaType: .audio, outputSettings: nil,
+                                           sourceFormatHint: formatDescription)
+            input.expectsMediaDataInRealTime = false
+            guard writer.canAdd(input) else {
+                throw NSError(domain: "SyntheticMovie", code: 5,
+                              userInfo: [NSLocalizedDescriptionKey: "cannot add audio input"])
+            }
+            writer.add(input)
+            audioInputs.append(input)
+        }
+    }
+
     guard writer.startWriting() else { throw writer.error ?? NSError(domain: "SyntheticMovie", code: 2) }
     writer.startSession(atSourceTime: .zero)
 
     let frameCount = Int((seconds * Double(fps)).rounded())
     let frameDuration = CMTime(value: 1, timescale: fps)
+    let packetFrameCount = 1024
+    let totalAudioFrames = Int(seconds * audioSampleRate)
 
     let videoProgress = FrameCounter()
     let videoFinished = OnceFlag()
@@ -144,6 +180,41 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
         }
     }
 
+    if let formatDescription = audioFormatDescription {
+        for (index, loopInput) in audioInputs.enumerated() {
+            nonisolated(unsafe) let input = loopInput
+            group.enter()
+            let audioProgress = FrameCounter()
+            let audioFinished = OnceFlag()
+            input.requestMediaDataWhenReady(on: DispatchQueue(label: "synthetic-movie.audio.\(index)")) {
+                while input.isReadyForMoreMediaData {
+                    if writer.status == .failed {
+                        audioFinished.fireOnce {
+                            input.markAsFinished()
+                            group.leave()
+                        }
+                        return
+                    }
+                    guard audioProgress.value < totalAudioFrames else {
+                        audioFinished.fireOnce {
+                            input.markAsFinished()
+                            group.leave()
+                        }
+                        return
+                    }
+                    let framesThisPacket = min(packetFrameCount, totalAudioFrames - audioProgress.value)
+                    guard let sampleBuffer = makeSilentAudioSampleBuffer(
+                        formatDescription: formatDescription,
+                        frameCount: framesThisPacket,
+                        startFrame: audioProgress.value)
+                    else { continue }
+                    input.append(sampleBuffer)
+                    audioProgress.value += framesThisPacket
+                }
+            }
+        }
+    }
+
     await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
         group.notify(queue: .global()) {
             continuation.resume()
@@ -162,6 +233,38 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
             }
         }
     }
+}
+
+/// Builds one packet of silent 32-bit float LPCM. Only `.silent` content is
+/// needed in this target — see `writeSyntheticMovie`'s doc comment above for
+/// why `.tone` was not ported over.
+private func makeSilentAudioSampleBuffer(formatDescription: CMAudioFormatDescription,
+                                         frameCount: Int, startFrame: Int) -> CMSampleBuffer? {
+    var blockBuffer: CMBlockBuffer?
+    CMBlockBufferCreateWithMemoryBlock(
+        allocator: kCFAllocatorDefault,
+        memoryBlock: nil,
+        blockLength: frameCount * 4,
+        blockAllocator: kCFAllocatorDefault,
+        customBlockSource: nil, offsetToData: 0, dataLength: frameCount * 4,
+        flags: 0, blockBufferOut: &blockBuffer
+    )
+    guard let blockBuffer else { return nil }
+    CMBlockBufferFillDataBytes(with: 0, blockBuffer: blockBuffer,
+                               offsetIntoDestination: 0,
+                               dataLength: frameCount * 4)
+
+    var sampleBuffer: CMSampleBuffer?
+    CMAudioSampleBufferCreateReadyWithPacketDescriptions(
+        allocator: kCFAllocatorDefault,
+        dataBuffer: blockBuffer,
+        formatDescription: formatDescription,
+        sampleCount: frameCount,
+        presentationTimeStamp: CMTime(value: CMTimeValue(startFrame), timescale: 48_000),
+        packetDescriptions: nil,
+        sampleBufferOut: &sampleBuffer
+    )
+    return sampleBuffer
 }
 
 /// Mutable frame-count cursor. See `SnittExportTests`' copy.

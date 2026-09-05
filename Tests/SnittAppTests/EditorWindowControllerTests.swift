@@ -222,6 +222,7 @@ struct EditorWindowControllerTests {
         // `windowWillClose(_:)` is public and `teardown()` is idempotent, so
         // the delegate callback can be invoked directly with a synthetic
         // notification.
+        let before = EditorWindowController.openWindowCount
         let controller = try await makePreviewController(seconds: 3)
         let editor = EditorWindowController(controller: controller, title: "demo")
         editor.show()
@@ -230,7 +231,13 @@ struct EditorWindowControllerTests {
 
         editor.windowWillClose(Notification(name: NSWindow.willCloseNotification))
 
-        #expect(EditorWindowController.openWindowCount == 0)
+        // M4a review finding #3: this used to assert `== 0` outright, which
+        // only held because this suite's serialized tests happened to run
+        // in source order with every other test cleaning up after itself.
+        // Reordering the file — or a future test leaking a window — breaks
+        // an absolute assertion silently. Relative to a captured `before`
+        // count, this only depends on THIS test's own open/close pair.
+        #expect(EditorWindowController.openWindowCount == before)
         #expect(NSApp.activationPolicy() == .accessory)
         #expect(controller.player.rate == 0)
     }
@@ -244,6 +251,17 @@ struct EditorWindowControllerTests {
         let bundle = try await stopEditorTestCoordinator(coordinator, initiator: .human)
         _ = bundle
         #expect(EditorWindowController.openWindowCount == before + 1)
+        // M4a review finding #3: this test never closed the editor it just
+        // opened, leaking a real window (and a bumped `openWindowCount`) for
+        // the rest of the run. The suite absorbed it because every other
+        // test's assertions are relative to a captured `before` count —
+        // except `closeButtonPathTearsDown`'s absolute `openWindowCount ==
+        // 0`, which only survived by accident of source order (this test
+        // used to run after it). `RecordingCoordinator.openEditor` builds
+        // the `EditorWindowController` internally and never hands it back,
+        // so `closeAllForTesting()` is the only way to tear it down here.
+        EditorWindowController.closeAllForTesting()
+        #expect(EditorWindowController.openWindowCount == before)
     }
 
     @Test("Stopping an agent recording does NOT open a window")
