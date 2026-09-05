@@ -50,6 +50,18 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     private static var count = 0
     public static var openWindowCount: Int { count }
 
+    /// Retains every open editor for as long as its window is on screen.
+    ///
+    /// Without this, an editor's ONLY owner is whatever created it. The stop
+    /// path that Task 5 adds constructs one and calls `show()` without
+    /// holding on to it afterwards — every prior caller of this type was a
+    /// test that kept its own `let editor = ...` alive for the whole test, so
+    /// this gap never showed up before there was a caller that didn't. A
+    /// dropped `EditorWindowController` deallocates: `NSWindow.delegate` is
+    /// `weak`, so `windowWillClose` stops firing, and the window itself can
+    /// vanish from under a user who is still watching it.
+    private static var open: [EditorWindowController] = []
+
     public init(controller: PreviewController, title: String) {
         self.controller = controller
         let hosting = NSHostingView(rootView: EditorContentView(controller: controller))
@@ -75,6 +87,7 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         if !isShown {
             isShown = true
             Self.count += 1
+            Self.open.append(self)
             Self.applyActivationPolicy()
         }
         window.makeKeyAndOrderFront(nil)
@@ -103,6 +116,7 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         // from a window the user can no longer see.
         controller.pause()
         Self.count -= 1
+        Self.open.removeAll { $0 === self }
         Self.applyActivationPolicy()
     }
 

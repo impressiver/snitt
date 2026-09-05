@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import os
 import SnittCapture
 import SnittDocument
 import SnittExport
@@ -114,6 +115,17 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     /// would hand it their bundle path. Cleared by EVERY stop, so a
     /// human-initiated stop makes the id stale immediately.
     private var agentSessionID: String?
+
+    /// Testing-only: makes the very NEXT `stopRecording()` overwrite the
+    /// just-finalized `capture.mov` with garbage before the editor build is
+    /// attempted. Simulates "the bundle is safe on disk, but unreadable"
+    /// (Important 2 of Task 5) without ever exercising a REAL finalization
+    /// failure — that is a different bug, covered by
+    /// `RecorderTests.finalizationFailureSurfaces`.
+    private var corruptCaptureAfterStopForTesting = false
+
+    private static let log = Logger(subsystem: "com.impressiver.snitt",
+                                    category: "recording-coordinator")
 
     public init(pickerResolver: TargetResolver,
                 cachedResolverFactory: @escaping @Sendable (TargetReference) -> TargetResolver,
@@ -430,9 +442,54 @@ public actor RecordingCoordinator: AgentRecordingControlling {
             let bundle = try await recorder.stop()
             let copied = ClipboardDestination.copy(fileURL: bundle.captureURL,
                                                    to: .general)
+            if corruptCaptureAfterStopForTesting {
+                corruptCaptureAfterStopForTesting = false
+                try? Data("not a movie".utf8).write(to: bundle.captureURL)
+            }
+            await openEditorIfHuman(for: bundle)
             return .stopped(bundle.url, copied: copied)
         } catch {
             return .failed("Recording failed to finalize: \(error)", reason: .internalError)
+        }
+    }
+
+    /// §9: "Stopping opens the editor with a default EDL spanning the full
+    /// range." Never for an agent's recording — §4.8 scopes automation to
+    /// record-only, and §5.3 exists because agent recordings happen with no
+    /// human present. A window appearing on someone's screen because a
+    /// background agent finished a capture is exactly the surprise the
+    /// consent rules exist to prevent.
+    ///
+    /// The initiator is read FROM THE JUST-FINALIZED BUNDLE's metadata — the
+    /// same stamp `Recorder` writes via `initiator(isAgent:)` — rather than
+    /// from `agentSessionID`, which `stopRecording()` has already cleared by
+    /// the time this runs.
+    private func openEditorIfHuman(for bundle: SnittBundle) async {
+        guard let metadata = try? RecordingMetadata.read(from: bundle),
+              metadata.initiator == .human else { return }
+        await openEditor(for: bundle)
+    }
+
+    /// Builds the preview and shows it. Best-effort: by this point the
+    /// recording is finalized and safe on disk, and a build failure — an
+    /// unreadable `capture.mov`, for instance — must surface as a log line,
+    /// never take down a stop that has already succeeded. Losing a valuable,
+    /// already-safe recording because a convenience (the preview) could not
+    /// be built would be exactly backwards.
+    private func openEditor(for bundle: SnittBundle) async {
+        do {
+            let edl = (try? EditDecisionList.read(from: bundle)) ?? .fullRange()
+            let events = try EventLog.read(from: bundle).events
+            let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+            let jumpPoints = MarkerJumpPoints.compute(events: events, keptRanges: built.keptRanges)
+            await MainActor.run {
+                let controller = PreviewController(built: built, jumpPoints: jumpPoints)
+                let editor = EditorWindowController(controller: controller,
+                                                    title: bundle.url.lastPathComponent)
+                editor.show()
+            }
+        } catch {
+            Self.log.error("Could not open the editor for \(bundle.url.lastPathComponent, privacy: .public): \(String(describing: error), privacy: .public)")
         }
     }
 
@@ -526,4 +583,42 @@ public actor RecordingCoordinator: AgentRecordingControlling {
                                      titleHint: reference.titleHint,
                                      displayID: reference.displayID)
     }
+
+    // MARK: - Testing seam
+
+    /// Injects an already-configured `Recorder` as the active recording.
+    ///
+    /// `Recorder`'s own testing seam (`forTesting`/`startForTesting`/
+    /// `feedForTesting`) is internal to `SnittCapture` and reachable only via
+    /// `@testable import` from a test target — `SnittApp`'s production code,
+    /// including this file, imports `SnittCapture` normally and cannot see
+    /// it. So the CALLER (a test, via `@testable import SnittCapture`)
+    /// builds and drives the `Recorder` up through a real, finalized bundle;
+    /// this just wires the result in as `active`, exactly where
+    /// `startRecording()` would have left it.
+    func setActiveForTesting(_ recorder: Recorder) {
+        active = recorder
+    }
+
+    /// Drives the exact production stop path — the same `stopRecording()`
+    /// that `toggle()` and `stopForAgent()` call — against whatever was
+    /// injected via `setActiveForTesting`. Exercises Task 5's actual
+    /// decision points (branching on the bundle's stamped initiator, the
+    /// best-effort build) rather than a stand-in for them.
+    func stopForTesting() async throws -> SnittBundle {
+        guard case .stopped(let stoppedURL, _) = await stopRecording() else {
+            throw StopForTestingFailed()
+        }
+        return try SnittBundle(opening: stoppedURL)
+    }
+
+    /// Testing-only: makes the very next `stopRecording()` corrupt the
+    /// finalized `capture.mov` before the editor build is attempted. See
+    /// `corruptCaptureAfterStopForTesting`'s doc comment for why this
+    /// simulates a DIFFERENT failure than a real finalization error.
+    func corruptNextCaptureForTesting() {
+        corruptCaptureAfterStopForTesting = true
+    }
+
+    private struct StopForTestingFailed: Error {}
 }

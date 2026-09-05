@@ -1,7 +1,10 @@
 import AppKit
 import AVFoundation
+import CoreMedia
+import CoreVideo
 import Foundation
-import SnittApp
+@testable import SnittCapture
+@testable import SnittApp
 import SnittDocument
 import SnittExport
 import Testing
@@ -22,6 +25,100 @@ private func makePreviewController(seconds: Double) async throws -> PreviewContr
     return PreviewController(built: built, jumpPoints: [])
 }
 
+/// A minimal, real one-frame-at-a-time video buffer — just enough for
+/// `AssetWriterSink` (inside `Recorder`) to `begin()`/`finish()` successfully
+/// and produce a genuinely valid, loadable `capture.mov`.
+///
+/// Duplicated from `Tests/SnittCaptureTests/SyntheticBuffers.swift` rather
+/// than shared — see `writeSyntheticMovie`'s own doc comment above for why:
+/// Swift Testing target sources do not share helpers across files, let alone
+/// across test targets. Trimmed to video only and not host-clock anchored,
+/// since nothing here reads a media offset — only whether the movie as a
+/// whole builds and plays.
+private func makeEditorTestVideoBuffer(atFrame frame: Int, size: CGSize) -> CMSampleBuffer {
+    var pixelBuffer: CVPixelBuffer?
+    CVPixelBufferCreate(kCFAllocatorDefault, Int(size.width), Int(size.height),
+                        kCVPixelFormatType_32BGRA, nil, &pixelBuffer)
+    let buffer = pixelBuffer!
+
+    CVPixelBufferLockBaseAddress(buffer, [])
+    if let base = CVPixelBufferGetBaseAddress(buffer) {
+        memset(base, 128, CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer))
+    }
+    CVPixelBufferUnlockBaseAddress(buffer, [])
+
+    var formatDescription: CMVideoFormatDescription?
+    CMVideoFormatDescriptionCreateForImageBuffer(
+        allocator: kCFAllocatorDefault, imageBuffer: buffer,
+        formatDescriptionOut: &formatDescription)
+
+    var timing = CMSampleTimingInfo(
+        duration: CMTime(value: 1, timescale: 30),
+        presentationTimeStamp: CMTime(value: CMTimeValue(frame), timescale: 30),
+        decodeTimeStamp: .invalid)
+
+    var sampleBuffer: CMSampleBuffer?
+    CMSampleBufferCreateForImageBuffer(
+        allocator: kCFAllocatorDefault, imageBuffer: buffer, dataReady: true,
+        makeDataReadyCallback: nil, refcon: nil,
+        formatDescription: formatDescription!, sampleTiming: &timing,
+        sampleBufferOut: &sampleBuffer)
+    return sampleBuffer!
+}
+
+@MainActor
+private func makeEditorTestCoordinator() -> RecordingCoordinator {
+    let store = TargetStore(fileURL: FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString))
+    return RecordingCoordinator(
+        // `MarkerResolver` (from `RecordingCoordinatorTests.swift`, same
+        // target): always throws. These tests never reach `resolve()` at
+        // all — the active recording is wired in directly — but every
+        // fixture that constructs a `RecordingCoordinator` in this target
+        // supplies real resolvers rather than leaving them nil-shaped.
+        pickerResolver: MarkerResolver(),
+        cachedResolverFactory: { _ in MarkerResolver() },
+        store: store,
+        outputDirectory: FileManager.default.temporaryDirectory,
+        ensureAccess: { true })
+}
+
+/// Wires a real, finalized `Recorder`-produced bundle into `coordinator` as
+/// its active recording, then runs the exact stop path production code
+/// runs (`RecordingCoordinator.stopForTesting()`), and returns the bundle it
+/// produced.
+///
+/// `Recorder`'s own testing seam (`forTesting` / `startForTesting` /
+/// `feedForTesting`) is internal to `SnittCapture` and reachable only via
+/// `@testable import` from a test target — `RecordingCoordinator`'s own
+/// production code cannot see it (a plain `import SnittCapture`). That is
+/// why `stopForTesting()` on the coordinator takes no `initiator:` parameter
+/// the way Task 5's brief sketches it: the initiator has to be baked into
+/// the `Recorder` at construction, here, in the one place that CAN reach the
+/// seam. This is arguably more faithful anyway — `Recorder.init(initiator:)`
+/// has no default for exactly this reason: nothing ever re-stamps a
+/// recording's initiator after it starts.
+@MainActor
+private func stopEditorTestCoordinator(_ coordinator: RecordingCoordinator,
+                                       initiator: Initiator,
+                                       corruptCapture: Bool = false) async throws -> SnittBundle {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString)
+        .appendingPathExtension(SnittBundle.fileExtension)
+    let size = CGSize(width: 32, height: 32)
+    let recorder = try Recorder.forTesting(bundleURL: url, videoSize: size,
+                                           initiator: initiator)
+    try await recorder.startForTesting()
+    for frame in 0..<10 {
+        recorder.feedForTesting(makeEditorTestVideoBuffer(atFrame: frame, size: size), .screen)
+    }
+    await coordinator.setActiveForTesting(recorder)
+    if corruptCapture {
+        await coordinator.corruptNextCaptureForTesting()
+    }
+    return try await coordinator.stopForTesting()
+}
+
 /// Grouped in a serialized suite for two reasons, not one:
 ///
 /// 1. (Per dispatch) these tests mutate process-global `NSApp` activation
@@ -35,6 +132,15 @@ private func makePreviewController(seconds: Double) async throws -> PreviewContr
 ///    nil and crashed the whole run (signal 5, no summary line). The
 ///    suite's `init()` touches `NSApplication.shared` once, deterministically,
 ///    before any test body runs.
+///
+/// Task 5's editor-on-stop tests (`RecordingCoordinator.stopForTesting`)
+/// live in THIS suite rather than in `RecordingCoordinatorTests.swift`, for
+/// reason 1 above: they construct real editor windows through the stop path
+/// and read `EditorWindowController`'s process-global `openWindowCount` —
+/// exactly the state this suite already exists to serialize access to.
+/// Swift Testing runs different suites concurrently by default, so a
+/// second, independently-serialized suite touching the same global would
+/// serialize against itself but still race against this one.
 @Suite(.serialized)
 @MainActor
 struct EditorWindowControllerTests {
@@ -127,5 +233,40 @@ struct EditorWindowControllerTests {
         #expect(EditorWindowController.openWindowCount == 0)
         #expect(NSApp.activationPolicy() == .accessory)
         #expect(controller.player.rate == 0)
+    }
+
+    // MARK: - Task 5: stopping opens the editor
+
+    @Test("Stopping a human recording opens an editor")
+    func humanStopOpensEditor() async throws {
+        let before = EditorWindowController.openWindowCount
+        let coordinator = makeEditorTestCoordinator()
+        let bundle = try await stopEditorTestCoordinator(coordinator, initiator: .human)
+        _ = bundle
+        #expect(EditorWindowController.openWindowCount == before + 1)
+    }
+
+    @Test("Stopping an agent recording does NOT open a window")
+    func agentStopOpensNothing() async throws {
+        // §5.3: agent recordings happen with no human present. A window
+        // appearing on someone's screen because a background agent finished
+        // is the surprise the consent rules exist to prevent.
+        let before = EditorWindowController.openWindowCount
+        let coordinator = makeEditorTestCoordinator()
+        _ = try await stopEditorTestCoordinator(coordinator, initiator: .agent)
+        #expect(EditorWindowController.openWindowCount == before)
+    }
+
+    @Test("A bundle the builder cannot open still finalises the recording")
+    func unbuildableBundleStillStops() async throws {
+        // The recording is on disk and safe before the editor is even
+        // considered. Losing it because a preview could not be built would
+        // trade the valuable thing for the convenient one.
+        let before = EditorWindowController.openWindowCount
+        let coordinator = makeEditorTestCoordinator()
+        let bundle = try await stopEditorTestCoordinator(coordinator, initiator: .human,
+                                                         corruptCapture: true)
+        #expect(FileManager.default.fileExists(atPath: bundle.url.path))
+        #expect(EditorWindowController.openWindowCount == before)
     }
 }
