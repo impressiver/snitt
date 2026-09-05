@@ -1027,7 +1027,11 @@ func hostWritesDiagnostics() async throws {
     // `DiagnosticsBundle.write` (or that calls it and discards the throw)
     // would pass a check on the response value alone.
     #expect(FileManager.default.fileExists(atPath: out.path))
-    let decoded = try JSONDecoder().decode(DiagnosticsReport.self, from: Data(contentsOf: out))
+    // `.iso8601` matches `DiagnosticsBundle.write`'s own encoder — dates in
+    // the exported file are human-readable text, not raw epoch doubles.
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let decoded = try decoder.decode(DiagnosticsReport.self, from: Data(contentsOf: out))
     #expect(decoded.appVersion == report.appVersion)
     #expect(decoded.recentSessions.count == 1)
     #expect(decoded.recentSessions[0].sessionID == "S1")
