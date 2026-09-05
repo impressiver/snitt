@@ -25,6 +25,15 @@ public enum AutomationProtocol {
     ///
     /// v2 was amended a fourth time to add `maxSizeBytes` to `.export`
     /// (M3d), for the same reason: still no released v2 client.
+    ///
+    /// v2 was amended a fifth time to add `.diagnostics`/`.diagnosticsWritten`
+    /// (M5a, Task 6), for the same reason: still no released v2 client.
+    /// Diagnostics runs in the app rather than the CLI for a different
+    /// reason than `.inspect`/`.trim`/`.export` do — not TCC, but process
+    /// scope: `OSLogStore(scope: .currentProcessIdentifier)` (spike S8)
+    /// reads back only the calling process's own log entries, so a CLI-side
+    /// implementation would bundle the CLI's own handful of lines and none
+    /// of the app's.
     public static let version = 2
 }
 
@@ -69,6 +78,12 @@ public struct AutomationRequest: Codable, Sendable {
         case trim(bundlePath: String, start: Double?, end: Double?, auto: Bool)
         case export(bundlePath: String, format: String, outputPath: String,
                     scale: Double, chapters: Bool, maxSizeBytes: Int?)
+        /// `outputPath` arrives already resolved against the CALLER's working
+        /// directory (`PathResolver.resolve`, done by the CLI before this is
+        /// sent) — never the app's, whose own cwd is not the caller's (M3c
+        /// finding #3, the same reason `.trim`/`.export`'s paths are
+        /// pre-resolved).
+        case diagnostics(outputPath: String)
     }
 
     public var protocolVersion: Int
@@ -209,6 +224,7 @@ public enum AutomationResponse: Codable, Sendable, Equatable {
     case inspected(InspectReport)
     case trimmed(TrimSummary)
     case exported(ExportManifest)
+    case diagnosticsWritten(DiagnosticsReport)
 }
 
 /// What a trim produced, for a caller that cannot inspect `edit.json` itself

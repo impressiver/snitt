@@ -280,6 +280,41 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         case .export(let bundlePath, let format, let outputPath, let scale, let chapters, let maxSizeBytes):
             return await export(bundlePath: bundlePath, format: format, outputPath: outputPath,
                                 scale: scale, chapters: chapters, maxSizeBytes: maxSizeBytes)
+
+        case .diagnostics(let outputPath):
+            return await diagnosticsExport(outputPath: outputPath)
+        }
+    }
+
+    /// How far back `snitt diagnostics export` reads the log and audit
+    /// trail, in minutes.
+    ///
+    /// Not tunable by the client (`.diagnostics` carries only `outputPath`):
+    /// §12's self-review names this value as untuned and expects it to be
+    /// wrong until real support threads say otherwise. 24 hours is picked as
+    /// long enough to span "it worked yesterday, not today" without making
+    /// every bundle enormous on a machine that has been recording all week.
+    private static let diagnosticsSinceMinutes = 24 * 60
+
+    /// Assembles and writes §12's support bundle IN THE APP, not the client
+    /// (see `AutomationProtocol.version`'s fifth amendment and
+    /// `DiagnosticsBundle`'s doc comment): `OSLogStore(scope:
+    /// .currentProcessIdentifier)` reads back only the calling process's own
+    /// log entries (spike S8), so only the app can assemble a bundle that
+    /// contains the app's own logs.
+    private func diagnosticsExport(outputPath: String) async -> AutomationResponse {
+        let url = URL(fileURLWithPath: outputPath)
+        do {
+            let report = try await MainActor.run {
+                try DiagnosticsBundle.write(to: url, auditLogURL: auditLogURL,
+                                           sinceMinutes: Self.diagnosticsSinceMinutes)
+            }
+            return .diagnosticsWritten(report)
+        } catch {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "Could not write the diagnostics bundle.",
+                hint: String(describing: error)))
         }
     }
 

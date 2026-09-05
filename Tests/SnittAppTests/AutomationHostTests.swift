@@ -998,3 +998,56 @@ func clearWithoutAgentSessionWritesNothing() async throws {
 
     #expect(try AuditLog.read(from: auditLogURL).isEmpty)
 }
+
+// MARK: - Diagnostics export
+
+@MainActor
+@Test("The host writes the diagnostics file and returns the report")
+func hostWritesDiagnostics() async throws {
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let auditLogURL = scratchAuditLogURL()
+    try AuditLog.append(AuditRecord(sessionID: "S1", target: "Safari", initiator: "agent",
+                                    startedAt: Date()), to: auditLogURL)
+    let host = makeHost(coordinator: coordinator, recorder: recorder, auditLogURL: auditLogURL)
+
+    let out = FileManager.default.temporaryDirectory
+        .appendingPathComponent("snitt-diagnostics-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: out) }
+
+    let response = await host.handle(.diagnostics(outputPath: out.path))
+
+    guard case .diagnosticsWritten(let report) = response else {
+        Issue.record("expected .diagnosticsWritten, got \(response)")
+        return
+    }
+    // The discriminating assertion: the FILE actually exists on disk with
+    // the report's own content. An implementation that builds the report
+    // in memory and returns `.diagnosticsWritten` without ever calling
+    // `DiagnosticsBundle.write` (or that calls it and discards the throw)
+    // would pass a check on the response value alone.
+    #expect(FileManager.default.fileExists(atPath: out.path))
+    let decoded = try JSONDecoder().decode(DiagnosticsReport.self, from: Data(contentsOf: out))
+    #expect(decoded.appVersion == report.appVersion)
+    #expect(decoded.recentSessions.count == 1)
+    #expect(decoded.recentSessions[0].sessionID == "S1")
+}
+
+@MainActor
+@Test("A diagnostics export that cannot write its file is reported as a failure")
+func diagnosticsExportFailureIsReported() async {
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let host = makeHost(coordinator: coordinator, recorder: recorder)
+
+    // A directory that does not exist: `DiagnosticsBundle.write` must throw
+    // rather than the host reporting success for a file it never wrote.
+    let badPath = "/nonexistent-\(UUID().uuidString)/diagnostics.json"
+
+    let response = await host.handle(.diagnostics(outputPath: badPath))
+    guard case .failure(let error) = response else {
+        Issue.record("expected a failure for an unwritable path, got \(response)")
+        return
+    }
+    #expect(error.code == .internalError)
+}

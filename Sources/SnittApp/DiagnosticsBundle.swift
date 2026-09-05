@@ -18,31 +18,12 @@ import SnittDocument
 /// verbatim, inside a bundle a customer emails to support. Marking an
 /// interpolation `.public` is a decision about what leaves the machine, not
 /// a debugging convenience.
-public struct DiagnosticsReport: Codable, Sendable, Equatable {
-    public let appVersion: String
-    public let protocolVersion: Int
-    public let generatedAt: Date
-    public let permissions: [String: String]
-    public let recentSessions: [AuditRecord]
-    public let logLines: [String]
-
-    public init(
-        appVersion: String,
-        protocolVersion: Int,
-        generatedAt: Date,
-        permissions: [String: String],
-        recentSessions: [AuditRecord],
-        logLines: [String]
-    ) {
-        self.appVersion = appVersion
-        self.protocolVersion = protocolVersion
-        self.generatedAt = generatedAt
-        self.permissions = permissions
-        self.recentSessions = recentSessions
-        self.logLines = logLines
-    }
-}
-
+///
+/// `DiagnosticsReport` itself lives in `SnittAutomation`
+/// (`AutomationResponse.diagnosticsWritten` has to name it, and that module
+/// depends on `SnittDocument` only — never on this one), imported here
+/// through the existing `SnittAutomation` import below.
+///
 /// Assembles and writes a `DiagnosticsReport`.
 ///
 /// This runs in the app, not the CLI. Spike S8 measured that

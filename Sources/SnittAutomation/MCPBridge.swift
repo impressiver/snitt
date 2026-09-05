@@ -239,6 +239,23 @@ public enum MCPBridge {
                     ],
                     "required": ["bundlePath", "format", "outputPath"],
                 ]),
+            ToolDefinition(
+                name: "snitt_diagnostics_export",
+                description: "Write a support bundle — recent app logs, app/CLI versions, "
+                           + "permission states, and recent agent session history — to a "
+                           + "JSON file. Contains no window titles, file paths, or input "
+                           + "detail. Use this to hand a person something to attach to a "
+                           + "support thread, or to see whether Screen Recording is granted.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "outputPath": [
+                            "type": "string",
+                            "description": "Where to write the diagnostics JSON file",
+                        ],
+                    ],
+                    "required": ["outputPath"],
+                ]),
         ]
     }
 
@@ -390,6 +407,12 @@ public enum MCPBridge {
             }
             return .success(.export(bundlePath: path, format: format, outputPath: outputPath,
                                      scale: scale, chapters: chapters, maxSizeBytes: maxSizeBytes))
+
+        case "snitt_diagnostics_export":
+            guard let outputPath = arguments["outputPath"] as? String else {
+                return .failure(MCPBridgeError("snitt_diagnostics_export requires outputPath"))
+            }
+            return .success(.diagnostics(outputPath: outputPath))
 
         default:
             return .failure(MCPBridgeError("Unknown tool: \(name)"))

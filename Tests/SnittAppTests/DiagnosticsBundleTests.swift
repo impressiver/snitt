@@ -2,6 +2,7 @@ import Testing
 import Foundation
 import SnittDocument
 import SnittCapture
+import SnittAutomation
 @testable import SnittApp
 
 private func tempURL() -> URL {

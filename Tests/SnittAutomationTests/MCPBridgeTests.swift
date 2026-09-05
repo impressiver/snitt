@@ -38,6 +38,8 @@ func everyToolMaps() {
             json = #"{"bundlePath": "/tmp/x.snitt", "autoTrim": true}"#
         case "snitt_export":
             json = #"{"bundlePath": "/tmp/x.snitt", "format": "mp4", "outputPath": "/tmp/demo.mp4"}"#
+        case "snitt_diagnostics_export":
+            json = #"{"outputPath": "/tmp/diagnostics.json"}"#
         default:
             json = "{}"
         }
@@ -53,7 +55,35 @@ func toolNamesAreStable() {
     let names = Set(MCPBridge.toolDefinitions().map(\.name))
     #expect(names == ["snitt_list_targets", "snitt_start_recording",
                       "snitt_stop_recording", "snitt_status", "snitt_add_marker",
-                      "snitt_inspect", "snitt_trim", "snitt_export"])
+                      "snitt_inspect", "snitt_trim", "snitt_export",
+                      "snitt_diagnostics_export"])
+}
+
+@Test("The MCP tool maps to the same request the CLI would send")
+func mcpDiagnosticsMapsToTheSameRequest() {
+    // §4.8: the CLI and the MCP server must be incapable of diverging.
+    // Fixture decoded from real JSON text, as every fixture in this file
+    // is — see `jsonArguments`'s doc comment.
+    guard case .success(let mcpBody) = MCPBridge.request(
+        forTool: "snitt_diagnostics_export",
+        arguments: jsonArguments(#"{"outputPath": "/tmp/diagnostics.json"}"#))
+    else { Issue.record("MCP could not express a diagnostics export"); return }
+    guard case .diagnostics(let mcpPath) = mcpBody else {
+        Issue.record("expected .diagnostics, got \(mcpBody)"); return
+    }
+    // The discriminating assertion: the request body actually CARRIES the
+    // path, not merely that mapping the tool call "succeeded" — a bridge
+    // that mapped every tool call to `.diagnostics(outputPath: "")` would
+    // pass a success-only assertion.
+    #expect(mcpPath == "/tmp/diagnostics.json")
+}
+
+@Test("snitt_diagnostics_export requires outputPath")
+func diagnosticsExportRequiresOutputPath() {
+    guard case .failure(let error) = MCPBridge.request(
+        forTool: "snitt_diagnostics_export", arguments: jsonArguments("{}"))
+    else { Issue.record("a missing outputPath must be refused"); return }
+    #expect(error.message.contains("outputPath"))
 }
 
 @Test("Both frontends express a trim identically")
