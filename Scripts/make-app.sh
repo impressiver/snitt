@@ -6,6 +6,14 @@ set -euo pipefail
 
 APP="build/Snitt.app"
 BUNDLE_ID="com.impressiver.snitt"
+VERSION_SOURCE="Sources/SnittDocument/AppVersion.swift"
+
+APP_VERSION="$(sed -nE 's/.*public static let fallback = "([^"]+)".*/\1/p' "$VERSION_SOURCE")"
+if [ -z "$APP_VERSION" ]; then
+  echo "error: could not extract AppVersion.fallback from $VERSION_SOURCE" >&2
+  echo "refusing to write an empty CFBundleShortVersionString" >&2
+  exit 1
+fi
 
 swift build -c debug --product SnittApp
 
@@ -26,7 +34,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleName</key><string>Snitt</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
+  <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Snitt records your microphone when you enable it for a recording.</string>

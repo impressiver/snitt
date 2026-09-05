@@ -264,7 +264,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         switch body {
         case .handshake:
             return .handshake(HandshakeInfo(protocolVersion: AutomationProtocol.version,
-                                            appVersion: "0.1.0"))
+                                            appVersion: AppVersion.current))
 
         case .status:
             return .status(await registry.current(now: now()))

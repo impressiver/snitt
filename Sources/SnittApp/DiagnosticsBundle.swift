@@ -64,7 +64,7 @@ public enum DiagnosticsBundle {
         ]
 
         let report = DiagnosticsReport(
-            appVersion: SnittDocument.version,
+            appVersion: AppVersion.current,
             protocolVersion: AutomationProtocol.version,
             generatedAt: Date(),
             permissions: permissions,
