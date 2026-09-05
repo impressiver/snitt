@@ -445,8 +445,9 @@ func appEntitlementsCarryNoWorkaroundLeakUnderARealTeamID() throws {
     try #require(appIsBuilt, appBundleSkipReason)
 
     // This can only ever exercise the teamless branch today (see
-    // leakedWorkaroundUnderARealTeamIDIsCaught for the Developer-ID-shaped
-    // case, which this repo cannot produce with a real signature). Under
+    // signingWithADeveloperIDShapedIdentityCarriesNoWorkaround for the
+    // Developer-ID-shaped case, which this repo cannot produce with a real
+    // signature). Under
     // the self-signed dev identity, make-app.sh is EXPECTED to add the
     // workaround, so assert that expectation explicitly rather than
     // silently doing nothing — a real integration check that never

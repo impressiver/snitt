@@ -104,6 +104,16 @@ final class StatusItemController: NSObject {
         menu.addItem(eventsItem)
         menu.addItem(.separator())
 
+        // A manual check must always be available regardless of the
+        // automatic-checks setting — the user clicking this IS the consent
+        // §5 requires for an update check to happen at all.
+        let checkForUpdatesItem = NSMenuItem(title: "Check for Updates…",
+                                             action: #selector(checkForUpdatesSelected),
+                                             keyEquivalent: "")
+        checkForUpdatesItem.target = self
+        menu.addItem(checkForUpdatesItem)
+        menu.addItem(.separator())
+
         let quitItem = NSMenuItem(title: "Quit Snitt",
                                   action: #selector(quitSelected),
                                   keyEquivalent: "q")
@@ -117,6 +127,13 @@ final class StatusItemController: NSObject {
 
     @objc private func quitSelected() {
         onQuit?()
+    }
+
+    /// Invoked when the user selects "Check for Updates…" from the menu.
+    var onCheckForUpdates: (() -> Void)?
+
+    @objc private func checkForUpdatesSelected() {
+        onCheckForUpdates?()
     }
 
     /// Mirrors the persisted setting so the menu can show a checkmark.

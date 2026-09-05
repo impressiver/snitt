@@ -15,9 +15,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var markerHotkey: HotkeyMonitor?
     private var coordinator: RecordingCoordinator?
     private var automationHost: AutomationHost?
+    private let updaterController = UpdaterController(settings: UpdateSettings.load())
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         statusItem.install()
+
+        // Started here, once, at real launch — never from a unit test's
+        // construction of UpdaterController, which would touch Sparkle's
+        // configuration validation against a bundle it was never set up for.
+        updaterController.start()
+        statusItem.onCheckForUpdates = { [weak self] in
+            self?.updaterController.checkForUpdates()
+        }
 
         let outputDirectory = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Desktop")
