@@ -86,12 +86,136 @@ final class StateRecorder {
 @MainActor
 private func makeHost(coordinator: FakeCoordinator,
                       recorder: StateRecorder,
-                      fullDisplayAllowed: Bool = false) -> AutomationHost {
-    AutomationHost(
+                      fullDisplayAllowed: Bool = false,
+                      clock: ManualClock? = nil,
+                      watchdog: ManualWatchdog? = nil) -> AutomationHost {
+    let now: @Sendable () -> Date
+    if let clock {
+        now = { clock.now() }
+    } else {
+        now = { Date() }
+    }
+    if let watchdog {
+        return AutomationHost(
+            coordinator: coordinator,
+            settings: { AgentSettings(agentRecordingEnabled: true,
+                                      fullDisplayAllowed: fullDisplayAllowed) },
+            onRecordingState: { state in recorder.record(state) },
+            now: now,
+            watchdogScheduling: watchdog.scheduling())
+    }
+    return AutomationHost(
         coordinator: coordinator,
         settings: { AgentSettings(agentRecordingEnabled: true,
                                   fullDisplayAllowed: fullDisplayAllowed) },
-        onRecordingState: { state in recorder.record(state) })
+        onRecordingState: { state in recorder.record(state) },
+        now: now)
+}
+
+/// A deterministic stand-in for `Date()`, so a watchdog test can make
+/// `SessionRegistry.expiredSession(now:)` see a session's cap as exceeded
+/// without waiting on real wall-clock time.
+private final class ManualClock: @unchecked Sendable {
+    private let lock = NSLock()
+    private var current: Date
+
+    init(_ start: Date = Date()) { self.current = start }
+
+    func now() -> Date {
+        lock.lock(); defer { lock.unlock() }
+        return current
+    }
+
+    func advance(by seconds: Double) {
+        lock.lock()
+        current = current.addingTimeInterval(seconds)
+        lock.unlock()
+    }
+}
+
+/// Lets a test decide exactly when an armed watchdog fires, replacing the
+/// real timer `AutomationHost` uses in production.
+///
+/// This is what removes the flake in "A stale watchdog never stops a later
+/// human recording" and "A watchdog that finds the coordinator busy keeps
+/// the session and its cap": both tests used to arm a real 0.2s timer and
+/// race their own setup (`clearAgentSession()`, `setStopOverride(.busy)`)
+/// against it, on the assumption that 200ms of wall-clock time was enough
+/// for the setup to finish first. Under full-suite parallel load that
+/// assumption broke — the test's own `await`s (through actor hops on the
+/// registry and the fake coordinator) could take longer than 200ms, so the
+/// timer fired first. With `ManualWatchdog`, the watchdog only ever fires
+/// when the test calls `fire()`, so the ordering is guaranteed rather than
+/// raced, regardless of how loaded the machine is.
+///
+/// A plain lock-protected class rather than an actor deliberately:
+/// `scheduling()` hands back a closure that `armWatchdog` calls SYNCHRONOUSLY
+/// (the closure itself is not `async` — only the `Task` it returns is), and
+/// `register(_:)` must complete before that call returns, so that by the
+/// time `AutomationHost.start()` hands the test back a `.started` response,
+/// the watchdog is already armed and ready for `fire()`. An actor's
+/// `register` would only be reachable via `await`, which meant dispatching
+/// it onto a detached `Task` from a sync context — exactly the kind of
+/// unstructured, unordered hop this whole fix exists to remove: the first
+/// version of this helper did precisely that, and “A session that outlives
+/// its cap is actually stopped” intermittently observed `fire()` running
+/// before that detached registration `Task` had (making `fire()` a silent
+/// no-op) — the same class of race as the original bug, just relocated into
+/// the test helper meant to fix it.
+private final class ManualWatchdog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var pendingFire: (@Sendable () async -> Void)?
+    private var cancelled = false
+
+    func scheduling() -> AutomationHost.WatchdogScheduling {
+        { [weak self] _, fire in
+            self?.register(fire)
+            let watchdog = self
+            return Task {
+                await withTaskCancellationHandler {
+                    // Long enough to never elapse before the test cancels
+                    // it (via `clearAgentSession()`/a normal `stop()`) or
+                    // the test process exits; `Task.sleep` is
+                    // cancellation-aware and returns immediately on cancel.
+                    try? await Task.sleep(for: .seconds(3600))
+                } onCancel: {
+                    watchdog?.markCancelled()
+                }
+            }
+        }
+    }
+
+    private func register(_ fire: @escaping @Sendable () async -> Void) {
+        lock.lock(); defer { lock.unlock() }
+        guard !cancelled else { return }
+        pendingFire = fire
+    }
+
+    private func markCancelled() {
+        lock.lock(); defer { lock.unlock() }
+        cancelled = true
+        pendingFire = nil
+    }
+
+    /// Fires the armed watchdog now, deterministically, awaiting the full
+    /// effect of expiry (including the coordinator call) before returning.
+    /// A no-op if the watchdog was already cancelled, matching the
+    /// production guard against a stale timer that already lost the race.
+    func fire() async {
+        let (action, isCancelled) = takePendingFire()
+        guard let action, !isCancelled else { return }
+        await action()
+    }
+
+    /// Locking, isolated to a synchronous function: this Swift toolchain
+    /// refuses to call `NSLock.lock()`/`unlock()` directly inside an `async`
+    /// function body, so the critical section lives here instead.
+    private func takePendingFire() -> ((@Sendable () async -> Void)?, Bool) {
+        lock.lock(); defer { lock.unlock() }
+        let action = pendingFire
+        pendingFire = nil
+        return (action, cancelled)
+    }
 }
 
 private func startBody(maxDuration: Double? = nil,
@@ -199,9 +323,17 @@ func expiredSessionIsStopped() async throws {
     // `record start` left AVAssetWriter writing indefinitely: Snitt is a
     // resident menu-bar app that never quits on its own. Pre-fix this test hung
     // on the poll below until it failed, because nothing ever stopped anything.
+    //
+    // The watchdog's firing is driven by `ManualWatchdog.fire()` rather than a
+    // real timer, and the cap's expiry by `ManualClock` rather than real
+    // elapsed time — both deterministic, so this test cannot flake under load
+    // the way a real 0.2s race against the suite's own scheduling once did.
     let coordinator = FakeCoordinator()
     let recorder = StateRecorder()
-    let host = makeHost(coordinator: coordinator, recorder: recorder)
+    let clock = ManualClock()
+    let watchdog = ManualWatchdog()
+    let host = makeHost(coordinator: coordinator, recorder: recorder,
+                       clock: clock, watchdog: watchdog)
 
     // A cap below the 600s ceiling passes through `effectiveMaxDuration`
     // unchanged, so this is the real production path and not a test-only knob.
@@ -211,12 +343,10 @@ func expiredSessionIsStopped() async throws {
         return
     }
 
-    var stopped: [String] = []
-    for _ in 0..<40 {
-        try await Task.sleep(for: .milliseconds(50))
-        stopped = await coordinator.stopCalls
-        if !stopped.isEmpty { break }
-    }
+    clock.advance(by: 0.3)
+    await watchdog.fire()
+
+    let stopped = await coordinator.stopCalls
     #expect(stopped == [sessionID],
             "the cap exists so a hung agent cannot fill the disk; it must ACT")
 
@@ -235,9 +365,22 @@ func watchdogDoesNotStopSomeoneElsesRecording() async throws {
     // session that has since ended firing into whatever is recording now. Two
     // guards must hold — the task is cancelled on a normal stop, and
     // `stopForAgent` refuses a session the coordinator no longer owns.
+    //
+    // This used to arm a real 0.2s timer, cancel it via `clearAgentSession()`,
+    // then sleep 600ms hoping that was long enough to observe "nothing
+    // happened". Under full-suite parallel load the test's own await between
+    // `started` and `clearAgentSession()` could itself take longer than
+    // 200ms, so the real timer sometimes fired and stopped the coordinator
+    // BEFORE the cancellation reached it — an intermittent failure that had
+    // nothing to do with the property under test. `ManualWatchdog` removes
+    // the race entirely: cancellation and firing are both explicit calls, so
+    // there is no wall-clock window for the timer to win.
     let coordinator = FakeCoordinator()
     let recorder = StateRecorder()
-    let host = makeHost(coordinator: coordinator, recorder: recorder)
+    let clock = ManualClock()
+    let watchdog = ManualWatchdog()
+    let host = makeHost(coordinator: coordinator, recorder: recorder,
+                       clock: clock, watchdog: watchdog)
 
     let started = await host.handle(startBody(maxDuration: 0.2))
     guard case .started = started else {
@@ -248,7 +391,10 @@ func watchdogDoesNotStopSomeoneElsesRecording() async throws {
     await coordinator.humanStops()
     await host.clearAgentSession()
 
-    try await Task.sleep(for: .milliseconds(600))
+    // Even though the cap has (simulated-)elapsed, the watchdog was
+    // cancelled above, so firing it now must be a no-op.
+    clock.advance(by: 0.3)
+    await watchdog.fire()
 
     let stopCalls = await coordinator.stopCalls
     #expect(stopCalls.isEmpty,
@@ -269,7 +415,10 @@ func expiryWithFailedFinalizeClearsTheIndicator() async throws {
     // picker. Worse than the defect the watchdog exists to fix.
     let coordinator = FakeCoordinator()
     let recorder = StateRecorder()
-    let host = makeHost(coordinator: coordinator, recorder: recorder)
+    let clock = ManualClock()
+    let watchdog = ManualWatchdog()
+    let host = makeHost(coordinator: coordinator, recorder: recorder,
+                       clock: clock, watchdog: watchdog)
 
     let started = await host.handle(startBody(maxDuration: 0.2))
     guard case .started(let sessionID, _) = started else {
@@ -278,10 +427,9 @@ func expiryWithFailedFinalizeClearsTheIndicator() async throws {
     }
     await coordinator.setStopOverride(.failed("writer would not finalize"))
 
-    for _ in 0..<40 {
-        try await Task.sleep(for: .milliseconds(50))
-        if await !coordinator.stopCalls.isEmpty { break }
-    }
+    clock.advance(by: 0.3)
+    await watchdog.fire()
+
     #expect(await coordinator.stopCalls == [sessionID])
     #expect(recorder.states.last == .idle,
             "an unfinalized recording is still a STOPPED recording; a lit indicator now means the kill switch starts a new one")
@@ -297,9 +445,22 @@ func expiryWhileBusyPreservesTheSession() async throws {
     // Matches `stop()`, which preserves the session on `.busy` and has a test
     // saying so. Nothing stopped, so nothing may be forgotten — dropping the
     // registry entry here would abandon the cap on a recording still running.
+    //
+    // This used to arm a real 0.2s timer and race `setStopOverride(.busy)`
+    // against it, on the assumption 200ms was enough time to set the override
+    // first. Under full-suite parallel load that assumption broke: if the
+    // timer fired before `setStopOverride(.busy)` ran, the watchdog stopped
+    // against the coordinator's DEFAULT outcome (an ordinary `.stopped`)
+    // instead of `.busy`, closing the registry entry the test then expected
+    // to still be open — the exact `info.recording → false` failure seen
+    // under load. `ManualWatchdog.fire()` is called only after the override
+    // is set, so the ordering is guaranteed rather than raced.
     let coordinator = FakeCoordinator()
     let recorder = StateRecorder()
-    let host = makeHost(coordinator: coordinator, recorder: recorder)
+    let clock = ManualClock()
+    let watchdog = ManualWatchdog()
+    let host = makeHost(coordinator: coordinator, recorder: recorder,
+                       clock: clock, watchdog: watchdog)
 
     let started = await host.handle(startBody(maxDuration: 0.2))
     guard case .started(let sessionID, _) = started else {
@@ -308,10 +469,9 @@ func expiryWhileBusyPreservesTheSession() async throws {
     }
     await coordinator.setStopOverride(.busy)
 
-    for _ in 0..<40 {
-        try await Task.sleep(for: .milliseconds(50))
-        if await !coordinator.stopCalls.isEmpty { break }
-    }
+    clock.advance(by: 0.3)
+    await watchdog.fire()
+
     #expect(await coordinator.stopCalls == [sessionID])
 
     let status = await host.handle(.status)

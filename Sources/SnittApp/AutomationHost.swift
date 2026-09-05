@@ -32,12 +32,49 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// ("a demo arrives as feature-branch-a1b2c3d.snitt") depends on.
     typealias GitResolving = @Sendable (URL) -> GitContext?
 
+    /// Schedules the watchdog's delayed firing.
+    ///
+    /// Injectable so tests can control exactly when — or whether — a
+    /// watchdog fires instead of racing real wall-clock time. The default
+    /// production implementation is a real timer; the two tests that assert
+    /// something did NOT happen by the time the watchdog fires
+    /// (`watchdogDoesNotStopSomeoneElsesRecording`,
+    /// `expiryWhileBusyPreservesTheSession`) used to arm a real 0.2s sleep
+    /// and race their own setup against it, which is fine in isolation but
+    /// flaked under full-suite parallel load: when the test's own subsequent
+    /// `await`s (through the registry and coordinator actors) were delayed
+    /// past 200ms by scheduler contention, the timer fired before the test
+    /// had finished setting up the very state it meant to test against
+    /// (`coordinator.humanStops()`/`clearAgentSession()`, or
+    /// `setStopOverride(.busy)`). `fire` is the actual expiry logic
+    /// (`expire(sessionID)`); the returned `Task` is what
+    /// `cancelWatchdog()`/`setWatchdog()` cancel to abort it.
+    typealias WatchdogScheduling = @Sendable (_ seconds: Double,
+                                              _ fire: @escaping @Sendable () async -> Void) -> Task<Void, Never>
+
+    private static let realWatchdogScheduling: WatchdogScheduling = { seconds, fire in
+        Task.detached {
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            await fire()
+        }
+    }
+
     private let coordinator: any AgentRecordingControlling
     private let settings: @Sendable () -> AgentSettings
     private let resolveGit: GitResolving
     private let onRecordingState: RecordingStateSink
     private let registry = SessionRegistry()
     private var server: AutomationServer?
+
+    /// The clock the registry's expiry checks are measured against.
+    ///
+    /// Injectable for the same reason `watchdogScheduling` is: a test that
+    /// wants to fire a watchdog deterministically must also be able to make
+    /// `SessionRegistry.expiredSession(now:)` see the cap as exceeded
+    /// without waiting on real wall-clock time.
+    private let now: @Sendable () -> Date
+    private let watchdogScheduling: WatchdogScheduling
 
     /// Guards `watchdog` only. Requests can arrive on several connections at
     /// once, so the task handle needs a lock even though everything else this
@@ -48,11 +85,15 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     init(coordinator: any AgentRecordingControlling,
          settings: @escaping @Sendable () -> AgentSettings,
          onRecordingState: @escaping RecordingStateSink = { _ in },
-         resolveGit: @escaping GitResolving = { GitContextResolver.resolve(in: $0) }) {
+         resolveGit: @escaping GitResolving = { GitContextResolver.resolve(in: $0) },
+         now: @escaping @Sendable () -> Date = Date.init,
+         watchdogScheduling: @escaping WatchdogScheduling = AutomationHost.realWatchdogScheduling) {
         self.coordinator = coordinator
         self.settings = settings
         self.onRecordingState = onRecordingState
         self.resolveGit = resolveGit
+        self.now = now
+        self.watchdogScheduling = watchdogScheduling
     }
 
     private func pushState(_ state: RecordingState) async {
@@ -106,7 +147,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                                             appVersion: "0.1.0"))
 
         case .status:
-            return .status(await registry.current(now: Date()))
+            return .status(await registry.current(now: now()))
 
         case .listTargets:
             return await listTargets()
@@ -430,7 +471,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         let maxDuration = policy().effectiveMaxDuration(options.maxDurationSeconds)
         let sessionID: String
         do {
-            sessionID = try await registry.open(maxDuration: maxDuration, now: Date())
+            sessionID = try await registry.open(maxDuration: maxDuration, now: now())
         } catch let error as AutomationError {
             return .failure(error)
         } catch {
@@ -553,15 +594,13 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// one runs, `stopForAgent(sessionID:)` refuses unless the coordinator's
     /// active recording is still that exact session.
     private func armWatchdog(sessionID: String, after seconds: Double) {
-        setWatchdog(Task.detached { [weak self] in
-            try? await Task.sleep(for: .seconds(seconds))
-            guard !Task.isCancelled, let self else { return }
-            await self.expire(sessionID)
+        setWatchdog(watchdogScheduling(seconds) { [weak self] in
+            await self?.expire(sessionID)
         })
     }
 
     private func expire(_ sessionID: String) async {
-        guard await registry.expiredSession(now: Date()) == sessionID else { return }
+        guard await registry.expiredSession(now: now()) == sessionID else { return }
         switch await coordinator.stopForAgent(sessionID: sessionID) {
         case .stopped, .failed:
             // `.failed` still means the recording is OVER: `stopRecording()`
