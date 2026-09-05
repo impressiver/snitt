@@ -18,6 +18,19 @@ import SnittExport
 public final class PreviewController {
     public private(set) var jumpPoints: [JumpPoint]
     public private(set) var durationSeconds: Double
+    /// The SOURCE recording's media duration (`BuiltComposition.sourceDuration`)
+    /// — never `durationSeconds` above, which is the TRIMMED (output)
+    /// duration. The editor timeline draws on this clock (M4b whole-branch
+    /// review, Critical finding #1): `edl.cuts` are source-time ranges, and
+    /// only a source-time axis gives a cut a coherent position at all — by
+    /// definition a cut has no position in the output.
+    public private(set) var sourceDurationSeconds: Double
+    /// The kept ranges the CURRENT composition was built from — the same set
+    /// `CompositionBuilder.build` inserted into it. Lets a caller (the
+    /// editor timeline) map the player's trimmed-time playhead, and this
+    /// controller's own `jumpPoints`, back onto the source clock via
+    /// `TimeRangeMapping.sourceTime(ofTrimmedTime:keptRanges:)`.
+    public private(set) var keptRanges: [TimeRange]
     private var item: AVPlayerItem
     public let player: AVPlayer
 
@@ -56,6 +69,8 @@ public final class PreviewController {
                 bundle: SnittBundle, scale: Double) {
         self.jumpPoints = jumpPoints
         self.durationSeconds = built.duration
+        self.sourceDurationSeconds = built.sourceDuration
+        self.keptRanges = built.keptRanges
         self.bundle = bundle
         self.scale = scale
         let item = AVPlayerItem(asset: built.composition)
@@ -76,17 +91,20 @@ public final class PreviewController {
     /// re-attaches it, keeping `jumpPoints` in step with the new
     /// `keptRanges`. §9: preview and export must stay the same code path.
     ///
-    /// R2 (binding): `events` defaults to `[]`. That default means "this
-    /// caller has no markers to place" — NOT "leave the old markers where
-    /// they were." Recomputing against `[]` clears `jumpPoints` to `[]`
-    /// rather than keeping stale positions from before the edit, because
-    /// stale positions are the exact preview/export divergence §9 exists to
-    /// prevent: a caller that forgets to pass events gets an empty scrub bar
-    /// (visibly wrong, immediately noticed) rather than markers silently
-    /// pointing at the wrong instant (wrong in a way nothing surfaces).
-    /// Task 6, which owns the real event log, must pass its events
-    /// explicitly.
-    public func apply(edl: EditDecisionList, events: [LoggedEvent] = []) async throws {
+    /// R2 (binding): `events` is REQUIRED, not defaulted to `[]` (M4b
+    /// whole-branch review, Important finding #3). "No markers to place" and
+    /// "the caller forgot to pass events" must not be the same call with no
+    /// compiler signal — a default here made the empty-marker case free to
+    /// reach by accident. The empty-list SEMANTICS this replaces are still
+    /// right and unchanged: recomputing against `[]` clears `jumpPoints` to
+    /// `[]` rather than keeping stale positions from before the edit,
+    /// because stale positions are the exact preview/export divergence §9
+    /// exists to prevent — a caller that passes `[]` on purpose gets an
+    /// empty scrub bar (visibly wrong, immediately noticed) rather than
+    /// markers silently pointing at the wrong instant (wrong in a way
+    /// nothing surfaces). What changes is that a caller must now WRITE `[]`
+    /// to get that behaviour, rather than getting it for free by omission.
+    public func apply(edl: EditDecisionList, events: [LoggedEvent]) async throws {
         let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: scale)
         let newItem = AVPlayerItem(asset: built.composition)
         newItem.videoComposition = built.videoComposition
@@ -98,6 +116,8 @@ public final class PreviewController {
         player.replaceCurrentItem(with: newItem)
         self.item = newItem
         self.durationSeconds = built.duration
+        self.sourceDurationSeconds = built.sourceDuration
+        self.keptRanges = built.keptRanges
         self.jumpPoints = MarkerJumpPoints.compute(events: events, keptRanges: built.keptRanges)
     }
 

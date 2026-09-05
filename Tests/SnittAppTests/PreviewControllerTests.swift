@@ -187,7 +187,7 @@ func applyRebuildsComposition() async throws {
 
     var edited = EditDecisionList()
     edited.cuts = [TimeRange(start: 1.0, end: 2.0)]
-    try await controller.apply(edl: edited)
+    try await controller.apply(edl: edited, events: [])
 
     let after = try #require(controller.player.currentItem?.asset)
     // A controller that mutates the existing AVMutableComposition in place

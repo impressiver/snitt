@@ -56,6 +56,21 @@ struct TrimGestureTests {
         #expect(g.phase != .idle)
     }
 
+    @Test("A zero-length range is not a cut even at a zero threshold")
+    func zeroLengthRangeIsNeverACutEvenAtZeroThreshold() {
+        // M4b whole-branch review, Minor finding #4: a zero-width
+        // `TimelineView` computes `minimumDragSeconds == 0` (its geometry
+        // clamps to zero at zero width), and `ended`'s old
+        // `length >= minimumSeconds` check alone would let `0 >= 0` through
+        // — firing a zero-length trim on every click. Guarding `length > 0`
+        // is exactly what stops that; this pins the fix at the `TrimGesture`
+        // level, independent of the view.
+        var g = TrimGesture()
+        g.began(atTime: 4.0)
+        let range = g.ended(atTime: 4.0, minimumSeconds: 0)
+        #expect(range == nil)
+    }
+
     @Test("The same pixel jitter is a no-op at very different recording lengths")
     func samePixelJitterYieldsNoCutRegardlessOfLength() {
         // This is the property a fixed time threshold got wrong (Task 6

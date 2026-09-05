@@ -26,6 +26,15 @@ public struct BuiltComposition: @unchecked Sendable {
     /// `@unchecked Sendable` note above.
     public let audioMix: AVAudioMix?
     public let duration: Double
+    /// The SOURCE recording's media duration — `mediaDuration(of:)`'s
+    /// result, before any cuts. The timeline view's axis is this clock, not
+    /// `duration` above: `edl.cuts` are expressed in source time, and a view
+    /// fed the trimmed `duration` instead maps every subsequent drag's
+    /// pixels against the wrong clock (M4b whole-branch review, Critical
+    /// finding #1). Carried here so a caller building a second composition
+    /// after a trim (`PreviewController.apply`) can keep the timeline's
+    /// clock in step without loading the asset a second time.
+    public let sourceDuration: Double
     /// The kept ranges (source-recording time) this composition was built
     /// from — `KeptRanges.compute`'s output already filtered to drop
     /// sub-frame slivers, i.e. exactly what `build` inserted into
@@ -244,6 +253,7 @@ public enum CompositionBuilder {
                                 videoComposition: videoComposition,
                                 audioMix: mix,
                                 duration: CMTimeGetSeconds(cursor),
+                                sourceDuration: assetDuration,
                                 keptRanges: kept)
     }
 }

@@ -48,7 +48,15 @@ public struct TrimGesture: Equatable, Sendable {
         phase = .idle
         currentTime = nil
         let range = Self.normalised(from, time)
-        guard range.end - range.start >= minimumSeconds else { return nil }
+        let length = range.end - range.start
+        // `length > 0` is checked separately from the threshold, not folded
+        // into a single `>= minimumSeconds` comparison (M4b whole-branch
+        // review, Minor finding #4): a zero-width view's `minimumDragSeconds`
+        // clamps to exactly 0, and `0 >= 0` would fire a zero-length cut for
+        // every click on such a view if the threshold check alone gated it.
+        // A zero-length range is never a deliberate cut, independent of
+        // whatever pixel threshold the caller computed.
+        guard length > 0, length >= minimumSeconds else { return nil }
         return range
     }
 

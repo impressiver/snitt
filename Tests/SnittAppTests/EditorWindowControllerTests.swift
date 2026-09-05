@@ -152,7 +152,8 @@ struct EditorWindowControllerTests {
     func openingPromotesActivationPolicy() async throws {
         NSApp.setActivationPolicy(.accessory)
         let controller = try await makePreviewController(seconds: 2)
-        let editor = EditorWindowController(controller: controller, title: "demo")
+        let editor = EditorWindowController(controller: controller, title: "demo",
+                                              edl: .fullRange(), events: [])
 
         editor.show()
 
@@ -168,7 +169,8 @@ struct EditorWindowControllerTests {
     func closingLastEditorDemotes() async throws {
         NSApp.setActivationPolicy(.accessory)
         let editor = EditorWindowController(
-            controller: try await makePreviewController(seconds: 2), title: "demo")
+            controller: try await makePreviewController(seconds: 2), title: "demo",
+            edl: .fullRange(), events: [])
         editor.show()
         editor.close()
         // Leaving the app .regular would strand a Dock icon for a menu-bar app
@@ -180,9 +182,11 @@ struct EditorWindowControllerTests {
     func closingOneOfTwoKeepsPromotion() async throws {
         NSApp.setActivationPolicy(.accessory)
         let first = EditorWindowController(
-            controller: try await makePreviewController(seconds: 2), title: "a")
+            controller: try await makePreviewController(seconds: 2), title: "a",
+            edl: .fullRange(), events: [])
         let second = EditorWindowController(
-            controller: try await makePreviewController(seconds: 2), title: "b")
+            controller: try await makePreviewController(seconds: 2), title: "b",
+            edl: .fullRange(), events: [])
         first.show(); second.show()
 
         first.close()
@@ -199,7 +203,8 @@ struct EditorWindowControllerTests {
     @Test("Pausing on close stops playback rather than leaving audio running")
     func closingPausesPlayback() async throws {
         let controller = try await makePreviewController(seconds: 3)
-        let editor = EditorWindowController(controller: controller, title: "demo")
+        let editor = EditorWindowController(controller: controller, title: "demo",
+                                              edl: .fullRange(), events: [])
         editor.show()
         controller.play()
 
@@ -224,7 +229,8 @@ struct EditorWindowControllerTests {
         // notification.
         let before = EditorWindowController.openWindowCount
         let controller = try await makePreviewController(seconds: 3)
-        let editor = EditorWindowController(controller: controller, title: "demo")
+        let editor = EditorWindowController(controller: controller, title: "demo",
+                                              edl: .fullRange(), events: [])
         editor.show()
         controller.play()
         #expect(NSApp.activationPolicy() == .regular)

@@ -6,14 +6,19 @@ import SwiftUI
 /// Owns the mutable editing state the timeline drives: the EDL a trim
 /// appends a cut to, and the events a trim's re-apply must keep passing.
 ///
-/// `PreviewController.apply(edl:events:)` defaults `events` to `[]`, which
-/// means "no markers to place" and recomputes jump points to empty rather
-/// than keeping stale ones (Task 4's binding — stale markers are a silent
-/// §9 divergence, an empty scrub bar is a visible one). This type exists so
-/// that every trim keeps passing the recording's real events instead of
-/// silently losing every marker.
+/// `PreviewController.apply(edl:events:)`'s `events` is required (M4b
+/// whole-branch review, Important finding #3) — passing `[]` recomputes jump
+/// points to empty rather than keeping stale ones (stale markers are a
+/// silent §9 divergence, an empty scrub bar is a visible one). This type
+/// exists so that every trim keeps passing the recording's real events
+/// instead of silently losing every marker.
+///
+/// Not `private`: `@testable import SnittApp` needs to drive `onTrim` and
+/// read `displayState(playhead:)` directly to verify the M4b Critical
+/// finding — that a SECOND trim in one session removes a distinct region —
+/// without a live `NSWindow` or SwiftUI's runtime.
 @MainActor
-private final class EditorTimelineState: ObservableObject {
+final class EditorTimelineState: ObservableObject {
     let controller: PreviewController
     let events: [LoggedEvent]
     @Published var edl: EditDecisionList
@@ -24,10 +29,50 @@ private final class EditorTimelineState: ObservableObject {
         self.events = events
     }
 
-    func onScrub(_ time: Double) {
-        Task { await controller.seek(toSeconds: time) }
+    /// Everything `TimelineView` needs to draw, expressed entirely on the
+    /// SOURCE clock — the timeline's own axis (M4b whole-branch review,
+    /// Critical finding #1). `edl.cuts` are already source-time ranges, so
+    /// they pass straight through unmapped; the player's playhead and this
+    /// controller's `jumpPoints` are in TRIMMED (output) time and need the
+    /// inverse mapping to land on the same axis.
+    struct DisplayState {
+        let duration: Double
+        let cuts: [TimeRange]
+        let jumpPoints: [JumpPoint]
+        let playhead: Double
     }
 
+    func displayState(playhead outputPlayhead: Double) -> DisplayState {
+        let keptRanges = controller.keptRanges
+        let sourcePlayhead = TimeRangeMapping.sourceTime(
+            ofTrimmedTime: outputPlayhead, keptRanges: keptRanges) ?? 0
+        let sourceJumpPoints: [JumpPoint] = controller.jumpPoints.compactMap { point in
+            guard let source = TimeRangeMapping.sourceTime(
+                ofTrimmedTime: point.timeSeconds, keptRanges: keptRanges) else { return nil }
+            return JumpPoint(timeSeconds: source, label: point.label)
+        }
+        return DisplayState(duration: controller.sourceDurationSeconds,
+                            cuts: edl.cuts,
+                            jumpPoints: sourceJumpPoints,
+                            playhead: sourcePlayhead)
+    }
+
+    /// `time` arrives in SOURCE time — the view's own axis — and must be
+    /// mapped to TRIMMED time before seeking, since the player plays the
+    /// composition built from `keptRanges`, not the source recording. A
+    /// click landing inside a cut has no frame to show and is silently
+    /// ignored rather than seeking to an invented nearby instant.
+    func onScrub(_ time: Double) {
+        guard let trimmedTime = TimeRangeMapping.trimmedTime(
+            of: time, keptRanges: controller.keptRanges) else { return }
+        Task { await controller.seek(toSeconds: trimmedTime) }
+    }
+
+    /// `range` arrives in SOURCE time directly from the view — no mapping
+    /// needed on the way in, since `edl.cuts` wants exactly that (M4b
+    /// Critical finding #1: before this fix, the view's axis was trimmed
+    /// time, and a second drag on the same view produced a range that had
+    /// already been computed against the wrong clock).
     func onTrim(_ range: TimeRange) {
         edl.cuts.append(range)
         let edl = self.edl
@@ -49,11 +94,16 @@ private struct TimelineViewRepresentable: NSViewRepresentable {
         return view
     }
 
+    /// Deliberately a one-line delegation to `state.displayState(playhead:)`
+    /// — the axis-mapping logic that matters lives there, where it is
+    /// testable without AppKit or SwiftUI's runtime; this stays the thin,
+    /// untestable seam.
     func updateNSView(_ nsView: TimelineView, context: Context) {
-        nsView.update(duration: state.controller.durationSeconds,
-                     cuts: state.edl.cuts,
-                     jumpPoints: state.controller.jumpPoints,
-                     playhead: playhead)
+        let display = state.displayState(playhead: playhead)
+        nsView.update(duration: display.duration,
+                     cuts: display.cuts,
+                     jumpPoints: display.jumpPoints,
+                     playhead: display.playhead)
     }
 }
 
@@ -131,13 +181,17 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// vanish from under a user who is still watching it.
     private static var open: [EditorWindowController] = []
 
-    /// `edl` and `events` default to an untrimmed range and no markers for
-    /// callers that only care about window lifecycle (most existing tests) —
-    /// a real editor session must pass the recording's actual EDL and
-    /// events, or every trim it draws applies against the wrong starting
-    /// point and loses the recording's real markers.
+    /// `edl` and `events` are REQUIRED (M4b whole-branch review, Important
+    /// finding #3) — a default here existed purely so window-lifecycle tests
+    /// that don't care about editing state didn't need touching, which is
+    /// test convenience shaping a production signature. A real editor
+    /// session must pass the recording's actual EDL and events, or every
+    /// trim it draws applies against the wrong starting point and loses the
+    /// recording's real markers; making the caller write `.fullRange()` /
+    /// `[]` explicitly when that's genuinely what's meant turns "I forgot"
+    /// into a build error instead of a silently empty scrub bar.
     public init(controller: PreviewController, title: String,
-                edl: EditDecisionList = .fullRange(), events: [LoggedEvent] = []) {
+                edl: EditDecisionList, events: [LoggedEvent]) {
         self.controller = controller
         let state = EditorTimelineState(controller: controller, edl: edl, events: events)
         let hosting = NSHostingView(rootView: EditorContentView(state: state))
