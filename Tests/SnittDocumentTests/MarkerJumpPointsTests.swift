@@ -55,7 +55,22 @@ struct MarkerJumpPointsTests {
         #expect(!points[0].label.isEmpty)
     }
 
-    @Test("Jump points come back in ascending time order")
+    @Test("An empty label is treated as no label, not as a blank jump point")
+func emptyLabelIsNamed() {
+    // `label` is optional AND can legitimately be the empty string — the
+    // event log stores whatever was passed. A jump point named "" is an
+    // unclickable blank in the UI, so "" must fall back the same way nil
+    // does. The nil case is covered by `unlabelledMarkersAreNamed`; this is
+    // the sibling a `label != nil` check would pass while still shipping a
+    // blank.
+    let events = [LoggedEvent(timeSeconds: 1.0, kind: .marker, label: "")]
+    let points = MarkerJumpPoints.compute(
+        events: events, keptRanges: [TimeRange(start: 0, end: 10)])
+    #expect(points.count == 1)
+    #expect(points[0].label == "Marker")
+}
+
+@Test("Jump points come back in ascending time order")
     func jumpPointsAreSorted() {
         let events = [
             LoggedEvent(timeSeconds: 8.0, kind: .marker, label: "second"),
