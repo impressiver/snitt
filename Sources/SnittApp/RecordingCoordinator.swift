@@ -515,7 +515,20 @@ public actor RecordingCoordinator: AgentRecordingControlling {
             // support threads (§5). The error itself is the diagnostic value;
             // the filename only correlates, and the operator can see it
             // unredacted in Console on their own machine.
-            Self.log.error("Could not open the editor: \(String(describing: error), privacy: .public)")
+            // NOT `String(describing: error)`: a Cocoa NSError renders its
+            // userInfo, which carries NSFilePath and NSURL — the FULL
+            // ABSOLUTE PATH, including the machine's username and the
+            // branch-derived bundle name (BundleNaming, M3a). Measured:
+            //   describing:    …UserInfo={NSFilePath=/Users/ian/…/feat-acme-corp-…}
+            //   localized:     The file “edit.json” couldn’t be opened…
+            // So the first route leaked exactly what redacting the filename
+            // from this message was meant to stop, and this line is
+            // collected verbatim into `snitt diagnostics export` (§5).
+            //
+            // domain+code is the precise identity a support engineer wants,
+            // and localizedDescription names only fixed sidecar filenames.
+            let ns = error as NSError
+            Self.log.error("Could not open the editor: \(ns.domain, privacy: .public) \(ns.code, privacy: .public) \(error.localizedDescription, privacy: .public)")
         }
     }
 

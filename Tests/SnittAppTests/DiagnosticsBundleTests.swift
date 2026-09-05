@@ -98,3 +98,36 @@ func bundleOmitsRecordingFilenames() throws {
     #expect(!written.contains(sentinel),
             "a value logged as .private must not reach an exported support bundle")
 }
+
+@MainActor
+@Test("A file error's path never reaches a support bundle")
+func bundleOmitsErrorFilePaths() throws {
+    // The second route to the leak that redacting a filename did not close.
+    // `String(describing:)` on a Cocoa NSError serialises userInfo, which
+    // carries NSFilePath and NSURL — the full absolute path, so the machine's
+    // username and the branch-derived bundle name travel inside the ERROR
+    // even when the message itself names no file.
+    //
+    // Measured on this toolchain:
+    //   describing:  …UserInfo={NSFilePath=/Users/…/feat-acme-…/edit.json, NSURL=…}
+    //   localized:   The file “edit.json” couldn’t be opened because…
+    let secretPath = "/Users/someone/work/feat-acme-secret-\(UUID().uuidString.prefix(6))/edit.json"
+    var caught: Error?
+    do { _ = try Data(contentsOf: URL(fileURLWithPath: secretPath)) } catch { caught = error }
+    let error = try #require(caught)
+    let ns = error as NSError
+
+    // Log it the way production now does.
+    SnittLog.logger(.compositor, target: "SnittApp")
+        .error("probe: \(ns.domain, privacy: .public) \(ns.code, privacy: .public) \(error.localizedDescription, privacy: .public)")
+
+    let auditURL = tempURL(); defer { try? FileManager.default.removeItem(at: auditURL) }
+    let out = tempURL(); defer { try? FileManager.default.removeItem(at: out) }
+    _ = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5)
+
+    let written = try String(contentsOf: out, encoding: .utf8)
+    #expect(!written.contains("feat-acme-secret"),
+            "an error's file path must not reach an exported support bundle")
+    // And the diagnosis survives: domain and code identify the fault exactly.
+    #expect(written.contains("NSCocoaErrorDomain"))
+}
