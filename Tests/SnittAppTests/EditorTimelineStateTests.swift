@@ -116,4 +116,57 @@ struct EditorTimelineStateTests {
         await waitForDuration(controller, toApproach: sourceSeconds - 4.0)
         #expect(abs(controller.durationSeconds - (sourceSeconds - 4.0)) < 0.2)
     }
+
+    /// A click inside a drawn cut region must SEEK, not do nothing.
+    ///
+    /// `onScrub` maps the view's source-time click into trimmed time before
+    /// seeking. `TimeRangeMapping.trimmedTime` returns nil for an instant
+    /// inside a cut — honest, since that instant has no frame — and the
+    /// first version of this handler simply returned, swallowing the click.
+    /// A visibly-drawn region that eats clicks with no feedback is the
+    /// silent no-op this project keeps finding, so it now snaps to the
+    /// nearest kept edge via `nearestTrimmedTime`.
+    ///
+    /// This test exists at the STATE level, not against `TimeRangeMapping`,
+    /// because the arithmetic was already covered while the wiring was not:
+    /// swapping `nearestTrimmedTime` back to `trimmedTime` in `onScrub`
+    /// compiled and passed the whole suite.
+    @Test("Clicking inside a cut seeks to the nearest kept edge rather than doing nothing")
+    func clickInsideACutStillSeeks() async throws {
+        let sourceSeconds = 8.0
+        let bundle = try await makeTimelineStateTestBundle(seconds: sourceSeconds)
+        let built = try await CompositionBuilder.build(
+            bundle: bundle, edl: EditDecisionList(), scale: 1.0)
+        let controller = PreviewController(built: built, jumpPoints: [],
+                                           bundle: bundle, scale: 1.0)
+        let state = EditorTimelineState(controller: controller, edl: EditDecisionList(), events: [])
+
+        let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
+        view.onScrub = { [weak state] in state?.onScrub($0) }
+        view.onTrim = { [weak state] in state?.onTrim($0) }
+        view.update(duration: sourceSeconds, cuts: [], jumpPoints: [], playhead: 0)
+
+        // Cut source 2-4s: x200 -> x400 on an 800px view of an 8s source.
+        view.mouseDown(with: .synthetic(at: NSPoint(x: 200, y: 20), in: view))
+        view.mouseDragged(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
+        view.mouseUp(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
+        await waitForDuration(controller, toApproach: sourceSeconds - 2.0)
+
+        view.update(duration: sourceSeconds, cuts: state.edl.cuts, jumpPoints: [], playhead: 0)
+        await controller.seek(toSeconds: 0)
+
+        // x300 is source 3.0s — squarely inside the removed 2-4s region.
+        view.mouseDown(with: .synthetic(at: NSPoint(x: 300, y: 20), in: view))
+        view.mouseUp(with: .synthetic(at: NSPoint(x: 300, y: 20), in: view))
+
+        var waited = 0.0
+        while CMTimeGetSeconds(controller.player.currentTime()) < 1.9, waited < 5.0 {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            waited += 0.02
+        }
+        // Trimmed 2.0s is where the cut sits in the output — the boundary
+        // both of its edges collapse onto. Doing nothing leaves the playhead
+        // at 0, which is what the un-snapped handler produced.
+        #expect(abs(CMTimeGetSeconds(controller.player.currentTime()) - 2.0) < 0.3)
+    }
 }

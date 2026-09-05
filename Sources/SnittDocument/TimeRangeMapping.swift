@@ -65,6 +65,31 @@ public enum TimeRangeMapping {
     /// Boundary rule mirrors `trimmedTime(of:keptRanges:)`: every kept range
     /// except the last claims its trimmed span half-open, the last one
     /// closed at both ends — so the two functions round-trip.
+    /// The trimmed-time position for a source instant, snapping to the
+    /// nearest kept boundary when the instant falls inside a cut.
+    ///
+    /// `trimmedTime(of:keptRanges:)` returns nil there, which is honest —
+    /// a cut instant has no frame. But a user clicking a cut region on the
+    /// timeline has clicked something visibly drawn, and answering with
+    /// nothing at all is the silent no-op this project keeps finding. The
+    /// nearest kept edge is the moment they can actually see, and it is
+    /// what every editor does.
+    public static func nearestTrimmedTime(toSourceTime sourceTime: Double,
+                                          keptRanges: [TimeRange]) -> Double? {
+        guard !keptRanges.isEmpty else { return nil }
+        var cursor = 0.0
+        for range in keptRanges {
+            // Before this range means inside the cut that precedes it (or
+            // before the recording). The answer is the cut's own position in
+            // trimmed time, which is everything kept so far.
+            if sourceTime < range.start { return cursor }
+            if sourceTime <= range.end { return cursor + (sourceTime - range.start) }
+            cursor += range.end - range.start
+        }
+        // Past the last kept range: the end of the output.
+        return cursor
+    }
+
     public static func sourceTime(ofTrimmedTime trimmedTime: Double,
                                   keptRanges: [TimeRange]) -> Double? {
         guard !keptRanges.isEmpty else { return nil }

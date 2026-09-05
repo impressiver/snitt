@@ -61,3 +61,34 @@ struct TimeRangeMappingTests {
         }
     }
 }
+
+@Test("A source instant inside a cut snaps to the nearest kept edge")
+func cutInstantSnapsToNearestEdge() {
+    // 0-2 kept, 2-5 cut, 5-10 kept. In trimmed time the second range
+    // begins at 2.0.
+    let kept = [TimeRange(start: 0, end: 2), TimeRange(start: 5, end: 10)]
+
+    // 2.4s is inside the cut and nearer its start edge (2.0) than its end
+    // edge (5.0), so it snaps back to trimmed 2.0 — the last frame the
+    // viewer actually sees before the cut.
+    #expect(TimeRangeMapping.nearestTrimmedTime(toSourceTime: 2.4, keptRanges: kept) == 2.0)
+
+    // 4.6s is nearer the far edge (5.0), which is trimmed 2.0 as well —
+    // the first frame after the cut. Both edges collapse to the same
+    // trimmed instant, which is correct: the cut has no duration in the
+    // output.
+    #expect(TimeRangeMapping.nearestTrimmedTime(toSourceTime: 4.6, keptRanges: kept) == 2.0)
+
+    // Discriminating against plain `trimmedTime`, which returns nil for
+    // every instant above and would make the click do nothing.
+    #expect(TimeRangeMapping.trimmedTime(of: 2.4, keptRanges: kept) == nil)
+}
+
+@Test("An instant inside a kept range is unchanged by snapping")
+func keptInstantIsNotMoved() {
+    let kept = [TimeRange(start: 0, end: 2), TimeRange(start: 5, end: 10)]
+    // Snapping must not perturb a click that already landed on a frame:
+    // 6.0s source is 3.0s trimmed (2s kept, then 1s into the second range).
+    #expect(TimeRangeMapping.nearestTrimmedTime(toSourceTime: 6.0, keptRanges: kept) == 3.0)
+    #expect(TimeRangeMapping.nearestTrimmedTime(toSourceTime: 1.0, keptRanges: kept) == 1.0)
+}

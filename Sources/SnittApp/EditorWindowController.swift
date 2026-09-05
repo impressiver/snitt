@@ -59,12 +59,15 @@ final class EditorTimelineState: ObservableObject {
 
     /// `time` arrives in SOURCE time — the view's own axis — and must be
     /// mapped to TRIMMED time before seeking, since the player plays the
-    /// composition built from `keptRanges`, not the source recording. A
-    /// click landing inside a cut has no frame to show and is silently
-    /// ignored rather than seeking to an invented nearby instant.
+    /// composition built from `keptRanges`, not the source recording.
+    ///
+    /// A click inside a cut SNAPS to the nearest kept edge rather than
+    /// doing nothing. The cut is drawn on the timeline, so it is a visible
+    /// thing the user aimed at; swallowing that click with no feedback is
+    /// the silent no-op this project keeps finding elsewhere.
     func onScrub(_ time: Double) {
-        guard let trimmedTime = TimeRangeMapping.trimmedTime(
-            of: time, keptRanges: controller.keptRanges) else { return }
+        guard let trimmedTime = TimeRangeMapping.nearestTrimmedTime(
+            toSourceTime: time, keptRanges: controller.keptRanges) else { return }
         Task { await controller.seek(toSeconds: trimmedTime) }
     }
 
