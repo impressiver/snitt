@@ -111,18 +111,14 @@ public final class PreviewController {
     /// caller that seeks immediately after construction (every test here
     /// does) would otherwise race the item's own loading.
     ///
-    /// Also waits (same bounded-polling discipline — never a thread block)
-    /// for `videoOutput`'s internal pipeline to actually catch up to the
-    /// new target. Measured directly via `itemTimeForDisplay`:
-    /// `AVPlayer.seek`'s completion firing, and even
-    /// `hasNewPixelBuffer(forItemTime:)` reporting true, do not mean the
-    /// video output is serving THIS target's frame yet — a second seek
-    /// issued right after the first measurably still returns the PREVIOUS
-    /// target's buffer (`itemTimeForDisplay` names the earlier time, not
-    /// nil and not an error) until real wall-clock time passes for the
-    /// output to advance. Polling here — where the caller is already
-    /// `await`ing — keeps `currentFrameFingerprint()` itself synchronous
-    /// and simple.
+    /// It does NOT wait for `videoOutput`'s pipeline to catch up. That wait
+    /// belongs to the observable, not to seeking: `AVPlayerLayer` renders
+    /// from the player's own presentation pipeline, not from the
+    /// `AVPlayerItemVideoOutput` tap, so the frame a user sees is correct as
+    /// soon as this returns. Making every real scrub wait for a tap only the
+    /// tests read would add up to two seconds of latency to the one
+    /// interaction this milestone exists to make fast. See
+    /// `currentFrameFingerprint()`, which does that waiting itself.
     public func seek(toSeconds seconds: Double) async {
         var waited = 0.0
         while item.status == .unknown && waited < 8.0 {
@@ -132,15 +128,6 @@ public final class PreviewController {
         let clamped = max(0, min(seconds, durationSeconds))
         let target = CMTime(seconds: clamped, preferredTimescale: 600)
         await player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
-
-        waited = 0.0
-        while waited < 2.0 {
-            var display = CMTime.invalid
-            _ = videoOutput.copyPixelBuffer(forItemTime: target, itemTimeForDisplay: &display)
-            if display.isValid, CMTimeCompare(display, target) == 0 { break }
-            try? await Task.sleep(nanoseconds: 20_000_000)
-            waited += 0.02
-        }
     }
 
     public func jump(to point: JumpPoint) async {
@@ -156,8 +143,24 @@ public final class PreviewController {
     ///
     /// Returns `nil` if no buffer is available for the current time (e.g.
     /// the item isn't ready yet).
-    public func currentFrameFingerprint() -> Int? {
+    ///
+    /// Waits, with bounded polling and never a thread block, for the output
+    /// to actually serve the current time. Measured: `AVPlayer.seek`'s
+    /// completion firing — and even `hasNewPixelBuffer` reporting true — do
+    /// not mean the video output has advanced, and a second seek issued
+    /// right after the first still hands back the PREVIOUS target's buffer,
+    /// with `itemTimeForDisplay` naming the earlier time. The wait lives
+    /// here because only this observable needs it.
+    public func currentFrameFingerprint() async -> Int? {
         let time = item.currentTime()
+        var waited = 0.0
+        while waited < 2.0 {
+            var display = CMTime.invalid
+            _ = videoOutput.copyPixelBuffer(forItemTime: time, itemTimeForDisplay: &display)
+            if display.isValid, CMTimeCompare(display, time) == 0 { break }
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            waited += 0.02
+        }
         // Called directly, not gated on `hasNewPixelBuffer`: S7 measured
         // `copyPixelBuffer` delivering a buffer on the first attempt (0
         // retries) at every seek target on a paused item, and

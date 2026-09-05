@@ -247,7 +247,7 @@ func seekingShowsDifferentFrames() async throws {
     var seen: Set<Int> = []
     for t in [0.5, 2.0, 3.5] {
         await controller.seek(toSeconds: t)
-        seen.insert(try #require(controller.currentFrameFingerprint()))
+        seen.insert(try #require(await controller.currentFrameFingerprint()))
     }
     #expect(seen.count == 3)
 }
@@ -267,10 +267,10 @@ func seekingIsRepeatable() async throws {
     let controller = PreviewController(built: built, jumpPoints: [], bundle: bundle, scale: 1.0)
 
     await controller.seek(toSeconds: 2.0)
-    let first = try #require(controller.currentFrameFingerprint())
+    let first = try #require(await controller.currentFrameFingerprint())
     await controller.seek(toSeconds: 0.5)
     await controller.seek(toSeconds: 2.0)
-    let second = try #require(controller.currentFrameFingerprint())
+    let second = try #require(await controller.currentFrameFingerprint())
 
     // Discriminating against tolerant seeking: with keyframe tolerance the
     // second seek can land on a different frame than the first, which is
