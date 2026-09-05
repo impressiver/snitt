@@ -224,6 +224,33 @@ func excessiveGainIsClampedToOne() async throws {
     #expect(volume == 1.0)
 }
 
+@Test("A non-finite gain falls back to unity rather than becoming a NaN volume")
+func nonFiniteGainFallsBackToUnity() async throws {
+    // min/max CANNOT clamp NaN — every comparison with NaN is false, so
+    // `min(max(.nan, 0), 1)` is still NaN, and setVolume takes it without
+    // complaint. The result is undefined playback volume that nothing
+    // reports: no crash, no error, just audio that may or may not exist.
+    // The negative and >1 cases are caught by the ordinary clamp; this one
+    // slips straight through it.
+    let bundle = try await makeTestBundle(seconds: 2, audioTrackCount: 2)
+    var edl = EditDecisionList.fullRange()
+    edl.trackStates = [
+        TrackState(track: "systemAudio", muted: false, gain: Double.nan),
+        TrackState(track: "microphone", muted: true, gain: 1.0),
+    ]
+
+    let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+
+    let mix = try #require(built.audioMix)
+    let tracks = built.composition.tracks(withMediaType: AVMediaType.audio)
+    let params = try #require(mix.inputParameters.first { $0.trackID == tracks[0].trackID })
+    var volume: Float = -1
+    #expect(params.getVolumeRamp(for: .zero, startVolume: &volume,
+                                 endVolume: nil, timeRange: nil))
+    #expect(volume.isFinite)
+    #expect(volume == 1.0)
+}
+
 @Test("A duplicate track name in the EDL does not crash the export")
 func duplicateTrackNameIsSurvivable() async throws {
     // `Dictionary(uniqueKeysWithValues:)` TRAPS on a repeated key — signal 5,

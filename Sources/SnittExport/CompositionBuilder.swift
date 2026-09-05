@@ -152,7 +152,14 @@ public enum CompositionBuilder {
             // an unclamped `Double` and the EDL is never rejected: a
             // recording should still open with a strange sidecar.
             let rawVolume = state.map { $0.muted ? 0.0 : Float($0.gain) } ?? 1.0
-            let volume = min(max(rawVolume, 0.0), 1.0)
+            // `isFinite` FIRST, because min/max cannot clamp a NaN: every
+            // comparison with NaN is false, so `min(max(.nan, 0), 1)` is
+            // still NaN, and `setVolume` accepts it silently — verified,
+            // `getVolumeRamp` reads it back with ok=true. A NaN volume is
+            // undefined playback rather than a crash, which is the worst
+            // shape: silent corruption nothing reports. `gain: null` decodes
+            // to NaN from a hand-edited sidecar easily enough.
+            let volume = rawVolume.isFinite ? min(max(rawVolume, 0.0), 1.0) : 1.0
             parameters.setVolume(volume, at: .zero)
             return parameters
         }
