@@ -39,6 +39,42 @@ func appendIsIncremental() throws {
     #expect(try AuditLog.read(from: url).map(\.sessionID) == ["S1", "S2", "S3"])
 }
 
+@Test("Appending preserves a line the reader cannot parse")
+func appendPreservesUnparseableLines() throws {
+    // THE property of an append-only log, and the one nothing else pinned.
+    //
+    // A first attempt asserted that appending leaves earlier BYTES
+    // untouched. That does not discriminate: JSONEncoder is deterministic
+    // and Codable emits keys in declaration order, so a
+    // decode-and-rewrite implementation reproduces byte-identical output.
+    // Verified by mutation before this version was written.
+    //
+    // What genuinely differs is data loss. `read` SKIPS a line it cannot
+    // decode, so a rewrite drops that line permanently, while a true
+    // append leaves it alone. That is exactly the loss JSONL was chosen to
+    // prevent, and it is observable.
+    let url = tempURL()
+    defer { try? FileManager.default.removeItem(at: url) }
+
+    try AuditLog.append(AuditRecord(sessionID: "S1", target: "T", initiator: "agent",
+                                    startedAt: Date(timeIntervalSince1970: 1)), to: url)
+    // A line from a future schema, or a half-written one from a crash:
+    // unreadable now, but not ours to destroy.
+    let handle = try FileHandle(forWritingTo: url)
+    try handle.seekToEnd()
+    try handle.write(contentsOf: Data("{\"unknownSchema\":true}\n".utf8))
+    try handle.close()
+
+    try AuditLog.append(AuditRecord(sessionID: "S2", target: "T", initiator: "agent",
+                                    startedAt: Date(timeIntervalSince1970: 2)), to: url)
+
+    let raw = try String(contentsOf: url, encoding: .utf8)
+    #expect(raw.contains("unknownSchema"),
+            "appending must not discard a line the reader could not parse")
+    // And the records we CAN read are still both there.
+    #expect(try AuditLog.read(from: url).map(\.sessionID) == ["S1", "S2"])
+}
+
 @Test("A truncated final line costs one record, not the log")
 func truncatedLineLosesOnlyItself() throws {
     let url = tempURL()
