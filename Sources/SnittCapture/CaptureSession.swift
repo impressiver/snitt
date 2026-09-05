@@ -1,18 +1,24 @@
 import Foundation
 import ScreenCaptureKit
 import CoreMedia
+import SnittDocument
 
 public struct CaptureOptions: Sendable {
     public var captureMicrophone: Bool
     public var captureSystemAudio: Bool
     public var maxDuration: Duration?
+    /// Log the fact of clicks and keystrokes (§4.2). Off by default: it costs
+    /// the user a third TCC dialog (§4.10).
+    public var logInputEvents: Bool
 
     public init(captureMicrophone: Bool = false,
                 captureSystemAudio: Bool = true,
-                maxDuration: Duration? = nil) {
+                maxDuration: Duration? = nil,
+                logInputEvents: Bool = false) {
         self.captureMicrophone = captureMicrophone
         self.captureSystemAudio = captureSystemAudio
         self.maxDuration = maxDuration
+        self.logInputEvents = logInputEvents
     }
 }
 
@@ -39,6 +45,11 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
     private var stream: SCStream?
     private let lock = NSLock()
     private var didBegin = false
+
+    /// The presentation timestamp of the first delivered buffer — the video
+    /// track's t=0, on SCStream's host/mach clock. Guarded by `lock` alongside
+    /// `didBegin`, since both are set together in `handle(_:of:)`.
+    private var firstPresentationTime: CMTime?
 
     public init(target: ResolvedTarget,
                 sink: SampleBufferSink,
@@ -110,6 +121,62 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
         self.stream = nil
     }
 
+    /// §12.1's metrics, gathered by the sink during the writer pass.
+    func health() -> CaptureHealth { sink.health.result() }
+
+    /// Seconds from the video's t=0 to now, in the SAME time base the video
+    /// track uses.
+    ///
+    /// Markers must not use wall-clock time: `Recorder.startedAt` is stamped
+    /// before the stream starts delivering, so it precedes the first frame's
+    /// presentation timestamp by however long SCStream takes to come up. A
+    /// marker on the wrong clock points at the wrong moment (§4.12).
+    ///
+    /// Returns nil before the first buffer arrives, when there is no video
+    /// time base to be relative to yet.
+    func mediaOffsetNow() -> Double? {
+        lock.lock()
+        let first = firstPresentationTime
+        lock.unlock()
+        return Self.mediaOffset(from: first, to: CMClockGetTime(CMClockGetHostTimeClock()))
+    }
+
+    /// The pure arithmetic behind `mediaOffsetNow()`, factored out because the
+    /// host clock itself cannot be driven from a test.
+    static func mediaOffset(from first: CMTime?, to now: CMTime) -> Double? {
+        guard let first else { return nil }
+        return CMTimeGetSeconds(CMTimeSubtract(now, first))
+    }
+
+    /// Falls back to wall clock when the media offset is implausible.
+    ///
+    /// The media offset assumes SCStream's presentation timestamps are on the
+    /// host clock. That holds today, but it is an assumption no test can check
+    /// without a live display — and when it is wrong the failure is silent and
+    /// total: every marker lands at "seconds since boot" and chapters inherit
+    /// it. A generous slack keeps the precise media offset in the normal case
+    /// while turning a catastrophic mismatch into a slightly imprecise marker.
+    ///
+    /// The 5-second slack is deliberately generous and must never fire on a
+    /// real recording — SCStream's startup latency is hundreds of
+    /// milliseconds, not seconds — while still catching a clock-base
+    /// mismatch, which is off by orders of magnitude, not seconds. Do not
+    /// tighten this: a smaller slack risks firing on legitimate recordings
+    /// under system load, which is worse than the imprecision it would save.
+    ///
+    /// The comparison is symmetric where the physics is one-sided. The media
+    /// clock starts at the FIRST FRAME and the wall clock starts before
+    /// `startCapture()`, so a legitimate `media` is always slightly LESS than
+    /// `wallClock`; `media > wallClock` by any real margin is already a
+    /// mismatch. The slack absorbs that today, so this is not a live defect —
+    /// but anyone tightening the guard should make it one-sided rather than
+    /// halving the 5.0.
+    static func plausibleOffset(media: Double?, wallClock: Double?) -> Double? {
+        guard let media else { return wallClock }
+        guard let wallClock else { return media >= 0 ? media : nil }
+        return abs(media - wallClock) <= 5.0 ? media : wallClock
+    }
+
     // MARK: - SCStreamOutput
 
     public func stream(_ stream: SCStream,
@@ -147,6 +214,7 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
             if !didBegin {
                 try sink.begin(at: buffer.presentationTimeStamp)
                 didBegin = true
+                firstPresentationTime = buffer.presentationTimeStamp
             }
             try sink.append(buffer, to: track)
         } catch {

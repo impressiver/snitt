@@ -4,15 +4,16 @@ import CoreVideo
 
 /// Builds a solid-grey video sample buffer. Used to drive the capture
 /// pipeline in tests without a real screen.
-func makeVideoBuffer(at seconds: Double, size: CGSize) -> CMSampleBuffer {
+func makeVideoBuffer(at seconds: Double, size: CGSize,
+                      pixelFormat: OSType = kCVPixelFormatType_32BGRA) -> CMSampleBuffer {
     var pixelBuffer: CVPixelBuffer?
     CVPixelBufferCreate(kCFAllocatorDefault,
                         Int(size.width), Int(size.height),
-                        kCVPixelFormatType_32BGRA, nil, &pixelBuffer)
+                        pixelFormat, nil, &pixelBuffer)
     let buffer = pixelBuffer!
 
     CVPixelBufferLockBaseAddress(buffer, [])
-    if let base = CVPixelBufferGetBaseAddress(buffer) {
+    if pixelFormat == kCVPixelFormatType_32BGRA, let base = CVPixelBufferGetBaseAddress(buffer) {
         memset(base, 128,
                CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer))
     }
@@ -25,9 +26,17 @@ func makeVideoBuffer(at seconds: Double, size: CGSize) -> CMSampleBuffer {
         formatDescriptionOut: &formatDescription
     )
 
+    // Anchored to the real host clock, not an absolute small value: real
+    // SCStream buffers carry host-clock timestamps, and CaptureSession's media
+    // offset is computed against CMClockGetHostTimeClock(). A synthetic buffer
+    // stamped with a bare CMTime(seconds:) would sit nowhere near "now" on
+    // that clock, making any media-offset arithmetic exercised against it
+    // meaningless (it would measure "seconds since boot", not seconds into
+    // the recording).
+    let anchor = CMClockGetTime(CMClockGetHostTimeClock())
     var timing = CMSampleTimingInfo(
         duration: CMTime(value: 1, timescale: 60),
-        presentationTimeStamp: CMTime(seconds: seconds, preferredTimescale: 600),
+        presentationTimeStamp: CMTimeAdd(anchor, CMTime(seconds: seconds, preferredTimescale: 600)),
         decodeTimeStamp: .invalid
     )
 
@@ -84,7 +93,10 @@ func makeAudioBuffer(at seconds: Double) -> CMSampleBuffer {
         dataBuffer: blockBuffer!,
         formatDescription: formatDescription!,
         sampleCount: frameCount,
-        presentationTimeStamp: CMTime(seconds: seconds, preferredTimescale: 48_000),
+        // Host-clock anchored for the same reason makeVideoBuffer is — see
+        // its comment.
+        presentationTimeStamp: CMTimeAdd(CMClockGetTime(CMClockGetHostTimeClock()),
+                                         CMTime(seconds: seconds, preferredTimescale: 48_000)),
         packetDescriptions: nil,
         sampleBufferOut: &sampleBuffer
     )

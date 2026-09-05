@@ -1,5 +1,6 @@
 import AppKit
 import Carbon.HIToolbox
+import os
 
 public struct HotkeyCombination: Equatable, Sendable {
     public var keyCode: UInt32
@@ -14,6 +15,13 @@ public struct HotkeyCombination: Equatable, Sendable {
     /// without colliding with it.
     public static let defaultCombination = HotkeyCombination(
         keyCode: UInt32(kVK_ANSI_5),
+        modifiers: UInt32(optionKey | cmdKey)
+    )
+
+    /// Option-Command-M — "mark". Distinct from the record combination so the
+    /// two never collide (§4.12).
+    public static let markerCombination = HotkeyCombination(
+        keyCode: UInt32(kVK_ANSI_M),
         modifiers: UInt32(optionKey | cmdKey)
     )
 }
@@ -32,10 +40,24 @@ public enum HotkeyError: Error, Equatable {
 /// window server and requires no TCC grant at all, which is what lets the
 /// hotkey work inside §4.10's one-dialog first-run budget.
 public final class HotkeyMonitor {
+    private static let idCounter = OSAllocatedUnfairLock(initialState: UInt32(0))
+
+    /// Hands out a fresh hotkey id per registration.
+    ///
+    /// Previously every monitor used `id: 1`. Combined with a callback that
+    /// never checked which hotkey fired, a second monitor made BOTH callbacks
+    /// run on either keypress — so adding a marker hotkey would have started a
+    /// recording too.
+    public static func nextHotKeyID() -> UInt32 {
+        idCounter.withLock { value in value += 1; return value }
+    }
+
     private let combination: HotkeyCombination
     private let onFire: () -> Void
     private var hotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?
+
+    public let hotKeyID: UInt32 = HotkeyMonitor.nextHotKeyID()
 
     public private(set) var isRegistered = false
 
@@ -44,17 +66,62 @@ public final class HotkeyMonitor {
         self.onFire = onFire
     }
 
+    /// Invoked by the Carbon callback with the id that actually fired.
+    func handle(hotKeyID firedID: UInt32) {
+        guard firedID == hotKeyID else { return }
+        onFire()
+    }
+
+    /// What Carbon should be told after inspecting a fired hotkey id.
+    ///
+    /// `noErr` means "handled" and STOPS propagation to other handlers on the
+    /// same target. Two monitors share one application event target, so a
+    /// monitor that ignored an id must return eventNotHandledErr or it eats
+    /// the other monitor's hotkey — which is exactly how the marker hotkey
+    /// silently broke ⌥⌘5 once both were installed: the marker's handler ran
+    /// first, correctly did nothing for a foreign id, then returned noErr and
+    /// swallowed the press before the record handler ever saw it.
+    static func dispatchResult(firedID: UInt32, matching ownID: UInt32) -> OSStatus {
+        firedID == ownID ? noErr : OSStatus(eventNotHandledErr)
+    }
+
+    /// The identifier this monitor registers with Carbon.
+    ///
+    /// Extracted so a test can assert the registration uses the INSTANCE id.
+    /// The original defect was a hard-coded `id: 1` here, which the allocator
+    /// being correct did nothing to prevent — two monitors then registered the
+    /// same identifier and each fired on the other's keypress.
+    var registrationID: EventHotKeyID {
+        EventHotKeyID(signature: OSType(0x534E_5454), id: hotKeyID) // 'SNTT'
+    }
+
     public func start() throws {
         guard !isRegistered else { return }
 
         var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
                                       eventKind: UInt32(kEventHotKeyPressed))
-        let callback: EventHandlerUPP = { _, _, userData in
-            guard let userData else { return noErr }
+        let callback: EventHandlerUPP = { _, event, userData in
+            // Every early exit below returns eventNotHandledErr, never noErr.
+            // noErr tells Carbon "handled" and STOPS the event propagating to
+            // other handlers on the same application event target — where the
+            // other monitor's handler lives. Returning noErr for an event this
+            // handler didn't actually act on swallows it before the other
+            // monitor gets a turn.
+            guard let userData, let event else { return OSStatus(eventNotHandledErr) }
+            var firedID = EventHotKeyID()
+            let status = GetEventParameter(event, EventParamName(kEventParamDirectObject),
+                                           EventParamType(typeEventHotKeyID), nil,
+                                           MemoryLayout<EventHotKeyID>.size, nil, &firedID)
+            // Without this, a failed read leaves firedID zero-initialised and the
+            // routing below would depend on ids never being 0 — true today only
+            // because nextHotKeyID() pre-increments. Depend on the check, not on
+            // that coincidence.
+            guard status == noErr else { return OSStatus(eventNotHandledErr) }
             let monitor = Unmanaged<HotkeyMonitor>
                 .fromOpaque(userData).takeUnretainedValue()
-            monitor.onFire()
-            return noErr
+            let result = HotkeyMonitor.dispatchResult(firedID: firedID.id, matching: monitor.hotKeyID)
+            monitor.handle(hotKeyID: firedID.id)
+            return result
         }
 
         let status = InstallEventHandler(
@@ -63,9 +130,8 @@ public final class HotkeyMonitor {
         )
         guard status == noErr else { throw HotkeyError.registrationFailed(status) }
 
-        let hotKeyID = EventHotKeyID(signature: OSType(0x534E_5454), id: 1) // 'SNTT'
         let registerStatus = RegisterEventHotKey(
-            combination.keyCode, combination.modifiers, hotKeyID,
+            combination.keyCode, combination.modifiers, registrationID,
             GetApplicationEventTarget(), 0, &hotKeyRef
         )
         guard registerStatus == noErr else {

@@ -1,0 +1,178 @@
+import AVFoundation
+import CoreMedia
+import CoreVideo
+import Foundation
+import SnittDocument
+
+/// Cheap health metrics gathered during the existing writer pass (§12.1).
+///
+/// Exists because an agent is blind to its own output: a recording of the wrong
+/// window, an occluded surface, or a dead microphone returns a valid path and
+/// exit 0 today. These are WARNINGS, never failures — a legitimately static UI
+/// demo will trip low frame variance, so no threshold gates anything until it
+/// has been tuned against real recordings.
+///
+/// Sampling is deliberately sparse: every Nth frame, and a grid within it. The
+/// cost has to stay far below the encode it rides along with, or it would
+/// change the thing it is measuring.
+public final class HealthSampler: @unchecked Sendable {
+    /// Every Nth video frame is inspected.
+    public static let frameStride = 30
+    /// Pixels are sampled on a grid this many rows/columns apart.
+    public static let pixelStride = 64
+
+    private let lock = NSLock()
+    private var frameIndex = 0
+    private var frameVariances: [Double] = []
+    private var micSumOfSquares = 0.0, micSampleCount = 0
+    private var systemSumOfSquares = 0.0, systemSampleCount = 0
+
+    public init() {}
+
+    public static func variance(ofLuma samples: [Double]) -> Double {
+        guard samples.count > 1 else { return 0 }
+        let mean = samples.reduce(0, +) / Double(samples.count)
+        let sum = samples.reduce(0) { $0 + ($1 - mean) * ($1 - mean) }
+        return sum / Double(samples.count)
+    }
+
+    public static func rms(ofFloatSamples samples: [Float]) -> Double {
+        guard !samples.isEmpty else { return 0 }
+        let sum = samples.reduce(0.0) { $0 + Double($1) * Double($1) }
+        return (sum / Double(samples.count)).squareRoot()
+    }
+
+    public func observe(_ buffer: CMSampleBuffer, track: TrackKind) {
+        switch track {
+        case .video: observeVideo(buffer)
+        case .microphone, .systemAudio: observeAudio(buffer, track: track)
+        }
+    }
+
+    private func observeVideo(_ buffer: CMSampleBuffer) {
+        lock.lock()
+        let index = frameIndex
+        frameIndex += 1
+        lock.unlock()
+        guard index % Self.frameStride == 0 else { return }
+
+        guard let pixels = CMSampleBufferGetImageBuffer(buffer) else { return }
+        CVPixelBufferLockBaseAddress(pixels, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(pixels, .readOnly) }
+        guard let base = CVPixelBufferGetBaseAddress(pixels) else { return }
+
+        let format = CVPixelBufferGetPixelFormatType(pixels)
+        var samples: [Double] = []
+
+        switch format {
+        case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+             kCVPixelFormatType_420YpCbCr8BiPlanarFullRange:
+            // Plane 0 is luma at full resolution, one byte per pixel — exactly
+            // the quantity frame variance wants, and better than the BGRA
+            // path's green-channel proxy. This is what ScreenCaptureKit
+            // actually delivers when configuration.pixelFormat is unset
+            // (confirmed on-device: '420v', biplanar 4:2:0). Use the
+            // plane-scoped accessors throughout — GetBaseAddress /
+            // GetBytesPerRow without "OfPlane" read plane 0's header as if it
+            // were the whole chunky image and silently produce garbage.
+            guard let planeBase = CVPixelBufferGetBaseAddressOfPlane(pixels, 0) else { return }
+            let planeBytes = planeBase.assumingMemoryBound(to: UInt8.self)
+            let planeRowBytes = CVPixelBufferGetBytesPerRowOfPlane(pixels, 0)
+            let planeWidth = CVPixelBufferGetWidthOfPlane(pixels, 0)
+            let planeHeight = CVPixelBufferGetHeightOfPlane(pixels, 0)
+            for row in stride(from: 0, to: planeHeight, by: Self.pixelStride) {
+                for column in stride(from: 0, to: planeWidth, by: Self.pixelStride) {
+                    let offset = row * planeRowBytes + column
+                    guard offset < planeRowBytes * planeHeight else { continue }
+                    samples.append(Double(planeBytes[offset]))
+                }
+            }
+
+        case kCVPixelFormatType_32BGRA:
+            // Chunky BGRA: take the green channel as a luma proxy. Cheap, and
+            // green carries most of perceived luminance. Reachable only if
+            // configuration.pixelFormat is ever set explicitly — SCK's
+            // observed default is the biplanar case above.
+            let bytes = base.assumingMemoryBound(to: UInt8.self)
+            let rowBytes = CVPixelBufferGetBytesPerRow(pixels)
+            let height = CVPixelBufferGetHeight(pixels)
+            let width = CVPixelBufferGetWidth(pixels)
+            for row in stride(from: 0, to: height, by: Self.pixelStride) {
+                for column in stride(from: 0, to: width, by: Self.pixelStride) {
+                    let offset = row * rowBytes + column * 4 + 1
+                    guard offset < rowBytes * height else { continue }
+                    samples.append(Double(bytes[offset]))
+                }
+            }
+
+        default:
+            return   // an unrecognised layout is skipped rather than measured wrongly
+        }
+
+        let variance = Self.variance(ofLuma: samples)
+        lock.lock(); frameVariances.append(variance); lock.unlock()
+    }
+
+    private func observeAudio(_ buffer: CMSampleBuffer, track: TrackKind) {
+        guard let format = CMSampleBufferGetFormatDescription(buffer),
+              let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee,
+              asbd.mFormatFlags & kAudioFormatFlagIsFloat != 0 else {
+            return   // only Float32 PCM is measured; anything else is skipped
+        }
+
+        var blockBuffer: CMBlockBuffer?
+        var list = AudioBufferList()
+        let status = CMSampleBufferGetAudioBufferListWithRetainedBlockBuffer(
+            buffer,
+            bufferListSizeNeededOut: nil,
+            bufferListOut: &list,
+            bufferListSize: MemoryLayout<AudioBufferList>.size,
+            blockBufferAllocator: kCFAllocatorDefault,
+            blockBufferMemoryAllocator: kCFAllocatorDefault,
+            flags: kCMSampleBufferFlag_AudioBufferList_Assure16ByteAlignment,
+            blockBufferOut: &blockBuffer)
+        // Only the first AudioBuffer is read. Correct today because
+        // CaptureSession forces channelCount = 1 for both audio tracks; must
+        // be revisited if/when stereo (non-interleaved) capture lands, since
+        // that would silently under-measure or make this call return
+        // non-noErr with a single-buffer bufferListSize.
+        guard status == noErr, let data = list.mBuffers.mData else { return }
+
+        let count = Int(list.mBuffers.mDataByteSize) / MemoryLayout<Float>.size
+        guard count > 0 else { return }
+
+        // The block buffer OWNS the samples `mData` points at, and ARC cannot
+        // see that dependency — the pointer is not syntactically derived from
+        // it — so without this the optimiser may release it before the loop
+        // reads. This is the documented hazard of the RetainedBlockBuffer API.
+        withExtendedLifetime(blockBuffer) {
+            let pointer = data.assumingMemoryBound(to: Float.self)
+            var sum = 0.0
+            for index in 0..<count {
+                let sample = Double(pointer[index])
+                sum += sample * sample
+            }
+
+            lock.lock()
+            switch track {
+            case .microphone: micSumOfSquares += sum; micSampleCount += count
+            case .systemAudio: systemSumOfSquares += sum; systemSampleCount += count
+            case .video: break
+            }
+            lock.unlock()
+        }
+    }
+
+    public func result() -> CaptureHealth {
+        lock.lock(); defer { lock.unlock() }
+        let meanVariance = frameVariances.isEmpty
+            ? nil
+            : frameVariances.reduce(0, +) / Double(frameVariances.count)
+        let mic = micSampleCount > 0
+            ? (micSumOfSquares / Double(micSampleCount)).squareRoot() : nil
+        let system = systemSampleCount > 0
+            ? (systemSumOfSquares / Double(systemSampleCount)).squareRoot() : nil
+        return CaptureHealth(meanFrameVariance: meanVariance,
+                             micRMS: mic, systemAudioRMS: system)
+    }
+}

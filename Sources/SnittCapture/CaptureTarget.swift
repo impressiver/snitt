@@ -17,15 +17,25 @@ public struct CaptureTargetDescriptor: Codable, Sendable, Equatable {
     public var applicationName: String?
     public var width: Int
     public var height: Int
+    /// The owning application's process id, for window targets. Needed to
+    /// activate the app before capture starts (§4.13); nil for displays.
+    public var processID: pid_t?
 
+    /// - Parameter processID: Deliberately has NO default. A default of `nil`
+    ///   is what made auto-focus (§4.13) dead code: both resolvers that feed a
+    ///   recording simply never passed one, `WindowFocuser` returned false at
+    ///   its first guard, and nothing failed. Every caller must now decide —
+    ///   `nil` for a display, which has no process to activate.
     public init(id: UInt32, kind: String, title: String?,
-                applicationName: String?, width: Int, height: Int) {
+                applicationName: String?, width: Int, height: Int,
+                processID: pid_t?) {
         self.id = id
         self.kind = kind
         self.title = title
         self.applicationName = applicationName
         self.width = width
         self.height = height
+        self.processID = processID
     }
 }
 
@@ -50,7 +60,8 @@ public enum CaptureTarget: @unchecked Sendable {
                 title: "Display \(display.displayID)",
                 applicationName: nil,
                 width: display.width,
-                height: display.height
+                height: display.height,
+                processID: nil
             )
         case .window(let window):
             return CaptureTargetDescriptor(
@@ -59,7 +70,8 @@ public enum CaptureTarget: @unchecked Sendable {
                 title: window.title,
                 applicationName: window.owningApplication?.applicationName,
                 width: Int(window.frame.width),
-                height: Int(window.frame.height)
+                height: Int(window.frame.height),
+                processID: window.owningApplication?.processID
             )
         }
     }
@@ -90,6 +102,27 @@ public enum CaptureTarget: @unchecked Sendable {
     @available(*, deprecated,
                message: "Interactive callers should use PickerTargetResolver, and repeat captures CachedTargetResolver. Headless callers with no human to drive a picker should keep using this — it enumerates directly, which is the bypass path (§5.2).")
     public static func available() async throws -> [CaptureTarget] {
+        let content = try await SCShareableContent.excludingDesktopWindows(
+            false, onScreenWindowsOnly: true
+        )
+        return content.displays.map { .display($0) }
+             + content.windows.map { .window($0) }
+    }
+
+    /// Enumerates what can be recorded, for callers with no human present.
+    ///
+    /// This is the carve-out `available()`'s deprecation note describes, given
+    /// its own name so headless callers do not have to suppress a warning aimed
+    /// at interactive ones. It is still the bypass path (§5.2) and still costs
+    /// the recurring re-consent prompt — that is a cost of automation, which
+    /// D42 accepted deliberately. Interactive callers must keep using
+    /// `PickerTargetResolver`.
+    ///
+    /// - Important: This does NOT ensure Screen Recording access itself. The
+    ///   caller must call `ScreenRecordingAccess.ensureGranted()` first —
+    ///   enumerating without it is the exact defect this codebase has shipped
+    ///   three times (see `ScreenRecordingAccess`'s doc comment).
+    public static func headlessAvailable() async throws -> [CaptureTarget] {
         let content = try await SCShareableContent.excludingDesktopWindows(
             false, onScreenWindowsOnly: true
         )

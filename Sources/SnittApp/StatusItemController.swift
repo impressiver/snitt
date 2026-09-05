@@ -89,6 +89,21 @@ final class StatusItemController: NSObject {
         guard let statusItem, let button = statusItem.button else { return }
 
         let menu = NSMenu()
+        let agentItem = NSMenuItem(title: "Allow agent recording",
+                                   action: #selector(toggleAgentRecording),
+                                   keyEquivalent: "")
+        agentItem.target = self
+        agentItem.state = agentRecordingEnabled ? .on : .off
+        menu.addItem(agentItem)
+
+        let eventsItem = NSMenuItem(title: "Log input events",
+                                    action: #selector(toggleEventLogging),
+                                    keyEquivalent: "")
+        eventsItem.target = self
+        eventsItem.state = eventLoggingEnabled ? .on : .off
+        menu.addItem(eventsItem)
+        menu.addItem(.separator())
+
         let quitItem = NSMenuItem(title: "Quit Snitt",
                                   action: #selector(quitSelected),
                                   keyEquivalent: "q")
@@ -102,6 +117,26 @@ final class StatusItemController: NSObject {
 
     @objc private func quitSelected() {
         onQuit?()
+    }
+
+    /// Mirrors the persisted setting so the menu can show a checkmark.
+    var agentRecordingEnabled = false
+
+    /// Invoked when the user toggles agent recording from the menu.
+    var onToggleAgentRecording: ((Bool) -> Void)?
+
+    @objc private func toggleAgentRecording() {
+        onToggleAgentRecording?(!agentRecordingEnabled)
+    }
+
+    /// Mirrors the persisted setting so the menu can show a checkmark.
+    var eventLoggingEnabled = false
+
+    /// Invoked when the user toggles input-event logging from the menu.
+    var onToggleEventLogging: ((Bool) -> Void)?
+
+    @objc private func toggleEventLogging() {
+        onToggleEventLogging?(!eventLoggingEnabled)
     }
 
     func update(_ newState: RecordingState) {

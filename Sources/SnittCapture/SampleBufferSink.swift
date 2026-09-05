@@ -22,4 +22,9 @@ public protocol SampleBufferSink: AnyObject, Sendable {
 
     /// Finalizes and returns the written file's location.
     func finish() async throws -> URL
+
+    /// §12.1's metrics, gathered while buffers pass through. On the protocol
+    /// rather than the concrete sink because `CaptureSession` only ever sees
+    /// the protocol.
+    var health: HealthSampler { get }
 }

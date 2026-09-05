@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Carbon.HIToolbox
 @testable import SnittApp
 
 @Test("The default combination is option-command-5")
@@ -17,6 +18,44 @@ func combinationsCompareOnBothFields() {
     let c = HotkeyCombination(keyCode: 0x17, modifiers: 1)
     #expect(a != b)
     #expect(a == c)
+}
+
+@Test("A monitor registers under its own instance id, not a constant")
+func registrationUsesTheInstanceID() {
+    // The original defect was a hard-coded id in start(). A correct allocator
+    // did not prevent it, so assert the registration itself.
+    let first = HotkeyMonitor(combination: .defaultCombination) {}
+    let second = HotkeyMonitor(combination: .markerCombination) {}
+
+    #expect(first.registrationID.id == first.hotKeyID)
+    #expect(second.registrationID.id == second.hotKeyID)
+    #expect(first.registrationID.id != second.registrationID.id,
+            "two monitors registering the same id is half of the cross-firing bug")
+}
+
+@Test("The marker combination differs from the record combination")
+func markerCombinationIsDistinct() {
+    #expect(HotkeyCombination.markerCombination != HotkeyCombination.defaultCombination)
+}
+
+@Test("A monitor only fires for its own hotkey id")
+func monitorIgnoresOtherHotkeys() {
+    var fired = 0
+    let monitor = HotkeyMonitor(combination: .markerCombination) { fired += 1 }
+    monitor.handle(hotKeyID: monitor.hotKeyID)
+    #expect(fired == 1)
+    monitor.handle(hotKeyID: monitor.hotKeyID &+ 1)
+    #expect(fired == 1, "a monitor must ignore a hotkey it did not register")
+}
+
+@Test("A monitor lets another monitor's hotkey propagate")
+func foreignHotkeyPropagates() {
+    // Returning noErr here would tell Carbon the event was handled and stop
+    // it reaching the other monitor — which silently broke ⌥⌘5 once the
+    // marker hotkey existed.
+    #expect(HotkeyMonitor.dispatchResult(firedID: 2, matching: 1)
+            == OSStatus(eventNotHandledErr))
+    #expect(HotkeyMonitor.dispatchResult(firedID: 1, matching: 1) == noErr)
 }
 
 // Both tests below register the real ⌥⌘5 combination with the window server.

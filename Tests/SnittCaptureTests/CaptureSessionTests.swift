@@ -10,6 +10,7 @@ final class SpySink: SampleBufferSink, @unchecked Sendable {
     var beginCount = 0
     var appended: [(TrackKind, Double)] = []
     var finishedURL = URL(fileURLWithPath: "/tmp/spy.mov")
+    let health = HealthSampler()
     private let lock = NSLock()
 
     func begin(at startTime: CMTime) throws {
@@ -77,4 +78,43 @@ func beginsExactlyOnce() throws {
     #expect(sink.appended.count == 10)
     #expect(sink.begun == true)
     #expect(sink.beginCount == 1)
+}
+
+@Test("A media offset is measured from the video's first frame, not from wall clock")
+func mediaOffsetIsRelativeToFirstFrame() {
+    // A marker's offset must land in the same time base as the video track, or
+    // it points a reviewer at the wrong moment (§4.12).
+    let first = CMTime(seconds: 1000.0, preferredTimescale: 600)
+    let now = CMTime(seconds: 1012.5, preferredTimescale: 600)
+    #expect(abs((CaptureSession.mediaOffset(from: first, to: now) ?? -1) - 12.5) < 0.001)
+}
+
+@Test("A marker before the first frame has no media offset")
+func noOffsetBeforeFirstFrame() {
+    #expect(CaptureSession.mediaOffset(from: nil, to: CMTime(seconds: 5, preferredTimescale: 600)) == nil)
+}
+
+@Test("An implausible media offset falls back to wall clock")
+func implausibleMediaOffsetFallsBack() {
+    // The 1.6-million-second case: a media clock that is not the host clock.
+    #expect(CaptureSession.plausibleOffset(media: 1_644_292, wallClock: 3.0) == 3.0)
+}
+
+@Test("A plausible media offset is preferred over wall clock")
+func plausibleMediaOffsetWins() {
+    // The whole point of the media clock: it is the accurate one, differing
+    // from wall clock by the stream's startup latency.
+    //
+    // The values are one-sided on purpose. The media clock starts at the first
+    // FRAME and the wall clock is stamped before `startCapture()`, so a
+    // legitimate media offset is always slightly SMALLER. This case used to
+    // read `media: 3.3, wallClock: 3.0`, pinning an impossible sign as
+    // canonical — harmless today because the 5-second slack absorbs it, but
+    // exactly the wrong example for whoever tightens the guard.
+    #expect(CaptureSession.plausibleOffset(media: 2.7, wallClock: 3.0) == 2.7)
+}
+
+@Test("With no media clock yet, wall clock is used")
+func noMediaClockUsesWallClock() {
+    #expect(CaptureSession.plausibleOffset(media: nil, wallClock: 2.0) == 2.0)
 }
