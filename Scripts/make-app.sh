@@ -166,13 +166,29 @@ sign_nested "$FRAMEWORK_DEST"
 # self-signed, TeamIdentifier "not set" on both), the app failed to launch
 # with "different Team IDs" from dyld — a self-signed identity has no real
 # Team ID, so two separately-produced signatures are never treated as
-# matching, "not set" included. A real (paid) Developer ID would sign both
-# under one genuine Team ID and this would not trigger, but development
-# builds need to keep launching today. `disable-library-validation` widens
-# hardened runtime to accept a differently-signed-but-still-signed embedded
-# framework; it does not disable the runtime or its other protections.
-ENTITLEMENTS="$(mktemp -t snitt-app-entitlements).plist"
-cat > "$ENTITLEMENTS" <<ENTITLEMENTS_PLIST
+# matching, "not set" included.
+#
+# R9: this workaround must NOT ship unconditionally. Snitt holds Screen
+# Recording and Microphone TCC grants and embeds an updater that downloads
+# and runs code; com.apple.security.cs.disable-library-validation lets any
+# validly-signed dylib — signed by anyone, not just Snitt's team — load
+# into that process. A real Developer ID gives the app and its re-signed
+# nested Sparkle components one genuine, matching Team ID, so library
+# validation is satisfied without widening it. So: sign the app first
+# WITHOUT the entitlement, read back whether the identity that just signed
+# it has a real Team ID, and only add the entitlement (re-signing) when it
+# does not. `Scripts/lib/needs-teamless-workaround.sh` holds the actual
+# decision so it can be unit-tested with a synthetic TeamIdentifier line —
+# there's no real paid Developer ID in this repo to exercise the "has a
+# team, skip the entitlement" branch end-to-end.
+codesign --force --sign "$SIGN_ID" --options runtime "$APP"
+
+TEAM_LINE="$(codesign -dvv "$APP" 2>&1 | grep '^TeamIdentifier=' || true)"
+if [ "$(./Scripts/lib/needs-teamless-workaround.sh "$TEAM_LINE")" = "yes" ]; then
+  echo "No real Team ID ($TEAM_LINE) — adding disable-library-validation so the embedded framework can still load." >&2
+  ENTITLEMENTS_DIR="$(mktemp -d -t snitt-app-entitlements)"
+  ENTITLEMENTS="$ENTITLEMENTS_DIR/entitlements.plist"
+  cat > "$ENTITLEMENTS" <<ENTITLEMENTS_PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -182,8 +198,11 @@ cat > "$ENTITLEMENTS" <<ENTITLEMENTS_PLIST
 </dict>
 </plist>
 ENTITLEMENTS_PLIST
-codesign --force --sign "$SIGN_ID" --options runtime --entitlements "$ENTITLEMENTS" "$APP"
-rm -f "$ENTITLEMENTS"
+  codesign --force --sign "$SIGN_ID" --options runtime --entitlements "$ENTITLEMENTS" "$APP"
+  rm -rf "$ENTITLEMENTS_DIR"
+else
+  echo "Real Team ID ($TEAM_LINE) — library validation satisfied without any extra entitlement."
+fi
 
 if [ "$STABLE_IDENTITY" = "1" ]; then
   echo "Signed with stable identity: $IDENTITY"

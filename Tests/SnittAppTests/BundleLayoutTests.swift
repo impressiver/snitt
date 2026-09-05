@@ -22,12 +22,18 @@ import Sparkle
 // back restores pass/fail as before.
 //
 // A CI run with no build step still exercises none of the assertions in
-// this file — the condition trait means it exercises none of it silently,
-// which is the honest failure mode for a check that fundamentally needs a
-// built artifact. See the task report.
+// this file — the condition trait means it exercises none of it silently.
+// Swift Testing counts a skipped test inside the run's total and still
+// reports the run "passed", so `Test run with N tests … passed` reads
+// identically whether packaging was actually covered or not. R12: set
+// SNITT_REQUIRE_APP_BUNDLE=1 (e.g. in CI, once it runs make-app.sh) to turn
+// a missing bundle into a real, visible failure instead of a silent skip —
+// unset (the default), local `swift test` behaves exactly as before.
 
 private let app = URL(fileURLWithPath: "build/Snitt.app")
 private let appIsBuilt = FileManager.default.fileExists(atPath: app.path)
+private let requireAppBundle = ProcessInfo.processInfo.environment["SNITT_REQUIRE_APP_BUNDLE"] == "1"
+private let appBundleSkipReason: Comment = "run ./Scripts/make-app.sh first (or set SNITT_REQUIRE_APP_BUNDLE=1 to fail instead of skip)"
 
 // Contents/MacOS/, not Contents/Frameworks/: spike S9 measured the rpath SwiftPM
 // emits as @loader_path, which resolves relative to the executable at
@@ -84,27 +90,42 @@ private func plistOf(_ app: URL) throws -> [String: Any] {
     return try #require(plist as? [String: Any])
 }
 
-@Test("The built app embeds Sparkle.framework at Contents/MacOS", .enabled(if: appIsBuilt, "run ./Scripts/make-app.sh first"))
+@Test("The built app embeds Sparkle.framework at Contents/MacOS", .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason))
 func builtAppEmbedsSparkleAtChosenLocation() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
     #expect(FileManager.default.fileExists(atPath: framework.path))
 }
 
 @Test(
     "Both the embedded framework and the outer app verify with codesign --deep --strict",
-    .enabled(if: appIsBuilt, "run ./Scripts/make-app.sh first")
+    .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason)
 )
 func frameworkAndAppAreBothSigned() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
     try #require(FileManager.default.fileExists(atPath: framework.path), "Sparkle.framework missing — cannot test signing")
 
-    // This check catches the framework being absent or its signature being
-    // stripped/corrupted entirely. It does NOT catch every wrong
-    // implementation: SPM's vendored Sparkle.framework arrives already
-    // signed ad-hoc by Sparkle's own build, so leaving it untouched (never
-    // re-signing it with Snitt's identity at all) still verifies here —
-    // ad-hoc counts as "signed" for --deep --strict. Confirmed by direct
-    // mutation (never re-sign the framework, only sign the app): this test
-    // still passes. `frameworkCarriesAppsSigningIdentity` below is what
-    // catches that specific gap; this test alone cannot discriminate it.
+    // Keep this test even though it has a known gap (below): it is the
+    // ONLY test in this file that catches SEAL INTEGRITY — the outer app's
+    // CodeResources pinning a nested item's designated requirement and then
+    // that nested item changing underneath it ("nested code is modified or
+    // invalid"). Hit this by accident once, restoring the framework without
+    // re-signing the app afterward — `frameworkCarriesAppsSigningIdentity`
+    // (an Authority= string comparison) passed straight through that,
+    // because both sides still nominally had an Authority; this test was
+    // the only one that failed.
+    //
+    // The gap: it does NOT catch every wrong implementation. SPM's vendored
+    // Sparkle.framework arrives already signed ad-hoc by Sparkle's own
+    // build, so leaving it untouched (never re-signing it with Snitt's
+    // identity at all) still verifies here, PROVIDED the app is re-signed
+    // consistently against that same still-ad-hoc framework — ad-hoc counts
+    // as "signed" for --deep --strict. Confirmed by direct mutation
+    // (rebuilt via a make-app.sh with every framework-level sign_nested
+    // call removed, so app and framework are self-consistent): this test
+    // passes. `frameworkCarriesAppsSigningIdentity` below is what catches
+    // that specific gap; this test alone cannot discriminate it. Two
+    // distinct properties, two tests — neither is redundant with the
+    // other.
     let frameworkResult = codesignVerifies(framework)
     #expect(frameworkResult.ok, "Sparkle.framework does not verify:\n\(frameworkResult.diagnostics)")
 
@@ -114,9 +135,10 @@ func frameworkAndAppAreBothSigned() throws {
 
 @Test(
     "The embedded framework carries Snitt's own signing identity, not the vendor's ad-hoc one",
-    .enabled(if: appIsBuilt, "run ./Scripts/make-app.sh first")
+    .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason)
 )
 func frameworkCarriesAppsSigningIdentity() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
     try #require(FileManager.default.fileExists(atPath: framework.path), "Sparkle.framework missing")
 
     // Catches exactly the gap `frameworkAndAppAreBothSigned` cannot: if
@@ -136,10 +158,11 @@ func frameworkCarriesAppsSigningIdentity() throws {
 }
 
 @Test(
-    "The app binary links Sparkle via @loader_path, matching where it's embedded",
-    .enabled(if: appIsBuilt, "run ./Scripts/make-app.sh first")
+    "The app binary carries the @loader_path rpath the Contents/MacOS embedding decision depends on",
+    .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason)
 )
 func appBinaryLinksSparkleViaLoaderPath() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
     let binary = app.appending(path: "Contents/MacOS/Snitt")
     try #require(FileManager.default.fileExists(atPath: binary.path))
 
@@ -153,11 +176,23 @@ func appBinaryLinksSparkleViaLoaderPath() throws {
     process.waitUntilExit()
     let output = String(data: data, encoding: .utf8) ?? ""
 
-    // Catches Contents/Frameworks embedding without the matching rpath: if
-    // make-app.sh's location and the binary's actual rpath ever disagreed,
-    // Sparkle would fail to load at runtime (a launch-time crash, not a
-    // build or codesign failure) despite every signing check above passing.
-    #expect(output.contains("@loader_path"), "no @loader_path rpath — Contents/MacOS embedding requires it")
+    // What this actually is: a toolchain canary, NOT a location-regression
+    // check. Both strings it looks for — the `LC_RPATH path @loader_path`
+    // and the `LC_LOAD_DYLIB name @rpath/Sparkle.framework/...` — are baked
+    // into this binary by the Swift linker when SnittApp is built;
+    // make-app.sh's packaging step never touches either. Confirmed by
+    // direct mutation: moving the embedded framework to Contents/Frameworks
+    // (a real location regression) makes `builtAppEmbedsSparkleAtChosenLocation`
+    // fail and makes the app fail to actually launch (dyld: Library not
+    // loaded), but leaves THIS test passing unchanged — it has no way to
+    // detect that regression. Its only genuine value: if a future SwiftPM
+    // ever emitted a different rpath (e.g. @executable_path/../Frameworks)
+    // for this target, embedding at Contents/MacOS/ would silently stop
+    // working and this is the one test that would notice, because the
+    // rationale in make-app.sh's comment depends on this exact rpath being
+    // true. `builtAppEmbedsSparkleAtChosenLocation` is the actual location
+    // check; this is not a substitute for it.
+    #expect(output.contains("@loader_path"), "no @loader_path rpath — the Contents/MacOS embedding decision assumes this")
     #expect(output.contains("Sparkle.framework"), "binary does not reference Sparkle.framework at all")
 }
 
@@ -195,8 +230,9 @@ func sparkleNeverLinksIntoThinClients() throws {
     }
 }
 
-@Test("Info.plist declares Sparkle's feed, omits the EdDSA key placeholder, and defaults automatic checks off", .enabled(if: appIsBuilt, "run ./Scripts/make-app.sh first"))
+@Test("Info.plist declares Sparkle's feed, omits the EdDSA key placeholder, and defaults automatic checks off", .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason))
 func infoPlistDeclaresSparkleKeys() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
     let plist = try plistOf(app)
 
     #expect(plist["SUFeedURL"] != nil)
@@ -241,10 +277,11 @@ private final class NoopUserDriver: NSObject, SPUUserDriver {
 
 @Test(
     "Sparkle's own SPUUpdater.startUpdater() accepts the built bundle's configuration",
-    .enabled(if: appIsBuilt, "run ./Scripts/make-app.sh first")
+    .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason)
 )
 @MainActor
 func sparkleAcceptsTheBuiltBundleConfiguration() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
     // This is what R5 asked for instead of one more key-presence assertion:
     // drive Sparkle's OWN configuration validation
     // (SPUUpdater.startUpdater(), which calls Sparkle's internal
@@ -264,4 +301,134 @@ func sparkleAcceptsTheBuiltBundleConfiguration() throws {
     let bundle = try #require(Bundle(url: app), "could not open build/Snitt.app as a bundle")
     let updater = SPUUpdater(hostBundle: bundle, applicationBundle: bundle, userDriver: NoopUserDriver(), delegate: nil)
     try updater.start()
+}
+
+// MARK: - R9/R10: com.apple.security.cs.disable-library-validation must be conditional
+
+/// Runs `Scripts/lib/needs-teamless-workaround.sh` — the exact decision
+/// `make-app.sh` uses — with a synthetic `codesign -dvv` TeamIdentifier
+/// line, and returns "yes" or "no".
+private func needsTeamlessWorkaround(forTeamIdentifierLine line: String) throws -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "Scripts/lib/needs-teamless-workaround.sh")
+    process.arguments = [line]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    try process.run()
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return (String(data: data, encoding: .utf8) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+}
+
+private func hasDisableLibraryValidation(_ entitlementsXML: String) -> Bool {
+    entitlementsXML.contains("com.apple.security.cs.disable-library-validation")
+}
+
+private func realTeamIdentifierLine(of url: URL) -> String {
+    let (_, output) = runCodesign(["-dvv", url.path])
+    for line in output.split(separator: "\n") where line.hasPrefix("TeamIdentifier=") {
+        return String(line)
+    }
+    return "TeamIdentifier=not set"
+}
+
+private func entitlementsXML(of url: URL) -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+    process.arguments = ["-d", "--entitlements", "-", "--xml", url.path]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    do {
+        try process.run()
+    } catch {
+        return ""
+    }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return String(data: data, encoding: .utf8) ?? ""
+}
+
+/// The one property R9/R10 exist to guarantee: a build signed under a real
+/// (non-teamless) identity must not carry the library-validation
+/// workaround. Shared by the synthetic test (which can exercise the
+/// Developer-ID-shaped branch, since no real one exists in this repo) and
+/// the integration test (which exercises real `codesign` output, but can
+/// currently only ever hit the teamless branch).
+private func assertNoWorkaroundLeak(teamIdentifierLine: String, entitlementsXML: String) throws {
+    let needsWorkaround = try needsTeamlessWorkaround(forTeamIdentifierLine: teamIdentifierLine) == "yes"
+    if !needsWorkaround {
+        #expect(
+            !hasDisableLibraryValidation(entitlementsXML),
+            "a Developer-ID-shaped build (\(teamIdentifierLine)) must not carry disable-library-validation"
+        )
+    }
+}
+
+@Test(
+    "R9's decision script adds the workaround only for a teamless identity (self-signed/ad-hoc)"
+)
+func teamlessWorkaroundScriptDecidesCorrectly() throws {
+    // Not gated on appIsBuilt: this calls the standalone decision script
+    // directly with synthetic input, so it needs no built bundle and no
+    // real signing identity of any kind.
+    //
+    // Verified by mutation: temporarily inverted the shell script's
+    // if/else (so it answered "no" for a teamless identity) — this test
+    // failed on the first assertion; reverting restored the pass.
+    #expect(try needsTeamlessWorkaround(forTeamIdentifierLine: "TeamIdentifier=not set") == "yes")
+    #expect(try needsTeamlessWorkaround(forTeamIdentifierLine: "TeamIdentifier=ABCDE12345TEAM") == "no")
+}
+
+@Test(
+    "A Developer-ID-shaped identity signing with the leaked workaround entitlement is caught"
+)
+func leakedWorkaroundUnderARealTeamIDIsCaught() throws {
+    // R10 in full: there is no real paid Developer ID in this repo, so the
+    // "signed under a genuine Team ID" case can't be produced end-to-end —
+    // every codesign invocation available here prints "TeamIdentifier=not
+    // set" (self-signed and ad-hoc alike). So this test constructs the
+    // failure by hand: a Developer-ID-shaped TeamIdentifier string paired
+    // with entitlements as if the workaround had leaked into that build,
+    // fed through the exact same `assertNoWorkaroundLeak` the real
+    // integration test below uses. Verified this actually catches it by
+    // running it before writing the "no leak" guard into
+    // assertNoWorkaroundLeak — it failed with the message below;
+    // afterwards it fails with the SAME issue on this synthetic input,
+    // which is the expected behavior: this test is supposed to fail unless
+    // withKnownIssue wraps the known-bad fixture.
+    withKnownIssue("synthetic fixture deliberately represents a leaked entitlement") {
+        try assertNoWorkaroundLeak(
+            teamIdentifierLine: "TeamIdentifier=ABCDE12345TEAM",
+            entitlementsXML: """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <plist version="1.0"><dict>
+              <key>com.apple.security.cs.disable-library-validation</key><true/>
+            </dict></plist>
+            """
+        )
+    }
+}
+
+@Test(
+    "The real built app carries no library-validation workaround under a real Team ID",
+    .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason)
+)
+func appEntitlementsCarryNoWorkaroundLeakUnderARealTeamID() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
+
+    // This can only ever exercise the teamless branch today (see
+    // leakedWorkaroundUnderARealTeamIDIsCaught for the Developer-ID-shaped
+    // case, which this repo cannot produce with a real signature). Under
+    // the self-signed dev identity, make-app.sh is EXPECTED to add the
+    // workaround, so assert that expectation explicitly rather than
+    // silently doing nothing — a real integration check that never
+    // executes its own guard clause is as good as no check at all.
+    let teamLine = realTeamIdentifierLine(of: app)
+    let xml = entitlementsXML(of: app)
+    if try needsTeamlessWorkaround(forTeamIdentifierLine: teamLine) == "yes" {
+        #expect(hasDisableLibraryValidation(xml), "teamless build (\(teamLine)) should carry the workaround, but doesn't")
+    } else {
+        try assertNoWorkaroundLeak(teamIdentifierLine: teamLine, entitlementsXML: xml)
+    }
 }
