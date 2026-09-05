@@ -99,39 +99,38 @@ public enum CompositionBuilder {
     /// every track unmuted at unity gain. A nil mix and an empty mix are not
     /// the same thing to a caller: nil says "nothing to apply".
     ///
-    /// `trackStates` are matched to composition audio tracks BY INDEX, in the
-    /// order the source declared them. A `TrackState` naming an index the
-    /// recording does not have is ignored — it can only come from an EDL
-    /// written against a different bundle, and refusing the whole export for
-    /// it would strand a recording behind a stale sidecar.
+    /// `trackStates` are matched to composition audio tracks BY NAME, via
+    /// `AudioTrackOrder.canonical`: composition audio track `i` is resolved
+    /// to `canonical[i]`, and the state whose `track` equals that name (if
+    /// any) governs it. A state naming something not in `canonical` —
+    /// `"video"`, or a name from a stale EDL — matches nothing and is
+    /// ignored, rather than being applied to whatever composition track
+    /// happens to sit at its position.
     ///
-    /// This is index matching, not name matching — `TrackState.track`'s
-    /// string content plays no part in which composition track a state
-    /// governs. That was checked against the recording path before landing:
-    /// `EditDecisionList.fullRange()` currently produces three states
-    /// (`"video"`, `"microphone"`, `"systemAudio"`, in that order), and
-    /// `AssetWriterSink` writes audio tracks in the order `[systemAudio,
-    /// microphone]`. Passed through unfiltered, those two orderings do NOT
-    /// line up — `states[0]` is not audio at all, and `states[1]`/`states[2]`
-    /// are reversed relative to the composition's actual audio track order.
-    /// Fixing that is the producer's job (filtering `trackStates` down to the
-    /// real audio tracks, in the composition's order, before it reaches
-    /// `build`), not this function's: this function has no way to learn a
-    /// composition audio track's semantic identity from the loaded
-    /// `AVAssetTrack` alone, and hardcoding `"systemAudio"`/`"microphone"`
-    /// here would only work for that one producer while breaking every
-    /// caller (including this file's own tests) that uses its own track
-    /// naming. See task-1-report.md for the full finding.
+    /// Task 1 matched by index instead, on the false assumption that
+    /// `trackStates`' order already lined up with the composition's audio
+    /// track order. It doesn't: `EditDecisionList.fullRange()` produces
+    /// `["video", "microphone", "systemAudio"]`, but `AssetWriterSink` writes
+    /// audio tracks in the order `[systemAudio, microphone]` (video is not
+    /// audio). Index-matching therefore gave audio track 0 (systemAudio) the
+    /// state named `"video"`, and dropped `"systemAudio"` off the end —
+    /// muting system audio did nothing, and muting "video" silenced it. See
+    /// task-1b-report.md for the full finding; name matching against the
+    /// shared `AudioTrackOrder.canonical` is the fix.
     private static func audioMix(for tracks: [AVMutableCompositionTrack],
                                  states: [TrackState]) -> AVAudioMix? {
         guard !tracks.isEmpty else { return nil }
-        let needsMix = states.contains { $0.muted || $0.gain != 1.0 }
+        let statesByName = Dictionary(uniqueKeysWithValues: states.map { ($0.track, $0) })
+        let matchedStates: [TrackState?] = tracks.indices.map { index in
+            guard index < AudioTrackOrder.canonical.count else { return nil }
+            return statesByName[AudioTrackOrder.canonical[index]]
+        }
+        let needsMix = matchedStates.contains { $0.map { $0.muted || $0.gain != 1.0 } ?? false }
         guard needsMix else { return nil }
 
         let mix = AVMutableAudioMix()
-        mix.inputParameters = tracks.enumerated().map { index, track in
+        mix.inputParameters = zip(tracks, matchedStates).map { track, state in
             let parameters = AVMutableAudioMixInputParameters(track: track)
-            let state = index < states.count ? states[index] : nil
             let volume = state.map { $0.muted ? 0.0 : Float($0.gain) } ?? 1.0
             parameters.setVolume(volume, at: .zero)
             return parameters

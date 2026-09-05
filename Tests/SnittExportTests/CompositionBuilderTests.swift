@@ -138,8 +138,12 @@ func mutedTrackIsSilencedInTheMix() async throws {
     let bundle = try await makeTestBundle(seconds: 2, audioTrackCount: 2)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
     var edl = EditDecisionList()
-    edl.trackStates = [TrackState(track: "audio0", muted: true, gain: 1.0),
-                       TrackState(track: "audio1", muted: false, gain: 1.0)]
+    // AudioTrackOrder.canonical is [systemAudio, microphone], so
+    // "systemAudio" is composition audio track 0 — the one asserted on
+    // below. Naming these "audio0"/"audio1" (Task 1's fixture) would match
+    // nothing under name-based matching and produce no mix at all.
+    edl.trackStates = [TrackState(track: "systemAudio", muted: true, gain: 1.0),
+                       TrackState(track: "microphone", muted: false, gain: 1.0)]
 
     let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
 
@@ -162,7 +166,7 @@ func gainIsCarriedIntoTheMix() async throws {
     let bundle = try await makeTestBundle(seconds: 2, audioTrackCount: 1)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
     var edl = EditDecisionList()
-    edl.trackStates = [TrackState(track: "audio0", muted: false, gain: 0.25)]
+    edl.trackStates = [TrackState(track: "systemAudio", muted: false, gain: 0.25)]
 
     let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
 
@@ -199,7 +203,7 @@ func exportAppliesTheMix() async throws {
     let bundle = try await makeTestBundle(seconds: 2, audioTrackCount: 1, audioContent: .tone)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
     var muted = EditDecisionList()
-    muted.trackStates = [TrackState(track: "audio0", muted: true, gain: 1.0)]
+    muted.trackStates = [TrackState(track: "systemAudio", muted: true, gain: 1.0)]
 
     let loudOut = FileManager.default.temporaryDirectory
         .appendingPathComponent("loud-\(UUID().uuidString).mp4")
@@ -223,4 +227,45 @@ func exportAppliesTheMix() async throws {
         .attributesOfItem(atPath: quietOut.path)[.size] as? Int)
     #expect(quiet < loud,
             "muting a track must change the exported bytes, not only the preview")
+}
+
+@Test("Track states are matched by name, so system audio mutes system audio")
+func systemAudioStateMutesSystemAudio() async throws {
+    let bundle = try await makeTestBundle(seconds: 2, audioTrackCount: 2)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+    var edl = EditDecisionList.fullRange()
+    edl.trackStates = edl.trackStates.map {
+        $0.track == "systemAudio" ? TrackState(track: "systemAudio", muted: true, gain: 1.0) : $0
+    }
+
+    let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+
+    let mix = try #require(built.audioMix)
+    let tracks = built.composition.tracks(withMediaType: AVMediaType.audio)
+    // AudioTrackOrder.canonical is [systemAudio, microphone], so index 0 is
+    // the one that must be silenced. Index-matching against fullRange()
+    // silences this track for the state named "video" instead, and leaves
+    // this assertion reading 1.0.
+    let params = try #require(mix.inputParameters.first { $0.trackID == tracks[0].trackID })
+    var volume: Float = -1
+    #expect(params.getVolumeRamp(for: .zero, startVolume: &volume,
+                                 endVolume: nil, timeRange: nil))
+    #expect(volume == 0.0)
+}
+
+@Test("A state naming the video track never silences audio")
+func videoStateDoesNotSilenceAudio() async throws {
+    let bundle = try await makeTestBundle(seconds: 2, audioTrackCount: 2)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+    var edl = EditDecisionList.fullRange()
+    edl.trackStates = edl.trackStates.map {
+        $0.track == "video" ? TrackState(track: "video", muted: true, gain: 1.0) : $0
+    }
+
+    let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+
+    // "video" is not an audio track. Muting it must be a no-op for audio,
+    // not a mute of whichever audio track happens to sit at index 0.
+    // This is the exact bug positional matching produces.
+    #expect(built.audioMix == nil)
 }
