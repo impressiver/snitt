@@ -63,7 +63,14 @@
 
 This is the third time this project has had to make a fixture able to show a property: `.noise` so size targeting was observable, `.tone` so muting was observable, and now `.ramp` so frame identity is observable. **Follow the same shape: opt-in, default unchanged**, so no existing test shifts and the suite does not get slower.
 
-Both copies of the helper are deliberate near-duplicates in different test targets (`SnittExport` must not depend on `SnittCapture`) and each carries a comment saying the other exists. Add the mode to both — a fix applied to one copy is how this project's bugs have survived, twice on the record.
+**The two copies of the helper have DIVERGED, and Task 1 must handle that** — verified before this plan was written:
+
+- `Tests/SnittExportTests/SyntheticMovie.swift` **has** `enum SyntheticFrameContent { case flat, noise }` and takes `content:`.
+- `Tests/SnittAppTests/SyntheticMovie.swift` has **no such enum at all** — it hardcodes `memset(base, 128, …)` — and its signature is `(to:seconds:size:fps:maxKeyFrameInterval:audioTrackCount:)`, with a `maxKeyFrameInterval` the export copy lacks.
+
+So this is not a symmetric two-line edit. The `SnittApp` copy needs the enum introduced (`flat` as the default, plus `ramp`) and a `content:` parameter added; the `SnittExport` copy needs only the `ramp` case. Tasks 5's `makeTestBundle(seconds:content:)` calls the `SnittApp` side, so that is the copy that must gain the parameter.
+
+They are deliberate near-duplicates in different test targets (`SnittExport` must not depend on `SnittCapture`) and each carries a comment saying the other exists and must be kept in step. That comment is already out of date — the drift above is exactly what it was written to prevent. **Note in your report whether the two are now closer or further apart**, and do not attempt to merge them.
 
 - [ ] **Step 1: Write the failing test**
 
