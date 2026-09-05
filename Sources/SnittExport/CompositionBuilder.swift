@@ -120,7 +120,13 @@ public enum CompositionBuilder {
     private static func audioMix(for tracks: [AVMutableCompositionTrack],
                                  states: [TrackState]) -> AVAudioMix? {
         guard !tracks.isEmpty else { return nil }
-        let statesByName = Dictionary(uniqueKeysWithValues: states.map { ($0.track, $0) })
+        // NOT `Dictionary(uniqueKeysWithValues:)`: that TRAPS on a repeated
+        // key, so an `edit.json` naming the same track twice — hand-edited,
+        // merged badly, or corrupted — would crash the app rather than
+        // export. Last one wins, matching how a later line in a config file
+        // normally overrides an earlier one.
+        let statesByName = Dictionary(states.map { ($0.track, $0) },
+                                      uniquingKeysWith: { _, last in last })
         let matchedStates: [TrackState?] = tracks.indices.map { index in
             guard index < AudioTrackOrder.canonical.count else { return nil }
             return statesByName[AudioTrackOrder.canonical[index]]

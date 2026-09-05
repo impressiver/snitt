@@ -180,6 +180,31 @@ func gainIsCarriedIntoTheMix() async throws {
     #expect(abs(volume - 0.25) < 0.001)
 }
 
+@Test("A duplicate track name in the EDL does not crash the export")
+func duplicateTrackNameIsSurvivable() async throws {
+    // `Dictionary(uniqueKeysWithValues:)` TRAPS on a repeated key — signal 5,
+    // the whole process — and an edit.json is a plain file a human can edit
+    // or a bad merge can duplicate. Refusing to export would be defensible;
+    // crashing is not. Last one wins.
+    let bundle = try await makeTestBundle(seconds: 2, audioTrackCount: 2)
+    var edl = EditDecisionList.fullRange()
+    edl.trackStates = [
+        TrackState(track: "systemAudio", muted: false, gain: 1.0),
+        TrackState(track: "systemAudio", muted: true, gain: 1.0),
+        TrackState(track: "microphone", muted: false, gain: 1.0),
+    ]
+
+    let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+
+    let mix = try #require(built.audioMix)
+    let tracks = built.composition.tracks(withMediaType: AVMediaType.audio)
+    let params = try #require(mix.inputParameters.first { $0.trackID == tracks[0].trackID })
+    var volume: Float = -1
+    #expect(params.getVolumeRamp(for: .zero, startVolume: &volume,
+                                 endVolume: nil, timeRange: nil))
+    #expect(volume == 0.0)
+}
+
 @Test("A recording with no audio produces no mix at all")
 func noAudioMeansNoMix() async throws {
     let bundle = try await makeTestBundle(seconds: 2, audioTrackCount: 0)
