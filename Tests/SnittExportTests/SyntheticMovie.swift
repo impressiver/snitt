@@ -88,13 +88,30 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
     ])
     videoInput.expectsMediaDataInRealTime = false
 
+    let pixelBufferAttributes: [String: Any] = [
+        kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+        kCVPixelBufferWidthKey as String: size.width,
+        kCVPixelBufferHeightKey as String: size.height,
+    ]
+
     nonisolated(unsafe) let adaptor = AVAssetWriterInputPixelBufferAdaptor(
         assetWriterInput: videoInput,
-        sourcePixelBufferAttributes: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-            kCVPixelBufferWidthKey as String: size.width,
-            kCVPixelBufferHeightKey as String: size.height,
-        ])
+        sourcePixelBufferAttributes: pixelBufferAttributes)
+
+    // Our OWN pool, not `adaptor.pixelBufferPool`. See the NOTE below the
+    // media-data loops for why: the adaptor's pool is owned by the writer's
+    // internal state machine and can be torn down underneath a buffer request
+    // racing a writer failure, crashing with a use-after-free. A pool we
+    // allocate ourselves, from the same attributes, has no such lifecycle tie
+    // to the writer and cannot be pulled out from under us.
+    var framePool: CVPixelBufferPool?
+    let poolStatus = CVPixelBufferPoolCreate(
+        kCFAllocatorDefault, nil, pixelBufferAttributes as CFDictionary, &framePool)
+    guard poolStatus == kCVReturnSuccess, let framePool else {
+        throw NSError(domain: "SyntheticMovie", code: 6,
+                      userInfo: [NSLocalizedDescriptionKey: "cannot create pixel buffer pool"])
+    }
+    nonisolated(unsafe) let pool = framePool
 
     guard writer.canAdd(videoInput) else {
         throw NSError(domain: "SyntheticMovie", code: 1,
@@ -148,14 +165,19 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
     // `Tests/SnittAppTests/SyntheticMovie.swift` (see this file's top-level
     // doc comment for why the duplication itself is deliberate). Both
     // copies must stay in step — in particular the `writer.status ==
-    // .failed` checks in the video and audio media-data loops below, which
-    // guard against a use-after-free: if the writer fails mid-stream,
+    // .failed` checks in the video and audio media-data loops below (correct
+    // and still useful for terminating promptly), AND the use of our own
+    // `pool` above instead of `adaptor.pixelBufferPool`. The latter used to
+    // be a real use-after-free: if the writer fails mid-stream,
     // `isReadyForMoreMediaData` can stay true while AVFoundation tears down
-    // the pixel buffer pool, so `adaptor.pixelBufferPool` returns a
+    // the adaptor's pixel buffer pool, so `adaptor.pixelBufferPool` returns a
     // non-nil but dangling pool and `CVPixelBufferPoolCreatePixelBuffer`
     // crashes dereferencing freed memory (SIGSEGV, confirmed via crash
-    // report from the `SnittAppTests` copy). Fix this hazard in one copy,
-    // fix it in both.
+    // report from the `SnittAppTests` copy, twice — a `writer.status ==
+    // .failed` check alone was not enough, since the teardown can happen
+    // between that check and the pool read/buffer creation a few lines
+    // later). Owning the pool removes the race instead of narrowing it. Fix
+    // this hazard in one copy, fix it in both.
     let group = DispatchGroup()
 
     group.enter()
@@ -185,7 +207,6 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
                 }
                 return
             }
-            guard let pool = adaptor.pixelBufferPool else { return }
             var pixelBuffer: CVPixelBuffer?
             CVPixelBufferPoolCreatePixelBuffer(nil, pool, &pixelBuffer)
             guard let buffer = pixelBuffer else { continue }
