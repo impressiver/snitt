@@ -40,8 +40,45 @@ public struct AuditRecord: Codable, Sendable, Equatable {
     /// Nil while the session is still running. Reporting 0 instead would
     /// read as "finished instantly" in an incident review, indistinguishable
     /// from a session that never got a completion record.
+    ///
+    /// Deliberately COMPUTED, not stored: `startedAt`/`endedAt` are the one
+    /// source of truth, so mutating `endedAt` (as `AuditLog`'s callers and
+    /// this type's own tests do) can never leave a stale duration sitting
+    /// alongside it. Encoded explicitly below — a computed property is
+    /// invisible to `Codable`'s synthesized `encode(to:)`, which is exactly
+    /// why every prior export of this record silently had no
+    /// `durationSeconds` field even though §12 lists duration among what
+    /// the audit must record.
     public var durationSeconds: Double? {
         endedAt.map { $0.timeIntervalSince(startedAt) }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case sessionID, target, initiator, startedAt, endedAt, outcome, durationSeconds
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessionID = try container.decode(String.self, forKey: .sessionID)
+        target = try container.decode(String.self, forKey: .target)
+        initiator = try container.decode(String.self, forKey: .initiator)
+        startedAt = try container.decode(Date.self, forKey: .startedAt)
+        endedAt = try container.decodeIfPresent(Date.self, forKey: .endedAt)
+        outcome = try container.decodeIfPresent(String.self, forKey: .outcome)
+        // `durationSeconds` is never decoded: it is derived from
+        // `startedAt`/`endedAt` above, and giving it a second, independently
+        // decoded source of truth is how it could drift from them.
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(sessionID, forKey: .sessionID)
+        try container.encode(target, forKey: .target)
+        try container.encode(initiator, forKey: .initiator)
+        try container.encode(startedAt, forKey: .startedAt)
+        try container.encodeIfPresent(endedAt, forKey: .endedAt)
+        try container.encodeIfPresent(outcome, forKey: .outcome)
+        try container.encodeIfPresent(durationSeconds, forKey: .durationSeconds)
     }
 }
 
