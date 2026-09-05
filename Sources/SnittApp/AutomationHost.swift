@@ -164,8 +164,18 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         do {
             try AuditLog.append(record, to: auditLogURL)
         } catch {
+            // NOT `String(describing: error)`: a Cocoa NSError renders its
+            // userInfo, which carries NSFilePath and NSURL — the FULL
+            // ABSOLUTE PATH, including the machine's username. In production
+            // `auditLogURL` is `~/Library/Application Support/Snitt/audit.jsonl`,
+            // so any disk-full, sandbox or permission fault would ship the
+            // username into a file people attach to public support threads
+            // (§5). domain+code is the precise identity a support engineer
+            // wants, and localizedDescription names only fixed sidecar files.
+            // See the identical reasoning at RecordingCoordinator.swift.
+            let ns = error as NSError
             Self.log.error(
-                "Could not write an audit record for session \(record.sessionID, privacy: .public): \(String(describing: error), privacy: .public)")
+                "Could not write an audit record for session \(record.sessionID, privacy: .public): \(ns.domain, privacy: .public) \(ns.code, privacy: .public) \(error.localizedDescription, privacy: .public)")
         }
     }
 
