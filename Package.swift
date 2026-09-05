@@ -10,6 +10,14 @@ let package = Package(
         .library(name: "SnittExport", targets: ["SnittExport"]),
         .library(name: "SnittAutomation", targets: ["SnittAutomation"]),
     ],
+    dependencies: [
+        // M5b (§13): in-app updates via direct download (§4.3). Only SnittApp
+        // may depend on this — see the SnittApp target below and
+        // ThinClientConformanceTests / otool checks in make-app.sh's
+        // verification for the enforcement. snitt-cli and snitt-mcp must
+        // stay thin (§4.9) and never link Sparkle.
+        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
+    ],
     targets: [
         .target(name: "SnittDocument"),
         .target(name: "SnittCapture", dependencies: ["SnittDocument"]),
@@ -33,7 +41,10 @@ let package = Package(
         ),
         .executableTarget(
             name: "SnittApp",
-            dependencies: ["SnittCapture", "SnittDocument", "SnittExport", "SnittAutomation"]
+            dependencies: [
+                "SnittCapture", "SnittDocument", "SnittExport", "SnittAutomation",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ]
         ),
         // No SnittDocument dependency: the CLI used to read RecordingMetadata
         // back from the bundle it just wrote to report health, but the bundle
