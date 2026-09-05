@@ -6,17 +6,25 @@ import SnittDocument
 ///
 /// `@unchecked Sendable`: the invariant this relies on is that `build(...)`
 /// hands back objects it has finished mutating and never touches again — no
-/// other reference to `composition` or `videoComposition` exists once this
-/// value is returned, so there is no concurrent mutation for the compiler to
-/// worry about even though `AVMutableComposition` and
-/// `AVMutableVideoComposition` are not themselves `Sendable`. Callers that
-/// hand the same `BuiltComposition` to multiple tasks and mutate it from more
-/// than one of them would violate that invariant; nothing here does.
+/// other reference to `composition`, `videoComposition`, or `audioMix`
+/// exists once this value is returned, so there is no concurrent mutation
+/// for the compiler to worry about even though `AVMutableComposition`,
+/// `AVMutableVideoComposition`, and `AVAudioMix` are not themselves
+/// `Sendable`. Callers that hand the same `BuiltComposition` to multiple
+/// tasks and mutate it from more than one of them would violate that
+/// invariant; nothing here does.
 public struct BuiltComposition: @unchecked Sendable {
     public let composition: AVMutableComposition
     /// §9's explicit passthrough slot. Shipping overlays means giving THIS
     /// object a `customVideoCompositorClass` — nothing else changes.
     public let videoComposition: AVMutableVideoComposition
+    /// The EDL's per-track mute and gain, expressed as an `AVAudioMix`. Nil
+    /// when there is nothing to express — no audio tracks, or every track
+    /// unmuted at unity gain — so preview and export can each check for nil
+    /// rather than every caller re-deriving "is this mix actually a no-op."
+    /// Built once, inside `build`, and never mutated afterwards: see the
+    /// `@unchecked Sendable` note above.
+    public let audioMix: AVAudioMix?
     public let duration: Double
     /// The kept ranges (source-recording time) this composition was built
     /// from — `KeptRanges.compute`'s output already filtered to drop
@@ -83,6 +91,52 @@ public enum CompositionBuilder {
     public static func mediaDuration(of bundle: SnittBundle) async throws -> Double {
         let asset = AVURLAsset(url: bundle.captureURL)
         return CMTimeGetSeconds(try await asset.load(.duration))
+    }
+
+    /// Builds the mix expressing the EDL's per-track mute and gain.
+    ///
+    /// Returns nil when there is nothing to express — no audio tracks, or
+    /// every track unmuted at unity gain. A nil mix and an empty mix are not
+    /// the same thing to a caller: nil says "nothing to apply".
+    ///
+    /// `trackStates` are matched to composition audio tracks BY INDEX, in the
+    /// order the source declared them. A `TrackState` naming an index the
+    /// recording does not have is ignored — it can only come from an EDL
+    /// written against a different bundle, and refusing the whole export for
+    /// it would strand a recording behind a stale sidecar.
+    ///
+    /// This is index matching, not name matching — `TrackState.track`'s
+    /// string content plays no part in which composition track a state
+    /// governs. That was checked against the recording path before landing:
+    /// `EditDecisionList.fullRange()` currently produces three states
+    /// (`"video"`, `"microphone"`, `"systemAudio"`, in that order), and
+    /// `AssetWriterSink` writes audio tracks in the order `[systemAudio,
+    /// microphone]`. Passed through unfiltered, those two orderings do NOT
+    /// line up — `states[0]` is not audio at all, and `states[1]`/`states[2]`
+    /// are reversed relative to the composition's actual audio track order.
+    /// Fixing that is the producer's job (filtering `trackStates` down to the
+    /// real audio tracks, in the composition's order, before it reaches
+    /// `build`), not this function's: this function has no way to learn a
+    /// composition audio track's semantic identity from the loaded
+    /// `AVAssetTrack` alone, and hardcoding `"systemAudio"`/`"microphone"`
+    /// here would only work for that one producer while breaking every
+    /// caller (including this file's own tests) that uses its own track
+    /// naming. See task-1-report.md for the full finding.
+    private static func audioMix(for tracks: [AVMutableCompositionTrack],
+                                 states: [TrackState]) -> AVAudioMix? {
+        guard !tracks.isEmpty else { return nil }
+        let needsMix = states.contains { $0.muted || $0.gain != 1.0 }
+        guard needsMix else { return nil }
+
+        let mix = AVMutableAudioMix()
+        mix.inputParameters = tracks.enumerated().map { index, track in
+            let parameters = AVMutableAudioMixInputParameters(track: track)
+            let state = index < states.count ? states[index] : nil
+            let volume = state.map { $0.muted ? 0.0 : Float($0.gain) } ?? 1.0
+            parameters.setVolume(volume, at: .zero)
+            return parameters
+        }
+        return mix
     }
 
     public static func build(bundle: SnittBundle,
@@ -157,8 +211,11 @@ public enum CompositionBuilder {
         instruction.layerInstructions = [layer]
         videoComposition.instructions = [instruction]
 
+        let mix = audioMix(for: audioTrackPairs.map(\.destination), states: edl.trackStates)
+
         return BuiltComposition(composition: composition,
                                 videoComposition: videoComposition,
+                                audioMix: mix,
                                 duration: CMTimeGetSeconds(cursor),
                                 keptRanges: kept)
     }

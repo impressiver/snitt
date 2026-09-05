@@ -57,11 +57,28 @@ enum SyntheticFrameContent {
     case noise
 }
 
+/// What samples a synthetic audio track is filled with.
+///
+/// `.silent` (the default, and the only option before Task 1) writes zeroed
+/// LPCM — fine for every test that only cares that an audio track exists and
+/// pairs to the right source. But a mix that mutes an already-silent track
+/// changes nothing observable: AAC encodes near-zero signal to essentially
+/// the same size whether the mix's volume parameter is 0.0 or 1.0. A test
+/// asserting that muting shrinks the exported file (`exportAppliesTheMix`)
+/// needs `.tone` — a real sine wave — or it cannot fail no matter how the
+/// mix is (mis)implemented; it would pass even if the mix were never applied
+/// at all, because a silent source already encodes small.
+enum SyntheticAudioContent {
+    case silent
+    case tone
+}
+
 func writeSyntheticMovie(to url: URL, seconds: Double,
                          size: CGSize = CGSize(width: 320, height: 240),
                          fps: Int32 = 30,
                          audioTrackCount: Int = 0,
-                         content: SyntheticFrameContent = .flat) async throws {
+                         content: SyntheticFrameContent = .flat,
+                         audioContent: SyntheticAudioContent = .silent) async throws {
     nonisolated(unsafe) let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
 
     nonisolated(unsafe) let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
@@ -231,11 +248,12 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
                         return
                     }
                     let framesThisPacket = min(packetFrameCount, totalAudioFrames - audioProgress.value)
-                    guard let sampleBuffer = makeSilentAudioSampleBuffer(
+                    guard let sampleBuffer = makeAudioSampleBuffer(
                         formatDescription: formatDescription,
                         frameCount: framesThisPacket,
                         startFrame: audioProgress.value,
-                        sampleRate: audioSampleRate)
+                        sampleRate: audioSampleRate,
+                        content: audioContent)
                     else { continue }
                     input.append(sampleBuffer)
                     audioProgress.value += framesThisPacket
@@ -332,13 +350,15 @@ private final class OnceFlag: @unchecked Sendable {
     }
 }
 
-/// One packet of silent LPCM audio, timestamped by frame offset. Small,
-/// deliberately duplicated version of the same idea as
+/// One packet of LPCM audio, timestamped by frame offset — silent zeros or a
+/// real sine tone depending on `content` (see `SyntheticAudioContent`).
+/// Small, deliberately duplicated version of the same idea as
 /// `Tests/SnittCaptureTests/SyntheticBuffers.swift`'s `makeAudioBuffer` — see
 /// this file's top-level doc comment for why it isn't shared directly.
-private func makeSilentAudioSampleBuffer(formatDescription: CMAudioFormatDescription,
-                                         frameCount: Int, startFrame: Int,
-                                         sampleRate: Double) -> CMSampleBuffer? {
+private func makeAudioSampleBuffer(formatDescription: CMAudioFormatDescription,
+                                   frameCount: Int, startFrame: Int,
+                                   sampleRate: Double,
+                                   content: SyntheticAudioContent) -> CMSampleBuffer? {
     var blockBuffer: CMBlockBuffer?
     CMBlockBufferCreateWithMemoryBlock(
         allocator: kCFAllocatorDefault,
@@ -352,6 +372,28 @@ private func makeSilentAudioSampleBuffer(formatDescription: CMAudioFormatDescrip
     CMBlockBufferFillDataBytes(with: 0, blockBuffer: blockBuffer,
                                offsetIntoDestination: 0,
                                dataLength: frameCount * 4)
+
+    switch content {
+    case .silent:
+        break
+    case .tone:
+        // 440Hz sine at 0.8 amplitude, matching the track's format
+        // (32-bit float LPCM, see `writeSyntheticMovie` above). Phase is
+        // continuous across packets via `startFrame`, so there is no
+        // discontinuity an encoder could flatten into silence at packet
+        // boundaries.
+        var samples = [Float](repeating: 0, count: frameCount)
+        let frequency = 440.0
+        for i in 0..<frameCount {
+            let t = Double(startFrame + i) / sampleRate
+            samples[i] = Float(0.8 * sin(2.0 * Double.pi * frequency * t))
+        }
+        samples.withUnsafeBytes { bytes in
+            _ = CMBlockBufferReplaceDataBytes(
+                with: bytes.baseAddress!, blockBuffer: blockBuffer,
+                offsetIntoDestination: 0, dataLength: bytes.count)
+        }
+    }
 
     var sampleBuffer: CMSampleBuffer?
     CMAudioSampleBufferCreateReadyWithPacketDescriptions(

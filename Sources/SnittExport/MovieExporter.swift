@@ -57,6 +57,11 @@ public enum MovieExporter {
         else { throw ExportError.noExportSession }
 
         session.videoComposition = built.videoComposition
+        // The mix lives on the export session, not the player item (M4's
+        // preview layer) — §9's whole point is that the two paths cannot
+        // apply the mix differently, and putting it here is what
+        // `exportAppliesTheMix` checks.
+        session.audioMix = built.audioMix
         if let maxSizeBytes {
             // The encoder's own primitive: one pass, the session picks a
             // bitrate that fits. Only if this misses do we re-encode at a
