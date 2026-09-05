@@ -1,17 +1,78 @@
 import AppKit
+import Combine
 import SnittDocument
 import SwiftUI
 
-/// SwiftUI shell around the `AVPlayerLayer` surface: play/pause controls and
-/// a jump-point list. §4.7 puts the video surface in AppKit
-/// (`PlayerLayerView`) while everything around it stays SwiftUI.
-private struct EditorContentView: View {
+/// Owns the mutable editing state the timeline drives: the EDL a trim
+/// appends a cut to, and the events a trim's re-apply must keep passing.
+///
+/// `PreviewController.apply(edl:events:)` defaults `events` to `[]`, which
+/// means "no markers to place" and recomputes jump points to empty rather
+/// than keeping stale ones (Task 4's binding — stale markers are a silent
+/// §9 divergence, an empty scrub bar is a visible one). This type exists so
+/// that every trim keeps passing the recording's real events instead of
+/// silently losing every marker.
+@MainActor
+private final class EditorTimelineState: ObservableObject {
     let controller: PreviewController
+    let events: [LoggedEvent]
+    @Published var edl: EditDecisionList
+
+    init(controller: PreviewController, edl: EditDecisionList, events: [LoggedEvent]) {
+        self.controller = controller
+        self.edl = edl
+        self.events = events
+    }
+
+    func onScrub(_ time: Double) {
+        Task { await controller.seek(toSeconds: time) }
+    }
+
+    func onTrim(_ range: TimeRange) {
+        edl.cuts.append(range)
+        let edl = self.edl
+        let events = self.events
+        Task { try? await controller.apply(edl: edl, events: events) }
+    }
+}
+
+/// Embeds `TimelineView` (AppKit) in the SwiftUI shell, driving it from
+/// `state` and forwarding its callbacks back into `state`.
+private struct TimelineViewRepresentable: NSViewRepresentable {
+    @ObservedObject var state: EditorTimelineState
+    let playhead: Double
+
+    func makeNSView(context: Context) -> TimelineView {
+        let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 480, height: 40))
+        view.onScrub = { [weak state] in state?.onScrub($0) }
+        view.onTrim = { [weak state] in state?.onTrim($0) }
+        return view
+    }
+
+    func updateNSView(_ nsView: TimelineView, context: Context) {
+        nsView.update(duration: state.controller.durationSeconds,
+                     cuts: state.edl.cuts,
+                     jumpPoints: state.controller.jumpPoints,
+                     playhead: playhead)
+    }
+}
+
+/// SwiftUI shell around the `AVPlayerLayer` surface: play/pause controls, the
+/// timeline, and a jump-point list. §4.7 puts the video surface — and, per
+/// Task 6, the timeline's gesture handling — in AppKit while everything
+/// around them stays SwiftUI.
+private struct EditorContentView: View {
+    @ObservedObject fileprivate var state: EditorTimelineState
+    @State private var playhead: Double = 0
+
+    private var controller: PreviewController { state.controller }
 
     var body: some View {
         VStack(spacing: 0) {
             PlayerLayerView(player: controller.player)
                 .frame(minWidth: 480, minHeight: 270)
+            TimelineViewRepresentable(state: state, playhead: playhead)
+                .frame(height: 40)
             HStack(spacing: 12) {
                 Button("Play") { controller.play() }
                 Button("Pause") { controller.pause() }
@@ -25,6 +86,14 @@ private struct EditorContentView: View {
                 }
                 .frame(maxHeight: 140)
             }
+        }
+        .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { _ in
+            // Playhead position is appearance only — not asserted by any
+            // test (Task 6 dispatch) — so simple polling is enough; a
+            // player-driven time observer would add AVFoundation closure
+            // plumbing for a value nothing verifies.
+            let seconds = controller.player.currentTime().seconds
+            playhead = seconds.isFinite ? seconds : 0
         }
     }
 }
@@ -62,9 +131,16 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// vanish from under a user who is still watching it.
     private static var open: [EditorWindowController] = []
 
-    public init(controller: PreviewController, title: String) {
+    /// `edl` and `events` default to an untrimmed range and no markers for
+    /// callers that only care about window lifecycle (most existing tests) —
+    /// a real editor session must pass the recording's actual EDL and
+    /// events, or every trim it draws applies against the wrong starting
+    /// point and loses the recording's real markers.
+    public init(controller: PreviewController, title: String,
+                edl: EditDecisionList = .fullRange(), events: [LoggedEvent] = []) {
         self.controller = controller
-        let hosting = NSHostingView(rootView: EditorContentView(controller: controller))
+        let state = EditorTimelineState(controller: controller, edl: edl, events: events)
+        let hosting = NSHostingView(rootView: EditorContentView(state: state))
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 420),
             styleMask: [.titled, .closable, .resizable, .miniaturizable],

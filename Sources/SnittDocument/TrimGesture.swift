@@ -13,28 +13,6 @@ public struct TrimGesture: Equatable, Sendable {
         case dragging(from: Double)
     }
 
-    /// The line between a click and a cut, in seconds of media time.
-    ///
-    /// A user's hand moves a pixel or two on any click, so zero is not the
-    /// right threshold — that would turn every click-to-seek into a
-    /// zero-length cut in the EDL. 50ms is small enough that no deliberate
-    /// short cut is likely to fall under it, while comfortably absorbing
-    /// click jitter.
-    ///
-    /// This is a time-based threshold, and that is a real limitation: the
-    /// gesture only sees media time, but the jitter that produces it is
-    /// pixel-based and happens at the view. A one-hour recording maps far
-    /// more seconds per pixel than a ten-second one, so a fixed time
-    /// threshold is more permissive of "clicks" on long recordings and
-    /// stricter on short ones — the opposite of what pixel jitter would
-    /// suggest. The more correct shape is a pixel threshold decided by the
-    /// view (which knows `TimelineGeometry`) and converted to seconds there
-    /// before being compared, or passed into this type. Kept as a fixed
-    /// time constant here to keep the state machine free of `TimelineGeometry`
-    /// and AppKit; revisit if short recordings prove this too permissive in
-    /// practice.
-    static let minimumDragSeconds: Double = 0.05
-
     public private(set) var phase: Phase = .idle
 
     public init() {}
@@ -48,12 +26,29 @@ public struct TrimGesture: Equatable, Sendable {
         currentTime = time
     }
 
-    public mutating func ended(atTime time: Double) -> TimeRange? {
+    /// Ends the drag, returning the range it covered, or `nil` if it was too
+    /// short to count as a deliberate cut rather than click jitter.
+    ///
+    /// `minimumSeconds` is a parameter, not a constant here, deliberately: a
+    /// fixed time threshold is wrong in opposite directions depending on
+    /// recording length. A hand wobbles by roughly the same number of
+    /// *pixels* on any click regardless of what the timeline shows, but the
+    /// same pixel count maps to wildly different amounts of media time
+    /// depending on how many seconds are squeezed into the view's width — a
+    /// ten-minute recording at 800px is ~0.75s/pixel, so a 0.05s threshold
+    /// sits under a single pixel and any click becomes a cut; a five-second
+    /// recording is ~0.006s/pixel, so the same 0.05s is ~8px and a
+    /// deliberate short cut is silently swallowed. Converting a pixel budget
+    /// to seconds requires `TimelineGeometry`, which lives with the view —
+    /// this type stays free of pixels and AppKit, and the caller (the view)
+    /// computes the right threshold for its own current geometry and hands
+    /// it in.
+    public mutating func ended(atTime time: Double, minimumSeconds: Double) -> TimeRange? {
         guard case .dragging(let from) = phase else { return nil }
         phase = .idle
         currentTime = nil
         let range = Self.normalised(from, time)
-        guard range.end - range.start >= Self.minimumDragSeconds else { return nil }
+        guard range.end - range.start >= minimumSeconds else { return nil }
         return range
     }
 

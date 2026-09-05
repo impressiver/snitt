@@ -499,7 +499,8 @@ public actor RecordingCoordinator: AgentRecordingControlling {
                 let controller = PreviewController(built: built, jumpPoints: jumpPoints,
                                                     bundle: bundle, scale: 1.0)
                 let editor = EditorWindowController(controller: controller,
-                                                    title: bundle.url.lastPathComponent)
+                                                    title: bundle.url.lastPathComponent,
+                                                    edl: edl, events: events)
                 editor.show()
             }
         } catch {
