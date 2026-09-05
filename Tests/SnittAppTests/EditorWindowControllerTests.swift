@@ -22,7 +22,7 @@ private func makePreviewController(seconds: Double) async throws -> PreviewContr
     try await writeSyntheticMovie(to: bundle.captureURL, seconds: seconds)
     let built = try await CompositionBuilder.build(
         bundle: bundle, edl: EditDecisionList(), scale: 1.0)
-    return PreviewController(built: built, jumpPoints: [])
+    return PreviewController(built: built, jumpPoints: [], bundle: bundle, scale: 1.0)
 }
 
 /// A minimal, real one-frame-at-a-time video buffer — just enough for

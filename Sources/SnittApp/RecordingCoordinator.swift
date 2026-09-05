@@ -496,7 +496,8 @@ public actor RecordingCoordinator: AgentRecordingControlling {
             let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
             let jumpPoints = MarkerJumpPoints.compute(events: events, keptRanges: built.keptRanges)
             await MainActor.run {
-                let controller = PreviewController(built: built, jumpPoints: jumpPoints)
+                let controller = PreviewController(built: built, jumpPoints: jumpPoints,
+                                                    bundle: bundle, scale: 1.0)
                 let editor = EditorWindowController(controller: controller,
                                                     title: bundle.url.lastPathComponent)
                 editor.show()
