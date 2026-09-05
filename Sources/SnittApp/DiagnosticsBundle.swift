@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import OSLog
 import SnittAutomation
@@ -66,16 +67,59 @@ public enum DiagnosticsBundle {
             protocolVersion: AutomationProtocol.version,
             generatedAt: Date(),
             permissions: permissions,
-            recentSessions: sessions,
+            recentSessions: sessions.map(redactingTarget),
             logLines: logLines
         )
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        // §12 asks for a HUMAN-readable audit trail. Apple-epoch doubles
+        // (`"startedAt": 810292682.018656`) are unreadable without doing
+        // arithmetic in your head; ISO 8601 is not. `DiagnosticsReport`'s
+        // own `generatedAt` and every `AuditRecord.startedAt`/`endedAt`
+        // inside `recentSessions` all go through this same encoder, so this
+        // one line fixes all of them together.
+        encoder.dateEncodingStrategy = .iso8601
         let data = try encoder.encode(report)
         try data.write(to: url, options: .atomic)
 
         return report
+    }
+
+    /// Replaces `record.target` (the window/app title `RecordingCoordinator`
+    /// stores — e.g. `SCWindow.title`) with a short hash, on the EXPORT path
+    /// only.
+    ///
+    /// §12 mandates "target" in the *local* audit log, and `AuditLog`/the
+    /// on-disk JSONL keep the real title unredacted so an operator can read
+    /// it in Console or with `snitt inspect` on their own machine. But §5.1's
+    /// own worked example of why window-scoping matters is a window titled
+    /// "Mail Password Required" — exactly the kind of string this bundle
+    /// promises never to carry (see the doc comments on this type and on
+    /// `DiagnosticsReport`). A stable, non-reversible hash keeps the field
+    /// present (so recurring targets are still recognisable to a support
+    /// engineer as "the same one") without naming what was on screen.
+    private static func redactingTarget(_ record: AuditRecord) -> AuditRecord {
+        var redacted = AuditRecord(
+            sessionID: record.sessionID,
+            target: hashedTarget(record.target),
+            initiator: record.initiator,
+            startedAt: record.startedAt
+        )
+        redacted.endedAt = record.endedAt
+        redacted.outcome = record.outcome
+        return redacted
+    }
+
+    /// A short, stable, non-reversible stand-in for a window/app title:
+    /// hex of `SHA256(target)`, truncated. Truncated because nothing reads
+    /// this by eye for its entropy — only to see whether two sessions in the
+    /// same bundle targeted the same window — and a full 64-character digest
+    /// would just be more noise in a file a human has to read.
+    private static func hashedTarget(_ target: String) -> String {
+        let digest = SHA256.hash(data: Data(target.utf8))
+        let hex = digest.map { String(format: "%02x", $0) }.joined()
+        return "target-" + hex.prefix(12)
     }
 
     /// Reads back this process's own `os_log` entries from the last
