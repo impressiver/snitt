@@ -153,16 +153,9 @@ private struct EditorContentView: View {
 
 /// Hosts one editor's preview in its own `NSWindow`.
 ///
-/// Snitt is an accessory (menu-bar-only) app (`main.swift` sets
-/// `.accessory`), and an accessory app's windows cannot become key in the
-/// normal way — an editor opened without addressing this appears unfocused,
-/// sits behind other apps, and ignores the keyboard. This controller
-/// promotes the app to `.regular` while at least one editor is open and
-/// demotes it back to `.accessory` once the last one closes.
-///
-/// The policy is driven by `openWindowCount`, not by any single window's
-/// lifetime — tying it to one window's `isOpen` flag demotes the app the
-/// moment ANY editor closes, even while a second one is still on screen.
+/// Snitt is a regular app (§4.14, D45; see `AppShell`), so its windows can
+/// become key the normal way without this controller doing anything about
+/// activation policy.
 @MainActor
 public final class EditorWindowController: NSObject, NSWindowDelegate {
     private let controller: PreviewController
@@ -214,14 +207,12 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         window.delegate = self
     }
 
-    /// Brings the window to the front and, on the first open, promotes the
-    /// app so the window can actually take focus and keystrokes.
+    /// Brings the window to the front.
     public func show() {
         if !isShown {
             isShown = true
             Self.count += 1
             Self.open.append(self)
-            Self.applyActivationPolicy()
         }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
@@ -250,13 +241,6 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         controller.pause()
         Self.count -= 1
         Self.open.removeAll { $0 === self }
-        Self.applyActivationPolicy()
-    }
-
-    /// Regular while any editor is open, accessory once the last one closes
-    /// — driven by the count, never by a single window's lifetime.
-    private static func applyActivationPolicy() {
-        NSApp.setActivationPolicy(count > 0 ? .regular : .accessory)
     }
 
     // MARK: - Testing seam

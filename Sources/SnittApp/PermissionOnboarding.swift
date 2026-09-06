@@ -126,10 +126,9 @@ public enum PermissionOnboarding {
         guard shouldPreExplain(service, defaults: defaults) else { return true }
         markPreExplained(service, defaults: defaults)
 
-        // Snitt is an `.accessory` app with no Dock icon, so a modal it raises
-        // can open behind whatever the user is looking at, with nothing to
-        // click in the Dock to find it. `AppDelegate.notify()` activates for
-        // exactly this reason.
+        // A background app's modal can open behind whatever the user is
+        // looking at, with nothing obvious to bring it forward.
+        // `AppDelegate.notify()` activates for exactly this reason.
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Snitt needs \(service.displayName)"

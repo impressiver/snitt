@@ -10,9 +10,9 @@ import SnittExport
 import Testing
 
 /// Builds a `PreviewController` over a tiny synthetic movie, for tests that
-/// only need SOME playable composition — the activation-policy and
-/// open-count behaviour under test here does not depend on the fixture's
-/// content, only on there being a real `AVPlayer` to pause and query.
+/// only need SOME playable composition — the open-count behaviour under
+/// test here does not depend on the fixture's content, only on there being
+/// a real `AVPlayer` to pause and query.
 @MainActor
 private func makePreviewController(seconds: Double) async throws -> PreviewController {
     let url = FileManager.default.temporaryDirectory
@@ -148,56 +148,39 @@ struct EditorWindowControllerTests {
         _ = NSApplication.shared
     }
 
-    @Test("Opening an editor promotes the app so its window can take focus")
-    func openingPromotesActivationPolicy() async throws {
-        NSApp.setActivationPolicy(.accessory)
-        let controller = try await makePreviewController(seconds: 2)
-        let editor = EditorWindowController(controller: controller, title: "demo",
-                                              edl: .fullRange(), events: [])
+    // Activation policy is no longer this controller's concern: the app is
+    // permanently `.regular` (§4.14, D45; see `AppShell`), which is why the
+    // promote/demote dance and its dedicated tests were deleted rather than
+    // rewritten to assert "unchanged" — once `AppShellTests` has run
+    // `AppShell.install` in this same process, macOS does not reliably allow
+    // reverting a regular app back to `.accessory`, which would make an
+    // "activation policy is untouched" assertion here flaky for reasons
+    // having nothing to do with this controller. Coverage that the app IS
+    // regular lives in `AppShellTests`. What's left here is the open-count
+    // bookkeeping, which never depended on activation policy in the first
+    // place.
 
-        editor.show()
-
-        // An .accessory app's windows cannot become key: the editor would open
-        // unfocused, behind other apps, and ignore the keyboard. This is the
-        // assertion that fails against an implementation that just orders the
-        // window front.
-        #expect(NSApp.activationPolicy() == .regular)
-        editor.close()
-    }
-
-    @Test("Closing the last editor returns the app to the menu bar")
-    func closingLastEditorDemotes() async throws {
-        NSApp.setActivationPolicy(.accessory)
-        let editor = EditorWindowController(
-            controller: try await makePreviewController(seconds: 2), title: "demo",
-            edl: .fullRange(), events: [])
-        editor.show()
-        editor.close()
-        // Leaving the app .regular would strand a Dock icon for a menu-bar app
-        // with no windows.
-        #expect(NSApp.activationPolicy() == .accessory)
-    }
-
-    @Test("Closing one of two editors keeps the app promoted")
-    func closingOneOfTwoKeepsPromotion() async throws {
-        NSApp.setActivationPolicy(.accessory)
+    @Test("Closing one of two editors keeps the other open")
+    func closingOneOfTwoKeepsTheOtherOpen() async throws {
+        let before = EditorWindowController.openWindowCount
         let first = EditorWindowController(
             controller: try await makePreviewController(seconds: 2), title: "a",
             edl: .fullRange(), events: [])
         let second = EditorWindowController(
             controller: try await makePreviewController(seconds: 2), title: "b",
             edl: .fullRange(), events: [])
+
         first.show(); second.show()
+        #expect(EditorWindowController.openWindowCount == before + 2)
 
         first.close()
+        // Discriminating against bookkeeping tied to a single window's
+        // lifetime rather than to the open set — that implementation drops
+        // the count to `before` here instead of `before + 1`.
+        #expect(EditorWindowController.openWindowCount == before + 1)
 
-        // Discriminating against a policy tied to a single window's lifetime
-        // rather than to the open count — that implementation passes both tests
-        // above and demotes the app while a window is still on screen.
-        #expect(NSApp.activationPolicy() == .regular)
-        #expect(EditorWindowController.openWindowCount == 1)
         second.close()
-        #expect(NSApp.activationPolicy() == .accessory)
+        #expect(EditorWindowController.openWindowCount == before)
     }
 
     @Test("Pausing on close stops playback rather than leaving audio running")
@@ -233,7 +216,6 @@ struct EditorWindowControllerTests {
                                               edl: .fullRange(), events: [])
         editor.show()
         controller.play()
-        #expect(NSApp.activationPolicy() == .regular)
 
         editor.windowWillClose(Notification(name: NSWindow.willCloseNotification))
 
@@ -244,7 +226,6 @@ struct EditorWindowControllerTests {
         // an absolute assertion silently. Relative to a captured `before`
         // count, this only depends on THIS test's own open/close pair.
         #expect(EditorWindowController.openWindowCount == before)
-        #expect(NSApp.activationPolicy() == .accessory)
         #expect(controller.player.rate == 0)
     }
 

@@ -5,9 +5,10 @@ import SnittDocument
 
 /// Menu-bar app entry point.
 ///
-/// An accessory app: no Dock icon, no window at launch. §4.11 requires that
-/// recording start from a keystroke without a window ever opening, so the app
-/// must be able to live entirely in the menu bar.
+/// A regular app (§4.14, D45): Dock icon and main menu always present, and
+/// still no window at launch. §4.11 requires that recording start from a
+/// keystroke without a window ever opening — that is about what the hotkey
+/// does, not about whether the app has a shell.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let statusItem = StatusItemController()
@@ -267,10 +268,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.addButton(withTitle: "OK")
         alert.runModal()
     }
+
+    /// Task 5 replaces this body with the real Settings window. It exists
+    /// here so the menu's selector resolves and ⌘, is not silently dead.
+    @objc func showSettings(_ sender: Any?) {
+        NSSound.beep()
+    }
 }
 
 let app = NSApplication.shared
-app.setActivationPolicy(.accessory)
+AppShell.install(into: app)
 let delegate = AppDelegate()
 app.delegate = delegate
 app.run()
