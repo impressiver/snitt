@@ -35,6 +35,16 @@ import Sparkle
 private let scriptPath = FileManager.default.currentDirectoryPath + "/Scripts/make-appcast.sh"
 private let signUpdatePath = FileManager.default.currentDirectoryPath
     + "/.build/artifacts/sparkle/Sparkle/bin/sign_update"
+// R4's standard, matching `BundleLayoutTests`' `appIsBuilt`/`appBundleSkipReason`:
+// a condition trait, not a hard failure, when an environment-dependent
+// prerequisite is missing. `theSignatureIsCryptographicallyValid` used to
+// `Issue.record` and return here instead — effectively unreachable in
+// practice, since Sparkle's SPM `binaryTarget` is always fetched on
+// resolve, but the wrong shape for the one case where it isn't (a resolve
+// that hasn't happened yet), which should skip, not fail.
+private let signUpdateIsAvailable = FileManager.default.isExecutableFile(atPath: signUpdatePath)
+private let signUpdateSkipReason: Comment =
+    "sign_update not found — Sparkle SPM artifacts not resolved; run `swift package resolve` first"
 
 private struct ScriptResult {
     let status: Int32
@@ -894,13 +904,11 @@ private func signUpdateVerify(seedFile: URL, artifact: URL, signature: String) -
     return process.terminationStatus
 }
 
-@Test("The emitted signature is cryptographically valid for the exact archive it describes")
+@Test(
+    "The emitted signature is cryptographically valid for the exact archive it describes",
+    .enabled(if: signUpdateIsAvailable, signUpdateSkipReason)
+)
 func theSignatureIsCryptographicallyValid() throws {
-    guard FileManager.default.isExecutableFile(atPath: signUpdatePath) else {
-        Issue.record("sign_update not found at \(signUpdatePath) — Sparkle SPM artifacts not resolved; cannot verify signature cryptographically")
-        return
-    }
-
     let keyPair = try EphemeralEdKeyPair.generate()
     let seedFile = FileManager.default.temporaryDirectory.appendingPathComponent("snitt-seed-\(UUID().uuidString).b64")
     try keyPair.seedBase64.write(to: seedFile, atomically: true, encoding: .utf8)

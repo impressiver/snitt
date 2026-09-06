@@ -20,7 +20,21 @@ let package = Package(
         // Sparkle product directly, purely to drive Sparkle's own
         // configuration-validation API in tests — that import doesn't
         // relax this rule, which is about the two client executables.)
-        .package(url: "https://github.com/sparkle-project/Sparkle", from: "2.6.0"),
+        //
+        // Pinned EXACT, not `from:` — `Scripts/make-app.sh` hardcodes
+        // Sparkle's nested-code layout for signing (five `sign_nested`
+        // calls naming `Versions/B/XPCServices/{Downloader,Installer}.xpc`,
+        // `Versions/B/Updater.app`, `Versions/B/Autoupdate`, and the
+        // framework itself). A floating `from: "2.6.0"` range would let a
+        // routine `swift package update` silently pick up a future 2.x that
+        // renames one of those paths (loud failure: `codesign` on a missing
+        // path under `set -e`) or adds a new nested code object (silent:
+        // left at the vendor's ad-hoc signature, rejected only much later,
+        // at notarization). Bumping this pin is a deliberate act that
+        // should come with re-checking `make-app.sh`'s nested paths against
+        // the new version, not an automatic side effect of a routine
+        // update.
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6"),
     ],
     targets: [
         .target(name: "SnittDocument"),

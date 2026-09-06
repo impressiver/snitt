@@ -24,33 +24,25 @@ public final class UpdaterController: NSObject {
     private let bridge: DelegateBridge
     private static let log = SnittLog.logger(.updates, target: "SnittApp")
 
-    /// A scheduling decision Sparkle's own delegate callbacks reported,
-    /// recorded (not asserted) here purely so a test can observe that a
-    /// check was or wasn't actually scheduled — the discriminator R3 asks
-    /// for, instead of a boolean field that merely mirrors the setting back.
+    /// A scheduling decision Sparkle's own delegate callbacks can report.
+    /// `UpdaterController` itself no longer records these — the R3
+    /// discriminator this type existed for (proving a check was or wasn't
+    /// actually scheduled, not merely that a boolean setting reads back
+    /// correctly) is now observed directly against a raw `SPUUpdater` in
+    /// `UpdaterControllerTests`' own `SchedulingSpy`, which is what still
+    /// reuses this enum. Kept only for that shared vocabulary between the
+    /// production delegate and the test's.
     public enum ScheduleEvent: Sendable, Equatable {
         case willSchedule
         case willNotSchedule
     }
-    public private(set) var scheduleEvents: [ScheduleEvent] = []
 
     /// `SPUUpdater.delegate` can only be set at construction, and `self`
-    /// isn't available before `super.init()` — this forwards Sparkle's
-    /// delegate callbacks to a weak reference of the outer controller so
-    /// `UpdaterController` itself doesn't have to be constructible before
-    /// it exists.
+    /// isn't available before `super.init()` — this exists as a separate
+    /// object so Sparkle has something to hold as its delegate before
+    /// `UpdaterController` itself has finished being constructed.
     @MainActor
     private final class DelegateBridge: NSObject, SPUUpdaterDelegate {
-        weak var target: UpdaterController?
-
-        func updater(_ updater: SPUUpdater, willScheduleUpdateCheckAfterDelay delay: TimeInterval) {
-            target?.scheduleEvents.append(.willSchedule)
-        }
-
-        func updaterWillNotScheduleUpdateCheck(_ updater: SPUUpdater) {
-            target?.scheduleEvents.append(.willNotSchedule)
-        }
-
         /// §5's diagnostics posture: an update check failure must be
         /// visible, not swallowed. Logs `domain` and `code` at `.public` —
         /// never `String(describing:)` on the `NSError` (its `userInfo` can
@@ -94,7 +86,6 @@ public final class UpdaterController: NSObject {
                                                    updaterDelegate: bridge,
                                                    userDriverDelegate: nil)
         super.init()
-        bridge.target = self
         controller.updater.automaticallyChecksForUpdates = settings.automaticChecksEnabled
         // System profiling attaches a hardware/OS report to every update
         // check (Sparkle's `SUEnableSystemProfiling`). §5 draws the line at

@@ -419,9 +419,18 @@ func signingWithADeveloperIDShapedIdentityCarriesNoWorkaround() throws {
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "Scripts/lib/sign-app-with-workaround.sh")
     process.arguments = [copy.path, "-"]
-    var environment = ProcessInfo.processInfo.environment
-    environment["SNITT_FAKE_TEAM_IDENTIFIER_LINE"] = "TeamIdentifier=ABCDE12345TEAM"
-    process.environment = environment
+    // Explicit environment, not inherited — matching the discipline
+    // `AppcastTests`, `NotarizeScriptTests` and `SignAppWithWorkaroundTests`
+    // each adopted: a real developer machine could have
+    // SNITT_FAKE_TEAM_IDENTIFIER_LINE already exported from an earlier test
+    // session, and inheriting the process environment would let this
+    // specific test pass (or, worse, silently pick up a stray override) for
+    // the wrong reason instead of the one line set below. Only `codesign`
+    // needs to resolve from PATH here.
+    process.environment = [
+        "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+        "SNITT_FAKE_TEAM_IDENTIFIER_LINE": "TeamIdentifier=ABCDE12345TEAM",
+    ]
     let pipe = Pipe()
     process.standardOutput = pipe
     process.standardError = pipe

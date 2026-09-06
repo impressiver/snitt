@@ -453,7 +453,7 @@ git commit -m "feat(release): generate appcast items, never unsigned"
 - **Nothing here proves an update actually installs.** Every test checks structure — the framework is embedded, the plist has keys, the appcast has a signature. A real end-to-end update requires two signed builds, a served appcast, and a machine willing to install one. That is a manual step, and the DoD names it.
 - **Task 2's test only runs when `build/Snitt.app` exists.** It `#require`s the bundle and skips otherwise, so a plain `swift test` never fails for want of it — but that also means CI without a build step silently covers nothing. Say so rather than assuming the green suite includes it.
 - **The version fallback can drift from the plist** if someone edits `make-app.sh`'s extraction. Task 1 makes the script fail loudly instead, but the coupling is real and a reviewer should check the failure actually fires.
-- **`SUPublicEDKey` has no value yet.** Until the maintainer generates a keypair, the plist key is a placeholder and Sparkle will refuse updates. That is the correct failure — better than accepting unsigned ones — but the app will report "update failed" rather than "not configured", and that is worth a look.
+- **`SUPublicEDKey` has no value yet.** The plist key is absent entirely (not a placeholder string), and an absent key does **not** make Sparkle refuse updates: `SUHost.m`/`SUSignatures.m` reads that as "no key configured" and falls back to requiring the downloaded update be code-signed to match the installed app's identity. On our HTTPS feed with a code-signed build, that fallback is safe, but it means EdDSA update-signature verification is not actually happening client-side yet — `make-appcast.sh` still refuses to emit an unsigned item, but nothing on the receiving end checks that signature. Before the first real release, run Sparkle's `generate_keys` once and paste the public half into `SUPublicEDKey`; see `docs/superpowers/notes/release-runbook.md`.
 
 **Type consistency.** `AppVersion.current` in Tasks 1, 2. `UpdateSettings` in Task 3. Script argument shapes in Tasks 4, 5 match their tests.
 
@@ -462,8 +462,8 @@ git commit -m "feat(release): generate appcast items, never unsigned"
 Automated tests cover structure, not the update itself. These need a person, and most need an Apple Developer account:
 
 1. `./Scripts/make-app.sh`, then `codesign --verify --deep --strict build/Snitt.app` — passes.
-2. `./Scripts/notarize.sh build/Snitt.app` with credentials set — submits, staples, and `spctl --assess` passes.
-3. Copy the stapled app to another Mac and open it. It should launch **without** a Gatekeeper warning. This is the only check that notarization actually worked.
+2. `./Scripts/notarize.sh build/Snitt.app` with credentials set — submits and **staples**. Then, **only after stapling**, `ditto -c -k --keepParent build/Snitt.app Snitt-0.1.0.zip` to produce the distributable archive — never distribute the temp zip `notarize.sh` submitted and deleted, which predates the staple. `spctl --assess` against the stapled `.app` passes. See `docs/superpowers/notes/release-runbook.md` for the full ordering and why it matters.
+3. Copy the stapled, re-zipped app to another Mac and open it. It should launch **without** a Gatekeeper warning. This is the only check that notarization actually worked.
 4. Generate a keypair with Sparkle's `generate_keys`, put the public half in the plist, and keep the private half out of the repo.
-5. Build 0.1.0, publish 0.1.1 to GitHub Releases with an appcast entry, and confirm 0.1.0 offers and installs it.
+5. Build 0.1.0, notarize + staple + **re-zip the stapled bundle** (step 2's ordering), publish that zip plus a `make-appcast.sh`-generated `appcast.xml` to GitHub Releases, and confirm 0.1.0 offers and installs 0.1.1.
 6. Confirm a fresh install does **not** check for updates until the setting is enabled.

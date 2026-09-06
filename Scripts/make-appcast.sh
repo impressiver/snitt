@@ -80,6 +80,18 @@
 # SUPublicEDKey in Scripts/make-app.sh's Info.plist. Nothing secret ever
 # enters this repo.
 #
+# CURRENT STATE (as of M5b): SUPublicEDKey has not been configured yet —
+# see Scripts/make-app.sh. This script still refuses to emit an item
+# without a signature (below), so the FEED never carries an unsigned
+# entry. But with no SUPublicEDKey in the shipped plist, Sparkle never
+# reads `sparkle:edSignature` at all — the "rejects an unsigned update at
+# install time" language below describes the behaviour ONCE a real key is
+# configured, not today's. Until then, update integrity rests on
+# TLS-to-github.com plus Developer-ID code-signature matching alone; the
+# EdDSA signature this script insists on is generated and published, but
+# not yet checked by any client. See
+# docs/superpowers/notes/release-runbook.md.
+#
 # GitHub's own releases.atom is Atom (<feed>/<entry>), not an RSS appcast:
 # Sparkle's SUAppcast parses /rss/channel/item and needs
 # <enclosure sparkle:version=…>, which an Atom feed never has — pointing
