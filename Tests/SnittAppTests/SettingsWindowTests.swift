@@ -263,21 +263,58 @@ struct EventLoggingToggleTests {
     /// Same shape, aimed at the grant step rather than the pre-explain step
     /// — a declined pre-explain and a refused grant are different failure
     /// points that must both leave the setting off.
-    @Test("A refused grant persists nothing, returns false, and shows the already-denied alert")
-    func refusedGrantPersistsNothing() throws {
+    ///
+    /// Found by hand: `apply` used to call `showAlreadyDenied()` on EVERY
+    /// refused grant, including the very first one. But
+    /// `InputMonitoringAccess.ensureGranted()` returns `false` on the FIRST
+    /// ask too, WHILE the user is still looking at the real System Settings
+    /// dialog it just raised (same shape as Screen Recording, spike S5) —
+    /// so that alert rendered on top of the live system dialog it was
+    /// contradicting. This test pins the fix: a first-time refusal
+    /// (`hasRequested` reporting `false`) must stay silent, exactly like
+    /// `ensureScreenRecordingGrant`'s `.awaitingRelaunch` case.
+    @Test("A first-time refused grant persists nothing, returns false, and stays silent")
+    func firstRefusedGrantStaysSilent() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var showedAlreadyDenied = false
+        var markedRequested = false
+        let applied = EventLoggingToggle.apply(true, defaults: defaults,
+                                                preExplain: { _ in true },
+                                                hasRequested: { false },
+                                                markRequested: { markedRequested = true },
+                                                ensureGranted: { false },
+                                                showAlreadyDenied: { showedAlreadyDenied = true })
+
+        #expect(applied == false)
+        #expect(EventLoggingSettings.load(defaults).enabled == false)
+        #expect(markedRequested, "the first ask must be recorded so a LATER refusal can be told apart")
+        #expect(!showedAlreadyDenied,
+                "macOS's own dialog is on screen on the first ask; Snitt's alert must not contradict it")
+    }
+
+    /// The other half of the same distinction: once Snitt has already asked
+    /// before (`hasRequested` reporting `true`), macOS raises no second
+    /// system dialog, so the only way the user learns anything is Snitt's
+    /// own alert — this is the one case where showing it is correct.
+    @Test("A refusal after an earlier ask persists nothing, returns false, and shows the already-denied alert")
+    func repeatRefusedGrantShowsAlreadyDenied() throws {
         let (defaults, suiteName) = try fixtureDefaults()
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         var showedAlreadyDenied = false
         let applied = EventLoggingToggle.apply(true, defaults: defaults,
                                                 preExplain: { _ in true },
+                                                hasRequested: { true },
+                                                markRequested: {},
                                                 ensureGranted: { false },
                                                 showAlreadyDenied: { showedAlreadyDenied = true })
 
         #expect(applied == false)
         #expect(EventLoggingSettings.load(defaults).enabled == false)
         #expect(showedAlreadyDenied,
-                "a refused grant must tell the user, the same way the status item's ladder does")
+                "macOS will not ask again, so Snitt's own alert is the only way the user finds out")
     }
 
     @Test("Pre-explain accepted and grant available persists enabled = true")
@@ -287,6 +324,8 @@ struct EventLoggingToggleTests {
 
         let applied = EventLoggingToggle.apply(true, defaults: defaults,
                                                 preExplain: { _ in true },
+                                                hasRequested: { false },
+                                                markRequested: {},
                                                 ensureGranted: { true },
                                                 showAlreadyDenied: {})
 
