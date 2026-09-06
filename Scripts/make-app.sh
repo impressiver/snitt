@@ -129,7 +129,19 @@ else
 fi
 
 STABLE_IDENTITY=0
-if IDENTITY="$(./Scripts/signing-identity.sh)"; then
+if [ -n "${SNITT_SIGN_IDENTITY+x}" ]; then
+  # An identity was explicitly requested (the release path — see
+  # docs/superpowers/notes/release-runbook.md step 1). Do NOT catch a
+  # failure here and fall back to ad-hoc: a release build that asked for a
+  # specific identity and silently got ad-hoc instead is precisely the
+  # "signed with the wrong certificate" failure this variable exists to
+  # prevent. `set -e` on this plain assignment (not wrapped in `[ ... ]` or
+  # an `if`) already makes signing-identity.sh's exit status fatal here, so
+  # its own loud error is what the caller sees.
+  IDENTITY="$(./Scripts/signing-identity.sh)"
+  SIGN_ID="$IDENTITY"
+  STABLE_IDENTITY=1
+elif IDENTITY="$(./Scripts/signing-identity.sh)"; then
   SIGN_ID="$IDENTITY"
   STABLE_IDENTITY=1
 else
@@ -189,8 +201,12 @@ sign_nested "$FRAMEWORK_DEST"
 # script is also what BundleLayoutTests.swift exercises directly (with a
 # synthetic Developer-ID-shaped identity injected via
 # SNITT_FAKE_TEAM_IDENTIFIER_LINE) to prove the "has a real team, skip the
-# entitlement" branch actually works, since no real Developer ID exists in
-# this repo to produce that signature for real.
+# entitlement" branch actually works on a machine with no Developer ID
+# installed. A real Developer ID (selected via SNITT_SIGN_IDENTITY, see
+# docs/superpowers/notes/release-runbook.md step 1) exercises that same
+# branch for real — SNITT_FAKE_TEAM_IDENTIFIER_LINE refuses to fire once a
+# genuine Team ID is already present (R28), so the synthetic seam cannot
+# mask the real one.
 ./Scripts/lib/sign-app-with-workaround.sh "$APP" "$SIGN_ID"
 
 if [ "$STABLE_IDENTITY" = "1" ]; then

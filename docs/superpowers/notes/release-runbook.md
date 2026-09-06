@@ -25,18 +25,25 @@ time, and only a user who can't reach Apple's servers ever sees it fail.
 
 ## The path, in order
 
-1. **Build.**
+1. **Build, with the real Developer ID.**
 
    ```sh
-   ./Scripts/make-app.sh
+   SNITT_SIGN_IDENTITY="Developer ID Application: impressiver LLC (TEGDRM8W7U)" ./Scripts/make-app.sh
    ```
 
    Produces `build/Snitt.app`, version-stamped from
    `Sources/SnittDocument/AppVersion.swift`'s `AppVersion.fallback` (both
-   `CFBundleShortVersionString` and `CFBundleVersion`), signed with a real
-   Developer ID (or the self-signed local identity — see
-   `docs/superpowers/notes/signing.md` — for local testing only; never
-   notarize or publish a locally-signed build).
+   `CFBundleShortVersionString` and `CFBundleVersion`).
+
+   `SNITT_SIGN_IDENTITY` is what selects the Developer ID — it is never
+   picked automatically just because the certificate exists in the
+   keychain. Plain `./Scripts/make-app.sh` (no variable set) keeps signing
+   with the self-signed local identity — see
+   `docs/superpowers/notes/signing.md` — which is for local testing only;
+   never notarize or publish a build signed that way. A name that doesn't
+   match an installed identity is a hard, loud failure (`Scripts/signing-
+   identity.sh` lists what's actually in the keychain), never a silent
+   fall-back to the local identity or to ad-hoc.
 
 2. **Verify the signature.**
 
