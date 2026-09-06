@@ -90,6 +90,16 @@ enum AppShell {
         menu.addItem(recent)
         menu.addItem(.separator())
 
+        // Task 8: the missing half of record → trim → share. Nil target —
+        // `AppDelegate.exportDocument(_:)` resolves which open editor this
+        // is for from `NSApp.keyWindow`, the same nil-target pattern as
+        // `Open…` above.
+        let export = NSMenuItem(title: "Export…",
+                                action: #selector(AppDelegate.exportDocument(_:)),
+                                keyEquivalent: "e")
+        menu.addItem(export)
+        menu.addItem(.separator())
+
         menu.addItem(withTitle: "Close",
                      action: #selector(NSWindow.performClose(_:)),
                      keyEquivalent: "w")

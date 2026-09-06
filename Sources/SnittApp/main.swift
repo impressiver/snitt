@@ -313,6 +313,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSDocumentController.shared.clearRecentDocuments(sender)
     }
 
+    /// File ▸ Export… (⌘E), Task 8. `EditorWindowController` is not an
+    /// `NSWindowController` and is never inserted into the responder chain,
+    /// so this menu item's nil target resolves here (AppKit's fallback
+    /// after the responder chain, mirroring `openDocument` above) rather
+    /// than to a specific editor directly. The KEY window, not
+    /// `openEditors.first`, is what picks which of several open documents
+    /// this export is for — with more than one editor window open, "the
+    /// front one" is the only reading a user would expect from a plain
+    /// ⌘E.
+    ///
+    /// Silently does nothing with no editor key — a keyboard shortcut
+    /// pressed with no document open has nothing to export, and Snitt's
+    /// menu items generally reflect this by staying live rather than
+    /// managing per-item enabled state (see `Close`, `Undo`/`Redo` above).
+    @objc func exportDocument(_ sender: Any?) {
+        guard let editor = EditorWindowController.openEditors.first(where: {
+            $0.window == NSApp.keyWindow
+        }) else { return }
+        editor.presentExportPanel()
+    }
+
     /// Finder double-click, `open(1)`, and drag-onto-Dock all arrive here.
     /// Can arrive before OR after `applicationDidFinishLaunching` on a cold
     /// launch — this must not depend on anything that method sets up.

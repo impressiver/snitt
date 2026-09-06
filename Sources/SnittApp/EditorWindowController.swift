@@ -1,7 +1,10 @@
 import AppKit
 import Combine
+import SnittCapture
 import SnittDocument
+import SnittExport
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Owns the mutable editing state the timeline drives: the EDL a trim
 /// appends a cut to, and the events a trim's re-apply must keep passing.
@@ -212,6 +215,13 @@ private struct EditorContentView: View {
 /// activation policy.
 @MainActor
 public final class EditorWindowController: NSObject, NSWindowDelegate {
+    // The project's logger factory (`SnittLog.logger`), not a hand-rolled
+    // `Logger` — see `DocumentOpener`'s identical note. `.compositor`
+    // matches `RecordingCoordinator`'s category for the same
+    // build-a-composition family of failures (export IS a composition
+    // build, per §9).
+    private static let log = SnittLog.logger(.compositor, target: "SnittApp")
+
     private let controller: PreviewController
     private let state: EditorTimelineState
     public let window: NSWindow
@@ -347,7 +357,100 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         Self.open.removeAll { $0 === self }
     }
 
+    // MARK: - Export (Task 8)
+
+    /// File ▸ Export…, wired via `AppDelegate.exportDocument(_:)`.
+    ///
+    /// Opens an `NSSavePanel` and, on a chosen destination, runs the SAME
+    /// export path `AutomationHost.export` already uses (`MovieExporter`
+    /// over `CompositionBuilder`) against `state.edl` — the exact EDL the
+    /// preview is currently showing, not a re-read of `edit.json` from
+    /// disk. Task 7's autosave means those normally agree, but reading the
+    /// in-memory value is what keeps them agreeing even for the instant
+    /// between a trim and its `applyAndSave` write landing, and it is what
+    /// §9 ("preview and export share one builder") actually asks for:
+    /// this is the EDL the on-screen preview was built from, not a second,
+    /// separately-sourced one that merely usually matches it.
+    public func presentExportPanel() {
+        let panel = NSSavePanel()
+        if let mp4 = UTType(filenameExtension: "mp4") {
+            panel.allowedContentTypes = [mp4]
+        }
+        panel.nameFieldStringValue = bundleURL.deletingPathExtension().lastPathComponent
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .OK, let destination = panel.url else { return }
+            Task { @MainActor in
+                do {
+                    try await self.performExport(to: destination, pasteboard: .general)
+                    self.presentExportSuccess()
+                } catch {
+                    self.presentExportFailure(error)
+                }
+            }
+        }
+    }
+
+    /// The actual export: build via `MovieExporter.export` (which builds
+    /// through `CompositionBuilder`, never a second one of its own — §9),
+    /// then re-copy the result to `pasteboard`, SUPERSEDING
+    /// `RecordingCoordinator`'s stop-time copy of the raw, untrimmed
+    /// `capture.mov`. Without this, that stale copy is the last thing that
+    /// ever touched the clipboard for this recording, and a user who
+    /// trimmed and pasted ships the version they just cut content out of —
+    /// silently, with no error anywhere (Task 8's second defect).
+    ///
+    /// Rebuilds `SnittBundle` from `bundleURL` rather than keeping a
+    /// `SnittBundle` of its own: `PreviewController`'s is `private` (R1 —
+    /// the write belongs with the owner), and `bundleURL` is already this
+    /// type's own normalized identity for exactly this document.
+    private func performExport(to destination: URL, pasteboard: NSPasteboard) async throws {
+        let bundle = try SnittBundle(opening: bundleURL)
+        _ = try await MovieExporter.export(bundle: bundle, edl: state.edl, scale: 1.0, to: destination)
+        if !ClipboardDestination.copy(fileURL: destination, to: pasteboard) {
+            // The export itself succeeded — the file the user asked for
+            // exists at `destination` — so this is not surfaced as an
+            // export failure. It IS logged: a copy that silently didn't
+            // happen is exactly the kind of clipboard mismatch this task
+            // exists to eliminate, just moved one step later.
+            Self.log.error("Export succeeded but the clipboard copy did not.")
+        }
+    }
+
+    private func presentExportSuccess() {
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = "Exported and copied to the clipboard."
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    /// Same redaction discipline as `DocumentOpener`'s catch: domain, code,
+    /// and `localizedDescription` only, never `String(describing:)` on the
+    /// error and never a path — `bundleURL`'s filename is branch-derived
+    /// (`BundleNaming`) and can name a customer.
+    private func presentExportFailure(_ error: Error) {
+        let ns = error as NSError
+        Self.log.error("Export failed: \(ns.domain, privacy: .public) \(ns.code, privacy: .public) \(error.localizedDescription, privacy: .public)")
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Snitt could not export this recording."
+        alert.informativeText = error.localizedDescription
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
     // MARK: - Testing seam
+
+    /// Drives an export exactly as `presentExportPanel()`'s save-panel
+    /// callback would, without a real `NSSavePanel` or the success/failure
+    /// `NSAlert` (both require a live window server this test target
+    /// cannot assume). `pasteboard` defaults to `.general` for parity with
+    /// the real path but is overridable so a test can assert against a
+    /// throwaway pasteboard instead of the machine's real clipboard.
+    func exportForTesting(to url: URL, pasteboard: NSPasteboard = .general) async throws {
+        try await performExport(to: url, pasteboard: pasteboard)
+    }
 
     /// Closes every editor `EditorWindowController` currently thinks is
     /// open, exactly as if each had gone through `close()`.
