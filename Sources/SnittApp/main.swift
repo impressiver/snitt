@@ -286,10 +286,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
-    /// Task 5 replaces this body with the real Settings window. It exists
-    /// here so the menu's selector resolves and ⌘, is not silently dead.
     @objc func showSettings(_ sender: Any?) {
-        NSSound.beep()
+        // Routes the update toggle through `updaterController` rather than
+        // writing UserDefaults directly — see SettingsWindowController's
+        // doc comment. `onChange` re-reads all four settings back into the
+        // status item's own cached properties, so a change made in the
+        // window shows up as the correct checkmark the next time the status
+        // menu is opened, rather than only after the next launch.
+        SettingsWindowController.show(updater: updaterController) { [weak self] in
+            self?.refreshStatusItemFromSettings()
+        }
+    }
+
+    /// Keeps the status item's cached checkmark state in sync with whatever
+    /// the Settings window just changed. Both surfaces read and write the
+    /// same `UserDefaults` keys, but `StatusItemController`'s checkmarks are
+    /// cached properties updated only when the status item's OWN toggle
+    /// handlers run — without this, a change made in the window would leave
+    /// the menu showing stale state until the app relaunched.
+    private func refreshStatusItemFromSettings() {
+        statusItem.agentRecordingEnabled = AgentSettings.load().agentRecordingEnabled
+        statusItem.eventLoggingEnabled = EventLoggingSettings.load().enabled
+        statusItem.automaticUpdateChecksEnabled = UpdateSettings.load().automaticChecksEnabled
+        statusItem.crashReportingEnabled = CrashReportSettings.load().enabled
     }
 
     // MARK: - §4.14: File ▸ Open, Open Recent, Finder double-click
