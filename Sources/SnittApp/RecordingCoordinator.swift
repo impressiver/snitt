@@ -349,6 +349,13 @@ public actor RecordingCoordinator: AgentRecordingControlling {
             // `ResolverChoice` to make at all — see `usedCache(choice:)`.
             choice = nil
         } else {
+            // `store.load()`'s result is discarded by `resolverChoice`
+            // today — it always returns `.picker` regardless of what is
+            // passed in, so this read has no effect on `resolver` below.
+            // Read anyway, rather than passing a hardcoded `false`, so this
+            // call site stays truthful about the store's actual state: if
+            // `resolverChoice`'s policy is ever restored, only its own body
+            // needs to change, not this call site.
             choice = Self.resolverChoice(hasCachedTarget: store.load() != nil)
             // `resolverChoice` has returned `.picker` unconditionally since
             // M2a made the app always ask which window (every hotkey press
@@ -617,17 +624,6 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     /// it needs a real `SCContentFilter`.
     static func usedCache(choice: ResolverChoice?) -> Bool {
         choice == .cache
-    }
-
-    static func reference(from stored: StoredTargetReference) -> TargetReference? {
-        switch stored.kind {
-        case .window:
-            guard let bundleID = stored.bundleIdentifier else { return nil }
-            return .window(bundleIdentifier: bundleID, titleHint: stored.titleHint)
-        case .display:
-            guard let id = stored.displayID else { return nil }
-            return .display(id: id)
-        }
     }
 
     static func stored(from reference: TargetReference) -> StoredTargetReference? {

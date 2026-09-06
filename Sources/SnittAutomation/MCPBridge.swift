@@ -259,8 +259,22 @@ public enum MCPBridge {
         ]
     }
 
+    /// - Parameter workingDirectory: The directory a relative `bundlePath`/
+    ///   `outputPath` is resolved against. Defaults to this process's own
+    ///   cwd, which IS the calling MCP client's cwd in production — `snitt-mcp`
+    ///   is a subprocess launched fresh per client over stdio, the same
+    ///   relationship `snitt-cli`'s own default has to its caller (see
+    ///   `requestBody(for:currentDirectory:)` in `Sources/snitt-cli/main.swift`).
+    ///   A test injects an explicit value here instead of mutating the real
+    ///   process cwd with `chdir` — the property under test is that a
+    ///   relative path resolves against the CALLER's directory, and this
+    ///   parameter names that directory directly rather than needing a
+    ///   round trip through `getcwd`/`chdir`, which is process-global,
+    ///   mutable state shared with every other test in the same test bundle.
     public static func request(forTool name: String,
-                               arguments: [String: Any]) -> Result<AutomationRequest.Body, MCPBridgeError> {
+                               arguments: [String: Any],
+                               workingDirectory: String = FileManager.default.currentDirectoryPath
+                               ) -> Result<AutomationRequest.Body, MCPBridgeError> {
         switch name {
         case "snitt_list_targets":
             return .success(.listTargets)
@@ -354,8 +368,8 @@ public enum MCPBridge {
                 return .failure(MCPBridgeError(
                     "snitt_trim requires end (\(end)) to be after start (\(start))"))
             }
-            return .success(.trim(bundlePath: PathResolver.resolve(path), start: start,
-                                   end: end, auto: auto))
+            return .success(.trim(bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory),
+                                   start: start, end: end, auto: auto))
 
         case "snitt_export":
             guard let path = arguments["bundlePath"] as? String else {
@@ -406,8 +420,9 @@ public enum MCPBridge {
                 }
                 maxSizeBytes = bytes
             }
-            return .success(.export(bundlePath: PathResolver.resolve(path), format: format,
-                                     outputPath: PathResolver.resolve(outputPath),
+            return .success(.export(bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory),
+                                     format: format,
+                                     outputPath: PathResolver.resolve(outputPath, workingDirectory: workingDirectory),
                                      scale: scale, chapters: chapters, maxSizeBytes: maxSizeBytes))
 
         case "snitt_diagnostics_export":
@@ -423,7 +438,7 @@ public enum MCPBridge {
             // relative path from an MCP client would resolve against
             // whatever cwd `Snitt.app`/the automation host happened to have,
             // not the caller's.
-            return .success(.diagnostics(outputPath: PathResolver.resolve(outputPath)))
+            return .success(.diagnostics(outputPath: PathResolver.resolve(outputPath, workingDirectory: workingDirectory)))
 
         default:
             return .failure(MCPBridgeError("Unknown tool: \(name)"))
