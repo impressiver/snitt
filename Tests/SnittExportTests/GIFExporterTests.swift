@@ -103,6 +103,7 @@ func degenerateRenderSizeRefused() async throws {
     let broken = BuiltComposition(
         composition: built.composition,
         videoComposition: AVMutableVideoComposition(),   // renderSize .zero
+        audioMix: built.audioMix,
         duration: built.duration,
         keptRanges: built.keptRanges)
     let out = FileManager.default.temporaryDirectory
@@ -144,6 +145,7 @@ func unfulfillableFrameFailsExport() async throws {
     let inflated = BuiltComposition(
         composition: built.composition,
         videoComposition: built.videoComposition,
+        audioMix: built.audioMix,
         duration: built.duration + 5,
         keptRanges: built.keptRanges)
     let out = FileManager.default.temporaryDirectory
@@ -192,6 +194,7 @@ func throwingWriteDoesNotDestroyAPreviousGoodFile() async throws {
     let inflated = BuiltComposition(
         composition: built.composition,
         videoComposition: built.videoComposition,
+        audioMix: built.audioMix,
         duration: built.duration + 5,
         keptRanges: built.keptRanges)
     await #expect(throws: (any Error).self) {

@@ -6,17 +6,25 @@ import SnittDocument
 ///
 /// `@unchecked Sendable`: the invariant this relies on is that `build(...)`
 /// hands back objects it has finished mutating and never touches again — no
-/// other reference to `composition` or `videoComposition` exists once this
-/// value is returned, so there is no concurrent mutation for the compiler to
-/// worry about even though `AVMutableComposition` and
-/// `AVMutableVideoComposition` are not themselves `Sendable`. Callers that
-/// hand the same `BuiltComposition` to multiple tasks and mutate it from more
-/// than one of them would violate that invariant; nothing here does.
+/// other reference to `composition`, `videoComposition`, or `audioMix`
+/// exists once this value is returned, so there is no concurrent mutation
+/// for the compiler to worry about even though `AVMutableComposition`,
+/// `AVMutableVideoComposition`, and `AVAudioMix` are not themselves
+/// `Sendable`. Callers that hand the same `BuiltComposition` to multiple
+/// tasks and mutate it from more than one of them would violate that
+/// invariant; nothing here does.
 public struct BuiltComposition: @unchecked Sendable {
     public let composition: AVMutableComposition
     /// §9's explicit passthrough slot. Shipping overlays means giving THIS
     /// object a `customVideoCompositorClass` — nothing else changes.
     public let videoComposition: AVMutableVideoComposition
+    /// The EDL's per-track mute and gain, expressed as an `AVAudioMix`. Nil
+    /// when there is nothing to express — no audio tracks, or every track
+    /// unmuted at unity gain — so preview and export can each check for nil
+    /// rather than every caller re-deriving "is this mix actually a no-op."
+    /// Built once, inside `build`, and never mutated afterwards: see the
+    /// `@unchecked Sendable` note above.
+    public let audioMix: AVAudioMix?
     public let duration: Double
     /// The kept ranges (source-recording time) this composition was built
     /// from — `KeptRanges.compute`'s output already filtered to drop
@@ -83,6 +91,79 @@ public enum CompositionBuilder {
     public static func mediaDuration(of bundle: SnittBundle) async throws -> Double {
         let asset = AVURLAsset(url: bundle.captureURL)
         return CMTimeGetSeconds(try await asset.load(.duration))
+    }
+
+    /// Builds the mix expressing the EDL's per-track mute and gain.
+    ///
+    /// Returns nil when there is nothing to express — no audio tracks, or
+    /// every track unmuted at unity gain. A nil mix and an empty mix are not
+    /// the same thing to a caller: nil says "nothing to apply".
+    ///
+    /// `trackStates` are matched to composition audio tracks BY NAME, via
+    /// `AudioTrackOrder.canonical`: composition audio track `i` is resolved
+    /// to `canonical[i]`, and the state whose `track` equals that name (if
+    /// any) governs it. A state naming something not in `canonical` —
+    /// `"video"`, or a name from a stale EDL — matches nothing and is
+    /// ignored, rather than being applied to whatever composition track
+    /// happens to sit at its position.
+    ///
+    /// Task 1 matched by index instead, on the false assumption that
+    /// `trackStates`' order already lined up with the composition's audio
+    /// track order. It doesn't: `EditDecisionList.fullRange()` produces
+    /// `["video", "microphone", "systemAudio"]`, but `AssetWriterSink` writes
+    /// audio tracks in the order `[systemAudio, microphone]` (video is not
+    /// audio). Index-matching therefore gave audio track 0 (systemAudio) the
+    /// state named `"video"`, and dropped `"systemAudio"` off the end —
+    /// muting system audio did nothing, and muting "video" silenced it. See
+    /// task-1b-report.md for the full finding; name matching against the
+    /// shared `AudioTrackOrder.canonical` is the fix.
+    private static func audioMix(for tracks: [AVMutableCompositionTrack],
+                                 states: [TrackState]) -> AVAudioMix? {
+        guard !tracks.isEmpty else { return nil }
+        // NOT `Dictionary(uniqueKeysWithValues:)`: that TRAPS on a repeated
+        // key, so an `edit.json` naming the same track twice — hand-edited,
+        // merged badly, or corrupted — would crash the app rather than
+        // export. Last one wins, matching how a later line in a config file
+        // normally overrides an earlier one.
+        let statesByName = Dictionary(states.map { ($0.track, $0) },
+                                      uniquingKeysWith: { _, last in last })
+        let matchedStates: [TrackState?] = tracks.indices.map { index in
+            guard index < AudioTrackOrder.canonical.count else { return nil }
+            return statesByName[AudioTrackOrder.canonical[index]]
+        }
+        let needsMix = matchedStates.contains { $0.map { $0.muted || $0.gain != 1.0 } ?? false }
+        guard needsMix else { return nil }
+
+        let mix = AVMutableAudioMix()
+        mix.inputParameters = zip(tracks, matchedStates).map { track, state in
+            let parameters = AVMutableAudioMixInputParameters(track: track)
+            // Clamped to `0...1`, not passed through raw. `TrackState.gain`
+            // is a plain `Double` decoded straight from `edit.json` — a
+            // human hand-editing that sidecar (or a bad merge, or a stale
+            // tool writing a different range) can put anything in it, and
+            // `AVMutableAudioMixInputParameters.setVolume` documents no
+            // clamping of its own. This milestone's ledger already has two
+            // "it's latent, nothing writes it yet" calls that turned out
+            // wrong — a deferred hazard came back as a SIGSEGV that silently
+            // truncated suite runs, and a deferred track-naming bug would
+            // have made muting system audio a silent no-op — so this is
+            // fixed here, where the value is actually consumed, rather than
+            // deferred to M4b's mute/gain UI. `TrackState.gain` itself stays
+            // an unclamped `Double` and the EDL is never rejected: a
+            // recording should still open with a strange sidecar.
+            let rawVolume = state.map { $0.muted ? 0.0 : Float($0.gain) } ?? 1.0
+            // `isFinite` FIRST, because min/max cannot clamp a NaN: every
+            // comparison with NaN is false, so `min(max(.nan, 0), 1)` is
+            // still NaN, and `setVolume` accepts it silently — verified,
+            // `getVolumeRamp` reads it back with ok=true. A NaN volume is
+            // undefined playback rather than a crash, which is the worst
+            // shape: silent corruption nothing reports. `gain: null` decodes
+            // to NaN from a hand-edited sidecar easily enough.
+            let volume = rawVolume.isFinite ? min(max(rawVolume, 0.0), 1.0) : 1.0
+            parameters.setVolume(volume, at: .zero)
+            return parameters
+        }
+        return mix
     }
 
     public static func build(bundle: SnittBundle,
@@ -157,8 +238,11 @@ public enum CompositionBuilder {
         instruction.layerInstructions = [layer]
         videoComposition.instructions = [instruction]
 
+        let mix = audioMix(for: audioTrackPairs.map(\.destination), states: edl.trackStates)
+
         return BuiltComposition(composition: composition,
                                 videoComposition: videoComposition,
+                                audioMix: mix,
                                 duration: CMTimeGetSeconds(cursor),
                                 keptRanges: kept)
     }

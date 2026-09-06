@@ -61,6 +61,11 @@ public final class AssetWriterSink: SampleBufferSink, @unchecked Sendable {
         let systemInput = makeAudioInput()
         let micInput = makeAudioInput()
 
+        // This order — video, then systemInput, then micInput — is load-bearing:
+        // it determines the audio track order the exporter's `AudioMix` matches
+        // states against. See `SnittDocument.AudioTrackOrder.canonical`, which
+        // names it explicitly rather than leaving `SnittExport` to infer it from
+        // this loop.
         for input in [videoInput, systemInput, micInput] {
             guard writer.canAdd(input) else {
                 throw SinkError.writerFailed("cannot add input \(input.mediaType)")

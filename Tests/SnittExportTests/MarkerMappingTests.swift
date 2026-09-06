@@ -45,3 +45,18 @@ func markerAtRecordingEndIsKept() {
     #expect(mapped.count == 1)
     #expect(mapped.first?.timeSeconds == 10)
 }
+
+@Test("Preview and export agree on where a marker lands")
+func previewAndExportAgreeOnMarkerTime() {
+    let kept = [TimeRange(start: 0, end: 2), TimeRange(start: 5, end: 10)]
+    let marker = LoggedEvent(timeSeconds: 8.0, kind: .marker, label: "m")
+
+    let exportTime = MarkerMapping.map([marker], keptRanges: kept).first?.timeSeconds
+    let previewTime = MarkerJumpPoints.compute(events: [marker], keptRanges: kept).first?.timeSeconds
+
+    // The two surfaces describing one recording must not disagree. This is
+    // the assertion that fails the day someone "improves" one mapper.
+    #expect(exportTime != nil)
+    #expect(previewTime != nil)
+    #expect(abs((exportTime ?? -1) - (previewTime ?? -2)) < 0.0001)
+}

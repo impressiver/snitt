@@ -293,3 +293,14 @@ func humanFailureClearsTheStore() async throws {
     #expect(store.load() == nil,
             "a stale cache must be cleared so the next press offers the picker")
 }
+
+// Task 5's editor-on-stop tests live in `EditorWindowControllerTests.swift`,
+// as an extension of that file's `@Suite(.serialized)` struct, not here.
+// They construct real editor windows and read `EditorWindowController`'s
+// process-global `openWindowCount`/activation-policy state — the exact state
+// that suite already exists to serialize access to. A second, independent
+// `@Suite(.serialized)` in THIS file would serialize its own tests against
+// each other but not against that one; Swift Testing runs different suites
+// concurrently by default, and the two suites did race in practice (observed
+// via a failing `swift test` run before this comment was written) until the
+// tests were merged into one suite.

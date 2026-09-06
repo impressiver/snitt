@@ -374,11 +374,22 @@ func scaleReductionActuallyShrinksTheFile() async throws {
 
     // Proves work happened, not just that a number was reported: a no-op
     // would produce (approximately) the SAME size as the unconstrained
-    // export, since nothing would differ between the two calls. Half is a
-    // generous margin against the ~700KB vs ~280KB measured above, and it
-    // is relative rather than absolute, so encoder variance moves both
-    // measurements together.
-    #expect(constrained.byteSize < unconstrained.byteSize / 2,
+    // export, since nothing would differ between the two calls.
+    //
+    // M4a review finding #2: this used to compare against half the
+    // unconstrained size (ratio < 0.5), which is not a margin derived from
+    // anything — it flaked at roughly 1-in-5 under full-suite load (one
+    // reviewer run: 340502 against a 311028 bound, ratio ~1.09). Re-measured
+    // properly by mutation instead: the TRUE-POSITIVE ratio (this
+    // implementation, unmutated), sampled across ~30 runs both standalone
+    // and inside the full `SnittExportTests` suite (to reproduce the
+    // contention that caused the flake), ranged from about 0.30 to 0.62 —
+    // never above ~0.62. The NO-OP ratio — `sizeLadder` mutated to `[1.0]`,
+    // so the ladder never actually drops scale and `fileLengthLimit` alone
+    // (still active) is all that's left — measured a tight 0.947 across 5
+    // runs. 0.85 sits with a comfortable margin on both sides: ~0.23 above
+    // the true positive's observed ceiling, ~0.10 below the no-op floor.
+    #expect(Double(constrained.byteSize) < Double(unconstrained.byteSize) * 0.85,
             "a real size target should shrink the file substantially, not just report success")
     #expect(constrained.scale < 1.0,
             "300_000 bytes is unreachable at scale 1.0 on this fixture; the ladder must have dropped scale")
@@ -467,14 +478,21 @@ func fileLengthLimitAloneShrinksTheFile() async throws {
 
     // Relative, not absolute (the hardware H.264 encoder is not
     // deterministic under load — the same caution `scaleReductionActually
-    // ShrinksTheFile` documents). The measured ratio is ~0.79 at rest, but
-    // 0.9 was NOT enough margin: one run in twelve crossed it under
-    // full-suite contention. 0.95 still fails hard against a no-op — two
-    // unconstrained encodes of the SAME composition differ by well under
-    // 5%, so a no-op lands at ~1.0 — while tolerating the variance that
-    // actually occurs. Tightening this back toward the measured 0.79 buys
-    // no discriminating power and reintroduces the flake.
-    #expect(Double(constrainedSize) < Double(unconstrainedSize) * 0.95,
+    // ShrinksTheFile` documents).
+    //
+    // M4a review finding #2: the previous 0.95 threshold flaked at roughly
+    // 1-in-5 under full-suite load (one reviewer run: 621311 against a
+    // 590953 bound, ratio ~1.05). Re-derived by mutation rather than by
+    // widening the absolute margin further: the TRUE-POSITIVE ratio (this
+    // implementation, unmutated), sampled across ~30 runs both standalone
+    // and inside the full `SnittExportTests` suite, mostly sat in the
+    // 0.30-0.50 range but reached as high as 0.79 twice under heavy
+    // contention. The NO-OP ratio — `session.fileLengthLimit = ...`
+    // commented out entirely — measured 0.97-1.0 across 5 runs (two
+    // unconstrained encodes of the same composition naturally differ by
+    // well under 5%). 0.90 sits with margin on both sides: ~0.11 above the
+    // true positive's observed ceiling, ~0.07 below the no-op floor.
+    #expect(Double(constrainedSize) < Double(unconstrainedSize) * 0.90,
             "fileLengthLimit should have measurably shrunk the file toward its floor")
     #expect(constrainedSize < unconstrainedSize)
 }
