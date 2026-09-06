@@ -193,6 +193,25 @@ func agentRecordingsCarryAgentProvenance() {
     #expect(RecordingCoordinator.initiator(isAgent: false) == .human)
 }
 
+@Test("usedCache means the human path actually chose the cache — not merely that a resolver was forced")
+func usedCacheReflectsTheHumanPathsOwnChoiceOnly() {
+    // Before this, an agent's forced-resolver branch set a `ResolverChoice`
+    // of `.cache` purely so `usedCache: choice == .cache` came out true —
+    // `usedCache` on that path meant "used an explicit resolver," not "hit
+    // the hotkey cache," two different concepts wearing one name. An agent's
+    // forced resolver now carries no `ResolverChoice` at all (`nil`), and
+    // `usedCache` must read false for it regardless of what the human path's
+    // own choice happens to be.
+    #expect(RecordingCoordinator.usedCache(choice: nil) == false)
+    // The human path's actual signal still works: `.cache` reads true...
+    #expect(RecordingCoordinator.usedCache(choice: .cache) == true)
+    // ...and `.picker` — the only value `resolverChoice` produces today —
+    // reads false, matching §5's requirement that `ConsentExplainer` behave
+    // exactly as it does now: never shown, because the human path's own
+    // `.cache` arm is unreachable.
+    #expect(RecordingCoordinator.usedCache(choice: .picker) == false)
+}
+
 @Test("The -3801 error reports permission_denied, not an internal error")
 func reasonMapsScreenCaptureDenial() {
     // Finding 3's most important case, and it had no test at all.
