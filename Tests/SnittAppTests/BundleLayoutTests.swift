@@ -230,18 +230,23 @@ func sparkleNeverLinksIntoThinClients() throws {
     }
 }
 
-@Test("Info.plist declares Sparkle's feed, omits the EdDSA key placeholder, and defaults automatic checks off", .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason))
+@Test("Info.plist declares Sparkle's feed, a usable EdDSA key, and defaults automatic checks off", .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason))
 func infoPlistDeclaresSparkleKeys() throws {
     try #require(appIsBuilt, appBundleSkipReason)
     let plist = try plistOf(app)
 
     #expect(plist["SUFeedURL"] != nil)
-    // NOT `!= nil` here: an empty-string SUPublicEDKey is a DIFFERENT and
-    // worse state than an absent one (see make-app.sh's comment) — it makes
-    // Sparkle refuse to start at all, rather than falling back to
-    // code-signing validation. So this key must be genuinely absent from
-    // the plist until a real key exists.
-    #expect(plist["SUPublicEDKey"] == nil, "SUPublicEDKey should be entirely absent, not an empty placeholder — see make-app.sh")
+    // NOT `!= nil`: the states that break Sparkle are all non-nil. An empty
+    // string, or anything that isn't exactly 32 decoded bytes, reads as
+    // SUSigningInputStatusInvalid and SPUUpdater then refuses to start at
+    // all with SUNoPublicDSAFoundError — a worse failure than having no key,
+    // because it takes the whole updater down rather than falling back to
+    // code-signing validation. So assert the shape Sparkle can actually use.
+    // (An absent key is a legitimate state too — see make-app.sh — but this
+    // build ships a real one, and silently losing it must fail here.)
+    let edKey = try #require(plist["SUPublicEDKey"] as? String, "SUPublicEDKey is missing — see make-app.sh")
+    let decoded = try #require(Data(base64Encoded: edKey), "SUPublicEDKey is not valid base64: \(edKey)")
+    #expect(decoded.count == 32, "Ed25519 public keys are 32 bytes; SUPublicEDKey decoded to \(decoded.count)")
     // Ruling R3: false is the cold-start default. An update check is a
     // network request announcing this machine runs Snitt, made at a moment
     // the user did not choose. Task 3 adds a user-facing setting that

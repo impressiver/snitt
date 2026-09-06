@@ -65,15 +65,11 @@
 # SPARKLE_SIGNATURE   Fallback source for the signature above, so a CI-less,
 #                     by-hand release doesn't need to quote a base64 blob
 #                     on the command line. Whichever source wins, an EMPTY
-#                     signature is refused outright (see below). ONCE A
-#                     REAL SUPublicEDKey EXISTS (see CURRENT STATE below —
-#                     not yet the case as of M5b), an unsigned update is
-#                     one Sparkle rejects at INSTALL time, after the user
-#                     has already downloaded it and waited; failing here
-#                     instead costs a release, not a user's trust. Until
-#                     then this script's refusal is the ONLY thing
-#                     enforcing "never unsigned" — nothing on the client
-#                     reads the attribute yet.
+#                     signature is refused outright (see below). An
+#                     unsigned update is one Sparkle rejects at INSTALL
+#                     time, after the user has already downloaded it and
+#                     waited; failing here instead costs a release, not a
+#                     user's trust.
 #
 # The maintainer's key. `sign_update` reads the private EdDSA key from the
 # login Keychain by default (`generate_keys`, also shipped alongside
@@ -85,18 +81,16 @@
 # SUPublicEDKey in Scripts/make-app.sh's Info.plist. Nothing secret ever
 # enters this repo.
 #
-# CURRENT STATE (as of M5b): SUPublicEDKey has not been configured yet —
-# see Scripts/make-app.sh. This script still refuses to emit an item
-# without a signature (below), so the FEED never carries an unsigned
-# entry. But with no SUPublicEDKey in the shipped plist, Sparkle never
-# reads `sparkle:edSignature` at all — every "Sparkle rejects an unsigned
-# update at INSTALL time" sentence in this file (both above, next to
-# SPARKLE_SIGNATURE, and below, next to the refusal check itself)
-# describes the behaviour ONCE a real key is configured, not today's.
-# Until then, update integrity rests on TLS-to-github.com plus
-# Developer-ID code-signature matching alone; the EdDSA signature this
-# script insists on is generated and published, but not yet checked by
-# any client. See docs/superpowers/notes/release-runbook.md.
+# CURRENT STATE: SUPublicEDKey IS configured in Scripts/make-app.sh, so
+# the signature this script insists on is verified client-side before an
+# update installs. Integrity now rests on three independent things — TLS
+# to github.com, the Developer-ID code-signature match, and this EdDSA
+# signature — rather than the first two alone.
+#
+# That makes the private key load-bearing: if it and the plist's public
+# half ever disagree, updates verify on the machine that built them and
+# fail on every other one. Scripts/generate-sparkle-key.sh reports which
+# key is in the keychain. See docs/superpowers/notes/release-runbook.md.
 #
 # GitHub's own releases.atom is Atom (<feed>/<entry>), not an RSS appcast:
 # Sparkle's SUAppcast parses /rss/channel/item and needs
@@ -226,11 +220,10 @@ fi
 # `sparkle:edSignature="…" length="…"` attribute pair, not a bare
 # signature — a maintainer who runs it without `-p` and pastes the output
 # here would otherwise get a nested, quote-escaped garbage attribute
-# written into the feed without complaint. That failure has NO symptom
-# today (with no SUPublicEDKey configured, nothing reads the attribute at
-# all — see the CURRENT STATE note above) and would only surface once a
-# real key is added, at which point every install would start failing
-# signature verification. Reject the unmistakable shapes of that mistake
+# written into the feed without complaint. With SUPublicEDKey configured
+# (see the CURRENT STATE note above) every install would then fail
+# signature verification against that garbage, so this is a live failure
+# mode, not a latent one. Reject the unmistakable shapes of that mistake
 # outright: a `"` (bare EdDSA base64 never contains one), the literal
 # `sparkle:edSignature` or `length=` substrings, or embedded whitespace/
 # newlines (a single base64 token has none). This is deliberately not a

@@ -89,8 +89,8 @@ time, and only a user who can't reach Apple's servers ever sees it fail.
 
    `Snitt-<version>.zip` is the artifact every remaining step consumes.
 
-5. **Sign the update for Sparkle's own EdDSA check** (once a keypair
-   exists — see "Before the first real release" below):
+5. **Sign the update for Sparkle's own EdDSA check** (see "The EdDSA
+   signing key" below):
 
    ```sh
    SIGNATURE="$(.build/artifacts/sparkle/Sparkle/bin/sign_update -p Snitt-<version>.zip)"
@@ -129,9 +129,9 @@ time, and only a user who can't reach Apple's servers ever sees it fail.
    `appcast.xml` — it's the basename of `SUFeedURL` in `make-app.sh`, and
    Sparkle fetches that literal URL.
 
-   Refuses outright (before writing anything) if `$SIGNATURE` is empty —
-   see "the real situation" below for what that guarantee does and does
-   not currently protect against.
+   Refuses outright (before writing anything) if `$SIGNATURE` is empty.
+   With `SUPublicEDKey` configured, that signature is verified on the
+   client before an update installs — see "The EdDSA signing key" below.
 
 7. **Publish to GitHub Releases.**
 
@@ -145,45 +145,65 @@ time, and only a user who can't reach Apple's servers ever sees it fail.
    is — so the release must be marked "latest" (GitHub's default for a
    new, non-prerelease tag) for existing installs to find it.
 
-## Before the first real release: the EdDSA key situation
+## The EdDSA signing key
 
-`Scripts/make-app.sh`'s Info.plist has **no `SUPublicEDKey`** — not a
-placeholder, entirely absent. Verified against Sparkle's source
-(`SUHost.m` / `SUSignatures.m`): an absent key reads back as
-`SUSigningInputStatusAbsent`, and Sparkle's config check falls back to
-requiring the downloaded update be code-signed to match the installed
-app's Developer ID. On an HTTPS feed with a code-signed build (both true
-here), that fallback does not accept a forged update — but it means
-**Sparkle never reads `sparkle:edSignature` at all.** `make-appcast.sh`
-refusing to emit an unsigned item is a real, enforced guarantee on the
-*feed* — the signature it insists on is genuinely generated and published
-— but it is currently **unenforceable on the client**, because nothing
-checks it. Today, update integrity rests entirely on TLS-to-github.com
-plus Developer-ID code-signature matching, with no EdDSA defense in depth
-and no protection if a release asset were ever replaced by something
-signed with the same identity.
+`SUPublicEDKey` **is** configured in `Scripts/make-app.sh`'s Info.plist,
+so `sparkle:edSignature` is verified on the client before an update
+installs. Integrity rests on three independent things — TLS to
+github.com, the Developer-ID code-signature match, and the EdDSA
+signature — rather than on the first two alone. A release asset replaced
+by something signed with the same Developer ID is now caught.
 
-This is a known, accepted gap for M5b, not a defect to work around here.
-**Before the first real release**, close it:
+The private half lives **only** in the maintainer's login keychain:
 
-1. Run Sparkle's `generate_keys` once, by hand, on the maintainer's own
-   machine. It writes the private key to the login Keychain — never a
-   file, never this repo — and prints the public half.
-2. Paste that public half into `SUPublicEDKey` in `Scripts/make-app.sh`'s
-   Info.plist block.
-3. Rebuild (step 1 above) so the shipped plist actually carries the key.
+| | |
+|---|---|
+| Keychain | `~/Library/Keychains/login.keychain-db` |
+| Service | `https://sparkle-project.org` |
+| Account | `ed25519` |
 
-**Do not run `generate_keys` as part of routine maintenance or tooling
-work on this repo** — it touches the real login keychain and only the
-maintainer, on their own machine, with intent to ship a real key, should
-run it.
+In Keychain Access.app: select **login**, search `sparkle`. The public
+half is not a secret and is committed; the private half must never enter
+this repo.
+
+**Losing the private key is unrecoverable.** Every installed copy of
+Snitt would reject every future update, and the only remedy is shipping a
+new build by hand to each user. Back it up to a password manager:
+
+```bash
+./.build/artifacts/sparkle/Sparkle/bin/generate_keys -x ~/Desktop/snitt-sparkle-private.key
+# copy the contents into a password manager, then:
+rm ~/Desktop/snitt-sparkle-private.key
+```
+
+`Scripts/generate-sparkle-key.sh` reports the existing key, warns if more
+than one exists for the service, and prints the plist line to paste. Run
+it by hand, only with intent to ship — it touches the real login
+keychain, so it is deliberately not part of any build or test path. It
+does not overwrite an existing key.
+
+**If the keychain key and the plist's public half ever disagree**,
+updates verify on the machine that built them and fail on every other
+one — the same failure signature as an unstapled archive, and just as
+invisible locally. `sign_update` and `SUPublicEDKey` must be the same
+keypair.
+
+**Never set `SUPublicEDKey` to an empty string.** Verified against
+Sparkle's source (`SUHost.m` / `SUSignatures.m`): an *absent* key reads
+as `SUSigningInputStatusAbsent` and Sparkle falls back to code-signature
+validation, but an *empty* one decodes to a zero-length `NSData`, reads
+as `SUSigningInputStatusInvalid`, and `SPUUpdater` refuses to start at
+all with `SUNoPublicDSAFoundError`. To ship without a key, delete the two
+plist lines entirely.
 
 ## First-real-release checklist (needs a Developer ID and Apple's servers)
 
 These can't be verified in this repo or in CI — they need real credentials
 and a second machine:
 
-1. `SUPublicEDKey` configured (above).
+1. `sign_update` signs with the same keypair whose public half is in
+   `SUPublicEDKey` — a mismatch verifies locally and fails everywhere
+   else. Check with `Scripts/generate-sparkle-key.sh`.
 2. A real `codesign -dvv` on the signed bundle prints
    `TeamIdentifier=<TEAMID>` (the exact form
    `Scripts/lib/needs-teamless-workaround.sh` compares against), and

@@ -144,9 +144,9 @@ func fullSignUpdateOutputPastedAsSignatureIsRefused() throws {
     // whole `sparkle:edSignature="…" length="…"` attribute pair, not a
     // bare signature. Before this test's corresponding fix, pasting that
     // straight into [signature] produced a nested, quote-escaped garbage
-    // attribute this script emitted without complaint — masked today
-    // (nothing reads it with no SUPublicEDKey configured) but scheduled to
-    // arm itself the moment a real key exists. Verified this fails
+    // attribute this script emitted without complaint. With a real
+    // SUPublicEDKey now configured, every install would fail signature
+    // verification against that garbage. Verified this fails
     // against the wrong implementation it exists to catch: temporarily
     // removed the `case … esac` shape check from make-appcast.sh and
     // re-ran — this test failed because the script exited 0 and emitted

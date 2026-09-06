@@ -18,16 +18,12 @@ public enum DiagnosticCategory: String, Codable, Sendable, CaseIterable {
     case compositor
     case automation
     /// M5b: Sparkle update checks and installs (§13). A failed network
-    /// fetch, a misconfigured feed, or — once the maintainer generates a
-    /// real EdDSA keypair and configures `SUPublicEDKey` (still not done as
-    /// of M5b; see `docs/superpowers/notes/release-runbook.md`) — a
-    /// signature rejection all land here rather than under `automation`,
-    /// since none of them have anything to do with the agent-control
-    /// socket. Today, with no `SUPublicEDKey` configured, a code-signed
-    /// bundle on an https feed is validated by Apple's code signature
-    /// alone — Sparkle never reads `sparkle:edSignature` at all, so it
-    /// cannot reject an update for the key's absence or for a bad
-    /// signature.
+    /// fetch, a misconfigured feed, or an EdDSA signature rejection all
+    /// land here rather than under `automation`, since none of them have
+    /// anything to do with the agent-control socket. `SUPublicEDKey` is
+    /// configured, so signature rejection is a reachable outcome: Sparkle
+    /// verifies `sparkle:edSignature` against that key before installing,
+    /// on top of the Developer-ID code-signature match.
     case updates
 
     /// Whether the person in front of the machine can do something about
