@@ -70,14 +70,19 @@ public struct DiagnosticsReport: Codable, Sendable, Equatable {
 /// nothing upstream of this type ever extracts one in the first place.
 public struct CrashReportSummary: Codable, Sendable, Equatable {
     public let incidentID: String
-    public let timestamp: Date
+    /// `nil` when the header's own `timestamp` string could not be parsed —
+    /// the same "not present" meaning the sibling `String` fields carry with
+    /// their `"unknown"` sentinel. A fabricated date (e.g. the Unix epoch)
+    /// would instead read as a real, absurd timestamp to whoever opens the
+    /// bundle, and would silently sort as the oldest report every time.
+    public let timestamp: Date?
     public let osVersion: String
     public let appVersion: String
     public let bugType: String
 
     public init(
         incidentID: String,
-        timestamp: Date,
+        timestamp: Date?,
         osVersion: String,
         appVersion: String,
         bugType: String

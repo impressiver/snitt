@@ -38,6 +38,18 @@ public enum CrashReportCollector {
             .appendingPathComponent("Library/Logs/DiagnosticReports", isDirectory: true)
     }
 
+    /// How much of an `.ips` file is ever read off disk, in bytes. Real
+    /// header lines observed in the wild run well under 1 KB; this leaves
+    /// generous headroom for a future macOS format without ever reaching
+    /// into the body, which is where the crashing binary's absolute path
+    /// (and, inside it, the user's home directory) lives — and which, for a
+    /// crash with a large stack or a foreign app's own large report, can run
+    /// to many kilobytes or more. Bounding the READ, not just the parse, is
+    /// what keeps `recent(in:)`'s claim true at the I/O level: it does not
+    /// load a foreign app's crash body into Snitt's address space just to
+    /// throw it away, and it does not pay for that I/O either.
+    private static let headerReadLimit = 8 * 1024
+
     /// Reads and redacts up to `limit` of Snitt's own crash reports found in
     /// `directory`, most recent first.
     ///
@@ -52,23 +64,42 @@ public enum CrashReportCollector {
         let summaries = entries
             .filter { $0.pathExtension.lowercased() == "ips" }
             .compactMap { url -> CrashReportSummary? in
-                guard let data = try? Data(contentsOf: url) else { return nil }
-                return parse(data)
+                guard let prefix = readHeaderPrefix(of: url) else { return nil }
+                return parse(prefix)
             }
 
-        return Array(summaries.sorted { $0.timestamp > $1.timestamp }.prefix(limit))
+        // An unparseable timestamp (`nil`) sorts as though it were the
+        // oldest possible report — it must not sort first just because
+        // `nil` compares that way by default in some orderings — but the
+        // field itself stays `nil` rather than a fabricated date.
+        return Array(summaries
+            .sorted { ($0.timestamp ?? .distantPast) > ($1.timestamp ?? .distantPast) }
+            .prefix(limit))
     }
 
-    /// Parses one `.ips` file's HEADER line only, and returns a summary iff
-    /// that header's `bundleID` identifies Snitt's own process.
+    /// Reads at most `headerReadLimit` bytes from the START of `url` — never
+    /// the whole file. A foreign app's `.ips` body (megabytes, in the worst
+    /// case) is never pulled into memory just to be discarded after `parse`
+    /// looks at its first line.
+    private static func readHeaderPrefix(of url: URL) -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        return try? handle.read(upToCount: headerReadLimit)
+    }
+
+    /// Parses one `.ips` file's HEADER line only, out of a bounded prefix of
+    /// the file, and returns a summary iff that header's `bundleID`
+    /// identifies Snitt's own process.
     ///
     /// `.ips` files are two JSON documents separated by a newline: a small
     /// header, then a much larger body report. Only the header is ever
-    /// decoded here. The body is where the crashing binary's absolute path
-    /// (and, inside it, the user's home directory) lives — this
-    /// deliberately never reads far enough to see it, so there is no
-    /// path-stripping step to get wrong or forget: the redaction is that the
-    /// path is never read in the first place.
+    /// decoded here — `readHeaderPrefix` already stopped the read at
+    /// `headerReadLimit` bytes, so the body is never even IN `data`, let
+    /// alone decoded. The body is where the crashing binary's absolute path
+    /// (and, inside it, the user's home directory) lives — this deliberately
+    /// never reads far enough to see it, so there is no path-stripping step
+    /// to get wrong or forget: the redaction is that the path is never read
+    /// in the first place, at the file-I/O level, not merely at parse time.
     ///
     /// The identity check (`header.bundleID == bundleIdentifier`) is
     /// intentionally on `bundleID`, not on `app_name`/`name` — a display
@@ -81,7 +112,7 @@ public enum CrashReportCollector {
 
         return CrashReportSummary(
             incidentID: header.incident_id ?? "unknown",
-            timestamp: parseTimestamp(header.timestamp) ?? Date(timeIntervalSince1970: 0),
+            timestamp: parseTimestamp(header.timestamp),
             osVersion: header.os_version ?? "unknown",
             appVersion: header.app_version ?? "unknown",
             bugType: header.bug_type ?? "unknown"

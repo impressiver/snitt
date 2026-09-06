@@ -67,3 +67,40 @@ func diagnosticsSummaryDescribesTheBundle() {
     #expect(text.contains("1.2.3"))
     #expect(text.contains("granted"))
 }
+
+/// Guards §12's "off vs none found" promise at the text an MCP client
+/// actually reads: `diagnosticsSummary` had no coverage of this distinction
+/// before this pair of tests, so a renderer collapsing "we weren't looking"
+/// into "nothing crashed" would have shipped invisibly.
+@Test("With crash reporting off, the MCP summary says so, not \"0 crash reports\"")
+func diagnosticsSummarySaysOffWhenDisabled() throws {
+    // Discriminates against the exact mutant the review named: hardcoding
+    // `"\(report.crashReports.count) crash report(s)"` unconditionally, which
+    // renders "0 crash report(s)" here — indistinguishable from "opted in,
+    // found nothing".
+    let report = DiagnosticsReport(
+        appVersion: "1.2.3", protocolVersion: 2, generatedAt: Date(),
+        permissions: [:], recentSessions: [], logLines: [],
+        crashReportingEnabled: false, crashReports: [])
+
+    let text = diagnosticsSummary(report, outputPath: "/tmp/diagnostics.json")
+
+    #expect(text.lowercased().contains("off"),
+            "the summary must say collection was off")
+    #expect(!text.contains("0 crash report"),
+            "\"0 crash report(s)\" is indistinguishable from \"nothing crashed\" and must not appear when collection was off")
+}
+
+@Test("With crash reporting on, the MCP summary gives a count, not \"off\"")
+func diagnosticsSummaryGivesCountWhenEnabled() throws {
+    let report = DiagnosticsReport(
+        appVersion: "1.2.3", protocolVersion: 2, generatedAt: Date(),
+        permissions: [:], recentSessions: [], logLines: [],
+        crashReportingEnabled: true, crashReports: [])
+
+    let text = diagnosticsSummary(report, outputPath: "/tmp/diagnostics.json")
+
+    #expect(text.contains("0 crash report"),
+            "collection was ON and found none — that is a different state from \"off\" and must say so")
+    #expect(!text.lowercased().contains("crash reporting off"))
+}

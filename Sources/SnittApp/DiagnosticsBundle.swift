@@ -59,12 +59,21 @@ public enum DiagnosticsBundle {
     /// setting and the real macOS crash-log directory; tests override both
     /// so no test ever touches the real preference domain or
     /// `~/Library/Logs/DiagnosticReports/`.
+    ///
+    /// `collectCrashReports` is the actual collection step, injected rather
+    /// than called inline, so a test can assert it was never INVOKED when
+    /// the setting is off — not merely that its result was discarded. A
+    /// read-then-throw-away refactor (read every `.ips` file regardless,
+    /// then gate only the assignment) would still be a privacy defect even
+    /// though `crashReports` would come out identical; making the read
+    /// itself the thing under test is what catches that shape of mistake.
     public static func write(
         to url: URL,
         auditLogURL: URL,
         sinceMinutes: Int,
         crashReportSettings: CrashReportSettings = .load(),
-        crashReportsDirectory: URL = CrashReportCollector.defaultDirectory()
+        crashReportsDirectory: URL = CrashReportCollector.defaultDirectory(),
+        collectCrashReports: (URL) -> [CrashReportSummary] = { CrashReportCollector.recent(in: $0) }
     ) throws -> DiagnosticsReport {
         let sessions = try AuditLog.recent(sessionLimit, from: auditLogURL)
         let logLines = try recentLogLines(sinceMinutes: sinceMinutes)
@@ -75,11 +84,14 @@ public enum DiagnosticsBundle {
         ]
 
         // §12's opt-in: crash reports are collected only when the setting is
-        // ON, never merely because some exist on disk. `crashReports` stays
+        // ON, never merely because some exist on disk. The `collectCrashReports`
+        // call itself is inside this branch — not hoisted out and gated only
+        // on assignment — so that being off means the collector is never
+        // INVOKED, not just that its result goes unused. `crashReports` stays
         // `[]` when it is off — `crashReportingEnabled` below is what lets a
         // reader tell that apart from "on, and none found".
         let crashReports = crashReportSettings.enabled
-            ? CrashReportCollector.recent(in: crashReportsDirectory)
+            ? collectCrashReports(crashReportsDirectory)
             : []
 
         let report = DiagnosticsReport(

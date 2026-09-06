@@ -68,13 +68,21 @@ func collectsSnittsOwnCrashReport() throws {
     #expect(reports.first?.incidentID == "AAA-111")
 }
 
-@Test("A foreign app's crash report is dropped even though it sits in the same directory")
-func dropsForeignCrashReports() throws {
+@Test("A foreign app's crash report, even one that also NAMES itself Snitt, is dropped")
+func dropsForeignCrashReportsEvenWhenNamedSnitt() throws {
     // The trap this whole feature exists to avoid:
     // `~/Library/Logs/DiagnosticReports/` holds every app's crashes, not
     // just Snitt's. A fixture containing only Snitt reports cannot exercise
     // the filter at all — this one plants a foreign report ALONGSIDE
     // Snitt's own and asserts only the latter survives.
+    //
+    // `writeIPS`'s `appName` defaults to `"Snitt"` and is not overridden
+    // here, so the foreign fixture below is foreign by `bundleID` alone
+    // while still claiming the display name "Snitt" — the same shape
+    // `dropsCrashReportsThatOnlyShareTheDisplayName` targets directly. That
+    // makes this test strictly STRONGER than "two differently-named apps",
+    // not weaker: it is named for what actually distinguishes it from that
+    // sibling test.
     //
     // Verified against the wrong implementation this guards: relaxing
     // `parse`'s `bundleID == bundleIdentifier` check to `true` (accept
@@ -91,6 +99,25 @@ func dropsForeignCrashReports() throws {
     #expect(reports.count == 1, "exactly one of the two on-disk reports is Snitt's own")
     #expect(reports.first?.incidentID == "OURS-1")
     #expect(!reports.contains { $0.incidentID == "FOREIGN-1" })
+}
+
+@Test("An ordinarily-named foreign app's crash report is dropped alongside Snitt's own")
+func dropsOrdinarilyNamedForeignCrashReports() throws {
+    // The plain case `dropsForeignCrashReportsEvenWhenNamedSnitt` no longer
+    // covers once its fixture's foreign report also claimed the "Snitt"
+    // display name: a foreign report that names itself honestly, the
+    // ordinary shape a real browser or password manager's crash takes.
+    let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
+    try writeIPS(in: dir, named: "Snitt-2024-01-01-120000.ips",
+                bundleID: "com.impressiver.snitt", incidentID: "OURS-2")
+    try writeIPS(in: dir, named: "SomeBrowser-2024-01-01-130000.ips",
+                bundleID: "com.example.browser", appName: "SomeBrowser", incidentID: "FOREIGN-2",
+                procPath: "/Users/testuser/Applications/SomeBrowser.app/Contents/MacOS/SomeBrowser")
+
+    let reports = CrashReportCollector.recent(in: dir)
+
+    #expect(reports.count == 1)
+    #expect(reports.first?.incidentID == "OURS-2")
 }
 
 @Test("A foreign report that merely NAMES itself Snitt is still dropped")
@@ -192,7 +219,27 @@ func summaryCarriesHeaderFields() throws {
     #expect(report.appVersion == "2.0.0")
     #expect(report.bugType == "309")
     // 2024-03-15 09:30:00 -0700 == 2024-03-15T16:30:00Z
-    #expect(abs(report.timestamp.timeIntervalSince1970 - 1_710_520_200) < 1)
+    let timestamp = try #require(report.timestamp)
+    #expect(abs(timestamp.timeIntervalSince1970 - 1_710_520_200) < 1)
+}
+
+@Test("An unparseable header timestamp becomes nil, not a fabricated epoch date")
+func unparseableTimestampBecomesNilNotEpoch() throws {
+    // A wrong implementation that falls back to `Date(timeIntervalSince1970: 0)`
+    // puts "1970-01-01T00:00:00Z" into a support bundle, which a reader
+    // would take as a real (absurd) date rather than as "not parsed", and
+    // which would sort ahead of every genuinely old-but-parsed report at the
+    // wrong end. The sibling `String` fields (`osVersion`, `appVersion`,
+    // `bugType`) all fall back to the literal `"unknown"` instead of a
+    // fabricated value in the same situation — `timestamp` must fail the
+    // same way, as `nil`, not as a date.
+    let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
+    try writeIPS(in: dir, named: "Snitt.ips", bundleID: "com.impressiver.snitt",
+                timestamp: "not a real timestamp")
+
+    let report = try #require(CrashReportCollector.recent(in: dir).first)
+
+    #expect(report.timestamp == nil)
 }
 
 @Test("Reports are returned most-recent first")

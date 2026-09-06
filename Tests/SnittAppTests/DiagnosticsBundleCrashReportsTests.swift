@@ -46,21 +46,35 @@ private func writeIPS(in directory: URL, named name: String, bundleID: String?,
 func crashReportingOffCollectsNothing() throws {
     // §12's opt-in, driven end-to-end through the same `write` the app
     // actually calls: collection must be gated on the setting, not merely
-    // possible when a report happens to exist. Verified against the wrong
-    // implementation this guards: a `write` that calls
-    // `CrashReportCollector.recent` unconditionally (ignoring
-    // `crashReportSettings.enabled`) makes this fail — the report would come
-    // back non-empty even with the setting off.
+    // possible when a report happens to exist.
+    //
+    // The discriminating assertion is `collectorWasInvoked` below, not just
+    // `report.crashReports.isEmpty`. A "read every `.ips` file, then discard
+    // the result while off" refactor of `write` would still make
+    // `crashReports` come out empty — an emptiness-only assertion cannot see
+    // that shape of privacy defect. Injecting the collector as a closure and
+    // asserting it was never CALLED is what turns this test's title ("never
+    // reads the crash-report directory's contents") into its actual
+    // assertion. Verified against both wrong implementations: ignoring
+    // `crashReportSettings.enabled` entirely, and reading unconditionally
+    // then gating only the assignment, each make this fail.
     let auditURL = tempURL(); defer { try? FileManager.default.removeItem(at: auditURL) }
     let out = tempURL(); defer { try? FileManager.default.removeItem(at: out) }
     let crashDir = tempDirectory(); defer { try? FileManager.default.removeItem(at: crashDir) }
     try writeIPS(in: crashDir, named: "Snitt.ips", bundleID: "com.impressiver.snitt")
 
+    var collectorWasInvoked = false
     let report = try DiagnosticsBundle.write(
         to: out, auditLogURL: auditURL, sinceMinutes: 5,
         crashReportSettings: CrashReportSettings(enabled: false),
-        crashReportsDirectory: crashDir)
+        crashReportsDirectory: crashDir,
+        collectCrashReports: { directory in
+            collectorWasInvoked = true
+            return CrashReportCollector.recent(in: directory)
+        })
 
+    #expect(!collectorWasInvoked,
+            "the collector must never be called at all while the setting is off")
     #expect(report.crashReportingEnabled == false)
     #expect(report.crashReports.isEmpty,
             "collection must not run at all while the setting is off, even though a report exists on disk")

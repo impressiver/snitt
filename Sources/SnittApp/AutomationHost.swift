@@ -96,6 +96,16 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// directory; production leaves it at its default, `AuditLogLocation.url()`.
     private let auditLogURL: URL
 
+    /// §12's crash-reporting opt-in and the directory it reads from, both
+    /// forwarded verbatim to `DiagnosticsBundle.write`. Injectable for the
+    /// same reason `auditLogURL` is: a test that never overrides them would
+    /// otherwise fall through to `CrashReportSettings.load()` (the real
+    /// `UserDefaults.standard`) and `CrashReportCollector.defaultDirectory()`
+    /// (the real `~/Library/Logs/DiagnosticReports/`) — isolation that holds
+    /// only because of ambient machine state, not because of injection.
+    private let crashReportSettings: @Sendable () -> CrashReportSettings
+    private let crashReportsDirectory: URL
+
     /// Per-session (target, startedAt) the audit trail needs at stop time,
     /// keyed by session id.
     ///
@@ -141,7 +151,9 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
          resolveGit: @escaping GitResolving = { GitContextResolver.resolve(in: $0) },
          now: @escaping @Sendable () -> Date = Date.init,
          watchdogScheduling: @escaping WatchdogScheduling = AutomationHost.realWatchdogScheduling,
-         auditLogURL: URL = AuditLogLocation.url()) {
+         auditLogURL: URL = AuditLogLocation.url(),
+         crashReportSettings: @escaping @Sendable () -> CrashReportSettings = { CrashReportSettings.load() },
+         crashReportsDirectory: URL = CrashReportCollector.defaultDirectory()) {
         self.coordinator = coordinator
         self.settings = settings
         self.onRecordingState = onRecordingState
@@ -149,6 +161,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         self.now = now
         self.watchdogScheduling = watchdogScheduling
         self.auditLogURL = auditLogURL
+        self.crashReportSettings = crashReportSettings
+        self.crashReportsDirectory = crashReportsDirectory
     }
 
     private func pushState(_ state: RecordingState) async {
@@ -314,10 +328,14 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// contains the app's own logs.
     private func diagnosticsExport(outputPath: String) async -> AutomationResponse {
         let url = URL(fileURLWithPath: outputPath)
+        let crashSettings = crashReportSettings()
+        let crashDirectory = crashReportsDirectory
         do {
             let report = try await MainActor.run {
                 try DiagnosticsBundle.write(to: url, auditLogURL: auditLogURL,
-                                           sinceMinutes: Self.diagnosticsSinceMinutes)
+                                           sinceMinutes: Self.diagnosticsSinceMinutes,
+                                           crashReportSettings: crashSettings,
+                                           crashReportsDirectory: crashDirectory)
             }
             return .diagnosticsWritten(report)
         } catch {
