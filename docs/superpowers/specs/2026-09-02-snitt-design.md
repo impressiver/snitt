@@ -370,6 +370,53 @@ Two consequences to design around rather than discover:
 
 Display captures never auto-focus; there is nothing to bring forward.
 
+### 4.14 App shape: a document app that can also live in the menu bar
+
+Snitt is a **standard macOS desktop application** — a regular activation policy,
+a Dock icon, a main menu, a Settings window, and multiple document windows — that
+*additionally* keeps a menu-bar item and a global hotkey.
+
+This corrects a conflation made during M4/M5. §4.11 requires that recording start
+from a keystroke **without a window opening**; that was implemented by making the
+app `.accessory` (menu-bar-only, no Dock icon), with the editor temporarily
+promoting to `.regular` while a window is open and demoting again when the last
+one closes. But "can record without opening a window" never implied "has no
+application shell." One is about what happens when you press the hotkey; the other
+is about what the application *is*. §4.7 already called for a SwiftUI app shell,
+menu bar, and settings — that was the intended shape all along.
+
+The cost of the conflation is not cosmetic. The editor was reachable from exactly
+one place: the end of a recording. **A `.snitt` bundle could be written but never
+reopened** — no document type was registered, no open handler existed, and neither
+the Finder nor a File menu could reach one. The non-destructive document model in
+§4.5 exists so an edit is never final; an app that cannot reopen its own documents
+spends that entire budget and collects none of it.
+
+Requirements:
+
+- **`.regular` activation policy, permanently.** The Dock icon and main menu are
+  always present.
+- **§4.11 is preserved exactly.** The hotkey and the menu-bar item still start and
+  stop recording with no window opening. A Dock icon does not require a window.
+- **The menu-bar item stays.** It is the fast path, not the whole app.
+- **`.snitt` is a registered document type** with an exported UTI, openable from
+  the Finder, from File ▸ Open, and from Open Recent.
+- **Multiple editor windows**, one per open document.
+- **A Settings window** (⌘,) consolidating what M2b–M5b accumulated as individual
+  status-item toggles: agent automation, event logging, automatic update checks,
+  and crash-report collection.
+- **Edits persist.** A trim made in the editor is written to the bundle's EDL. The
+  GUI had no write path at all — `onTrim` mutated an in-memory EDL and re-applied
+  the preview, so the edit looked applied and was discarded on close (D46).
+- **Multi-level undo**, and undo persists too. Autosave makes undo the only way
+  back from an unwanted cut, so the two ship together or neither does.
+- **An export affordance in the GUI.** Export existed only over the CLI and MCP,
+  so a person could record and trim and then not get anything out (D46).
+
+The three-frontend architecture in §6 is unchanged: the GUI remains one frontend
+among three, and the CLI and MCP server continue to drive the same core. This
+decision is about the GUI's own shape, not about its primacy.
+
 ## 5. Consent and privacy
 
 ### 5.1 Window-scoped capture is the default for everyone
@@ -779,6 +826,17 @@ before it is allowed to gate anything. Sampling happens during the existing
   passthrough composition slot, §9)
 - **M5** Packaging: notarization, Sparkle, diagnostics (§12). *(Developer ID
   signing moved earlier — see the M2 note below.)*
+- **M5c** The app shell (§4.14): permanent `.regular` activation, main menu,
+  Settings window, `.snitt` document type + open/Open Recent, multiple editor
+  windows. Added after M5 when real use showed the app had no shell and could not
+  reopen its own documents — see D45. **Gates v0**: §13's first validation
+  question is about the record → trim → share loop, and an editor reachable only
+  at the end of a recording is not that loop
+- **M5d** Durability (§11): finalize on disk-full rather than discarding, offer
+  recovery for an unfinalized bundle at launch, and a retention/output-location
+  policy for bundles accumulating in `~/Desktop`. All three are §11 promises the
+  code never implemented — found by review, not by use, and unlisted anywhere
+  before D47
 - **▶ v0 SHIP — validation gate**
 - **M6** Overlay desirability probe
 - **M7** Custom compositor + overlay rendering *(conditional on M6)*
@@ -1085,6 +1143,27 @@ still needs to re-resolve a stored reference.
 | D44 | `--auto-trim-gaps` removes dead air BETWEEN events; recorded as an unscheduled enhancement, not a milestone item | Most wasted length in a real demo sits mid-recording, not at the bookends. Held back because it needs three things the baseline does not: a generous threshold (waiting on a build is sometimes the content), audio-aware cut points (never cut where either track is above the noise floor), and frame-change detection as well as input events — without which an agent-driven recording, which logs no OS input, would be seen as one long gap and deleted entirely | §8, D23, S1 | Decided | enhancement-needing-its-own-evidence |
 
 `conformance: 2026-09-02` (post-M2a)
+
+### Post-M5 — reversed by real use (2026-09-06)
+
+| # | Decision | Rationale | Rests on | Status | Shape |
+|---|---|---|---|---|---|
+| D45 | **Snitt is a standard desktop app that also lives in the menu bar**, not a menu-bar app that sometimes opens a window. Corrects the `.accessory` shape M4/M5 shipped | The product owner used the built app and named the gap: it is a menu-bar item, not an application. The cause was a conflation — §4.11's "record without opening a window" was implemented as "have no application shell," which it never implied. §4.7 had asked for a shell, a menu bar, and settings from the start. The concrete cost was that a `.snitt` bundle could be written but **never reopened**: no document type, no open handler, and the editor reachable only at the end of a recording. §4.5's non-destructive model pays for reopenability and was collecting none of it. Same evidence class as D42 — real use of the real thing, against a decision that rested on an assumption | Direct user feedback on a running build; §4.5, §4.7, §4.11, §4.14, §13 | Decided | conflation-caught-by-use |
+
+**This gates v0 rather than following it.** §13's first validation question asks
+whether anyone prefers Snitt to `Cmd+Shift+5` for record → trim → share. Testing
+that against a shell the product does not intend to keep risks a "no" that cannot
+be distinguished from a real one — the most expensive kind of negative result,
+since it looks like an answer.
+
+### Post-M5c refinement — adversarial pass (2026-09-06)
+
+| # | Decision | Rationale | Rests on | Status | Shape |
+|---|---|---|---|---|---|
+| D46 | **GUI edits persist, with multi-level undo.** The editor autosaves the EDL to the bundle after each applied change; ⌘Z/⇧⌘Z walk a real undo stack and each step persists too. A GUI **Export** affordance calls the existing `CompositionBuilder`/`MovieExporter` path, and exporting re-copies to the clipboard, superseding the stale stop-time copy | Six independent sources — a Phase 2 code check plus five personas reasoning from different mandates and unable to see one another — found the same defect: `EditorWindowController.onTrim` appended to an in-memory `edl.cuts` and re-applied the preview, so a trim **looked** applied and was discarded on window close. The only EDL writers were `Recorder.swift:288` (full-range, at capture) and `AutomationHost.swift:387` (the CLI). Export was likewise CLI/MCP-only. §13's first validation question is the record → trim → share loop; it was unanswerable through the GUI. Autosave alone would be unsafe — it commits a mistaken cut instantly — so undo is part of this decision rather than a follow-on, and undo persists for the same reason the trim does | `EditorWindowController.swift:79-84`; `PreviewController.swift:107-121`; grep: no EDL write in `Sources/SnittApp/` outside `AutomationHost`; §4.5, §4.14, §13 | Decided | capability-reachable-by-machines-not-people |
+| D47 | **A spec promise must map to a test, a task, or an explicit "not yet."** Checked mechanically, so a normative claim cannot silently go unimplemented | Three verified instances of the same shape: §4.7's app shell went unbuilt through five milestones and was caught only when the product owner used the app; §11's "disk full mid-recording: finalize the partial file" and "unfinalized bundle found at launch: offer recovery" are both absent from the code and appeared nowhere on the roadmap. Under this project's own recurrence rule, three hits means patching instances is off the table and the class needs a structural guard. The spec is the binding authority for every plan, so a promise it makes that nothing implements is a defect in the authority itself | §4.7, §11, §4.14, D45; Operator + Platform persona findings, both code-verified | Decided | promise-with-no-conformance-check |
+
+`conformance: 2026-09-06` (post-M5c refinement)
 
 ### Termination
 
