@@ -14,7 +14,16 @@ import AppKit
 enum AppShell {
     static func install(into app: NSApplication) {
         app.setActivationPolicy(.regular)
-        app.mainMenu = buildMainMenu()
+        let menu = buildMainMenu()
+        app.mainMenu = menu
+        // Without these, AppKit has no menu to auto-populate: the Window
+        // menu's own list of open windows and the Help menu's search field
+        // both depend on the app knowing which of `menu`'s items are theirs.
+        // Which windows actually show up there — and whether "Bring All to
+        // Front" needs more than this — is Task 4/6 scope; unassigned would
+        // leave that unasserted either way, so it's assigned regardless.
+        app.windowsMenu = menu.item(withTitle: "Window")?.submenu
+        app.helpMenu = menu.item(withTitle: "Help")?.submenu
     }
 
     /// Built separately from `install` so tests can inspect the structure

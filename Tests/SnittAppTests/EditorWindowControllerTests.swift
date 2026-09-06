@@ -203,8 +203,8 @@ struct EditorWindowControllerTests {
         // The path a real user actually takes. `close()` is the programmatic
         // door; clicking the window's close button arrives through
         // `windowWillClose(_:)` instead, and if that path skips teardown the
-        // app strands a Dock icon with no windows and keeps playing audio the
-        // user cannot see.
+        // window's audio keeps playing with nothing on screen to show for it,
+        // and `openWindowCount` stays inflated for the rest of the run.
         //
         // Task 4's report said this needed a live window server. It does not:
         // `windowWillClose(_:)` is public and `teardown()` is idempotent, so
