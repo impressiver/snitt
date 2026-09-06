@@ -501,18 +501,7 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     /// be built would be exactly backwards.
     private func openEditor(for bundle: SnittBundle) async {
         do {
-            let edl = (try? EditDecisionList.read(from: bundle)) ?? .fullRange()
-            let events = try EventLog.read(from: bundle).events
-            let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
-            let jumpPoints = MarkerJumpPoints.compute(events: events, keptRanges: built.keptRanges)
-            await MainActor.run {
-                let controller = PreviewController(built: built, jumpPoints: jumpPoints,
-                                                    bundle: bundle, scale: 1.0)
-                let editor = EditorWindowController(controller: controller,
-                                                    title: bundle.url.lastPathComponent,
-                                                    edl: edl, events: events)
-                editor.show()
-            }
+            _ = try await DocumentOpener.open(bundle: bundle)
         } catch {
             // The bundle's FILENAME is redacted deliberately: BundleNaming
             // derives it from the git branch and commit, so a branch called
