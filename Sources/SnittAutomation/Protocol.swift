@@ -34,6 +34,14 @@ public enum AutomationProtocol {
     /// reads back only the calling process's own log entries, so a CLI-side
     /// implementation would bundle the CLI's own handful of lines and none
     /// of the app's.
+    ///
+    /// v2 was amended a sixth time to add `crashReportingEnabled` and
+    /// `crashReports` to `DiagnosticsReport` (§12's opt-in local crash
+    /// reporting), for the same reason: still no released v2 client. Both
+    /// fields are non-optional, so a NEW client decoding an OLD app's
+    /// response would fail `keyNotFound` — acceptable only because there is
+    /// no old client to break; a real v2 release would need this amendment
+    /// to be additive-and-optional instead, or a bump.
     public static let version = 2
 }
 

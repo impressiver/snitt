@@ -112,7 +112,9 @@ private func makeHost(coordinator: FakeCoordinator,
             onRecordingState: { state in recorder.record(state) },
             now: now,
             watchdogScheduling: watchdog.scheduling(),
-            auditLogURL: auditLogURL)
+            auditLogURL: auditLogURL,
+            crashReportSettings: { CrashReportSettings(enabled: false) },
+            crashReportsDirectory: scratchCrashReportsDirectory())
     }
     return AutomationHost(
         coordinator: coordinator,
@@ -120,7 +122,24 @@ private func makeHost(coordinator: FakeCoordinator,
                                   fullDisplayAllowed: fullDisplayAllowed) },
         onRecordingState: { state in recorder.record(state) },
         now: now,
-        auditLogURL: auditLogURL)
+        auditLogURL: auditLogURL,
+        // Structural, not ambient: every `makeHost` caller — and therefore
+        // every diagnostics-export test in this file — is isolated from the
+        // real `UserDefaults.standard` crash-reporting key and the real
+        // `~/Library/Logs/DiagnosticReports/` by construction, not because
+        // the key happens to be absent on the machine running the suite.
+        crashReportSettings: { CrashReportSettings(enabled: false) },
+        crashReportsDirectory: scratchCrashReportsDirectory())
+}
+
+/// A directory that is never created. `CrashReportCollector.recent(in:)`
+/// treats a missing directory the same as an empty one (no crash has ever
+/// been written there), so this is enough to guarantee no test in this file
+/// can ever read a real `.ips` file even if a future change flipped
+/// `crashReportSettings` on by mistake.
+private func scratchCrashReportsDirectory() -> URL {
+    FileManager.default.temporaryDirectory
+        .appendingPathComponent("AutomationHostTests-crashreports-\(UUID().uuidString)", isDirectory: true)
 }
 
 /// A deterministic stand-in for `Date()`, so a watchdog test can make

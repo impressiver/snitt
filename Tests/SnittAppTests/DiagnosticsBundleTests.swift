@@ -11,6 +11,21 @@ private func tempURL() -> URL {
         .appendingPathComponent("DiagnosticsBundleTests-\(UUID().uuidString)")
 }
 
+/// A directory that is never created, passed to every `DiagnosticsBundle.write`
+/// call in this file alongside `CrashReportSettings(enabled: false)` below.
+///
+/// None of these tests are about crash reporting, so isolation from the real
+/// `~/Library/Logs/DiagnosticReports/` must be structural, not ambient: a
+/// `write` call here that omitted both overrides would fall through to
+/// `CrashReportSettings.load()` (the real `UserDefaults.standard`) and
+/// `CrashReportCollector.defaultDirectory()` (the real crash-log directory),
+/// and would happen to be safe only because the key is absent on the machine
+/// running the suite.
+private func neverCreatedCrashDirectory() -> URL {
+    FileManager.default.temporaryDirectory
+        .appendingPathComponent("DiagnosticsBundleTests-crashreports-\(UUID().uuidString)")
+}
+
 @MainActor
 @Test("The report carries versions, permissions and recent sessions")
 func reportHasTheSpecifiedSections() throws {
@@ -19,7 +34,9 @@ func reportHasTheSpecifiedSections() throws {
                                     startedAt: Date()), to: auditURL)
     let out = tempURL(); defer { try? FileManager.default.removeItem(at: out) }
 
-    let report = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5)
+    let report = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5,
+        crashReportSettings: CrashReportSettings(enabled: false),
+        crashReportsDirectory: neverCreatedCrashDirectory())
 
     #expect(!report.appVersion.isEmpty)
     #expect(report.protocolVersion > 0)
@@ -49,7 +66,9 @@ func exportCarriesDurationAndReadableDates() throws {
                         to: auditURL)
     let out = tempURL(); defer { try? FileManager.default.removeItem(at: out) }
 
-    let report = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5)
+    let report = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5,
+        crashReportSettings: CrashReportSettings(enabled: false),
+        crashReportsDirectory: neverCreatedCrashDirectory())
 
     let finished = try #require(report.recentSessions.last { $0.outcome == "completed" })
     #expect(finished.durationSeconds == 42)
@@ -80,7 +99,9 @@ func bundleCapturesOurOwnLogs() throws {
 
     let auditURL = tempURL(); defer { try? FileManager.default.removeItem(at: auditURL) }
     let out = tempURL(); defer { try? FileManager.default.removeItem(at: out) }
-    let report = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5)
+    let report = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5,
+        crashReportSettings: CrashReportSettings(enabled: false),
+        crashReportsDirectory: neverCreatedCrashDirectory())
 
     // The discriminating assertion. An implementation that writes versions
     // and permissions but no logs passes every other test here, and is
@@ -113,7 +134,9 @@ func bundleExcludesForeignSubsystemLogs() throws {
 
     let auditURL = tempURL(); defer { try? FileManager.default.removeItem(at: auditURL) }
     let out = tempURL(); defer { try? FileManager.default.removeItem(at: out) }
-    let report = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5)
+    let report = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5,
+        crashReportSettings: CrashReportSettings(enabled: false),
+        crashReportsDirectory: neverCreatedCrashDirectory())
 
     #expect(report.logLines.contains { $0.contains(ours) },
             "Snitt's own log lines must still reach the bundle")
@@ -129,7 +152,9 @@ func noSessionsStillExports() throws {
     // Support bundles are requested most often by people who have never run
     // an agent session. Failing here would deny diagnostics to exactly the
     // users most likely to need them.
-    let report = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5)
+    let report = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5,
+        crashReportSettings: CrashReportSettings(enabled: false),
+        crashReportsDirectory: neverCreatedCrashDirectory())
     #expect(report.recentSessions.isEmpty)
     #expect(FileManager.default.fileExists(atPath: out.path))
 }
@@ -139,7 +164,9 @@ func noSessionsStillExports() throws {
 func writtenFileParsesBack() throws {
     let auditURL = tempURL(); defer { try? FileManager.default.removeItem(at: auditURL) }
     let out = tempURL(); defer { try? FileManager.default.removeItem(at: out) }
-    let report = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5)
+    let report = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5,
+        crashReportSettings: CrashReportSettings(enabled: false),
+        crashReportsDirectory: neverCreatedCrashDirectory())
 
     // A support engineer has to read this. A file that exists but is not
     // parseable is a worse outcome than no file, because it looks like
@@ -174,7 +201,9 @@ func bundleRedactsSessionTargets() throws {
                                     startedAt: Date()), to: auditURL)
     let out = tempURL(); defer { try? FileManager.default.removeItem(at: out) }
 
-    let report = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5)
+    let report = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5,
+        crashReportSettings: CrashReportSettings(enabled: false),
+        crashReportsDirectory: neverCreatedCrashDirectory())
 
     // The redaction must survive to the WRITTEN file, not just the in-memory
     // report — the file is the artefact that leaves the machine.
@@ -215,7 +244,9 @@ func bundleOmitsRecordingFilenames() throws {
 
     let auditURL = tempURL(); defer { try? FileManager.default.removeItem(at: auditURL) }
     let out = tempURL(); defer { try? FileManager.default.removeItem(at: out) }
-    _ = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5)
+    _ = try DiagnosticsBundle.write(to: out, auditLogURL: auditURL, sinceMinutes: 5,
+        crashReportSettings: CrashReportSettings(enabled: false),
+        crashReportsDirectory: neverCreatedCrashDirectory())
 
     let written = try String(contentsOf: out, encoding: .utf8)
     #expect(!written.contains(sentinel),
@@ -281,7 +312,9 @@ func bundleOmitsErrorFilePaths() async throws {
     }
 
     let out = tempURL(); defer { try? FileManager.default.removeItem(at: out) }
-    _ = try DiagnosticsBundle.write(to: out, auditLogURL: auditLogURL, sinceMinutes: 5)
+    _ = try DiagnosticsBundle.write(to: out, auditLogURL: auditLogURL, sinceMinutes: 5,
+        crashReportSettings: CrashReportSettings(enabled: false),
+        crashReportsDirectory: neverCreatedCrashDirectory())
 
     let written = try String(contentsOf: out, encoding: .utf8)
     #expect(!written.contains(sentinel),
@@ -312,8 +345,12 @@ func targetHashesAreSaltedPerExport() throws {
 
     let outA = tempURL(); defer { try? FileManager.default.removeItem(at: outA) }
     let outB = tempURL(); defer { try? FileManager.default.removeItem(at: outB) }
-    let a = try DiagnosticsBundle.write(to: outA, auditLogURL: auditURL, sinceMinutes: 5)
-    let b = try DiagnosticsBundle.write(to: outB, auditLogURL: auditURL, sinceMinutes: 5)
+    let a = try DiagnosticsBundle.write(to: outA, auditLogURL: auditURL, sinceMinutes: 5,
+        crashReportSettings: CrashReportSettings(enabled: false),
+        crashReportsDirectory: neverCreatedCrashDirectory())
+    let b = try DiagnosticsBundle.write(to: outB, auditLogURL: auditURL, sinceMinutes: 5,
+        crashReportSettings: CrashReportSettings(enabled: false),
+        crashReportsDirectory: neverCreatedCrashDirectory())
 
     let targetsA = a.recentSessions.map(\.target)
     #expect(targetsA.count == 2)
