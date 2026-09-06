@@ -1,9 +1,5 @@
 import Foundation
 
-public enum SnittDocument {
-    public static let version = "0.1.0"
-}
-
 public enum SnittBundleError: Error, Equatable {
     case notADirectory
     case missingCapture

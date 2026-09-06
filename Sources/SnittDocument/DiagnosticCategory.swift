@@ -17,6 +17,14 @@ public enum DiagnosticCategory: String, Codable, Sendable, CaseIterable {
     case capture
     case compositor
     case automation
+    /// M5b: Sparkle update checks and installs (§13). A failed network
+    /// fetch, a misconfigured feed, or an EdDSA signature rejection all
+    /// land here rather than under `automation`, since none of them have
+    /// anything to do with the agent-control socket. `SUPublicEDKey` is
+    /// configured, so signature rejection is a reachable outcome: Sparkle
+    /// verifies `sparkle:edSignature` against that key before installing,
+    /// on top of the Developer-ID code-signature match.
+    case updates
 
     /// Whether the person in front of the machine can do something about
     /// it. A permission denial has a System Settings pane; a compositor
@@ -25,7 +33,7 @@ public enum DiagnosticCategory: String, Codable, Sendable, CaseIterable {
     public var isUserActionable: Bool {
         switch self {
         case .permission, .disk: return true
-        case .capture, .compositor, .automation: return false
+        case .capture, .compositor, .automation, .updates: return false
         }
     }
 }

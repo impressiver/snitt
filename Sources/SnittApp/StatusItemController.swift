@@ -104,6 +104,30 @@ final class StatusItemController: NSObject {
         menu.addItem(eventsItem)
         menu.addItem(.separator())
 
+        // A manual check must always be available regardless of the
+        // automatic-checks setting — the user clicking this IS the consent
+        // §5 requires for an update check to happen at all.
+        let checkForUpdatesItem = NSMenuItem(title: "Check for Updates…",
+                                             action: #selector(checkForUpdatesSelected),
+                                             keyEquivalent: "")
+        checkForUpdatesItem.target = self
+        menu.addItem(checkForUpdatesItem)
+
+        // Ruling R3's third clause ("turning the setting off must stop
+        // future automatic checks") governs nothing without a way to turn
+        // it ON in the first place — Sparkle's own permission prompt never
+        // appears, because the plist's `SUEnableAutomaticChecks` cold-start
+        // default suppresses it permanently (see `startUpdateCycle`'s
+        // `shouldPrompt` check). This is the only route by which a user can
+        // ever opt in.
+        let automaticUpdatesItem = NSMenuItem(title: "Automatically check for updates",
+                                              action: #selector(toggleAutomaticUpdateChecks),
+                                              keyEquivalent: "")
+        automaticUpdatesItem.target = self
+        automaticUpdatesItem.state = automaticUpdateChecksEnabled ? .on : .off
+        menu.addItem(automaticUpdatesItem)
+        menu.addItem(.separator())
+
         let quitItem = NSMenuItem(title: "Quit Snitt",
                                   action: #selector(quitSelected),
                                   keyEquivalent: "q")
@@ -117,6 +141,23 @@ final class StatusItemController: NSObject {
 
     @objc private func quitSelected() {
         onQuit?()
+    }
+
+    /// Invoked when the user selects "Check for Updates…" from the menu.
+    var onCheckForUpdates: (() -> Void)?
+
+    @objc private func checkForUpdatesSelected() {
+        onCheckForUpdates?()
+    }
+
+    /// Mirrors the persisted setting so the menu can show a checkmark.
+    var automaticUpdateChecksEnabled = false
+
+    /// Invoked when the user toggles automatic update checks from the menu.
+    var onToggleAutomaticUpdateChecks: ((Bool) -> Void)?
+
+    @objc private func toggleAutomaticUpdateChecks() {
+        onToggleAutomaticUpdateChecks?(!automaticUpdateChecksEnabled)
     }
 
     /// Mirrors the persisted setting so the menu can show a checkmark.
