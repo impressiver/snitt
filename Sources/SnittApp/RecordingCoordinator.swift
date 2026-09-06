@@ -124,8 +124,11 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     /// `RecorderTests.finalizationFailureSurfaces`.
     private var corruptCaptureAfterStopForTesting = false
 
-    private static let log = Logger(subsystem: "com.impressiver.snitt",
-                                    category: "recording-coordinator")
+    // `.compositor`, not `.capture`: the only site using this logs a failure
+    // to BUILD THE PREVIEW after a recording finished successfully. Nothing
+    // was being captured when it happened, and telling a support engineer
+    // "capture fault" sends them to look at the recorder.
+    private static let log = SnittLog.logger(.compositor, target: "SnittApp")
 
     public init(pickerResolver: TargetResolver,
                 cachedResolverFactory: @escaping @Sendable (TargetReference) -> TargetResolver,
@@ -504,7 +507,28 @@ public actor RecordingCoordinator: AgentRecordingControlling {
                 editor.show()
             }
         } catch {
-            Self.log.error("Could not open the editor for \(bundle.url.lastPathComponent, privacy: .public): \(String(describing: error), privacy: .public)")
+            // The bundle's FILENAME is redacted deliberately: BundleNaming
+            // derives it from the git branch and commit, so a branch called
+            // `feat/acme-corp-integration` would name a customer or an
+            // unreleased feature — and this line is collected verbatim into
+            // `snitt diagnostics export`, which people attach to public
+            // support threads (§5). The error itself is the diagnostic value;
+            // the filename only correlates, and the operator can see it
+            // unredacted in Console on their own machine.
+            // NOT `String(describing: error)`: a Cocoa NSError renders its
+            // userInfo, which carries NSFilePath and NSURL — the FULL
+            // ABSOLUTE PATH, including the machine's username and the
+            // branch-derived bundle name (BundleNaming, M3a). Measured:
+            //   describing:    …UserInfo={NSFilePath=/Users/ian/…/feat-acme-corp-…}
+            //   localized:     The file “edit.json” couldn’t be opened…
+            // So the first route leaked exactly what redacting the filename
+            // from this message was meant to stop, and this line is
+            // collected verbatim into `snitt diagnostics export` (§5).
+            //
+            // domain+code is the precise identity a support engineer wants,
+            // and localizedDescription names only fixed sidecar filenames.
+            let ns = error as NSError
+            Self.log.error("Could not open the editor: \(ns.domain, privacy: .public) \(ns.code, privacy: .public) \(error.localizedDescription, privacy: .public)")
         }
     }
 

@@ -172,6 +172,30 @@ func trimRejectsInvertedRange() {
             .isFailure)
 }
 
+@Test("diagnostics export parses and carries the raw --out value")
+func diagnosticsExportParses() {
+    // Asserts the VALUE reached the command, not merely that parsing
+    // succeeded — a parser that accepts `--out` and drops it (returning,
+    // say, `.diagnosticsExport(outputPath: "")`) would pass a
+    // success-only assertion. This is `main.swift`'s job to resolve, not
+    // the parser's — see `requestBody(for:currentDirectory:)` and
+    // `relativeOutIsResolved` in `Tests/SnittCLITests`.
+    guard case .success(.diagnosticsExport(let outputPath)) =
+        CommandLineParser.parse(["diagnostics", "export", "--out", "d.json"])
+    else { Issue.record("parse failed"); return }
+    #expect(outputPath == "d.json")
+}
+
+@Test("diagnostics export needs --out")
+func diagnosticsExportNeedsOut() {
+    #expect(CommandLineParser.parse(["diagnostics", "export"]).isFailure)
+}
+
+@Test("An unknown diagnostics subcommand is refused")
+func diagnosticsUnknownSubcommandRefused() {
+    #expect(CommandLineParser.parse(["diagnostics", "wipe"]).isFailure)
+}
+
 private extension Result {
     var isFailure: Bool { if case .failure = self { return true }; return false }
 }

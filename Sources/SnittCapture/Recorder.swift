@@ -32,8 +32,13 @@ public actor Recorder {
     /// was previously unreachable from any test at all.
     private(set) var inputEvents: InputEventMonitor?
 
-    private static let log = Logger(subsystem: "com.impressiver.snitt",
-                                    category: "recorder")
+    // One logger PER CATEGORY, not per file. `Logger`'s category is fixed at
+    // construction, while `DiagnosticCategory` names the KIND OF FAULT — so a
+    // single cached logger stamps every message in the file with whichever
+    // category happened to be chosen, and §12's "error categories are
+    // distinguishable" quietly stops being true.
+    private static let permissionLog = SnittLog.logger(.permission, target: "SnittCapture")
+    private static let captureLog = SnittLog.logger(.capture, target: "SnittCapture")
 
     /// How the recorder READS the Input Monitoring grant.
     ///
@@ -123,7 +128,7 @@ public actor Recorder {
         // flags any file that preflights a service without also requesting it,
         // and the request belongs in the app's toggle, not in the recorder.
         guard isInputMonitoringGranted() else {
-            Self.log.error("Input event logging is enabled but Input Monitoring is not granted; recording without it. events.json will contain markers only.")
+            Self.permissionLog.error("Input event logging is enabled but Input Monitoring is not granted; recording without it. events.json will contain markers only.")
             return
         }
 
@@ -153,7 +158,7 @@ public actor Recorder {
             // metadata field: the recording itself is fine and must not be
             // aborted, and the honest signal the user acts on is the menu
             // toggle, which no longer stays checked after a refused grant.
-            Self.log.error("Input event tap failed to install despite the grant reading as present; recording without it.")
+            Self.captureLog.error("Input event tap failed to install despite the grant reading as present; recording without it.")
             return
         }
         inputEvents = monitor

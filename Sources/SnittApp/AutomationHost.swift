@@ -1,4 +1,5 @@
 import Foundation
+import os
 import SnittAutomation
 import SnittCapture
 import SnittDocument
@@ -18,6 +19,29 @@ import SnittExport
 /// to the same `StatusItemController.update(_:)` the hotkey uses. Without it an
 /// agent recording runs with the menu bar showing idle, and §5.3's kill switch
 /// is a control nobody has a reason to click.
+/// Where the agent-session audit log lives on disk in production.
+///
+/// Named once so the two sides that must agree on it — `AutomationHost`,
+/// which appends to it below, and whatever wires
+/// `DiagnosticsBundle.write(auditLogURL:)` into production (neither Task 4
+/// nor this task owns that wiring) — can never drift onto two different
+/// files. Get this wrong and diagnostics reads an empty log while sessions
+/// are audited elsewhere: the M4a `AudioTrackOrder` shape, applied here.
+///
+/// Application Support, beside `SocketPath`'s socket and `TargetStore`'s
+/// cache, for the same reason those two use it: per-user and not writable
+/// by another account on a shared machine.
+enum AuditLogLocation {
+    static func url() -> URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory,
+                                            in: .userDomainMask)[0]
+            .appendingPathComponent("Snitt", isDirectory: true)
+        try? FileManager.default.createDirectory(at: base,
+                                                 withIntermediateDirectories: true)
+        return base.appendingPathComponent("audit.jsonl")
+    }
+}
+
 final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// Pushes recording state at the menu bar. `@MainActor` because that is
     /// where `StatusItemController` lives; deliberately not `@Sendable`, so it
@@ -67,6 +91,35 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     private let registry = SessionRegistry()
     private var server: AutomationServer?
 
+    /// Where §12's audit trail is written. Injectable so tests write to a
+    /// scratch file rather than a real machine's Application Support
+    /// directory; production leaves it at its default, `AuditLogLocation.url()`.
+    private let auditLogURL: URL
+
+    /// Per-session (target, startedAt) the audit trail needs at stop time,
+    /// keyed by session id.
+    ///
+    /// Not sourced from `SessionRegistry`: it tracks only the cap and the id,
+    /// never the target name the coordinator resolved. A second, purpose-built
+    /// store is smaller than widening the registry's contract for one caller.
+    private let auditSessions = AuditSessions()
+
+    private static let log = SnittLog.logger(.automation, target: "SnittApp")
+
+    /// §12's three shapes an agent session can end in. Recording only "ended"
+    /// makes a cap-terminated session indistinguishable from a clean stop —
+    /// exactly the fact an incident review most needs (§5.3).
+    private enum AuditOutcome {
+        static let completed = "completed"
+        static let capped = "capped"
+        static let failed = "failed"
+        /// A person ended an agent's recording from the menu bar (§5.3's
+        /// kill switch). Distinct from `completed` on purpose: an incident
+        /// review needs to see that a human intervened, not that the agent
+        /// finished normally.
+        static let stoppedByHuman = "stoppedByHuman"
+    }
+
     /// The clock the registry's expiry checks are measured against.
     ///
     /// Injectable for the same reason `watchdogScheduling` is: a test that
@@ -87,18 +140,77 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
          onRecordingState: @escaping RecordingStateSink = { _ in },
          resolveGit: @escaping GitResolving = { GitContextResolver.resolve(in: $0) },
          now: @escaping @Sendable () -> Date = Date.init,
-         watchdogScheduling: @escaping WatchdogScheduling = AutomationHost.realWatchdogScheduling) {
+         watchdogScheduling: @escaping WatchdogScheduling = AutomationHost.realWatchdogScheduling,
+         auditLogURL: URL = AuditLogLocation.url()) {
         self.coordinator = coordinator
         self.settings = settings
         self.onRecordingState = onRecordingState
         self.resolveGit = resolveGit
         self.now = now
         self.watchdogScheduling = watchdogScheduling
+        self.auditLogURL = auditLogURL
     }
 
     private func pushState(_ state: RecordingState) async {
         let sink = onRecordingState
         await MainActor.run { sink(state) }
+    }
+
+    /// Appends `record`, never letting the append fail the recording it
+    /// describes: a session that recorded successfully but could not be
+    /// audited must still succeed. §12 wants the trail; it is not permitted
+    /// to become a new way for a recording to fail.
+    private func appendAudit(_ record: AuditRecord) {
+        do {
+            try AuditLog.append(record, to: auditLogURL)
+        } catch {
+            // NOT `String(describing: error)`: a Cocoa NSError renders its
+            // userInfo, which carries NSFilePath and NSURL — the FULL
+            // ABSOLUTE PATH, including the machine's username. In production
+            // `auditLogURL` is `~/Library/Application Support/Snitt/audit.jsonl`,
+            // so any disk-full, sandbox or permission fault would ship the
+            // username into a file people attach to public support threads
+            // (§5). domain+code is the precise identity a support engineer
+            // wants, and localizedDescription names only fixed sidecar files.
+            // See the identical reasoning at RecordingCoordinator.swift.
+            let ns = error as NSError
+            Self.log.error(
+                "Could not write an audit record for session \(record.sessionID, privacy: .public): \(ns.domain, privacy: .public) \(ns.code, privacy: .public) \(error.localizedDescription, privacy: .public)")
+        }
+    }
+
+    /// Writes the START half of §12's audit trail. Only ever called from
+    /// `start(_:)`'s `.started` arm, which is reachable exclusively through
+    /// the automation socket — every session `AutomationHost` opens is
+    /// agent-initiated by construction, so no `isAgent` check is needed here
+    /// the way `RecordingCoordinator.initiator(isAgent:)` needs one for
+    /// bundle metadata, which also covers the hotkey path.
+    ///
+    /// Since `AuditLog` is append-only JSONL, this is the FIRST of two
+    /// records sharing `sessionID` — `recordSessionEnd` appends the second
+    /// once the session ends, rather than rewriting this one in place.
+    private func recordSessionStart(sessionID: String, target: String) async {
+        let startedAt = now()
+        await auditSessions.remember(sessionID, target: target, startedAt: startedAt)
+        appendAudit(AuditRecord(sessionID: sessionID,
+                                target: target,
+                                initiator: Initiator.agent.rawValue,
+                                startedAt: startedAt))
+    }
+
+    /// Writes the END half: a second record, same `sessionID`, with
+    /// `endedAt`/`outcome` filled in. A no-op if this session was never
+    /// remembered by `recordSessionStart` (there is nothing true to say about
+    /// its start), which is also how a human's own recording — which never
+    /// passes through `start(_:)` at all — can never produce an audit line.
+    private func recordSessionEnd(sessionID: String, outcome: String) async {
+        guard let session = await auditSessions.forget(sessionID) else { return }
+        appendAudit(AuditRecord(sessionID: sessionID,
+                                target: session.target,
+                                initiator: Initiator.agent.rawValue,
+                                startedAt: session.startedAt,
+                                endedAt: now(),
+                                outcome: outcome))
     }
 
     /// Forgets any agent session, without touching the coordinator.
@@ -109,7 +221,15 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// a person ended from the menu bar.
     func clearAgentSession() async {
         cancelWatchdog()
-        await registry.closeAny()
+        // Record the end BEFORE forgetting the id: an agent session stopped
+        // from the menu bar is the human kill switch (§5.3) acting on work
+        // nobody was watching, and an audit that shows its start with no end
+        // reads as still running. `recordSessionEnd` is a no-op for a session
+        // that was never audited, so a human's own recording still writes
+        // nothing.
+        if let closed = await registry.closeAny() {
+            await recordSessionEnd(sessionID: closed, outcome: AuditOutcome.stoppedByHuman)
+        }
     }
 
     private func cancelWatchdog() {
@@ -170,6 +290,41 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         case .export(let bundlePath, let format, let outputPath, let scale, let chapters, let maxSizeBytes):
             return await export(bundlePath: bundlePath, format: format, outputPath: outputPath,
                                 scale: scale, chapters: chapters, maxSizeBytes: maxSizeBytes)
+
+        case .diagnostics(let outputPath):
+            return await diagnosticsExport(outputPath: outputPath)
+        }
+    }
+
+    /// How far back `snitt diagnostics export` reads the log and audit
+    /// trail, in minutes.
+    ///
+    /// Not tunable by the client (`.diagnostics` carries only `outputPath`):
+    /// §12's self-review names this value as untuned and expects it to be
+    /// wrong until real support threads say otherwise. 24 hours is picked as
+    /// long enough to span "it worked yesterday, not today" without making
+    /// every bundle enormous on a machine that has been recording all week.
+    private static let diagnosticsSinceMinutes = 24 * 60
+
+    /// Assembles and writes §12's support bundle IN THE APP, not the client
+    /// (see `AutomationProtocol.version`'s fifth amendment and
+    /// `DiagnosticsBundle`'s doc comment): `OSLogStore(scope:
+    /// .currentProcessIdentifier)` reads back only the calling process's own
+    /// log entries (spike S8), so only the app can assemble a bundle that
+    /// contains the app's own logs.
+    private func diagnosticsExport(outputPath: String) async -> AutomationResponse {
+        let url = URL(fileURLWithPath: outputPath)
+        do {
+            let report = try await MainActor.run {
+                try DiagnosticsBundle.write(to: url, auditLogURL: auditLogURL,
+                                           sinceMinutes: Self.diagnosticsSinceMinutes)
+            }
+            return .diagnosticsWritten(report)
+        } catch {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "Could not write the diagnostics bundle.",
+                hint: String(describing: error)))
         }
     }
 
@@ -513,6 +668,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         case .started(let name, _):
             await pushState(.recording(startedAt: Date()))
             armWatchdog(sessionID: sessionID, after: maxDuration)
+            await recordSessionStart(sessionID: sessionID, target: name)
             return .started(sessionID: sessionID, target: name)
         default:
             try? await registry.close(sessionID)
@@ -611,6 +767,11 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             // sees `active == nil`, and STARTS a new one through the picker.
             try? await registry.close(sessionID)
             await pushState(.idle)
+            // `.capped`, not `.completed`: this is the ONLY path that ends a
+            // session by force rather than by request, and it is §5's safety
+            // mechanism for an orphaned agent — the fact an incident review
+            // most needs, not just "ended".
+            await recordSessionEnd(sessionID: sessionID, outcome: AuditOutcome.capped)
 
         case .notCurrentSession:
             // Someone else's recording, or nothing at all. The registry entry
@@ -640,6 +801,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             cancelWatchdog()
             try? await registry.close(sessionID)
             await pushState(.idle)
+            await recordSessionEnd(sessionID: sessionID, outcome: AuditOutcome.completed)
             return .stopped(bundlePath: url.path, health: health)
 
         case .notCurrentSession:
@@ -664,6 +826,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             cancelWatchdog()
             try? await registry.close(sessionID)
             await pushState(.idle)
+            await recordSessionEnd(sessionID: sessionID, outcome: AuditOutcome.failed)
             return .failure(AutomationError(code: .internalError,
                                             message: "The recording did not finalize.",
                                             hint: message))
@@ -684,9 +847,16 @@ extension AutomationHost {
     /// every one of those on purpose, so such a test fails loudly instead of
     /// silently observing a no-op.
     static func forTesting() -> AutomationHost {
+        // `NullCoordinator` never returns `.started`, so no audit record is
+        // ever written here — but a stray real-disk touch under
+        // `~/Library/Application Support` from a test binary is worth
+        // avoiding anyway, so this points at a scratch file instead of
+        // `AuditLogLocation.url()`'s production default.
         AutomationHost(coordinator: NullCoordinator(),
                       settings: { AgentSettings(agentRecordingEnabled: true,
-                                                fullDisplayAllowed: false) })
+                                                fullDisplayAllowed: false) },
+                      auditLogURL: FileManager.default.temporaryDirectory
+                          .appendingPathComponent("snitt-forTesting-audit-\(UUID().uuidString).jsonl"))
     }
 }
 
@@ -704,5 +874,26 @@ private actor NullCoordinator: AgentRecordingControlling {
 
     func markForAgent(sessionID: String, label: String?) async -> AgentMarkResult {
         .notRecording
+    }
+}
+
+/// Per-session data the audit trail needs at stop time that `SessionRegistry`
+/// does not expose: the resolved target name and the exact `startedAt` the
+/// start record used, so the end record's `durationSeconds` matches it
+/// exactly rather than being computed from a second, slightly later clock
+/// read.
+private actor AuditSessions {
+    private var started: [String: (target: String, startedAt: Date)] = [:]
+
+    func remember(_ id: String, target: String, startedAt: Date) {
+        started[id] = (target, startedAt)
+    }
+
+    /// Removes and returns the session's data, if any. A miss means either
+    /// this session was never started through `AutomationHost` (a human's own
+    /// recording never reaches `recordSessionStart` at all) or its end was
+    /// already recorded — either way there is nothing true left to append.
+    func forget(_ id: String) -> (target: String, startedAt: Date)? {
+        started.removeValue(forKey: id)
     }
 }

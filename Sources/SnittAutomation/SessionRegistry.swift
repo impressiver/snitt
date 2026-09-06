@@ -47,8 +47,18 @@ public actor SessionRegistry {
     /// recording — a person pressing the hotkey or the menu-bar kill switch. The
     /// session is over whether or not the agent ever asks, and leaving the entry
     /// behind would make `snitt status` report a recording that is not running.
-    public func closeAny() {
+    /// Forgets any session, returning the id it closed.
+    ///
+    /// The id is returned so a caller can record what happened to it — an
+    /// agent session ended by the human kill switch (§5.3) otherwise leaves
+    /// an audit trail with a start and no end, reading as permanently
+    /// in-flight when in fact a person stopped it deliberately. That is the
+    /// single event §12's audit most needs to show.
+    @discardableResult
+    public func closeAny() -> String? {
+        let id = session?.id
         session = nil
+        return id
     }
 
     public func current(now: Date) -> StatusInfo {

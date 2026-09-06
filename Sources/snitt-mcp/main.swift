@@ -104,7 +104,29 @@ func describe(_ response: AutomationResponse) -> String {
              + (cuts.isEmpty ? "" : " (\(cuts))")
     case .exported(let manifest):
         return exportSummary(manifest)
+    case .diagnosticsWritten(let report):
+        // No `outputPath` here: `DiagnosticsReport` doesn't carry it. The
+        // caller (`tools/call` below) renders this case itself, with the
+        // path it already resolved from the tool arguments, rather than
+        // going through this generic renderer.
+        return diagnosticsSummary(report, outputPath: "the requested path")
     }
+}
+
+/// Renders `.diagnosticsWritten`'s report as the text an agent reads back.
+///
+/// A separate function, not inlined into `describe`'s switch, for the same
+/// reason `exportSummary` is: it can be exercised directly by a test, and
+/// its wording is verifiably the same shape the CLI's `diagnosticsNote`
+/// produces (§4.8).
+func diagnosticsSummary(_ report: DiagnosticsReport, outputPath: String) -> String {
+    let permissions = report.permissions.sorted { $0.key < $1.key }
+        .map { "\($0.key)=\($0.value)" }.joined(separator: ", ")
+    return "Wrote diagnostics bundle to \(outputPath): "
+         + "\(report.recentSessions.count) recent session(s), "
+         + "\(report.logLines.count) log line(s), "
+         + "app \(report.appVersion), protocol \(report.protocolVersion)"
+         + (permissions.isEmpty ? "" : " — \(permissions)")
 }
 
 while let line = readLine(strippingNewline: true) {
@@ -138,9 +160,19 @@ while let line = readLine(strippingNewline: true) {
         case .failure(let problem):
             toolError(id: id, problem.message)
         case .success(let body):
+            // `DiagnosticsReport` (unlike `ExportManifest`) carries no
+            // `outputPath` of its own — captured here, from the SAME
+            // resolved value `body` already carries, so the rendered text
+            // can still say where the file went.
+            var diagnosticsOutputPath: String?
+            if case .diagnostics(let path) = body { diagnosticsOutputPath = path }
             do {
                 let response = try await AutomationClient().send(body)
-                result(id: id, textContent(describe(response)))
+                if case .diagnosticsWritten(let report) = response, let diagnosticsOutputPath {
+                    result(id: id, textContent(diagnosticsSummary(report, outputPath: diagnosticsOutputPath)))
+                } else {
+                    result(id: id, textContent(describe(response)))
+                }
             } catch ClientError.notRunning {
                 // Fail immediately rather than block: an agent cannot see or
                 // answer a dialog, and a hung call is worse than a clean error

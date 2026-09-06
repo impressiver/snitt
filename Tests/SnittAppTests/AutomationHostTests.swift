@@ -83,12 +83,21 @@ final class StateRecorder {
     func record(_ state: RecordingState) { states.append(state) }
 }
 
+/// A fresh scratch path per call, so tests never touch a real machine's
+/// Application Support directory (`AuditLogLocation.url()`'s production
+/// default) and never see another test's audit records.
+private func scratchAuditLogURL() -> URL {
+    FileManager.default.temporaryDirectory
+        .appendingPathComponent("snitt-test-audit-\(UUID().uuidString).jsonl")
+}
+
 @MainActor
 private func makeHost(coordinator: FakeCoordinator,
                       recorder: StateRecorder,
                       fullDisplayAllowed: Bool = false,
                       clock: ManualClock? = nil,
-                      watchdog: ManualWatchdog? = nil) -> AutomationHost {
+                      watchdog: ManualWatchdog? = nil,
+                      auditLogURL: URL = scratchAuditLogURL()) -> AutomationHost {
     let now: @Sendable () -> Date
     if let clock {
         now = { clock.now() }
@@ -102,14 +111,16 @@ private func makeHost(coordinator: FakeCoordinator,
                                       fullDisplayAllowed: fullDisplayAllowed) },
             onRecordingState: { state in recorder.record(state) },
             now: now,
-            watchdogScheduling: watchdog.scheduling())
+            watchdogScheduling: watchdog.scheduling(),
+            auditLogURL: auditLogURL)
     }
     return AutomationHost(
         coordinator: coordinator,
         settings: { AgentSettings(agentRecordingEnabled: true,
                                   fullDisplayAllowed: fullDisplayAllowed) },
         onRecordingState: { state in recorder.record(state) },
-        now: now)
+        now: now,
+        auditLogURL: auditLogURL)
 }
 
 /// A deterministic stand-in for `Date()`, so a watchdog test can make
@@ -309,6 +320,113 @@ func failedStartDoesNotLightTheIndicator() async {
     _ = await host.handle(startBody())
     #expect(recorder.states.isEmpty,
             "nothing is recording, so nothing may be indicated")
+}
+
+// MARK: - Task 5: §12's audit trail
+
+@MainActor
+@Test("An agent session is audited from start to stop")
+func agentSessionIsAudited() async throws {
+    // The discriminating check: nothing wrote to `auditLogURL` before this
+    // task, so this failed against the pre-fix host with an empty array —
+    // `AuditLog.read` returning `[]` for a log that was never created.
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let auditLogURL = scratchAuditLogURL()
+    let host = makeHost(coordinator: coordinator, recorder: recorder, auditLogURL: auditLogURL)
+
+    let started = await host.handle(startBody())
+    guard case .started(let sessionID, let target) = started else {
+        Issue.record("expected a started response, got \(started)")
+        return
+    }
+
+    guard case .stopped = await host.handle(.stopRecording(sessionID: sessionID)) else {
+        Issue.record("expected a stopped response")
+        return
+    }
+
+    // The log is append-only JSONL, so a session's start and end are two
+    // records sharing one `sessionID` rather than one record rewritten in
+    // place — `AuditLog.append` never reads or rewrites existing content.
+    let records = try AuditLog.read(from: auditLogURL)
+    #expect(records.count == 2,
+            "one record at start, a second appended at stop — never a rewrite")
+    #expect(records.allSatisfy { $0.sessionID == sessionID })
+    #expect(records.allSatisfy { $0.initiator == "agent" })
+    #expect(records.allSatisfy { $0.target == target })
+
+    guard let last = records.last else {
+        Issue.record("expected a second record")
+        return
+    }
+    #expect(last.endedAt != nil, "the end record must carry when the session ended")
+    #expect(last.outcome == "completed")
+    #expect(last.durationSeconds != nil && last.durationSeconds! >= 0,
+            "an incident review needs how long the session ran")
+}
+
+@MainActor
+@Test("A human recording writes no audit record")
+func humanRecordingIsNotAudited() async throws {
+    // §12 scopes the audit to agent-initiated work; auditing every human
+    // recording would bury the agent entries the audit exists to surface.
+    // `AutomationHost` never sees a human's OWN recording at all — the only
+    // entry point a human's activity reaches is `clearAgentSession()`, which
+    // `AppDelegate` calls on every human start AND stop, whether or not an
+    // agent session was ever open. The discriminating mutation: an
+    // implementation that writes an audit line unconditionally inside
+    // `clearAgentSession()` (reasoning "this is where sessions end") would
+    // fail this, because it fires for a plain human recording too.
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let auditLogURL = scratchAuditLogURL()
+    let host = makeHost(coordinator: coordinator, recorder: recorder, auditLogURL: auditLogURL)
+
+    // A person starts, then stops, their own recording — never touching the
+    // automation socket at all. `AppDelegate` reports both edges here.
+    await host.clearAgentSession()
+    await host.clearAgentSession()
+
+    let records = try AuditLog.read(from: auditLogURL)
+    #expect(records.isEmpty, "no agent session ever ran, so nothing may be logged")
+}
+
+@MainActor
+@Test("A capped session records that the cap ended it")
+func cappedSessionRecordsTheCap() async throws {
+    // The cap is §5's safety mechanism for an orphaned agent session — the
+    // single fact an incident review most needs. A bundle recording only
+    // "ended" (or any single outcome shared with a clean stop) makes this
+    // indistinguishable from `agentSessionIsAudited`'s normal stop, which is
+    // exactly the discriminating mutation: collapse `AuditOutcome.capped` to
+    // `AuditOutcome.completed` (or any one shared string) and this fails
+    // while `agentSessionIsAudited` keeps passing.
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let clock = ManualClock()
+    let watchdog = ManualWatchdog()
+    let auditLogURL = scratchAuditLogURL()
+    let host = makeHost(coordinator: coordinator, recorder: recorder,
+                       clock: clock, watchdog: watchdog, auditLogURL: auditLogURL)
+
+    let started = await host.handle(startBody(maxDuration: 0.2))
+    guard case .started(let sessionID, _) = started else {
+        Issue.record("expected a started response, got \(started)")
+        return
+    }
+
+    clock.advance(by: 0.3)
+    await watchdog.fire()
+
+    let records = try AuditLog.read(from: auditLogURL)
+    #expect(records.count == 2)
+    guard let last = records.last(where: { $0.sessionID == sessionID && $0.endedAt != nil }) else {
+        Issue.record("expected an end record for the capped session, got \(records)")
+        return
+    }
+    #expect(last.outcome == "capped",
+            "a cap-terminated session must not read as an ordinary clean stop")
 }
 
 // MARK: - Critical 2: the session cap is enforced, not merely reported
@@ -651,7 +769,8 @@ func consentGatesTheCoordinator() async {
     let recorder = StateRecorder()
     let host = AutomationHost(coordinator: coordinator,
                               settings: { AgentSettings(agentRecordingEnabled: false) },
-                              onRecordingState: { state in recorder.record(state) })
+                              onRecordingState: { state in recorder.record(state) },
+                              auditLogURL: scratchAuditLogURL())
 
     let response = await host.handle(startBody())
     guard case .failure(let error) = response else {
@@ -684,7 +803,8 @@ func workingDirectoryBecomesGitContext() async {
         resolveGit: { url in
             seen.record(url.path)
             return GitContext(branch: "feat/markers", commit: "a1b2c3d")
-        })
+        },
+        auditLogURL: scratchAuditLogURL())
 
     _ = await host.handle(startBody(workingDirectory: "/Users/someone/src/project"))
 
@@ -707,7 +827,8 @@ func noWorkingDirectoryMeansNoGit() async {
         coordinator: coordinator,
         settings: { AgentSettings(agentRecordingEnabled: true) },
         onRecordingState: { state in recorder.record(state) },
-        resolveGit: { url in seen.record(url.path); return GitContext(branch: "x") })
+        resolveGit: { url in seen.record(url.path); return GitContext(branch: "x") },
+        auditLogURL: scratchAuditLogURL())
 
     _ = await host.handle(startBody())
 
@@ -817,7 +938,8 @@ func markIsGatedByConsent() async {
     let recorder = StateRecorder()
     let host = AutomationHost(coordinator: coordinator,
                               settings: { AgentSettings(agentRecordingEnabled: false) },
-                              onRecordingState: { state in recorder.record(state) })
+                              onRecordingState: { state in recorder.record(state) },
+                              auditLogURL: scratchAuditLogURL())
 
     let response = await host.handle(.mark(sessionID: "s1", label: nil))
     guard case .failure(let error) = response else {
@@ -826,4 +948,110 @@ func markIsGatedByConsent() async {
     }
     #expect(error.code == .consentRequired)
     #expect(await coordinator.markCalls.isEmpty)
+}
+
+@MainActor
+@Test("A session ended by the human kill switch is audited as such")
+func killSwitchStopIsAudited() async throws {
+    // §5.3's kill switch is a person stopping agent work nobody was
+    // watching, and §12's audit exists so that incident is reconstructable.
+    // Before this, `clearAgentSession` forgot the session id without
+    // recording an end, so the trail showed a start and nothing after it —
+    // reading as PERMANENTLY IN-FLIGHT when in fact a human intervened,
+    // which is the opposite of what happened.
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let auditLogURL = scratchAuditLogURL()
+    let host = makeHost(coordinator: coordinator, recorder: recorder, auditLogURL: auditLogURL)
+
+    let started = await host.handle(startBody())
+    guard case .started(let sessionID, _) = started else {
+        Issue.record("expected a started response, got \(started)")
+        return
+    }
+
+    // What AppDelegate calls when a person stops from the menu bar.
+    await host.clearAgentSession()
+
+    let records = try AuditLog.read(from: auditLogURL)
+    let mine = records.filter { $0.sessionID == sessionID }
+    #expect(mine.count == 2, "a kill-switch stop must close the session, not leave it open")
+    // Distinct from `completed` deliberately: an incident review needs to
+    // see that a human intervened, not that the agent finished normally.
+    #expect(mine.last?.outcome == "stoppedByHuman")
+    #expect(mine.last?.endedAt != nil)
+}
+
+@MainActor
+@Test("Clearing with no agent session writes nothing")
+func clearWithoutAgentSessionWritesNothing() async throws {
+    // `clearAgentSession` also fires when a HUMAN starts or stops their own
+    // recording. §12 scopes the audit to agent-initiated work, so this path
+    // must stay silent — an implementation that writes unconditionally
+    // buries the agent entries the audit exists to surface.
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let auditLogURL = scratchAuditLogURL()
+    let host = makeHost(coordinator: coordinator, recorder: recorder, auditLogURL: auditLogURL)
+
+    await host.clearAgentSession()
+
+    #expect(try AuditLog.read(from: auditLogURL).isEmpty)
+}
+
+// MARK: - Diagnostics export
+
+@MainActor
+@Test("The host writes the diagnostics file and returns the report")
+func hostWritesDiagnostics() async throws {
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let auditLogURL = scratchAuditLogURL()
+    try AuditLog.append(AuditRecord(sessionID: "S1", target: "Safari", initiator: "agent",
+                                    startedAt: Date()), to: auditLogURL)
+    let host = makeHost(coordinator: coordinator, recorder: recorder, auditLogURL: auditLogURL)
+
+    let out = FileManager.default.temporaryDirectory
+        .appendingPathComponent("snitt-diagnostics-\(UUID().uuidString).json")
+    defer { try? FileManager.default.removeItem(at: out) }
+
+    let response = await host.handle(.diagnostics(outputPath: out.path))
+
+    guard case .diagnosticsWritten(let report) = response else {
+        Issue.record("expected .diagnosticsWritten, got \(response)")
+        return
+    }
+    // The discriminating assertion: the FILE actually exists on disk with
+    // the report's own content. An implementation that builds the report
+    // in memory and returns `.diagnosticsWritten` without ever calling
+    // `DiagnosticsBundle.write` (or that calls it and discards the throw)
+    // would pass a check on the response value alone.
+    #expect(FileManager.default.fileExists(atPath: out.path))
+    // `.iso8601` matches `DiagnosticsBundle.write`'s own encoder — dates in
+    // the exported file are human-readable text, not raw epoch doubles.
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let decoded = try decoder.decode(DiagnosticsReport.self, from: Data(contentsOf: out))
+    #expect(decoded.appVersion == report.appVersion)
+    #expect(decoded.recentSessions.count == 1)
+    #expect(decoded.recentSessions[0].sessionID == "S1")
+}
+
+@MainActor
+@Test("A diagnostics export that cannot write its file is reported as a failure")
+func diagnosticsExportFailureIsReported() async {
+    let coordinator = FakeCoordinator()
+    let recorder = StateRecorder()
+    let host = makeHost(coordinator: coordinator, recorder: recorder)
+
+    // A directory that does not exist: `DiagnosticsBundle.write` must throw
+    // rather than the host reporting success for a file it never wrote.
+    let badPath = "/nonexistent-\(UUID().uuidString)/diagnostics.json"
+
+    let response = await host.handle(.diagnostics(outputPath: badPath))
+    guard case .failure(let error) = response else {
+        Issue.record("expected a failure for an unwritable path, got \(response)")
+        return
+    }
+    #expect(error.code == .internalError)
 }

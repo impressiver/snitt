@@ -38,6 +38,8 @@ func everyToolMaps() {
             json = #"{"bundlePath": "/tmp/x.snitt", "autoTrim": true}"#
         case "snitt_export":
             json = #"{"bundlePath": "/tmp/x.snitt", "format": "mp4", "outputPath": "/tmp/demo.mp4"}"#
+        case "snitt_diagnostics_export":
+            json = #"{"outputPath": "/tmp/diagnostics.json"}"#
         default:
             json = "{}"
         }
@@ -53,7 +55,76 @@ func toolNamesAreStable() {
     let names = Set(MCPBridge.toolDefinitions().map(\.name))
     #expect(names == ["snitt_list_targets", "snitt_start_recording",
                       "snitt_stop_recording", "snitt_status", "snitt_add_marker",
-                      "snitt_inspect", "snitt_trim", "snitt_export"])
+                      "snitt_inspect", "snitt_trim", "snitt_export",
+                      "snitt_diagnostics_export"])
+}
+
+@Test("The MCP tool maps to the same request the CLI would send")
+func mcpDiagnosticsMapsToTheSameRequest() {
+    // §4.8: the CLI and the MCP server must be incapable of diverging.
+    // Fixture decoded from real JSON text, as every fixture in this file
+    // is — see `jsonArguments`'s doc comment.
+    guard case .success(let mcpBody) = MCPBridge.request(
+        forTool: "snitt_diagnostics_export",
+        arguments: jsonArguments(#"{"outputPath": "/tmp/diagnostics.json"}"#))
+    else { Issue.record("MCP could not express a diagnostics export"); return }
+    guard case .diagnostics(let mcpPath) = mcpBody else {
+        Issue.record("expected .diagnostics, got \(mcpBody)"); return
+    }
+    // The discriminating assertion: the request body actually CARRIES the
+    // path, not merely that mapping the tool call "succeeded" — a bridge
+    // that mapped every tool call to `.diagnostics(outputPath: "")` would
+    // pass a success-only assertion.
+    #expect(mcpPath == "/tmp/diagnostics.json")
+}
+
+@Test("snitt_diagnostics_export resolves a relative outputPath against this process's cwd")
+func diagnosticsExportResolvesRelativePaths() throws {
+    // `.diagnostics`'s own doc comment (`Protocol.swift`) declares
+    // `outputPath` arrives already resolved against the CALLER's working
+    // directory. `snitt-cli` honours that via `PathResolver.resolve` before
+    // it ever builds the request; `MCPBridge.request` — the only place
+    // `snitt-mcp` builds one — forwarded the raw string instead, so a
+    // relative path from an MCP client would resolve wherever
+    // `AutomationHost`/`Snitt.app` happened to have its cwd, not the
+    // caller's, exactly the M3c finding #3 shape this file's `PathResolver`
+    // doc comment describes for `bundlePath`/`outputPath` generally.
+    //
+    // A fixed absolute path (as every other fixture in this file uses)
+    // cannot tell a resolving implementation from a pass-through one — both
+    // leave it unchanged. Only a RELATIVE path discriminates.
+    let scratchDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("MCPBridgeTests-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: scratchDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: scratchDir) }
+
+    let previousCWD = FileManager.default.currentDirectoryPath
+    #expect(FileManager.default.changeCurrentDirectoryPath(scratchDir.path))
+    defer { _ = FileManager.default.changeCurrentDirectoryPath(previousCWD) }
+    // `/tmp` is itself a symlink to `/private/tmp` on macOS, and `chdir`
+    // resolves it — read the resolved cwd back rather than trust
+    // `scratchDir.path`, so the expectation isn't comparing a symlinked
+    // path against its resolved target.
+    let resolvedCWD = FileManager.default.currentDirectoryPath
+
+    guard case .success(let body) = MCPBridge.request(
+        forTool: "snitt_diagnostics_export",
+        arguments: jsonArguments(#"{"outputPath": "diagnostics.json"}"#))
+    else { Issue.record("MCP could not express a diagnostics export"); return }
+    guard case .diagnostics(let resolvedPath) = body else {
+        Issue.record("expected .diagnostics, got \(body)"); return
+    }
+
+    #expect(resolvedPath == resolvedCWD + "/diagnostics.json",
+            "a relative outputPath must resolve against the caller's working directory, not arrive verbatim")
+}
+
+@Test("snitt_diagnostics_export requires outputPath")
+func diagnosticsExportRequiresOutputPath() {
+    guard case .failure(let error) = MCPBridge.request(
+        forTool: "snitt_diagnostics_export", arguments: jsonArguments("{}"))
+    else { Issue.record("a missing outputPath must be refused"); return }
+    #expect(error.message.contains("outputPath"))
 }
 
 @Test("Both frontends express a trim identically")

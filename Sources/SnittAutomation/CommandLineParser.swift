@@ -22,6 +22,12 @@ public enum ParsedCommand: Equatable {
     case trim(bundlePath: String, start: Double?, end: Double?, auto: Bool)
     case export(bundlePath: String, format: String, outputPath: String,
                 scale: Double, chapters: Bool, maxSizeBytes: Int?)
+    /// `outputPath` here is still the RAW string typed on the command line —
+    /// `main.swift` resolves it against the caller's cwd before it reaches
+    /// the wire, the same as `.export`'s `outputPath`/`.trim`'s
+    /// `bundlePath`. Keeping resolution out of the parser is what makes it
+    /// testable as pure string handling, independent of any real cwd.
+    case diagnosticsExport(outputPath: String)
 }
 
 /// Parses the CLI's arguments. Pure, so the whole surface is testable without a
@@ -99,6 +105,16 @@ public enum CommandLineParser {
                   + "Use the path `snitt record stop` printed."))
             }
             return parseExport(path: path, args: Array(args.dropFirst()))
+
+        case "diagnostics":
+            guard let sub = args.first else {
+                return .failure(ParseFailure("Expected `diagnostics export`."))
+            }
+            args.removeFirst()
+            guard sub == "export" else {
+                return .failure(ParseFailure("Unknown diagnostics subcommand: \(sub)"))
+            }
+            return parseDiagnosticsExport(args)
 
         default:
             return .failure(ParseFailure("Unknown command: \(first). Try `snitt help`."))
@@ -246,5 +262,25 @@ public enum CommandLineParser {
         }
         return .success(.export(bundlePath: path, format: format, outputPath: outputPath,
                                  scale: scale, chapters: chapters, maxSizeBytes: maxSizeBytes))
+    }
+
+    private static func parseDiagnosticsExport(_ args: [String]) -> Result<ParsedCommand, ParseFailure> {
+        var outputPath: String?
+        var index = 0
+        while index < args.count {
+            switch args[index] {
+            case "--out":
+                index += 1
+                guard index < args.count else { return .failure(ParseFailure("--out needs a path")) }
+                outputPath = args[index]
+            default:
+                return .failure(ParseFailure("Unknown option: \(args[index])"))
+            }
+            index += 1
+        }
+        guard let outputPath else {
+            return .failure(ParseFailure("`diagnostics export` needs --out <path>"))
+        }
+        return .success(.diagnosticsExport(outputPath: outputPath))
     }
 }

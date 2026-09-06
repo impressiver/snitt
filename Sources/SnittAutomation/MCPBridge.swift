@@ -239,6 +239,23 @@ public enum MCPBridge {
                     ],
                     "required": ["bundlePath", "format", "outputPath"],
                 ]),
+            ToolDefinition(
+                name: "snitt_diagnostics_export",
+                description: "Write a support bundle — recent app logs, app/CLI versions, "
+                           + "permission states, and recent agent session history — to a "
+                           + "JSON file. Contains no window titles, file paths, or input "
+                           + "detail. Use this to hand a person something to attach to a "
+                           + "support thread, or to see whether Screen Recording is granted.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "outputPath": [
+                            "type": "string",
+                            "description": "Where to write the diagnostics JSON file",
+                        ],
+                    ],
+                    "required": ["outputPath"],
+                ]),
         ]
     }
 
@@ -390,6 +407,23 @@ public enum MCPBridge {
             }
             return .success(.export(bundlePath: path, format: format, outputPath: outputPath,
                                      scale: scale, chapters: chapters, maxSizeBytes: maxSizeBytes))
+
+        case "snitt_diagnostics_export":
+            guard let outputPath = arguments["outputPath"] as? String else {
+                return .failure(MCPBridgeError("snitt_diagnostics_export requires outputPath"))
+            }
+            // `.diagnostics`'s own doc comment declares `outputPath` arrives
+            // already resolved against the CALLER's working directory —
+            // `snitt-cli` honours that (`PathResolver.resolve`, done before
+            // the request is sent); this bridge did not, so a relative
+            // `outputPath` from an MCP client resolved against whatever cwd
+            // `Snitt.app`/the automation host happened to have, not the
+            // caller's. `snitt_trim`/`snitt_export` have the same gap (they
+            // also forward `bundlePath`/`outputPath` verbatim through this
+            // same function) — left alone here, for a following change that
+            // closes all of them together rather than fixing one MCP tool
+            // at a time.
+            return .success(.diagnostics(outputPath: PathResolver.resolve(outputPath)))
 
         default:
             return .failure(MCPBridgeError("Unknown tool: \(name)"))

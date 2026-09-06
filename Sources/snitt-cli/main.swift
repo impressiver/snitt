@@ -46,6 +46,21 @@ func exportNote(_ manifest: ExportManifest) -> String {
     return text
 }
 
+/// The human-readable line printed to stderr for `.diagnosticsWritten`.
+///
+/// A support command whose output is a bare "OK" makes a person guess
+/// whether it worked; this names where the file went and roughly what is in
+/// it, the same way `exportNote`/`stopped`'s note do for their own responses.
+func diagnosticsNote(_ report: DiagnosticsReport, outputPath: String) -> String {
+    let permissions = report.permissions.sorted { $0.key < $1.key }
+        .map { "\($0.key)=\($0.value)" }.joined(separator: ", ")
+    return "Wrote diagnostics bundle to \(outputPath): "
+         + "\(report.recentSessions.count) recent session(s), "
+         + "\(report.logLines.count) log line(s), "
+         + "app \(report.appVersion), protocol \(report.protocolVersion)"
+         + (permissions.isEmpty ? "" : " — \(permissions)")
+}
+
 let helpText = """
 snitt — record a window and hand back a .snitt bundle
 
@@ -65,6 +80,8 @@ snitt — record a window and hand back a .snitt bundle
                                           scale pixels; write a .vtt from markers;
                                           walk down quality to hit a byte budget
                                           (gif has no audio track)
+  snitt diagnostics export --out <path>  write a support bundle (logs, versions,
+                                          permission states, recent sessions) as JSON
   snitt status                           whether a recording is running
 
 Output is JSON on stdout and human text on stderr, so a script can parse one
@@ -88,26 +105,50 @@ if case .help = command {
     exit(0)
 }
 
-let body: AutomationRequest.Body
-switch command {
-case .targetsList:              body = .listTargets
-case .recordStart(var options):
-    options.workingDirectory = FileManager.default.currentDirectoryPath
-    body = .startRecording(options)
-case .recordStop(let session):  body = .stopRecording(sessionID: session)
-case .recordMark(let session, let label): body = .mark(sessionID: session, label: label)
-case .status:                   body = .status
-case .inspect(let path):        body = .inspect(bundlePath: PathResolver.resolve(path))
-case .trim(let path, let start, let end, let auto):
-    body = .trim(bundlePath: PathResolver.resolve(path), start: start, end: end, auto: auto)
-case .export(let path, let format, let out, let scale, let chapters, let maxSizeBytes):
-    body = .export(bundlePath: PathResolver.resolve(path), format: format, outputPath: PathResolver.resolve(out),
-                    scale: scale, chapters: chapters, maxSizeBytes: maxSizeBytes)
-case .help:                     body = .status  // unreachable; handled above
+/// Maps a parsed command to the wire request, resolving any client-supplied
+/// path against `currentDirectory` — the CALLER's working directory, never
+/// the app's, which is `/` for `Snitt.app` and cannot know what a relative
+/// path was relative to (M3c finding #3; `PathResolver`'s doc comment).
+///
+/// A separate, testable function — not inlined below — specifically so
+/// "a relative path really is resolved before it reaches the wire" can be
+/// asserted on the REQUEST BODY it produces, with an injected
+/// `currentDirectory`, rather than only on whether parsing succeeded.
+/// `CommandLineParserTests`/`SnittCLITests` exercise this; parsing alone
+/// cannot catch a resolution step that silently never ran.
+func requestBody(for command: ParsedCommand,
+                 currentDirectory: String = FileManager.default.currentDirectoryPath) -> AutomationRequest.Body {
+    switch command {
+    case .targetsList: return .listTargets
+    case .recordStart(var options):
+        options.workingDirectory = currentDirectory
+        return .startRecording(options)
+    case .recordStop(let session): return .stopRecording(sessionID: session)
+    case .recordMark(let session, let label): return .mark(sessionID: session, label: label)
+    case .status: return .status
+    case .inspect(let path):
+        return .inspect(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory))
+    case .trim(let path, let start, let end, let auto):
+        return .trim(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
+                     start: start, end: end, auto: auto)
+    case .export(let path, let format, let out, let scale, let chapters, let maxSizeBytes):
+        return .export(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
+                       format: format,
+                       outputPath: PathResolver.resolve(out, workingDirectory: currentDirectory),
+                       scale: scale, chapters: chapters, maxSizeBytes: maxSizeBytes)
+    case .diagnosticsExport(let path):
+        return .diagnostics(outputPath: PathResolver.resolve(path, workingDirectory: currentDirectory))
+    case .help: return .status  // unreachable; handled above
+    }
 }
+
+let body = requestBody(for: command)
 
 let isExport: Bool
 if case .export = command { isExport = true } else { isExport = false }
+
+var diagnosticsOutputPath: String?
+if case .diagnostics(let path) = body { diagnosticsOutputPath = path }
 
 do {
     // Encoding takes seconds to tens of seconds and the default client
@@ -150,6 +191,9 @@ do {
     case .exported(let manifest):
         emit(manifest)
         note(exportNote(manifest))
+    case .diagnosticsWritten(let report):
+        emit(report)
+        note(diagnosticsNote(report, outputPath: diagnosticsOutputPath ?? "?"))
     }
 } catch ClientError.notRunning {
     note("Snitt is not running. Open Snitt and try again.")
