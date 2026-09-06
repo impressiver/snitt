@@ -218,17 +218,32 @@ if [ -z "$LENGTH" ] || [ "$LENGTH" -le 0 ]; then
   exit 1
 fi
 
-# Cross-check <version> against the archive's own Contents/*.app/Info.plist
-# when the zip actually has one readable — nearly free given the zip is
-# already open for the length check above, and it guards the exact
-# mismatch (a stale or mistyped <version>) that makes Sparkle silently
-# ignore an update, or install one that still reports the old version.
-# Deliberately a SOFT check: if the zip isn't a real app archive (a test
-# fixture, or some other packaging this script hasn't anticipated), or the
-# tools to inspect it aren't available, this does not block emission —
-# only an ACTUAL, DETECTED mismatch does.
+# Cross-check <version> against the archive's own TOP-LEVEL bundle's
+# Info.plist when the zip actually has one readable — nearly free given
+# the zip is already open for the length check above, and it guards the
+# exact mismatch (a stale or mistyped <version>) that makes Sparkle
+# silently ignore an update, or install one that still reports the old
+# version. Deliberately a SOFT check: if the zip isn't a real app archive
+# (a test fixture, or some other packaging this script hasn't
+# anticipated), or the tools to inspect it aren't available, this does not
+# block emission — only an ACTUAL, DETECTED mismatch does.
+#
+# R38 (task-5-rereview.md): the pattern below is anchored to EXACTLY
+# "<name>.app/Contents/Info.plist" at the zip root — no leading path, no
+# extra segments between Contents/ and Info.plist. An earlier, unanchored
+# `(^|/)Contents/Info\.plist$` also matched every NESTED bundle's
+# Info.plist (Sparkle.framework's embedded Downloader.xpc and
+# Installer.xpc, and Updater.app, each carry their own
+# Contents/Info.plist), and `ditto -c -k --keepParent` (Scripts/
+# notarize.sh) lists Downloader.xpc's before the app's own — so the
+# unanchored version read Sparkle's OWN version (e.g. "2.9.6") and
+# refused EVERY real release. Reproduced end-to-end before fixing.
+# Tests/SnittAppTests/AppcastTests.swift's
+# archiveVersionMismatchReadsTheOuterAppNotANestedXPCBundle builds an
+# archive with exactly this nested shape and pins the anchored pattern
+# against it.
 if command -v unzip >/dev/null 2>&1 && command -v /usr/libexec/PlistBuddy >/dev/null 2>&1; then
-  ARCHIVE_INFO_PLIST_ENTRY="$(unzip -Z1 "$ZIP" 2>/dev/null | grep -m1 -E '(^|/)Contents/Info\.plist$' || true)"
+  ARCHIVE_INFO_PLIST_ENTRY="$(unzip -Z1 "$ZIP" 2>/dev/null | grep -m1 -E '^[^/]+\.app/Contents/Info\.plist$' || true)"
   if [ -n "$ARCHIVE_INFO_PLIST_ENTRY" ]; then
     VERIFY_DIR="$(mktemp -d -t snitt-appcast-verify)"
     if unzip -p "$ZIP" "$ARCHIVE_INFO_PLIST_ENTRY" > "$VERIFY_DIR/Info.plist" 2>/dev/null; then

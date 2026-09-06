@@ -358,6 +358,115 @@ func archiveVersionMismatchIsRefused() throws {
     #expect(matching.status == 0)
 }
 
+/// Builds an archive shaped like a REAL Snitt release, not the flat
+/// single-bundle fixture above: an outer `<name>.app/Contents/Info.plist`
+/// PLUS a nested `Sparkle.framework/.../Downloader.xpc/Contents/Info.plist`
+/// carrying a DIFFERENT version — exactly what `Scripts/notarize.sh`'s
+/// `ditto -c -k --keepParent` produces, since Sparkle's embedded XPC
+/// services and `Updater.app` each carry their own `Info.plist`.
+///
+/// The nested entry is added to the zip BEFORE the outer one (two
+/// separate `zip` invocations, each appending one file), reproducing the
+/// exact ordering `task-5-rereview.md`'s R38 found: the nested
+/// `Contents/Info.plist` sorted first in `unzip -Z1`'s listing under real
+/// `ditto` output, so an unanchored `grep -m1` picked Sparkle's own
+/// version (observed: "2.9.6") instead of the app's.
+private func makeArchiveWithNestedXPCBundle(
+    outerVersion: String,
+    nestedXPCVersion: String
+) throws -> URL {
+    let workDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("snitt-appcast-nested-src-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: workDir) }
+
+    let outerContents = workDir.appendingPathComponent("SnittFixture.app/Contents")
+    try FileManager.default.createDirectory(at: outerContents, withIntermediateDirectories: true)
+    let outerPlistData = try PropertyListSerialization.data(
+        fromPropertyList: ["CFBundleShortVersionString": outerVersion],
+        format: .xml, options: 0
+    )
+    try outerPlistData.write(to: outerContents.appendingPathComponent("Info.plist"))
+
+    let nestedRelativePath =
+        "SnittFixture.app/Contents/MacOS/Sparkle.framework/Versions/B/XPCServices/Downloader.xpc/Contents"
+    let nestedContents = workDir.appendingPathComponent(nestedRelativePath)
+    try FileManager.default.createDirectory(at: nestedContents, withIntermediateDirectories: true)
+    let nestedPlistData = try PropertyListSerialization.data(
+        fromPropertyList: ["CFBundleShortVersionString": nestedXPCVersion],
+        format: .xml, options: 0
+    )
+    try nestedPlistData.write(to: nestedContents.appendingPathComponent("Info.plist"))
+
+    let zipPath = FileManager.default.temporaryDirectory
+        .appendingPathComponent("snitt-appcast-nested-\(UUID().uuidString).zip")
+
+    func appendToZip(_ relativePath: String) throws {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+        process.currentDirectoryURL = workDir
+        process.arguments = ["-q", zipPath.path, relativePath]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            throw NSError(domain: "AppcastTests", code: Int(process.terminationStatus))
+        }
+    }
+
+    // Nested entry FIRST, outer entry SECOND — the ordering that actually
+    // broke the unanchored pattern.
+    try appendToZip("\(nestedRelativePath)/Info.plist")
+    try appendToZip("SnittFixture.app/Contents/Info.plist")
+
+    return zipPath
+}
+
+@Test("The version check reads the outer app's own Info.plist, not a nested framework/XPC bundle's")
+func archiveVersionMismatchReadsTheOuterAppNotANestedXPCBundle() throws {
+    // R38 (task-5-rereview.md): with an unanchored pattern, this exact
+    // shape made a CORRECT release get refused, forever — the nested
+    // Sparkle XPC service's own version ("2.9.6" here) was read instead
+    // of the app's ("9.9.9"), which never matches any real <version>
+    // argument. This test's outer/nested versions deliberately DIFFER, so
+    // the two cannot agree by coincidence: only reading the right one
+    // passes.
+    let zip = try makeArchiveWithNestedXPCBundle(outerVersion: "9.9.9", nestedXPCVersion: "2.9.6")
+    defer { try? FileManager.default.removeItem(at: zip) }
+
+    // Sanity: confirm the fixture actually reproduces the hazardous
+    // ordering (nested entry listed before the outer one), so a passing
+    // test below is not passing because the fixture accidentally didn't
+    // reproduce the bug's precondition.
+    let listing = Process()
+    listing.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
+    listing.arguments = ["-Z1", zip.path]
+    let listingOut = Pipe()
+    listing.standardOutput = listingOut
+    listing.standardError = Pipe()
+    try listing.run()
+    let listingText = String(data: listingOut.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    listing.waitUntilExit()
+    let entries = listingText.split(separator: "\n").map(String.init)
+    let nestedIndex = try #require(entries.firstIndex(where: { $0.hasSuffix("Downloader.xpc/Contents/Info.plist") }))
+    let outerIndex = try #require(entries.firstIndex(of: "SnittFixture.app/Contents/Info.plist"))
+    #expect(nestedIndex < outerIndex, "fixture must list the nested Info.plist before the outer one to reproduce R38")
+
+    // The real assertion: the outer app's own version is what gets
+    // checked, regardless of listing order.
+    let matchingOuter = runScript(["9.9.9", zip.path, "https://example.test/S.zip", "sig"])
+    #expect(matchingOuter.status == 0)
+    #expect(matchingOuter.stderr.isEmpty)
+
+    // And a version that matches the NESTED bundle but not the outer app
+    // is still correctly refused — confirming this isn't "skip the check
+    // entirely" in disguise.
+    let matchingNestedOnly = runScript(["2.9.6", zip.path, "https://example.test/S.zip", "sig"])
+    #expect(matchingNestedOnly.status != 0)
+    #expect(matchingNestedOnly.stderr.contains("2.9.6"))
+    #expect(matchingNestedOnly.stderr.contains("9.9.9"))
+}
+
 // MARK: - Sparkle-driven round trip
 
 /// A minimal, single-purpose HTTP/1.1 server bound to loopback on an
