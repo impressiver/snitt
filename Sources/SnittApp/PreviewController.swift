@@ -14,8 +14,16 @@ import SnittExport
 /// editors is an export that does not match the preview" — and a preview that
 /// constructs its own composition, video composition or audio mix is how that
 /// guarantee is lost, one small tweak at a time.
+/// Not `final`: a test subclass overrides `apply(edl:events:)` to make it
+/// take a chosen amount of time, which is the only way to force a
+/// DETERMINISTIC completion-order inversion between two autosaves
+/// (`EditorPersistenceTests.laterTrimIsNotOverwrittenByAnEarlierSave`,
+/// whole-branch review F2). Two real builds of two real EDLs finish in
+/// whatever order the machine happens to pick, so a test written against
+/// real timing would pass against the unserialized code most of the time —
+/// the shape of non-test this project has already paid for.
 @MainActor
-public final class PreviewController {
+public class PreviewController {
     public private(set) var jumpPoints: [JumpPoint]
     public private(set) var durationSeconds: Double
     /// The SOURCE recording's media duration (`BuiltComposition.sourceDuration`)
@@ -85,6 +93,19 @@ public final class PreviewController {
 
     public func play() { player.play() }
     public func pause() { player.pause() }
+
+    /// Writes `edl` to the bundle this controller was built with (Task 7,
+    /// D46). This is the only writer for a GUI trim — before this method
+    /// existed, `EditorWindowController.onTrim` rebuilt the preview through
+    /// `apply(edl:events:)` and never wrote anything, so a trim shown on
+    /// screen was silently discarded when the window closed.
+    ///
+    /// Lives here, not on `EditDecisionList` or `EditorTimelineState`,
+    /// because `bundle` is `private` to this type (R1: the write belongs
+    /// with the owner, not behind a widened-to-internal field).
+    public func persist(_ edl: EditDecisionList) throws {
+        try edl.write(to: bundle)
+    }
 
     /// Rebuilds the composition through `CompositionBuilder.build` — never
     /// by mutating the existing `AVMutableComposition` in place — and
