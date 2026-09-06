@@ -291,12 +291,21 @@ private struct SparkleFixture {
             // milliseconds later via its own XPC round trip, especially
             // under the full suite's parallel load, occasionally recreating
             // an empty file just after a single delete attempt (observed).
-            // A short bounded retry closes that window without adding
-            // meaningful time to the run.
+            // A short bounded retry closes that window.
+            //
+            // R37 (task-5-review.md): delete, then wait once and check —
+            // if the file is still gone after that one window, stop; only
+            // an actual recreation costs a further cycle. Without this
+            // early exit, every invocation paid the full 9×50ms
+            // regardless of whether the race ever fired, which
+            // contradicted this comment's own "without adding meaningful
+            // time" claim.
             for attempt in 0..<10 {
                 try? FileManager.default.removeItem(at: preferencesURL)
-                if attempt < 9 {
-                    Thread.sleep(forTimeInterval: 0.05)
+                guard attempt < 9 else { break }
+                Thread.sleep(forTimeInterval: 0.05)
+                if !FileManager.default.fileExists(atPath: preferencesURL.path) {
+                    break
                 }
             }
         }

@@ -223,6 +223,141 @@ func generatedFeedIsWellFormedXML() throws {
     #expect(enclosure.attribute(forName: "sparkle:edSignature")?.stringValue == "xyz")
 }
 
+// MARK: - The feed and the app must provably meet (R31, task-5-review.md)
+//
+// Before this section, `Scripts/make-app.sh`'s `SUFeedURL` and
+// `make-appcast.sh`'s output agreed only by the maintainer remembering to
+// type `> appcast.xml` — nothing failed if they drifted, which is exactly
+// the silent-no-op class this task was warned about. `--output` plus the
+// tests below pin the two together: an asset uploaded under any name
+// other than `SUFeedURL`'s own basename is now something the SCRIPT
+// itself refuses to produce, and a future edit to `SUFeedURL` that isn't
+// matched here fails a test instead of silently drifting.
+
+/// Reads `SUFeedURL`'s value straight out of `Scripts/make-app.sh`'s
+/// Info.plist heredoc — the actual file the real build uses, not a copy
+/// of the string — so this test breaks the moment that file's value
+/// changes without a matching update here.
+private func extractSUFeedURLFromMakeAppScript() throws -> String {
+    let path = FileManager.default.currentDirectoryPath + "/Scripts/make-app.sh"
+    let contents = try String(contentsOfFile: path, encoding: .utf8)
+    let pattern = #"<key>SUFeedURL</key>\s*<string>([^<]+)</string>"#
+    let regex = try NSRegularExpression(pattern: pattern)
+    let range = NSRange(contents.startIndex..., in: contents)
+    guard let match = regex.firstMatch(in: contents, range: range),
+        let urlRange = Range(match.range(at: 1), in: contents)
+    else {
+        throw NSError(
+            domain: "AppcastTests", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "could not find SUFeedURL in Scripts/make-app.sh"]
+        )
+    }
+    return String(contents[urlRange])
+}
+
+@Test("Scripts/make-app.sh's SUFeedURL and make-appcast.sh's --output requirement name the same asset")
+func feedURLAndScriptOutputAgreeOnFilename() throws {
+    let feedURLString = try extractSUFeedURLFromMakeAppScript()
+    let feedURL = try #require(URL(string: feedURLString))
+    #expect(feedURL.host == "github.com")
+    #expect(feedURL.lastPathComponent == "appcast.xml")
+
+    let zip = try makeFixtureArchive(byteCount: 14)
+    defer { try? FileManager.default.removeItem(at: zip) }
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("snitt-appcast-output-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+
+    // The script must accept the REAL basename taken from SUFeedURL...
+    let rightPath = dir.appendingPathComponent(feedURL.lastPathComponent)
+    let accepted = runScript(["1.0.0", zip.path, "https://example.test/S.zip", "sig", "--output", rightPath.path])
+    #expect(accepted.status == 0)
+    #expect(FileManager.default.fileExists(atPath: rightPath.path))
+
+    // ...and refuse any other name, so a caller can never accidentally
+    // publish a feed Sparkle's SUFeedURL will never request.
+    let wrongPath = dir.appendingPathComponent("Snitt-appcast.xml")
+    let refused = runScript(["1.0.0", zip.path, "https://example.test/S.zip", "sig", "--output", wrongPath.path])
+    #expect(refused.status != 0)
+    #expect(!FileManager.default.fileExists(atPath: wrongPath.path))
+}
+
+@Test("An --output write is atomic: a refused run never touches an existing good feed")
+func outputWriteNeverTruncatesOnFailure() throws {
+    // R35 (task-5-review.md): shell redirection (`> appcast.xml`)
+    // truncates the destination before the script runs a single check.
+    // `--output` exists specifically so a refused run leaves a
+    // previously-published good feed untouched.
+    let zip = try makeFixtureArchive(byteCount: 14)
+    defer { try? FileManager.default.removeItem(at: zip) }
+    let dir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("snitt-appcast-atomic-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let outputPath = dir.appendingPathComponent("appcast.xml")
+
+    let goodContent = "GOOD-PREVIOUS-FEED-CONTENT-\(UUID().uuidString)"
+    try goodContent.write(to: outputPath, atomically: true, encoding: .utf8)
+
+    // No signature at all — this run MUST be refused.
+    let refused = runScript(["1.0.0", zip.path, "https://example.test/S.zip", "--output", outputPath.path])
+    #expect(refused.status != 0)
+
+    let survivingContent = try String(contentsOf: outputPath, encoding: .utf8)
+    #expect(survivingContent == goodContent)
+}
+
+// MARK: - Version agreement with the archive (R34, task-5-review.md)
+
+/// Builds a real zip (via `/usr/bin/zip`, not raw bytes) containing
+/// `Placeholder.app/Contents/Info.plist` with the given
+/// `CFBundleShortVersionString`, so make-appcast.sh's own `unzip`/
+/// `PlistBuddy` cross-check has a genuine archive to inspect — not the
+/// plain-bytes fixture the other tests use, which this check silently
+/// (and correctly) declines to open.
+private func makeArchiveWithAppInfoPlist(bundleShortVersion: String) throws -> URL {
+    let workDir = FileManager.default.temporaryDirectory
+        .appendingPathComponent("snitt-appcast-archive-src-\(UUID().uuidString)")
+    let appContents = workDir.appendingPathComponent("Placeholder.app/Contents")
+    try FileManager.default.createDirectory(at: appContents, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: workDir) }
+
+    let plist: [String: Any] = ["CFBundleShortVersionString": bundleShortVersion]
+    let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
+    try data.write(to: appContents.appendingPathComponent("Info.plist"))
+
+    let zipPath = FileManager.default.temporaryDirectory
+        .appendingPathComponent("snitt-appcast-archive-\(UUID().uuidString).zip")
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/zip")
+    process.currentDirectoryURL = workDir
+    process.arguments = ["-r", "-q", zipPath.path, "Placeholder.app"]
+    process.standardOutput = Pipe()
+    process.standardError = Pipe()
+    try process.run()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else {
+        throw NSError(domain: "AppcastTests", code: Int(process.terminationStatus))
+    }
+    return zipPath
+}
+
+@Test("A <version> argument that disagrees with the archive's own Info.plist is refused")
+func archiveVersionMismatchIsRefused() throws {
+    let zip = try makeArchiveWithAppInfoPlist(bundleShortVersion: "2.0.0")
+    defer { try? FileManager.default.removeItem(at: zip) }
+
+    let mismatched = runScript(["1.2.0", zip.path, "https://example.test/S.zip", "sig"])
+    #expect(mismatched.status != 0)
+    #expect(mismatched.stderr.contains("1.2.0"))
+    #expect(mismatched.stderr.contains("2.0.0"))
+    #expect(mismatched.stdout.isEmpty)
+
+    let matching = runScript(["2.0.0", zip.path, "https://example.test/S.zip", "sig"])
+    #expect(matching.status == 0)
+}
+
 // MARK: - Sparkle-driven round trip
 
 /// A minimal, single-purpose HTTP/1.1 server bound to loopback on an
@@ -232,9 +367,24 @@ func generatedFeedIsWellFormedXML() throws {
 /// asserting against the XML text this test process wrote itself.
 private final class LocalFixedResponseServer: @unchecked Sendable {
     private(set) var port: UInt16 = 0
-    private var listenFD: Int32 = -1
     private let body: Data
-    private var acceptThread: Thread?
+
+    // R36 (task-5-review.md): `listenFD` and `stopped` are read/written
+    // from both the caller's thread and the accept-loop thread, and the
+    // original version closed the fd directly under a `stop()` that could
+    // race a thread blocked inside `accept()` on that same fd number — a
+    // closed fd's integer can be reused by any other socket the process
+    // opens under parallel test load, so a late-arriving `accept()` return
+    // could then be operating on someone else's socket. `stateLock` makes
+    // every read/write of `listenFD`/`stopped` mutually exclusive with
+    // `stop()`, and `stop()` unblocks the accept loop by CONNECTING to it
+    // (a normal, local, loopback-only connection) rather than yanking the
+    // fd out from under it, then waits for the loop to actually exit
+    // before closing anything.
+    private let stateLock = NSLock()
+    private var listenFD: Int32 = -1
+    private var stopped = false
+    private let acceptLoopFinished = DispatchSemaphore(value: 0)
 
     enum SetupError: Error { case socket, bind, listen, getsockname }
 
@@ -268,13 +418,29 @@ private final class LocalFixedResponseServer: @unchecked Sendable {
 
         let thread = Thread { [weak self] in self?.acceptLoop() }
         thread.start()
-        self.acceptThread = thread
     }
 
     private func acceptLoop() {
-        while listenFD >= 0 {
-            let clientFD = accept(listenFD, nil, nil)
+        while true {
+            stateLock.lock()
+            let fd = listenFD
+            let isStopped = stopped
+            stateLock.unlock()
+            if isStopped || fd < 0 { break }
+
+            let clientFD = accept(fd, nil, nil)
             if clientFD < 0 { break }
+
+            stateLock.lock()
+            let stoppedAfterAccept = stopped
+            stateLock.unlock()
+            if stoppedAfterAccept {
+                // This is `stop()`'s own unblocking connection, not a real
+                // request — serve nothing and let the loop exit.
+                close(clientFD)
+                break
+            }
+
             var buffer = [UInt8](repeating: 0, count: 4096)
             _ = buffer.withUnsafeMutableBytes { recv(clientFD, $0.baseAddress, $0.count, 0) }
             var response = Data(
@@ -282,17 +448,54 @@ private final class LocalFixedResponseServer: @unchecked Sendable {
                     .utf8
             )
             response.append(body)
-            response.withUnsafeBytes { _ = send(clientFD, $0.baseAddress, $0.count, 0) }
+            response.withUnsafeBytes { rawBuffer in
+                var sent = 0
+                let total = rawBuffer.count
+                while sent < total {
+                    let result = send(clientFD, rawBuffer.baseAddress!.advanced(by: sent), total - sent, 0)
+                    if result <= 0 { break }
+                    sent += result
+                }
+            }
             close(clientFD)
         }
+        acceptLoopFinished.signal()
     }
 
     func stop() {
-        if listenFD >= 0 {
-            let fd = listenFD
-            listenFD = -1
-            close(fd)
+        stateLock.lock()
+        if stopped {
+            stateLock.unlock()
+            return
         }
+        stopped = true
+        let fd = listenFD
+        let serverPort = port
+        stateLock.unlock()
+
+        guard fd >= 0 else { return }
+
+        // Unblock a thread parked in `accept(fd, ...)` by connecting to it
+        // ourselves, rather than closing `fd` out from under it.
+        let unblocker = socket(AF_INET, SOCK_STREAM, 0)
+        if unblocker >= 0 {
+            var addr = sockaddr_in()
+            addr.sin_family = sa_family_t(AF_INET)
+            addr.sin_addr.s_addr = inet_addr("127.0.0.1")
+            addr.sin_port = serverPort.bigEndian
+            _ = withUnsafePointer(to: &addr) { ptr -> Int32 in
+                ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                    connect(unblocker, $0, socklen_t(MemoryLayout<sockaddr_in>.size))
+                }
+            }
+            close(unblocker)
+        }
+
+        // Only close the listening fd once the accept loop has actually
+        // returned — this is what makes the fd-reuse race structurally
+        // unreachable rather than merely unlikely.
+        _ = acceptLoopFinished.wait(timeout: .now() + 2)
+        close(fd)
     }
 
     deinit { stop() }
@@ -338,8 +541,39 @@ private final class RoundTripNoopUserDriver: NSObject, SPUUserDriver {
 /// `SparkleFixture` for the full rationale — every read/write Sparkle
 /// performs against this bundle must land in a throwaway suite this
 /// fixture owns and deletes, never in `com.impressiver.snitt`).
+/// Captured once, before any fixture in this process can have written a
+/// preferences file — see `sweepStaleAppcastFixtureFiles()` below.
+private let appcastFixtureProcessStartTime = Date()
+
+/// R33: `UpdaterControllerTests.swift`'s `SparkleFixture` sweeps stale
+/// `com.snitt.test.fixture.*.plist` files left behind by a prior, killed
+/// `swift test` run — without it, R24 notes, that is "unbounded growth,
+/// one file per leaked run, forever." This fixture's suite prefix
+/// (`com.snitt.test.appcast-fixture.`) does not match that sweep's
+/// `hasPrefix("com.snitt.test.fixture.")` check, so it needs its own —
+/// otherwise this fixture reaches the exact unbounded-leak failure mode
+/// R24 exists to prevent, just under a different prefix. Only removes
+/// files strictly OLDER than this process's own start time, for the same
+/// reason `SparkleFixture` does: a file this process itself just created
+/// can never be mistaken for a stale one, so this can never delete a
+/// fixture concurrently in use within this same process.
+private func sweepStaleAppcastFixtureFiles() {
+    guard let preferencesDirectory = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first?
+        .appendingPathComponent("Preferences") else { return }
+    guard let contents = try? FileManager.default.contentsOfDirectory(
+        at: preferencesDirectory,
+        includingPropertiesForKeys: [.contentModificationDateKey]
+    ) else { return }
+    for file in contents where file.lastPathComponent.hasPrefix("com.snitt.test.appcast-fixture.") {
+        let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+        guard let modified, modified < appcastFixtureProcessStartTime else { continue }
+        try? FileManager.default.removeItem(at: file)
+    }
+}
+
 @MainActor
 private func makeRoundTripFixture(feedURL: String) throws -> (bundle: Bundle, root: URL, suite: String) {
+    sweepStaleAppcastFixtureFiles()
     let suite = "com.snitt.test.appcast-fixture.\(UUID().uuidString)"
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent("SnittAppcastFixture-\(UUID().uuidString).app")
@@ -378,9 +612,15 @@ private func cleanUpRoundTripFixture(root: URL, suite: String) {
     // landed on disk — `cfprefsd` can flush a domain's dirty state a
     // couple of milliseconds later via its own XPC round trip, especially
     // under the full suite's parallel load. A bounded retry closes that
-    // window without adding meaningful time to the run — see
-    // `UpdaterControllerTests.swift`'s `SparkleFixture.cleanUp()`, which
-    // hit and fixed the exact same race first.
+    // window — see `UpdaterControllerTests.swift`'s
+    // `SparkleFixture.cleanUp()`, which hit the same race first.
+    //
+    // R37: delete, THEN wait once and check — if the file is still gone
+    // after that one window, stop; only a recreation (the race actually
+    // firing) costs a further delete-and-wait cycle. The common case (no
+    // race) costs one 50ms wait instead of nine, which is what the
+    // original "without adding meaningful time" comment claimed but the
+    // unconditional 10-iteration loop it described did not actually do.
     let defaults = UserDefaults(suiteName: suite)
     defaults?.removePersistentDomain(forName: suite)
     defaults?.synchronize()
@@ -390,8 +630,10 @@ private func cleanUpRoundTripFixture(root: URL, suite: String) {
     {
         for attempt in 0..<10 {
             try? FileManager.default.removeItem(at: preferencesURL)
-            if attempt < 9 {
-                Thread.sleep(forTimeInterval: 0.05)
+            guard attempt < 9 else { break }
+            Thread.sleep(forTimeInterval: 0.05)
+            if !FileManager.default.fileExists(atPath: preferencesURL.path) {
+                break
             }
         }
     }
@@ -404,6 +646,47 @@ private func waitUntil(timeout: TimeInterval = 60, _ condition: () -> Bool) asyn
     while !condition() && Date() < deadline {
         try await Task.sleep(nanoseconds: 50_000_000)
     }
+}
+
+@MainActor
+@Test("A stale round-trip fixture preference file is swept on the next fixture creation")
+func staleAppcastFixtureFileIsSwept() throws {
+    // R33 (task-5-review.md): `UpdaterControllerTests.swift`'s
+    // `sweepStaleFixtureFiles()` only matches
+    // `com.snitt.test.fixture.*` and does nothing for this file's
+    // `com.snitt.test.appcast-fixture.*` suite — that domain had NO sweep
+    // at all before `sweepStaleAppcastFixtureFiles()` was added, i.e. a
+    // leaked file from a killed run would accumulate forever, one per
+    // leak, exactly what R24 added the original sweep to prevent for the
+    // other fixture. This directly exercises that fix: plant a
+    // fixture-shaped preferences file, backdate it before this process's
+    // own `appcastFixtureProcessStartTime`, and confirm the very next
+    // fixture creation removes it.
+    guard let preferencesDirectory = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first?
+        .appendingPathComponent("Preferences")
+    else {
+        Issue.record("could not resolve ~/Library/Preferences")
+        return
+    }
+    let staleFile = preferencesDirectory
+        .appendingPathComponent("com.snitt.test.appcast-fixture.STALE-\(UUID().uuidString).plist")
+    try Data("stale".utf8).write(to: staleFile)
+    defer { try? FileManager.default.removeItem(at: staleFile) }
+
+    // Backdate it to well before this process started, so it unambiguously
+    // qualifies as "leaked by an earlier run" rather than "created just
+    // now by this test" — the same distinction
+    // `sweepStaleAppcastFixtureFiles()` itself draws.
+    try FileManager.default.setAttributes(
+        [.modificationDate: Date(timeIntervalSince1970: 0)],
+        ofItemAtPath: staleFile.path
+    )
+    #expect(FileManager.default.fileExists(atPath: staleFile.path))
+
+    let (_, root, suite) = try makeRoundTripFixture(feedURL: "https://example.invalid/appcast.xml")
+    defer { cleanUpRoundTripFixture(root: root, suite: suite) }
+
+    #expect(!FileManager.default.fileExists(atPath: staleFile.path))
 }
 
 @MainActor

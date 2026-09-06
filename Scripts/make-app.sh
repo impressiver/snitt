@@ -60,15 +60,21 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Snitt records your microphone when you enable it for a recording.</string>
-  <!-- PLACEHOLDER — Task 5's make-appcast.sh generates the real appcast.
+  <!-- Task 5's Scripts/make-appcast.sh generates the real appcast this URL
+       points at (run with `--output`, whose only accepted filename is
+       this URL's own basename, "appcast.xml" — enforced by the script
+       itself and cross-checked against this exact line by
+       Tests/SnittAppTests/AppcastTests.swift's
+       feedURLAndScriptOutputAgreeOnFilename, so the two cannot drift
+       apart silently again). The maintainer uploads that generated file
+       as the latest GitHub release's "appcast.xml" asset.
+
        GitHub's own releases.atom is Atom (<feed>/<entry>), not a Sparkle
        appcast: SUAppcast.m parses /rss/channel/item and needs
        <enclosure sparkle:version=…>, which an Atom feed never emits, so
        pointing at releases.atom would make every check silently find zero
-       items. This URL is a stand-in with the same shape Task 5's output
-       will have (an appcast.xml release asset); replace it with the real
-       one when that task lands, the same way SUPublicEDKey below is a
-       stand-in for a real key. -->
+       items. Do not "simplify" this into pointing at GitHub's Atom feed
+       instead. -->
   <key>SUFeedURL</key>
   <string>https://github.com/impressiver/snitt/releases/latest/download/appcast.xml</string>
   <!-- No SUPublicEDKey key at all — not even an empty string. Verified
