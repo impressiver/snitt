@@ -139,6 +139,16 @@ else
   echo "Run ./Scripts/signing-identity.sh for one-time setup instructions." >&2
 fi
 
+# Every codesign call below (this script's nested-item signs, plus both of
+# Scripts/lib/sign-app-with-workaround.sh's) adds a secure timestamp by
+# default and honors SNITT_SKIP_TIMESTAMP=1 as an explicit, per-invocation
+# offline opt-out. See Scripts/lib/sign-nested-item.sh and
+# Scripts/lib/sign-app-with-workaround.sh for the shared rationale (Apple's
+# notary service rejects an untimestamped binary; --timestamp is a
+# confirmed no-op for ad-hoc but a confirmed hard failure against an
+# unreachable server for a real identity) — not repeated here to avoid it
+# drifting out of sync across three copies.
+
 # We deliberately do NOT use `--deep` on the framework. SPM's vendored
 # Sparkle.framework arrives from Sparkle's own build already signed
 # (ad-hoc) WITH the hardened runtime flag and entitlements on every nested
@@ -158,8 +168,13 @@ fi
 # item already has from Sparkle's build rather than guessing at
 # .entitlements files we don't own. `--options runtime` re-adds the
 # hardened runtime flag our own signature would otherwise omit.
+#
+# The actual codesign call lives in Scripts/lib/sign-nested-item.sh, not
+# inline here, for the same reason Scripts/lib/sign-app-with-workaround.sh
+# was already factored out: so this exact production signing call can be
+# exercised directly by a test, independent of the full app build.
 sign_nested() {
-  codesign --force --sign "$SIGN_ID" --options runtime --preserve-metadata=entitlements "$1"
+  ./Scripts/lib/sign-nested-item.sh "$1" "$SIGN_ID"
 }
 
 sign_nested "$FRAMEWORK_DEST/Versions/B/XPCServices/Downloader.xpc"

@@ -24,6 +24,19 @@ APP="$1"
 SIGN_ID="$2"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# See Scripts/make-app.sh's matching block for the full rationale (Apple
+# rejects every unsigned-with-a-secure-timestamp binary on notarization;
+# `--timestamp` is a confirmed no-op for ad-hoc but a confirmed hard
+# failure against an unreachable server for a real identity). Timestamp by
+# default; SNITT_SKIP_TIMESTAMP=1 is the explicit, per-invocation opt-out
+# for offline work under a real (non-ad-hoc) identity — set for one run,
+# never left exported, same discipline as SNITT_FAKE_TEAM_IDENTIFIER_LINE
+# below.
+TIMESTAMP_ARGS=()
+if [ "${SNITT_SKIP_TIMESTAMP:-}" != "1" ]; then
+  TIMESTAMP_ARGS=(--timestamp)
+fi
+
 # Signing order is the whole risk here: codesign signs inner code before the
 # enclosing bundle. An unsigned (or wrongly-signed) framework inside a signed
 # app can launch fine from Finder on this machine and fail Gatekeeper or
@@ -49,7 +62,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # it has a real Team ID, and only add the entitlement (re-signing) when it
 # does not. `needs-teamless-workaround.sh` holds the actual decision so it
 # can also be unit-tested in isolation with a synthetic TeamIdentifier line.
-codesign --force --sign "$SIGN_ID" --options runtime "$APP"
+codesign --force --sign "$SIGN_ID" --options runtime \
+  "${TIMESTAMP_ARGS[@]+"${TIMESTAMP_ARGS[@]}"}" "$APP"
 
 REAL_TEAM_LINE="$(codesign -dvv "$APP" 2>&1 | grep '^TeamIdentifier=' || true)"
 
@@ -106,7 +120,8 @@ if [ "$DECISION" = "yes" ]; then
 </dict>
 </plist>
 ENTITLEMENTS_PLIST
-  codesign --force --sign "$SIGN_ID" --options runtime --entitlements "$ENTITLEMENTS" "$APP"
+  codesign --force --sign "$SIGN_ID" --options runtime --entitlements "$ENTITLEMENTS" \
+    "${TIMESTAMP_ARGS[@]+"${TIMESTAMP_ARGS[@]}"}" "$APP"
   rm -rf "$ENTITLEMENTS_DIR"
 elif [ "$DECISION" = "no" ]; then
   echo "Real Team ID ($TEAM_LINE) — library validation satisfied without any extra entitlement."

@@ -474,3 +474,234 @@ func appEntitlementsCarryNoWorkaroundLeakUnderARealTeamID() throws {
         try assertNoWorkaroundLeak(teamIdentifierLine: teamLine, entitlementsXML: xml)
     }
 }
+
+// MARK: - Secure timestamp (M5b notary defect): every codesign call must timestamp
+
+// Apple's notary service rejected the first real submission on all three
+// signed things (Snitt.app, Updater.app, both Sparkle XPC services) with
+// "The signature does not include a secure timestamp." No LOCAL check
+// catches this: `codesign --verify --deep --strict` passes on an
+// untimestamped signature, and so does launching the app — only Apple's
+// service looks. The one local observable that DOES exist is `codesign
+// -dvv` printing a `Timestamp=<date>` line, confirmed directly (not
+// assumed) to appear only for a securely-timestamped signature.
+//
+// This defect is exactly the shape this project has hit twenty-six times
+// before: three separate codesign call sites (Scripts/make-app.sh's
+// sign_nested → Scripts/lib/sign-nested-item.sh; and
+// Scripts/lib/sign-app-with-workaround.sh's two calls, one per branch of
+// its teamless-workaround decision), and a test that only checks a
+// property true of all three regardless of which one is broken would miss
+// exactly the same bug in a smaller way. So each test below is pinned to
+// ONE call site and asserts on the ACTUAL on-disk signature that call site
+// alone produces — not a fixture, not a string comparison against the
+// script's own source.
+//
+// Confirmed directly, and load-bearing for the gating below: `--timestamp`
+// is a silent no-op for ad-hoc signing (`-`) — no `Timestamp=` line, no
+// network attempt even against a deliberately unreachable server, exit 0
+// — but for a REAL (non-ad-hoc) identity, an unreachable timestamp server
+// makes codesign FAIL the whole signing call outright. So verifying a
+// REAL secure timestamp locally requires both a real signing identity AND
+// working network access to Apple's timestamp service; these tests gate on
+// having confirmed both, live, rather than assuming either.
+
+/// `Scripts/signing-identity.sh`'s stable identity name, or nil if that
+/// script exits non-zero (no such identity installed on this machine).
+private let stableSigningIdentity: String? = {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "Scripts/signing-identity.sh")
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = FileHandle.nullDevice
+    do {
+        try process.run()
+    } catch {
+        return nil
+    }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    guard process.terminationStatus == 0 else { return nil }
+    let name = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+    return (name?.isEmpty == false) ? name : nil
+}()
+
+/// Whether `codesign --timestamp` can actually reach Apple's timestamp
+/// service, right now, under the stable signing identity — determined by
+/// really trying it against a throwaway file, not assumed from "network
+/// looks up". A real, non-ad-hoc identity is required for this probe:
+/// ad-hoc's `--timestamp` is a confirmed no-op regardless of reachability,
+/// so probing with `-` would always read as "reachable" even when offline.
+private let timestampServiceReachable: Bool = {
+    guard let identity = stableSigningIdentity else { return false }
+    let probe = FileManager.default.temporaryDirectory.appending(path: "snitt-timestamp-probe-\(UUID().uuidString)")
+    FileManager.default.createFile(atPath: probe.path, contents: Data("probe".utf8))
+    defer { try? FileManager.default.removeItem(at: probe) }
+    let (status, _) = runCodesign(["--force", "--sign", identity, "--timestamp", probe.path])
+    return status == 0
+}()
+
+private let timestampSkipReason: Comment =
+    "needs both Scripts/signing-identity.sh's stable identity installed and live network access to Apple's timestamp service — see stableSigningIdentity/timestampServiceReachable"
+
+/// Runs one of the two testable signing lib scripts against a fresh copy
+/// of the built app (or, for sign-nested-item.sh, a fresh copy of one
+/// nested item), returning (exit status, combined output).
+private func runScript(_ path: String, arguments: [String], environment: [String: String]) -> (status: Int32, output: String) {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: path)
+    process.arguments = arguments
+    process.environment = environment
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    process.standardError = pipe
+    do {
+        try process.run()
+    } catch {
+        return (-1, "failed to launch \(path): \(error)")
+    }
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return (process.terminationStatus, String(data: data, encoding: .utf8) ?? "")
+}
+
+@Test(
+    "Secure timestamp: sign-nested-item.sh's codesign call timestamps a nested Sparkle item",
+    .enabled(if: appIsBuilt && timestampServiceReachable, timestampSkipReason)
+)
+func signNestedItemTimestampsTheItem() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
+    let identity = try #require(stableSigningIdentity)
+
+    // Verified this fails against the wrong implementation it exists to
+    // catch: temporarily removed --timestamp from
+    // Scripts/lib/sign-nested-item.sh's codesign call and re-ran this
+    // test — it failed on the missing Timestamp= line for this exact
+    // item; reverting restored the pass. The other two timestamp tests
+    // below did NOT fail from that same mutation, confirming this test is
+    // pinned to sign-nested-item.sh alone.
+    let source = framework.appending(path: "Versions/B/Updater.app")
+    try #require(FileManager.default.fileExists(atPath: source.path), "Updater.app missing — build/Snitt.app not fully assembled")
+
+    let tempDir = FileManager.default.temporaryDirectory.appending(path: "snitt-nested-timestamp-\(UUID().uuidString)")
+    let copy = tempDir.appending(path: "Updater.app")
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    try FileManager.default.copyItem(at: source, to: copy)
+
+    let (status, output) = runScript(
+        "Scripts/lib/sign-nested-item.sh",
+        arguments: [copy.path, identity],
+        environment: ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
+    )
+    #expect(status == 0, "sign-nested-item.sh failed:\n\(output)")
+
+    let (_, dvv) = runCodesign(["-dvv", copy.path])
+    #expect(dvv.contains("Timestamp="), "expected a secure timestamp on a sign-nested-item.sh signature:\n\(dvv)")
+}
+
+@Test(
+    "Secure timestamp: sign-app-with-workaround.sh's initial app sign (Developer-ID-shaped branch) timestamps the app",
+    .enabled(if: appIsBuilt && timestampServiceReachable, timestampSkipReason)
+)
+func initialAppSignIsTimestamped() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
+    let identity = try #require(stableSigningIdentity)
+
+    // Forcing a Developer-ID-shaped TeamIdentifier (as
+    // signingWithADeveloperIDShapedIdentityCarriesNoWorkaround above
+    // already does) takes the "no real Team ID? no" branch, which skips
+    // the entitlements re-sign entirely — so the on-disk signature this
+    // test inspects is produced by ONLY the first codesign call (line 52),
+    // not overwritten by the second. That isolates this test to that one
+    // call site.
+    //
+    // Verified this fails against the wrong implementation: temporarily
+    // removed --timestamp from just this first codesign call in
+    // sign-app-with-workaround.sh and re-ran — this test failed on the
+    // missing Timestamp= line while workaroundResignIsTimestamped below
+    // (which exercises the OTHER call) still passed, confirming isolation
+    // in both directions.
+    let tempDir = FileManager.default.temporaryDirectory.appending(path: "snitt-initial-sign-timestamp-\(UUID().uuidString)")
+    let copy = tempDir.appending(path: "Snitt.app")
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    try FileManager.default.copyItem(at: app, to: copy)
+
+    let (status, output) = runScript(
+        "Scripts/lib/sign-app-with-workaround.sh",
+        arguments: [copy.path, identity],
+        environment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "SNITT_FAKE_TEAM_IDENTIFIER_LINE": "TeamIdentifier=ABCDE12345TEAM",
+        ]
+    )
+    #expect(status == 0, "sign-app-with-workaround.sh failed:\n\(output)")
+
+    let (_, dvv) = runCodesign(["-dvv", copy.path])
+    #expect(dvv.contains("Timestamp="), "expected a secure timestamp on the initial (Developer-ID-shaped-branch) app sign:\n\(dvv)")
+}
+
+@Test(
+    "Secure timestamp: sign-app-with-workaround.sh's teamless-workaround re-sign timestamps the app",
+    .enabled(if: appIsBuilt && timestampServiceReachable, timestampSkipReason)
+)
+func workaroundResignIsTimestamped() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
+    let identity = try #require(stableSigningIdentity)
+
+    // No SNITT_FAKE_TEAM_IDENTIFIER_LINE override here: a self-signed
+    // identity naturally reads back "TeamIdentifier=not set", taking the
+    // "yes" branch, whose entitlements re-sign (line 109) runs SECOND and
+    // so is what's actually on disk afterward — isolating this test to
+    // that call site, distinct from initialAppSignIsTimestamped above.
+    //
+    // Verified this fails against the wrong implementation: temporarily
+    // removed --timestamp from just this second (entitlements re-sign)
+    // codesign call and re-ran — this test failed on the missing
+    // Timestamp= line while initialAppSignIsTimestamped above still
+    // passed.
+    let tempDir = FileManager.default.temporaryDirectory.appending(path: "snitt-workaround-resign-timestamp-\(UUID().uuidString)")
+    let copy = tempDir.appending(path: "Snitt.app")
+    try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tempDir) }
+    try FileManager.default.copyItem(at: app, to: copy)
+
+    let (status, output) = runScript(
+        "Scripts/lib/sign-app-with-workaround.sh",
+        arguments: [copy.path, identity],
+        environment: ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
+    )
+    #expect(status == 0, "sign-app-with-workaround.sh failed:\n\(output)")
+
+    let teamLine = realTeamIdentifierLine(of: copy)
+    try #require(try needsTeamlessWorkaround(forTeamIdentifierLine: teamLine) == "yes", "expected the self-signed identity to take the teamless-workaround branch (got \(teamLine)) — cannot isolate the re-sign call otherwise")
+
+    let (_, dvv) = runCodesign(["-dvv", copy.path])
+    #expect(dvv.contains("Timestamp="), "expected a secure timestamp on the teamless-workaround re-sign:\n\(dvv)")
+}
+
+@Test("SNITT_SKIP_TIMESTAMP=1 omits the secure timestamp (offline opt-out actually opts out)")
+func skipTimestampEnvVarActuallySkipsIt() throws {
+    // Ad-hoc signing needs no real identity and no network — this proves
+    // the opt-out variable is wired to sign-nested-item.sh's codesign call
+    // without depending on the network-gated tests above. (--timestamp is
+    // already a no-op for ad-hoc, so this doesn't prove much about ad-hoc
+    // specifically; it proves SNITT_SKIP_TIMESTAMP reaches the flag at
+    // all, which the network-gated tests above can't check when skipped.)
+    let tempFile = FileManager.default.temporaryDirectory.appending(path: "snitt-skip-timestamp-\(UUID().uuidString)")
+    FileManager.default.createFile(atPath: tempFile.path, contents: Data("probe".utf8))
+    defer { try? FileManager.default.removeItem(at: tempFile) }
+
+    let (status, output) = runScript(
+        "Scripts/lib/sign-nested-item.sh",
+        arguments: [tempFile.path, "-"],
+        environment: [
+            "PATH": "/usr/bin:/bin:/usr/sbin:/sbin",
+            "SNITT_SKIP_TIMESTAMP": "1",
+        ]
+    )
+    #expect(status == 0, "sign-nested-item.sh failed:\n\(output)")
+    let (_, dvv) = runCodesign(["-dvv", tempFile.path])
+    #expect(!dvv.contains("Timestamp="), "SNITT_SKIP_TIMESTAMP=1 should omit the secure timestamp:\n\(dvv)")
+}
