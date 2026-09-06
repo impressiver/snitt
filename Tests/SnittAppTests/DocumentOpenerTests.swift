@@ -39,7 +39,7 @@ struct DocumentOpenerTests {
         #expect(controller.window.title == url.lastPathComponent)
     }
 
-    @Test("Opening a path that is not a .snitt bundle throws rather than opening an empty window")
+    @Test("Opening a path that is not a directory throws SnittBundleError.notADirectory rather than opening an empty window")
     func rejectsNonBundle() async throws {
         let junk = FileManager.default.temporaryDirectory
             .appending(path: "not-a-bundle-\(UUID().uuidString).txt")
@@ -47,10 +47,46 @@ struct DocumentOpenerTests {
         defer { try? FileManager.default.removeItem(at: junk) }
 
         let before = EditorWindowController.openWindowCount
-        await #expect(throws: (any Error).self) {
+        // Assert the SPECIFIC rejection, not just "something threw": an
+        // implementation that swallows `SnittBundle(opening:)`'s error and
+        // falls through to, say, the parent directory would still satisfy
+        // a bare `#expect(throws: (any Error).self)` — `EventLog.read`
+        // would throw a *different* error next, and the test would pass
+        // for the wrong reason. Pinning the error to
+        // `SnittBundleError.notADirectory` means only the intended
+        // rejection — "this path is not a bundle directory at all" — can
+        // satisfy it.
+        await #expect(throws: SnittBundleError.notADirectory) {
             _ = try await DocumentOpener.open(bundleURL: junk)
         }
         // The failure that matters is a half-open editor showing nothing.
+        // NOTE: this assertion is unfalsifiable by construction, not just
+        // in practice — `BuiltComposition`'s memberwise init is internal
+        // to `SnittExport`, so no `SnittApp` implementation, however
+        // broken, can construct one to hand `PreviewController` without
+        // first getting through `CompositionBuilder.build`. The "no empty
+        // editor" contract holds structurally; this line documents that
+        // rather than being the thing enforcing it.
+        #expect(EditorWindowController.openWindowCount == before)
+    }
+
+    @Test("Opening a directory that looks like a bundle but has no bundle contents throws rather than opening an empty window")
+    func rejectsInvalidBundleDirectory() async throws {
+        // The likelier real-world case: a plain folder someone renamed to
+        // `.snitt`, or a bundle a failed recording never finished writing.
+        // `SnittBundle(opening:)` only checks "is this a directory" — it
+        // has no `missingCapture` check wired up — so this one gets past
+        // that guard and must be rejected further in, when `EventLog.read`
+        // can't find `events.json`.
+        let empty = FileManager.default.temporaryDirectory
+            .appending(path: "not-really-a-bundle-\(UUID().uuidString).snitt")
+        try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: empty) }
+
+        let before = EditorWindowController.openWindowCount
+        await #expect(throws: CocoaError.self) {
+            _ = try await DocumentOpener.open(bundleURL: empty)
+        }
         #expect(EditorWindowController.openWindowCount == before)
     }
 }
