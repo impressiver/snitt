@@ -20,6 +20,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let updater: UpdaterController
     private let defaults: UserDefaults
     private let onChange: (() -> Void)?
+    private let eventLoggingToggle: (Bool, UserDefaults) -> Bool
 
     static let agentRecordingTitle = "Allow agent recording"
     static let eventLoggingTitle = "Log input events"
@@ -58,10 +59,21 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// bitten by. The window is still real and still gets its real content
     /// view and delegate; tests just never ask AppKit to put it on screen or
     /// steal focus, which is the part that was racing.
+    ///
+    /// `eventLoggingToggle` is also test-only. Production always uses the
+    /// default, which forwards to `EventLoggingToggle.apply` against the
+    /// real `PermissionOnboarding`/`InputMonitoringAccess` — real AppKit
+    /// alert and real per-machine TCC state, neither of which a test can
+    /// drive. Tests substitute a fake that reports the grant as refused, so
+    /// the checkbox's return-to-off behavior can be pinned without a real
+    /// dialog appearing.
     static func show(updater: UpdaterController,
                       defaults: UserDefaults = .standard,
                       onChange: (() -> Void)? = nil,
-                      activate: Bool) {
+                      activate: Bool,
+                      eventLoggingToggle: @escaping (Bool, UserDefaults) -> Bool = {
+                          EventLoggingToggle.apply($0, defaults: $1)
+                      }) {
         // A second Command-comma focuses the existing window rather than
         // opening a second one — two Settings windows can disagree on
         // screen.
@@ -72,7 +84,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             }
             return
         }
-        let controller = SettingsWindowController(updater: updater, defaults: defaults, onChange: onChange)
+        let controller = SettingsWindowController(updater: updater, defaults: defaults,
+                                                  onChange: onChange, eventLoggingToggle: eventLoggingToggle)
         shared = controller
         if activate {
             controller.window.makeKeyAndOrderFront(nil)
@@ -95,10 +108,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         shared = nil
     }
 
-    private init(updater: UpdaterController, defaults: UserDefaults, onChange: (() -> Void)?) {
+    private init(updater: UpdaterController, defaults: UserDefaults, onChange: (() -> Void)?,
+                eventLoggingToggle: @escaping (Bool, UserDefaults) -> Bool) {
         self.updater = updater
         self.defaults = defaults
         self.onChange = onChange
+        self.eventLoggingToggle = eventLoggingToggle
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 200),
                           styleMask: [.titled, .closable],
                           backing: .buffered,
@@ -162,7 +177,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     @objc private func toggleEventLogging(_ sender: NSButton) {
-        EventLoggingSettings(enabled: sender.state == .on).save(to: defaults)
+        // Routed through the SAME §4.10 ladder the status item runs — see
+        // `EventLoggingToggle`'s doc comment. `apply` returns the state
+        // actually persisted, which is `false` whenever the pre-explain is
+        // declined or the Input Monitoring grant is unavailable, even
+        // though the user just checked this box; the checkbox is set back
+        // to match, so it never shows a state the setting does not have.
+        let applied = eventLoggingToggle(sender.state == .on, defaults)
+        sender.state = applied ? .on : .off
         onChange?()
     }
 

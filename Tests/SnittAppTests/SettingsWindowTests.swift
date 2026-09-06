@@ -163,4 +163,155 @@ struct SettingsWindowTests {
         let second = try #require(SettingsWindowController.shared)
         #expect(first !== second)
     }
+
+    /// F1: the fix-round finding. A plain `save()` in the window's event-
+    /// logging toggle skips §4.10's pre-explain and can persist `enabled =
+    /// true` with no Input Monitoring grant behind it — the exact state
+    /// `AppDelegate`'s original status-item closure was written to avoid
+    /// (see its "deliberately NOT persisted" comment). Verified to fail
+    /// against that bug: a `toggleEventLogging` body that does
+    /// `EventLoggingSettings(enabled: sender.state == .on).save(to:
+    /// defaults)` and nothing else makes both `#expect`s below fail — the
+    /// checkbox stays on and the setting reads back `true` even though the
+    /// injected `eventLoggingToggle` fake reports the grant as refused.
+    @Test("The window's event-logging checkbox returns to off when the grant is refused, and nothing is persisted")
+    func eventLoggingRevertsWhenGrantRefused() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            SettingsWindowController.resetForTesting()
+        }
+        let updater = UpdaterController(settings: UpdateSettings.load(defaults))
+
+        // Simulates §4.10's ladder refusing the grant (declined pre-explain,
+        // or `InputMonitoringAccess.ensureGranted()` returning false) —
+        // without raising the real alert or touching real TCC state.
+        SettingsWindowController.show(updater: updater, defaults: defaults, activate: false,
+                                      eventLoggingToggle: { _, _ in false })
+
+        let checkbox = try #require(
+            SettingsWindowController.shared?.checkbox(titled: SettingsWindowController.eventLoggingTitle))
+        #expect(checkbox.state == .off)
+        checkbox.performClick(nil)
+
+        #expect(checkbox.state == .off,
+                "a refused grant must leave the checkbox unchecked, not showing the click that was refused")
+        #expect(EventLoggingSettings.load(defaults).enabled == false,
+                "a refused grant must not persist enabled = true")
+    }
+
+    /// The success path through the same injection point, so the fake
+    /// above is pinned as actually standing in for a real grant rather than
+    /// a stub that always returns false regardless of what happened.
+    @Test("The window's event-logging checkbox stays on when the grant succeeds")
+    func eventLoggingPersistsWhenGrantSucceeds() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            SettingsWindowController.resetForTesting()
+        }
+        let updater = UpdaterController(settings: UpdateSettings.load(defaults))
+
+        SettingsWindowController.show(updater: updater, defaults: defaults, activate: false,
+                                      eventLoggingToggle: { enabled, defaults in
+                                          EventLoggingSettings(enabled: enabled).save(to: defaults)
+                                          return enabled
+                                      })
+
+        let checkbox = try #require(
+            SettingsWindowController.shared?.checkbox(titled: SettingsWindowController.eventLoggingTitle))
+        checkbox.performClick(nil)
+
+        #expect(checkbox.state == .on)
+        #expect(EventLoggingSettings.load(defaults).enabled == true)
+    }
+}
+
+/// Unit tests for the extracted §4.10 ladder itself — the single place both
+/// the status item and the Settings window now call, so there is one rule
+/// instead of two that can drift apart.
+@Suite(.serialized)
+@MainActor
+struct EventLoggingToggleTests {
+    init() { _ = NSApplication.shared }
+
+    private func fixtureDefaults() throws -> (UserDefaults, String) {
+        let suiteName = "com.snitt.test.eventtoggle.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        return (defaults, suiteName)
+    }
+
+    /// Verified to fail against the bug this whole fix round exists for: a
+    /// `apply` body that skips straight to `EventLoggingSettings(enabled:
+    /// enabled).save(to: defaults)` without consulting `preExplain` at all
+    /// makes the second `#expect` fail — `enabled` reads back `true` even
+    /// though `preExplain` here declines.
+    @Test("Declining the pre-explain persists nothing and returns false")
+    func decliningPreExplainPersistsNothing() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let applied = EventLoggingToggle.apply(true, defaults: defaults,
+                                                preExplain: { _ in false },
+                                                ensureGranted: { true },
+                                                showAlreadyDenied: {})
+
+        #expect(applied == false)
+        #expect(EventLoggingSettings.load(defaults).enabled == false)
+    }
+
+    /// Same shape, aimed at the grant step rather than the pre-explain step
+    /// — a declined pre-explain and a refused grant are different failure
+    /// points that must both leave the setting off.
+    @Test("A refused grant persists nothing, returns false, and shows the already-denied alert")
+    func refusedGrantPersistsNothing() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var showedAlreadyDenied = false
+        let applied = EventLoggingToggle.apply(true, defaults: defaults,
+                                                preExplain: { _ in true },
+                                                ensureGranted: { false },
+                                                showAlreadyDenied: { showedAlreadyDenied = true })
+
+        #expect(applied == false)
+        #expect(EventLoggingSettings.load(defaults).enabled == false)
+        #expect(showedAlreadyDenied,
+                "a refused grant must tell the user, the same way the status item's ladder does")
+    }
+
+    @Test("Pre-explain accepted and grant available persists enabled = true")
+    func grantedTurnOnPersists() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let applied = EventLoggingToggle.apply(true, defaults: defaults,
+                                                preExplain: { _ in true },
+                                                ensureGranted: { true },
+                                                showAlreadyDenied: {})
+
+        #expect(applied == true)
+        #expect(EventLoggingSettings.load(defaults).enabled == true)
+    }
+
+    /// Turning OFF never consults the ladder — only turning ON needs a
+    /// grant, and a mutant that ran `preExplain`/`ensureGranted` on every
+    /// call would still pass unless it also refused a same-process false
+    /// grant here, so this pins the "off always succeeds" branch directly.
+    @Test("Turning off always persists, without consulting the ladder")
+    func turningOffNeverConsultsLadder() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        EventLoggingSettings(enabled: true).save(to: defaults)
+
+        var ladderConsulted = false
+        let applied = EventLoggingToggle.apply(false, defaults: defaults,
+                                                preExplain: { _ in ladderConsulted = true; return true },
+                                                ensureGranted: { ladderConsulted = true; return true },
+                                                showAlreadyDenied: {})
+
+        #expect(applied == false)
+        #expect(ladderConsulted == false)
+        #expect(EventLoggingSettings.load(defaults).enabled == false)
+    }
 }

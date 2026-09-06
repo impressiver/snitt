@@ -68,36 +68,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.eventLoggingEnabled = EventLoggingSettings.load().enabled
         statusItem.onToggleEventLogging = { [weak self] enabled in
             guard let self else { return }
-            if enabled {
-                // First use of the feature that needs it — never at launch.
-                guard PermissionOnboarding.preExplain(.inputMonitoring) else {
-                    self.statusItem.eventLoggingEnabled = false
-                    return
-                }
-                if !InputMonitoringAccess.ensureGranted() {
-                    // Same shape as Screen Recording: a request returns false
-                    // even while the user is granting, so this is "relaunch",
-                    // not "denied".
-                    PermissionOnboarding.showAlreadyDenied(.inputMonitoring)
-                    // Deliberately NOT persisted. Saving `enabled = true` here
-                    // left a checkmark on a feature that can never produce an
-                    // event — indistinguishable from "the user did not type" —
-                    // and left `Recorder` to meet the missing grant mid-
-                    // recording, where the TCC dialog it raises lands in frame
-                    // with no pre-explain (§4.10), or on the agent path with
-                    // nobody there to dismiss it.
-                    //
-                    // After a first-run grant this means one more toggle on the
-                    // next launch, which is the same "relaunch" the alert just
-                    // described, and is the honest state in the meantime.
-                    self.statusItem.eventLoggingEnabled = false
-                    return
-                }
-            }
-            var settings = EventLoggingSettings.load()
-            settings.enabled = enabled
-            settings.save()
-            self.statusItem.eventLoggingEnabled = enabled
+            // Routed through EventLoggingToggle so the status item and the
+            // Settings window run exactly the same §4.10 ladder — see its
+            // doc comment for why a second copy of this logic is a defect,
+            // not a convenience. `apply` returns the state actually
+            // persisted, which is `false` (not `enabled`) whenever the
+            // pre-explain is declined or the grant is unavailable; the
+            // mirrored property below is what makes the menu's checkmark
+            // reflect that, exactly as it did before this was extracted.
+            self.statusItem.eventLoggingEnabled = EventLoggingToggle.apply(enabled)
         }
 
         // §12's opt-in crash reporting: no handler, no network — purely
