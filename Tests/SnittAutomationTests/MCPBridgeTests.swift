@@ -78,8 +78,20 @@ func mcpDiagnosticsMapsToTheSameRequest() {
     #expect(mcpPath == "/tmp/diagnostics.json")
 }
 
-@Test("snitt_diagnostics_export resolves a relative outputPath against this process's cwd")
-func diagnosticsExportResolvesRelativePaths() throws {
+// The three tests below inject an explicit `workingDirectory` — the same
+// injectable seam `snitt-cli`'s own `requestBody(for:currentDirectory:)`
+// uses — rather than `chdir`-ing the real process. `chdir` mutates
+// process-wide, shared state: swift-testing runs every test target in ONE
+// process (`SnittPackageTests.xctest`) and parallelizes across ALL of them by
+// default, not just within this file, so a `chdir` here can race unrelated
+// tests elsewhere in the package that resolve their own paths against the
+// real cwd (several such tests exist under `SnittAppTests`) — serializing
+// only this file's tests against each other narrows that race without
+// closing it. Asserting through `workingDirectory` instead removes the
+// shared mutable state entirely: the real process cwd is never touched and
+// is irrelevant to these tests.
+@Test("snitt_diagnostics_export resolves a relative outputPath against the caller's working directory")
+func diagnosticsExportResolvesRelativePaths() {
     // `.diagnostics`'s own doc comment (`Protocol.swift`) declares
     // `outputPath` arrives already resolved against the CALLER's working
     // directory. `snitt-cli` honours that via `PathResolver.resolve` before
@@ -93,29 +105,57 @@ func diagnosticsExportResolvesRelativePaths() throws {
     // A fixed absolute path (as every other fixture in this file uses)
     // cannot tell a resolving implementation from a pass-through one — both
     // leave it unchanged. Only a RELATIVE path discriminates.
-    let scratchDir = FileManager.default.temporaryDirectory
-        .appendingPathComponent("MCPBridgeTests-\(UUID().uuidString)")
-    try FileManager.default.createDirectory(at: scratchDir, withIntermediateDirectories: true)
-    defer { try? FileManager.default.removeItem(at: scratchDir) }
-
-    let previousCWD = FileManager.default.currentDirectoryPath
-    #expect(FileManager.default.changeCurrentDirectoryPath(scratchDir.path))
-    defer { _ = FileManager.default.changeCurrentDirectoryPath(previousCWD) }
-    // `/tmp` is itself a symlink to `/private/tmp` on macOS, and `chdir`
-    // resolves it — read the resolved cwd back rather than trust
-    // `scratchDir.path`, so the expectation isn't comparing a symlinked
-    // path against its resolved target.
-    let resolvedCWD = FileManager.default.currentDirectoryPath
+    let workingDirectory = "/private/tmp/MCPBridgeTests-\(UUID().uuidString)"
 
     guard case .success(let body) = MCPBridge.request(
         forTool: "snitt_diagnostics_export",
-        arguments: jsonArguments(#"{"outputPath": "diagnostics.json"}"#))
+        arguments: jsonArguments(#"{"outputPath": "diagnostics.json"}"#),
+        workingDirectory: workingDirectory)
     else { Issue.record("MCP could not express a diagnostics export"); return }
     guard case .diagnostics(let resolvedPath) = body else {
         Issue.record("expected .diagnostics, got \(body)"); return
     }
 
-    #expect(resolvedPath == resolvedCWD + "/diagnostics.json",
+    #expect(resolvedPath == workingDirectory + "/diagnostics.json",
+            "a relative outputPath must resolve against the caller's working directory, not arrive verbatim")
+}
+
+@Test("snitt_trim resolves a relative bundlePath against the caller's working directory")
+func trimResolvesRelativePaths() {
+    // Same shape as `diagnosticsExportResolvesRelativePaths` above: only
+    // a relative path discriminates a resolving implementation from a
+    // pass-through one.
+    let workingDirectory = "/private/tmp/MCPBridgeTests-\(UUID().uuidString)"
+
+    guard case .success(let body) = MCPBridge.request(
+        forTool: "snitt_trim",
+        arguments: jsonArguments(#"{"bundlePath": "d.snitt", "autoTrim": true}"#),
+        workingDirectory: workingDirectory)
+    else { Issue.record("MCP could not express a trim"); return }
+    guard case .trim(let resolvedPath, _, _, _) = body else {
+        Issue.record("expected .trim, got \(body)"); return
+    }
+
+    #expect(resolvedPath == workingDirectory + "/d.snitt",
+            "a relative bundlePath must resolve against the caller's working directory, not arrive verbatim")
+}
+
+@Test("snitt_export resolves relative bundlePath and outputPath against the caller's working directory")
+func exportResolvesRelativePaths() {
+    let workingDirectory = "/private/tmp/MCPBridgeTests-\(UUID().uuidString)"
+
+    guard case .success(let body) = MCPBridge.request(
+        forTool: "snitt_export",
+        arguments: jsonArguments(#"{"bundlePath": "d.snitt", "format": "mp4", "outputPath": "out.mp4"}"#),
+        workingDirectory: workingDirectory)
+    else { Issue.record("MCP could not express an export"); return }
+    guard case .export(let resolvedBundlePath, _, let resolvedOutputPath, _, _, _) = body else {
+        Issue.record("expected .export, got \(body)"); return
+    }
+
+    #expect(resolvedBundlePath == workingDirectory + "/d.snitt",
+            "a relative bundlePath must resolve against the caller's working directory, not arrive verbatim")
+    #expect(resolvedOutputPath == workingDirectory + "/out.mp4",
             "a relative outputPath must resolve against the caller's working directory, not arrive verbatim")
 }
 

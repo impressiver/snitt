@@ -342,23 +342,30 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         // Everything downstream (permission preflight, resolution, the Recorder,
         // the indicator, the kill switch) still stays shared with the hotkey path.
         let resolver: TargetResolver
-        let choice: ResolverChoice
+        let choice: ResolverChoice?
         if let forcedResolver {
             resolver = forcedResolver
-            choice = .cache // only affects `usedCache:` in the returned outcome
+            // An agent's target is named explicitly, so there is no
+            // `ResolverChoice` to make at all — see `usedCache(choice:)`.
+            choice = nil
         } else {
-            let stored = store.load()
-            choice = Self.resolverChoice(hasCachedTarget: stored != nil)
-            switch choice {
-            case .cache:
-                guard let stored, let reference = Self.reference(from: stored) else {
-                    return .failed("The cached target could not be read.",
-                                   reason: .targetUnavailable)
-                }
-                resolver = cachedResolverFactory(reference)
-            case .picker:
-                resolver = pickerResolver
-            }
+            // `store.load()`'s result is discarded by `resolverChoice`
+            // today — it always returns `.picker` regardless of what is
+            // passed in, so this read has no effect on `resolver` below.
+            // Read anyway, rather than passing a hardcoded `false`, so this
+            // call site stays truthful about the store's actual state: if
+            // `resolverChoice`'s policy is ever restored, only its own body
+            // needs to change, not this call site.
+            choice = Self.resolverChoice(hasCachedTarget: store.load() != nil)
+            // `resolverChoice` has returned `.picker` unconditionally since
+            // M2a made the app always ask which window (every hotkey press
+            // asks, even with a cached target), and `WindowFocuser` — the
+            // only later consumer that could have needed the choice itself —
+            // acts solely on the resolved target's descriptor, never on this
+            // value. The `.cache` arm that used to sit here, reading the
+            // store back with its own `guard let stored`, was therefore
+            // unreachable and has been deleted along with that guard.
+            resolver = pickerResolver
         }
 
         let target: ResolvedTarget
@@ -426,7 +433,7 @@ public actor RecordingCoordinator: AgentRecordingControlling {
             try await recorder.start()
             active = recorder
             return .started(target.descriptor.title ?? "screen",
-                            usedCache: choice == .cache)
+                            usedCache: Self.usedCache(choice: choice))
         } catch {
             return .failed("Could not start recording: \(error)", reason: .internalError)
         }
@@ -604,15 +611,19 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         isAgent ? .agent : .human
     }
 
-    static func reference(from stored: StoredTargetReference) -> TargetReference? {
-        switch stored.kind {
-        case .window:
-            guard let bundleID = stored.bundleIdentifier else { return nil }
-            return .window(bundleIdentifier: bundleID, titleHint: stored.titleHint)
-        case .display:
-            guard let id = stored.displayID else { return nil }
-            return .display(id: id)
-        }
+    /// Whether the outcome's `usedCache` — the consent-explainer signal
+    /// `main.swift`'s hotkey handler reads (§5) — should read true.
+    ///
+    /// `choice` is `nil` for an agent's forced resolver: an agent's target is
+    /// always explicit, never the human's hotkey cache, so there is no
+    /// `ResolverChoice` to make at all — not a `.picker` standing in for
+    /// "not the cache." Only the human path's own choice can make this true,
+    /// and today never does (`.cache` is unreachable — see `resolverChoice`'s
+    /// doc comment). Extracted, like `initiator(isAgent:)` above, so the
+    /// mapping itself is checkable: the call site cannot be, because reaching
+    /// it needs a real `SCContentFilter`.
+    static func usedCache(choice: ResolverChoice?) -> Bool {
+        choice == .cache
     }
 
     static func stored(from reference: TargetReference) -> StoredTargetReference? {
