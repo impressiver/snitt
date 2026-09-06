@@ -255,6 +255,37 @@ func infoPlistDeclaresSparkleKeys() throws {
     #expect(plist["SUEnableAutomaticChecks"] as? Bool == false)
 }
 
+@Test("The built app declares .snitt as an openable package type", .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason))
+func infoPlistDeclaresDocumentType() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
+    let plist = try plistOf(app)
+
+    let exported = try #require(plist["UTExportedTypeDeclarations"] as? [[String: Any]])
+    let snitt = try #require(exported.first { ($0["UTTypeIdentifier"] as? String) == "com.impressiver.snitt.recording" },
+                             "no exported UTI for .snitt")
+
+    // A .snitt is a DIRECTORY. Without com.apple.package the Finder shows a
+    // folder and a double-click navigates into it instead of opening it —
+    // the app looks broken while every key is nominally present.
+    let conforms = try #require(snitt["UTTypeConformsTo"] as? [String])
+    #expect(conforms.contains("com.apple.package"))
+
+    let tags = try #require(snitt["UTTypeTagSpecification"] as? [String: Any])
+    let extensions = try #require(tags["public.filename-extension"] as? [String])
+    #expect(extensions.contains("snitt"))
+
+    let docTypes = try #require(plist["CFBundleDocumentTypes"] as? [[String: Any]])
+    let docType = try #require(docTypes.first, "no CFBundleDocumentTypes entry")
+    let contentTypes = try #require(docType["LSItemContentTypes"] as? [String])
+
+    // The two must AGREE. A document type naming a UTI the app does not
+    // export is the same silent-drift class as SUFeedURL vs appcast.xml:
+    // both halves look right in isolation and nothing opens.
+    #expect(contentTypes.contains("com.impressiver.snitt.recording"))
+    #expect(docType["CFBundleTypeRole"] as? String == "Editor")
+    #expect(docType["LSTypeIsPackage"] as? Bool == true)
+}
+
 /// A `SPUUserDriver` that does nothing. Sparkle requires one to construct an
 /// `SPUUpdater`, but `startUpdater()` only needs to run its own
 /// configuration validation synchronously — nothing here should ever

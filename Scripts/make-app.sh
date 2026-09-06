@@ -60,6 +60,37 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>15.0</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Snitt records your microphone when you enable it for a recording.</string>
+  <!-- A .snitt is a DIRECTORY bundle, so the exported type must conform to
+       com.apple.package. Without that the Finder presents it as a folder and
+       a double-click navigates into it rather than opening Snitt — every key
+       below is present and nothing works. -->
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key><string>com.impressiver.snitt.recording</string>
+      <key>UTTypeDescription</key><string>Snitt Recording</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>com.apple.package</string>
+        <string>public.composite-content</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array><string>snitt</string></array>
+      </dict>
+    </dict>
+  </array>
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>Snitt Recording</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSTypeIsPackage</key><true/>
+      <key>LSItemContentTypes</key>
+      <array><string>com.impressiver.snitt.recording</string></array>
+    </dict>
+  </array>
   <!-- Task 5's Scripts/make-appcast.sh generates the real appcast this URL
        points at (run with --output, whose only accepted filename is
        this URL's own basename, "appcast.xml" — enforced by the script
