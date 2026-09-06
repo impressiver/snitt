@@ -113,4 +113,77 @@ struct DocumentOpenerTests {
         let resolvedRecents = RecentDocuments.urls().map { $0.resolvingSymlinksInPath() }
         #expect(resolvedRecents.contains(url.resolvingSymlinksInPath()))
     }
+
+    // MARK: - Task 6: one window per document
+
+    @Test("Two different bundles open two independent windows")
+    func twoBundlesOpenTwoWindows() async throws {
+        let a = try await makeFixtureBundle()
+        let b = try await makeFixtureBundle()
+        defer {
+            try? FileManager.default.removeItem(at: a)
+            try? FileManager.default.removeItem(at: b)
+        }
+
+        let before = EditorWindowController.openWindowCount
+        let first = try await DocumentOpener.open(bundleURL: a)
+        let second = try await DocumentOpener.open(bundleURL: b)
+        defer { first.close(); second.close() }
+
+        #expect(EditorWindowController.openWindowCount == before + 2)
+        #expect(first.window !== second.window)
+    }
+
+    @Test("Opening the same bundle twice focuses the existing window instead of duplicating it")
+    func sameBundleReusesItsWindow() async throws {
+        let url = try await makeFixtureBundle()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let first = try await DocumentOpener.open(bundleURL: url)
+        defer { first.close() }
+        let before = EditorWindowController.openWindowCount
+        let second = try await DocumentOpener.open(bundleURL: url)
+
+        // Two windows on one document means two EDLs over one bundle, and
+        // whichever saves last wins — a data-loss shape, not a cosmetic one.
+        #expect(EditorWindowController.openWindowCount == before)
+        #expect(first.window === second.window)
+    }
+
+    @Test("Opening the same bundle via /tmp and /private/tmp still reuses the window")
+    func sameBundleReusesItsWindowAcrossSymlinkSpellings() async throws {
+        // On macOS `/tmp` is a symlink to `/private/tmp`. A raw string
+        // comparison of URLs would see two different paths here and open a
+        // second window on the same document — exactly the data-loss shape
+        // `EditorWindowController.existing(for:)` exists to prevent. This is
+        // the mutation Task 6's brief calls out by name: comparing raw
+        // `url` strings instead of standardized ones must fail THIS test,
+        // even though `sameBundleReusesItsWindow` above (same-spelling) can
+        // still pass against that mutant.
+        //
+        // Deliberately NOT built via `makeFixtureBundle()`:
+        // `FileManager.default.temporaryDirectory` on macOS resolves to
+        // `/var/folders/...`, not `/tmp`, so this test builds the fixture
+        // directly under the literal `/tmp` path the mutation names.
+        let tmpSpelling = URL(fileURLWithPath: "/tmp")
+            .appendingPathComponent("fixture-\(UUID().uuidString).snitt")
+        let bundle = try SnittBundle(creatingAt: tmpSpelling)
+        try await writeSyntheticMovie(to: bundle.captureURL, seconds: 1)
+        try RecordingMetadata(createdAt: Date(), initiator: .human).write(to: bundle)
+        try EventLog(events: []).write(to: bundle)
+        try EditDecisionList.fullRange().write(to: bundle)
+        defer { try? FileManager.default.removeItem(at: tmpSpelling) }
+
+        let privateTmpSpelling = URL(fileURLWithPath: "/private/tmp")
+            .appendingPathComponent(tmpSpelling.lastPathComponent)
+        #expect(tmpSpelling.path != privateTmpSpelling.path)
+
+        let first = try await DocumentOpener.open(bundleURL: tmpSpelling)
+        defer { first.close() }
+        let before = EditorWindowController.openWindowCount
+        let second = try await DocumentOpener.open(bundleURL: privateTmpSpelling)
+
+        #expect(EditorWindowController.openWindowCount == before)
+        #expect(first.window === second.window)
+    }
 }

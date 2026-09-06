@@ -177,6 +177,44 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// vanish from under a user who is still watching it.
     private static var open: [EditorWindowController] = []
 
+    /// The document this window edits. Standardized on the way in so two
+    /// spellings of one path cannot open two windows onto one document —
+    /// on macOS `/tmp` is a symlink to `/private/tmp`, so a raw string
+    /// comparison would let exactly that through. Once EDL autosave exists
+    /// (Task 7), two windows on one bundle means two EDLs over one document
+    /// and whichever saves last wins; this identity is what `existing(for:)`
+    /// keys reuse on to prevent that.
+    public let bundleURL: URL
+
+    /// Looks up an already-open window for `url`, standardizing both sides
+    /// of the comparison so `/tmp/x.snitt` and `/private/tmp/x.snitt` — the
+    /// same document under two spellings — are recognized as one.
+    static func existing(for url: URL) -> EditorWindowController? {
+        let wanted = normalizedBundleURL(url)
+        return open.first { $0.bundleURL == wanted }
+    }
+
+    /// `url.standardizedFileURL.resolvingSymlinksInPath()` alone is not
+    /// enough: `resolvingSymlinksInPath()` preserves whatever
+    /// has-directory-path hint `url` already carries, and `URL` computes
+    /// that hint by checking the filesystem AT THE TIME a `URL` value is
+    /// built. Two `URL`s for the identical `/tmp` vs `/private/tmp` bundle
+    /// path can therefore resolve to the same string with, and without, a
+    /// trailing slash — which `==` treats as different URLs — purely
+    /// because of when each one happened to be constructed relative to the
+    /// bundle existing on disk. Rebuilding from the plain path with
+    /// `URL(fileURLWithPath:)` right before resolving forces both sides to
+    /// recompute that hint against the SAME (current, real) filesystem
+    /// state, so the trailing slash can no longer differ.
+    private static func normalizedBundleURL(_ url: URL) -> URL {
+        URL(fileURLWithPath: url.path).resolvingSymlinksInPath()
+    }
+
+    /// Every currently open editor, for the Window menu's document list
+    /// (`AppShell`'s `WindowMenuDelegate`). Not `public` — only `SnittApp`
+    /// itself needs to enumerate open editors.
+    static var openEditors: [EditorWindowController] { open }
+
     /// `edl` and `events` are REQUIRED (M4b whole-branch review, Important
     /// finding #3) — a default here existed purely so window-lifecycle tests
     /// that don't care about editing state didn't need touching, which is
@@ -186,9 +224,10 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// recording's real markers; making the caller write `.fullRange()` /
     /// `[]` explicitly when that's genuinely what's meant turns "I forgot"
     /// into a build error instead of a silently empty scrub bar.
-    public init(controller: PreviewController, title: String,
+    public init(controller: PreviewController, title: String, bundleURL: URL,
                 edl: EditDecisionList, events: [LoggedEvent]) {
         self.controller = controller
+        self.bundleURL = Self.normalizedBundleURL(bundleURL)
         let state = EditorTimelineState(controller: controller, edl: edl, events: events)
         let hosting = NSHostingView(rootView: EditorContentView(state: state))
         let window = NSWindow(

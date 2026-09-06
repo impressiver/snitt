@@ -12,6 +12,14 @@ import AppKit
 /// with no window. A Dock icon does not require a window.
 @MainActor
 enum AppShell {
+    /// Owns the Window menu's dynamic document list. A single, stable
+    /// instance — assigning a fresh delegate on every `install(into:)` call
+    /// would still work, but tests build the menu directly (`buildMainMenu`)
+    /// without going through `install`, and a shared instance keeps the
+    /// delegate assignment inside `windowMenuItem()` itself rather than
+    /// requiring both call sites to remember it separately.
+    private static let windowMenuDelegate = WindowMenuDelegate()
+
     static func install(into app: NSApplication) {
         app.setActivationPolicy(.regular)
         let menu = buildMainMenu()
@@ -105,6 +113,10 @@ enum AppShell {
         return item
     }
 
+    /// The four items below are the ones every install starts with;
+    /// `WindowMenuDelegate` trims back to this count before re-appending
+    /// its document list, so a change here must stay in step with
+    /// `WindowMenuDelegate.staticItemCount`.
     private static func windowMenuItem() -> NSMenuItem {
         let item = NSMenuItem(title: "Window", action: nil, keyEquivalent: "")
         let menu = NSMenu(title: "Window")
@@ -116,6 +128,14 @@ enum AppShell {
         menu.addItem(withTitle: "Bring All to Front",
                      action: #selector(NSApplication.arrangeInFront(_:)),
                      keyEquivalent: "")
+        // AppKit's own automatic Window-menu population (driven by
+        // `NSApp.windowsMenu`, assigned in `install(into:)`) depends on a
+        // live window server tracking real on-screen windows — it does not
+        // reliably fire in a headless test bundle. This delegate is what
+        // makes the document list observable and testable directly, the
+        // same reason Task 4 put Open Recent behind `menuNeedsUpdate(_:)`
+        // instead of trusting a menu built once at install time.
+        menu.delegate = windowMenuDelegate
         item.submenu = menu
         return item
     }
@@ -124,5 +144,41 @@ enum AppShell {
         let item = NSMenuItem(title: "Help", action: nil, keyEquivalent: "")
         item.submenu = NSMenu(title: "Help")
         return item
+    }
+}
+
+/// Keeps the Window menu's list of open editor documents current.
+///
+/// A menu built once at launch (`AppShell.buildMainMenu`) is permanently
+/// stale — it can only ever show the windows that existed at that moment,
+/// never one opened afterwards. `menuNeedsUpdate(_:)` is what AppKit calls
+/// right before the menu is actually shown, so rebuilding the document list
+/// here — rather than trusting whatever `windowMenuItem()` populated it
+/// with at install time — is what keeps it live for the life of the app.
+/// Mirrors `AppDelegate`'s `NSMenuDelegate` conformance for Open Recent
+/// (Task 4) for exactly the same reason.
+@MainActor
+private final class WindowMenuDelegate: NSObject, NSMenuDelegate {
+    /// Minimize, Zoom, a separator, and Bring All to Front — the items
+    /// `windowMenuItem()` seeds the menu with before this delegate ever
+    /// runs. Everything after this count is this delegate's own and gets
+    /// discarded and rebuilt on every call.
+    static let staticItemCount = 4
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        while menu.items.count > Self.staticItemCount {
+            menu.removeItem(at: menu.items.count - 1)
+        }
+        let editors = EditorWindowController.openEditors
+        guard !editors.isEmpty else { return }
+        menu.addItem(.separator())
+        for editor in editors {
+            let entry = NSMenuItem(title: editor.window.title,
+                                   action: #selector(NSWindow.makeKeyAndOrderFront(_:)),
+                                   keyEquivalent: "")
+            entry.target = editor.window
+            entry.representedObject = editor
+            menu.addItem(entry)
+        }
     }
 }

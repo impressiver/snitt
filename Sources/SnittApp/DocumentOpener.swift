@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import SnittCapture
 import SnittDocument
@@ -40,6 +41,15 @@ enum DocumentOpener {
     }
 
     static func open(bundle: SnittBundle) async throws -> EditorWindowController {
+        // Before the composition, not after: building it first wastes the
+        // work and can leave a half-built preview behind on the reuse path.
+        // Two windows on one document means two EDLs over one bundle and
+        // whichever saves last wins — data loss, not a cosmetic duplicate.
+        if let existing = EditorWindowController.existing(for: bundle.url) {
+            existing.window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return existing
+        }
         do {
             let edl = (try? EditDecisionList.read(from: bundle)) ?? .fullRange()
             let events = try EventLog.read(from: bundle).events
@@ -50,6 +60,7 @@ enum DocumentOpener {
                                                bundle: bundle, scale: 1.0)
             let editor = EditorWindowController(controller: controller,
                                                 title: bundle.url.lastPathComponent,
+                                                bundleURL: bundle.url,
                                                 edl: edl, events: events)
             editor.show()
             // Recorded only after `show()` succeeds — a document that failed

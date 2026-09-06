@@ -165,9 +165,13 @@ struct EditorWindowControllerTests {
         let before = EditorWindowController.openWindowCount
         let first = EditorWindowController(
             controller: try await makePreviewController(seconds: 2), title: "a",
+            bundleURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString).appendingPathExtension("snitt"),
             edl: .fullRange(), events: [])
         let second = EditorWindowController(
             controller: try await makePreviewController(seconds: 2), title: "b",
+            bundleURL: FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString).appendingPathExtension("snitt"),
             edl: .fullRange(), events: [])
 
         first.show(); second.show()
@@ -187,6 +191,8 @@ struct EditorWindowControllerTests {
     func closingPausesPlayback() async throws {
         let controller = try await makePreviewController(seconds: 3)
         let editor = EditorWindowController(controller: controller, title: "demo",
+                                              bundleURL: FileManager.default.temporaryDirectory
+                                                  .appendingPathComponent(UUID().uuidString).appendingPathExtension("snitt"),
                                               edl: .fullRange(), events: [])
         editor.show()
         controller.play()
@@ -213,6 +219,8 @@ struct EditorWindowControllerTests {
         let before = EditorWindowController.openWindowCount
         let controller = try await makePreviewController(seconds: 3)
         let editor = EditorWindowController(controller: controller, title: "demo",
+                                              bundleURL: FileManager.default.temporaryDirectory
+                                                  .appendingPathComponent(UUID().uuidString).appendingPathExtension("snitt"),
                                               edl: .fullRange(), events: [])
         editor.show()
         controller.play()
