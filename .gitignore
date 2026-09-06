@@ -34,6 +34,19 @@ build/
 AuthKey_*.p8
 *.p8
 
+# Task 5 (make-appcast.sh / Sparkle EdDSA signing): the maintainer's
+# private key lives in the login Keychain by default (generate_keys), not
+# a file — but generate_keys -x and sign_update --ed-key-file both accept
+# an arbitrary file path if anyone ever exports one, e.g. for backup or
+# transfer to another machine. There is no fixed filename Sparkle mandates
+# for that export, so these patterns are a net, not a guarantee: never put
+# an exported private key anywhere under this repo, even temporarily.
+*.pem
+*_private_key*
+*private_key*
+dsa_priv.pem
+eddsa_priv*
+
 # Snitt working artifacts
 *.snitt/
 *.mov
