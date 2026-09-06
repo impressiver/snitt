@@ -28,15 +28,27 @@ struct DocumentOpenerTests {
         let url = try await makeFixtureBundle()
         defer { try? FileManager.default.removeItem(at: url) }
 
-        let before = EditorWindowController.openWindowCount
-        let controller = try await DocumentOpener.open(bundleURL: url)
-        defer { controller.close() }
+        // Every test in this file that reads `openWindowCount` around a
+        // `before`/`after` snapshot runs inside `EditorWindowTestGate`
+        // (Task 7). `.serialized` only serializes tests WITHIN this suite;
+        // `EditorWindowControllerTests` and `EditorPersistenceTests` are
+        // independently-serialized suites that swift-testing runs
+        // concurrently with this one, and all three open real windows and
+        // read this same process-global counter. Without the gate, a
+        // window opened by one of those suites can land inside this test's
+        // snapshot-to-assertion window and make the count wrong for a
+        // reason that has nothing to do with `DocumentOpener`.
+        try await EditorWindowTestGate.run {
+            let before = EditorWindowController.openWindowCount
+            let controller = try await DocumentOpener.open(bundleURL: url)
+            defer { controller.close() }
 
-        // Assert the OUTCOME — a window exists — not that a function was
-        // called. "openEditor was invoked" passes against an implementation
-        // that throws inside and swallows it.
-        #expect(EditorWindowController.openWindowCount == before + 1)
-        #expect(controller.window.title == url.lastPathComponent)
+            // Assert the OUTCOME — a window exists — not that a function was
+            // called. "openEditor was invoked" passes against an implementation
+            // that throws inside and swallows it.
+            #expect(EditorWindowController.openWindowCount == before + 1)
+            #expect(controller.window.title == url.lastPathComponent)
+        }
     }
 
     @Test("Opening a path that is not a directory throws SnittBundleError.notADirectory rather than opening an empty window")
@@ -46,28 +58,30 @@ struct DocumentOpenerTests {
         try Data("hello".utf8).write(to: junk)
         defer { try? FileManager.default.removeItem(at: junk) }
 
-        let before = EditorWindowController.openWindowCount
-        // Assert the SPECIFIC rejection, not just "something threw": an
-        // implementation that swallows `SnittBundle(opening:)`'s error and
-        // falls through to, say, the parent directory would still satisfy
-        // a bare `#expect(throws: (any Error).self)` — `EventLog.read`
-        // would throw a *different* error next, and the test would pass
-        // for the wrong reason. Pinning the error to
-        // `SnittBundleError.notADirectory` means only the intended
-        // rejection — "this path is not a bundle directory at all" — can
-        // satisfy it.
-        await #expect(throws: SnittBundleError.notADirectory) {
-            _ = try await DocumentOpener.open(bundleURL: junk)
+        try await EditorWindowTestGate.run {
+            let before = EditorWindowController.openWindowCount
+            // Assert the SPECIFIC rejection, not just "something threw": an
+            // implementation that swallows `SnittBundle(opening:)`'s error and
+            // falls through to, say, the parent directory would still satisfy
+            // a bare `#expect(throws: (any Error).self)` — `EventLog.read`
+            // would throw a *different* error next, and the test would pass
+            // for the wrong reason. Pinning the error to
+            // `SnittBundleError.notADirectory` means only the intended
+            // rejection — "this path is not a bundle directory at all" — can
+            // satisfy it.
+            await #expect(throws: SnittBundleError.notADirectory) {
+                _ = try await DocumentOpener.open(bundleURL: junk)
+            }
+            // The failure that matters is a half-open editor showing nothing.
+            // NOTE: this assertion is unfalsifiable by construction, not just
+            // in practice — `BuiltComposition`'s memberwise init is internal
+            // to `SnittExport`, so no `SnittApp` implementation, however
+            // broken, can construct one to hand `PreviewController` without
+            // first getting through `CompositionBuilder.build`. The "no empty
+            // editor" contract holds structurally; this line documents that
+            // rather than being the thing enforcing it.
+            #expect(EditorWindowController.openWindowCount == before)
         }
-        // The failure that matters is a half-open editor showing nothing.
-        // NOTE: this assertion is unfalsifiable by construction, not just
-        // in practice — `BuiltComposition`'s memberwise init is internal
-        // to `SnittExport`, so no `SnittApp` implementation, however
-        // broken, can construct one to hand `PreviewController` without
-        // first getting through `CompositionBuilder.build`. The "no empty
-        // editor" contract holds structurally; this line documents that
-        // rather than being the thing enforcing it.
-        #expect(EditorWindowController.openWindowCount == before)
     }
 
     @Test("Opening a directory that looks like a bundle but has no bundle contents throws rather than opening an empty window")
@@ -83,11 +97,13 @@ struct DocumentOpenerTests {
         try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: empty) }
 
-        let before = EditorWindowController.openWindowCount
-        await #expect(throws: CocoaError.self) {
-            _ = try await DocumentOpener.open(bundleURL: empty)
+        try await EditorWindowTestGate.run {
+            let before = EditorWindowController.openWindowCount
+            await #expect(throws: CocoaError.self) {
+                _ = try await DocumentOpener.open(bundleURL: empty)
+            }
+            #expect(EditorWindowController.openWindowCount == before)
         }
-        #expect(EditorWindowController.openWindowCount == before)
     }
 
     @Test("Opening a bundle records it in the recent documents list")
@@ -102,16 +118,18 @@ struct DocumentOpenerTests {
             NSDocumentController.shared.clearRecentDocuments(nil)
         }
 
-        let controller = try await DocumentOpener.open(bundleURL: url)
-        defer { controller.close() }
+        try await EditorWindowTestGate.run {
+            let controller = try await DocumentOpener.open(bundleURL: url)
+            defer { controller.close() }
 
-        // The observable outcome, not "note() was called": a menu built after
-        // opening must contain the document. Resolved against symlinks: the
-        // fixture lives under `/tmp`, which macOS reports back through
-        // `NSDocumentController` as `/private/tmp` — a path difference, not
-        // a different document.
-        let resolvedRecents = RecentDocuments.urls().map { $0.resolvingSymlinksInPath() }
-        #expect(resolvedRecents.contains(url.resolvingSymlinksInPath()))
+            // The observable outcome, not "note() was called": a menu built after
+            // opening must contain the document. Resolved against symlinks: the
+            // fixture lives under `/tmp`, which macOS reports back through
+            // `NSDocumentController` as `/private/tmp` — a path difference, not
+            // a different document.
+            let resolvedRecents = RecentDocuments.urls().map { $0.resolvingSymlinksInPath() }
+            #expect(resolvedRecents.contains(url.resolvingSymlinksInPath()))
+        }
     }
 
     // MARK: - Task 6: one window per document
@@ -125,13 +143,15 @@ struct DocumentOpenerTests {
             try? FileManager.default.removeItem(at: b)
         }
 
-        let before = EditorWindowController.openWindowCount
-        let first = try await DocumentOpener.open(bundleURL: a)
-        let second = try await DocumentOpener.open(bundleURL: b)
-        defer { first.close(); second.close() }
+        try await EditorWindowTestGate.run {
+            let before = EditorWindowController.openWindowCount
+            let first = try await DocumentOpener.open(bundleURL: a)
+            let second = try await DocumentOpener.open(bundleURL: b)
+            defer { first.close(); second.close() }
 
-        #expect(EditorWindowController.openWindowCount == before + 2)
-        #expect(first.window !== second.window)
+            #expect(EditorWindowController.openWindowCount == before + 2)
+            #expect(first.window !== second.window)
+        }
     }
 
     @Test("Opening the same bundle twice focuses the existing window instead of duplicating it")
@@ -139,15 +159,17 @@ struct DocumentOpenerTests {
         let url = try await makeFixtureBundle()
         defer { try? FileManager.default.removeItem(at: url) }
 
-        let first = try await DocumentOpener.open(bundleURL: url)
-        defer { first.close() }
-        let before = EditorWindowController.openWindowCount
-        let second = try await DocumentOpener.open(bundleURL: url)
+        try await EditorWindowTestGate.run {
+            let first = try await DocumentOpener.open(bundleURL: url)
+            defer { first.close() }
+            let before = EditorWindowController.openWindowCount
+            let second = try await DocumentOpener.open(bundleURL: url)
 
-        // Two windows on one document means two EDLs over one bundle, and
-        // whichever saves last wins — a data-loss shape, not a cosmetic one.
-        #expect(EditorWindowController.openWindowCount == before)
-        #expect(first.window === second.window)
+            // Two windows on one document means two EDLs over one bundle, and
+            // whichever saves last wins — a data-loss shape, not a cosmetic one.
+            #expect(EditorWindowController.openWindowCount == before)
+            #expect(first.window === second.window)
+        }
     }
 
     @Test("Opening the same bundle via /tmp and /private/tmp still reuses the window")
@@ -178,12 +200,14 @@ struct DocumentOpenerTests {
             .appendingPathComponent(tmpSpelling.lastPathComponent)
         #expect(tmpSpelling.path != privateTmpSpelling.path)
 
-        let first = try await DocumentOpener.open(bundleURL: tmpSpelling)
-        defer { first.close() }
-        let before = EditorWindowController.openWindowCount
-        let second = try await DocumentOpener.open(bundleURL: privateTmpSpelling)
+        try await EditorWindowTestGate.run {
+            let first = try await DocumentOpener.open(bundleURL: tmpSpelling)
+            defer { first.close() }
+            let before = EditorWindowController.openWindowCount
+            let second = try await DocumentOpener.open(bundleURL: privateTmpSpelling)
 
-        #expect(EditorWindowController.openWindowCount == before)
-        #expect(first.window === second.window)
+            #expect(EditorWindowController.openWindowCount == before)
+            #expect(first.window === second.window)
+        }
     }
 }

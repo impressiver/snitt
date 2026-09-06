@@ -23,6 +23,20 @@ final class EditorTimelineState: ObservableObject {
     let events: [LoggedEvent]
     @Published var edl: EditDecisionList
 
+    /// The window's `UndoManager` (Task 7), set once the window exists —
+    /// this type is constructed before the `NSWindow` that owns it. Task
+    /// 1's Edit menu already wires `undo:`/`redo:` to the responder chain;
+    /// registering against the window's own manager, rather than a private
+    /// one, is what makes those menu items resolve to something instead of
+    /// nothing.
+    weak var undoManager: UndoManager?
+
+    /// The in-flight `apply` + `persist` from the most recent trim or undo,
+    /// for `waitForPendingSaveForTesting` to await. A test that instead
+    /// slept a fixed interval would be a flake this project has already
+    /// paid for once (M4/M5 review history).
+    private var pendingSaveTask: Task<Void, Never>?
+
     init(controller: PreviewController, edl: EditDecisionList, events: [LoggedEvent]) {
         self.controller = controller
         self.edl = edl
@@ -77,10 +91,50 @@ final class EditorTimelineState: ObservableObject {
     /// time, and a second drag on the same view produced a range that had
     /// already been computed against the wrong clock).
     func onTrim(_ range: TimeRange) {
+        applyCut(range)
+    }
+
+    /// Appends `range` and registers its inverse as a whole-EDL snapshot,
+    /// not an inverse operation (Task 7 ruling): a stack of whole-value
+    /// restores is multi-level by construction and cannot drift from the
+    /// applied state the way a stack of inverse ops can.
+    private func applyCut(_ range: TimeRange) {
+        let previous = edl
+        undoManager?.registerUndo(withTarget: self) { target in
+            target.restore(previous)
+        }
         edl.cuts.append(range)
+        applyAndSave()
+    }
+
+    /// Restores a prior whole-EDL snapshot and pushes the CURRENT state back
+    /// onto the undo stack as the redo — this is what makes undo/redo
+    /// multi-level rather than a single toggle between two states.
+    private func restore(_ snapshot: EditDecisionList) {
+        let current = edl
+        undoManager?.registerUndo(withTarget: self) { $0.restore(current) }
+        edl = snapshot
+        applyAndSave()
+    }
+
+    /// Rebuilds the preview, THEN persists (Task 7 ordering) — never the
+    /// reverse. Writing an EDL the compositor rejected would put a state on
+    /// disk the app cannot reopen, turning a bad edit into a broken
+    /// document instead of a recoverable one.
+    private func applyAndSave() {
         let edl = self.edl
         let events = self.events
-        Task { try? await controller.apply(edl: edl, events: events) }
+        let controller = self.controller
+        pendingSaveTask = Task {
+            try? await controller.apply(edl: edl, events: events)
+            try? controller.persist(edl)
+        }
+    }
+
+    // MARK: - Testing seam
+
+    func waitForPendingSave() async {
+        await pendingSaveTask?.value
     }
 }
 
@@ -159,8 +213,13 @@ private struct EditorContentView: View {
 @MainActor
 public final class EditorWindowController: NSObject, NSWindowDelegate {
     private let controller: PreviewController
+    private let state: EditorTimelineState
     public let window: NSWindow
     private var isShown = false
+
+    /// The window's `UndoManager` (Task 7) — the same manager Task 1's Edit
+    /// menu resolves `undo:`/`redo:` against through the responder chain.
+    public var undoManager: UndoManager? { window.undoManager }
 
     private static var count = 0
     public static var openWindowCount: Int { count }
@@ -229,6 +288,7 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         self.controller = controller
         self.bundleURL = Self.normalizedBundleURL(bundleURL)
         let state = EditorTimelineState(controller: controller, edl: edl, events: events)
+        self.state = state
         let hosting = NSHostingView(rootView: EditorContentView(state: state))
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 640, height: 420),
@@ -244,6 +304,11 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         self.window = window
         super.init()
         window.delegate = self
+        // Set only now that `window` exists — this window's `undoManager`
+        // (lazily created by AppKit on first access) is what Task 1's Edit
+        // menu already resolves `undo:`/`redo:` against through the
+        // responder chain.
+        state.undoManager = window.undoManager
     }
 
     /// Brings the window to the front.
@@ -299,5 +364,82 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         for editor in open {
             editor.close()
         }
+    }
+
+    /// Drives a trim exactly as the timeline view's gesture would, without
+    /// a live `NSView` or SwiftUI runtime (Task 7).
+    func applyTrimForTesting(_ range: TimeRange) {
+        state.onTrim(range)
+    }
+
+    /// The in-memory EDL. Deliberately the ADJACENT property to the one
+    /// `EditorPersistenceTests` cares about — see that suite's doc comments
+    /// for why asserting only this would pass against the bug Task 7 fixes.
+    func currentEDLForTesting() -> EditDecisionList {
+        state.edl
+    }
+
+    /// Awaits the actual in-flight apply-then-persist `Task`, not a fixed
+    /// sleep — a test that slept would be a flake this project has already
+    /// paid for once.
+    func waitForPendingSaveForTesting() async {
+        await state.waitForPendingSave()
+    }
+}
+
+/// Cross-suite serialization for tests that read `EditorWindowController`'s
+/// process-global `openWindowCount` around a `before`/`after` snapshot.
+///
+/// `@Suite(.serialized)` (used by `DocumentOpenerTests`,
+/// `EditorWindowControllerTests`, and `EditorPersistenceTests`) only
+/// serializes tests WITHIN one suite — swift-testing runs different suites
+/// concurrently by default. All three of those suites open real, real
+/// front-ordered windows and read this same static counter, so without this
+/// gate a window opened by one suite's test can land in the middle of
+/// another suite's `before`/`after` window, changing the count out from
+/// under an assertion that has no way to see it happening. Discovered by
+/// running the full suite repeatedly after adding `EditorPersistenceTests`
+/// (Task 7): two of four consecutive runs failed with
+/// `EditorWindowControllerTests`'s open-count assertions off by exactly the
+/// window `EditorPersistenceTests` had open at the time — not a segfault,
+/// but the same class of hazard the M5c test-infrastructure note warns
+/// about, one level up (a shared counter instead of a shared `NSWindow`).
+///
+/// `@MainActor`, not a separate `actor`: every caller here already runs on
+/// `@MainActor` (these tests construct real `NSWindow`s, which requires
+/// it), and `body` closures capture MainActor-isolated, non-`Sendable`
+/// state (`EditorWindowController`, `PreviewController`). Routing through
+/// a distinct actor would require SENDING that closure across an isolation
+/// boundary — exactly the `Sendable`-crossing error `-strict-concurrency
+/// =complete` exists to catch — for no benefit, since there is only ever
+/// one MainActor to contend for anyway.
+@MainActor
+enum EditorWindowTestGate {
+    private static var locked = false
+    private static var waiters: [CheckedContinuation<Void, Never>] = []
+
+    private static func acquire() async {
+        if !locked {
+            locked = true
+            return
+        }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    private static func release() {
+        if waiters.isEmpty {
+            locked = false
+        } else {
+            waiters.removeFirst().resume()
+        }
+    }
+
+    /// Runs `body` with the gate held for its ENTIRE duration — the whole
+    /// snapshot-mutate-assert critical section a test cares about, not just
+    /// the moment a window is created.
+    static func run<T>(_ body: () async throws -> T) async rethrows -> T {
+        await acquire()
+        defer { release() }
+        return try await body()
     }
 }

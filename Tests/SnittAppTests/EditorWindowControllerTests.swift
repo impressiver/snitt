@@ -162,46 +162,63 @@ struct EditorWindowControllerTests {
 
     @Test("Closing one of two editors keeps the other open")
     func closingOneOfTwoKeepsTheOtherOpen() async throws {
-        let before = EditorWindowController.openWindowCount
-        let first = EditorWindowController(
-            controller: try await makePreviewController(seconds: 2), title: "a",
-            bundleURL: FileManager.default.temporaryDirectory
-                .appendingPathComponent(UUID().uuidString).appendingPathExtension("snitt"),
-            edl: .fullRange(), events: [])
-        let second = EditorWindowController(
-            controller: try await makePreviewController(seconds: 2), title: "b",
-            bundleURL: FileManager.default.temporaryDirectory
-                .appendingPathComponent(UUID().uuidString).appendingPathExtension("snitt"),
-            edl: .fullRange(), events: [])
+        // `EditorWindowTestGate` (Task 7): this suite's `.serialized`
+        // trait only serializes its OWN tests. `DocumentOpenerTests` and
+        // `EditorPersistenceTests` are separately-serialized suites that
+        // run concurrently with this one and also open real windows
+        // against this same process-global counter — without the gate, one
+        // of their windows can appear or disappear between this test's
+        // `before` snapshot and its assertions.
+        try await EditorWindowTestGate.run {
+            let before = EditorWindowController.openWindowCount
+            let first = EditorWindowController(
+                controller: try await makePreviewController(seconds: 2), title: "a",
+                bundleURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString).appendingPathExtension("snitt"),
+                edl: .fullRange(), events: [])
+            let second = EditorWindowController(
+                controller: try await makePreviewController(seconds: 2), title: "b",
+                bundleURL: FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString).appendingPathExtension("snitt"),
+                edl: .fullRange(), events: [])
 
-        first.show(); second.show()
-        #expect(EditorWindowController.openWindowCount == before + 2)
+            first.show(); second.show()
+            #expect(EditorWindowController.openWindowCount == before + 2)
 
-        first.close()
-        // Discriminating against bookkeeping tied to a single window's
-        // lifetime rather than to the open set — that implementation drops
-        // the count to `before` here instead of `before + 1`.
-        #expect(EditorWindowController.openWindowCount == before + 1)
+            first.close()
+            // Discriminating against bookkeeping tied to a single window's
+            // lifetime rather than to the open set — that implementation drops
+            // the count to `before` here instead of `before + 1`.
+            #expect(EditorWindowController.openWindowCount == before + 1)
 
-        second.close()
-        #expect(EditorWindowController.openWindowCount == before)
+            second.close()
+            #expect(EditorWindowController.openWindowCount == before)
+        }
     }
 
     @Test("Pausing on close stops playback rather than leaving audio running")
     func closingPausesPlayback() async throws {
-        let controller = try await makePreviewController(seconds: 3)
-        let editor = EditorWindowController(controller: controller, title: "demo",
-                                              bundleURL: FileManager.default.temporaryDirectory
-                                                  .appendingPathComponent(UUID().uuidString).appendingPathExtension("snitt"),
-                                              edl: .fullRange(), events: [])
-        editor.show()
-        controller.play()
+        // Doesn't itself read `openWindowCount`, but still opens a real
+        // window against the same process-global counter another
+        // suite's gated before/after test could be mid-snapshot on — the
+        // gate has to wrap every window-opening test here, not just the
+        // ones that assert the count, or an ungated open here could still
+        // perturb a gated assertion elsewhere.
+        try await EditorWindowTestGate.run {
+            let controller = try await makePreviewController(seconds: 3)
+            let editor = EditorWindowController(controller: controller, title: "demo",
+                                                  bundleURL: FileManager.default.temporaryDirectory
+                                                      .appendingPathComponent(UUID().uuidString).appendingPathExtension("snitt"),
+                                                  edl: .fullRange(), events: [])
+            editor.show()
+            controller.play()
 
-        editor.close()
+            editor.close()
 
-        // A closed window whose player keeps playing leaves audio coming from a
-        // window the user cannot see.
-        #expect(controller.player.rate == 0)
+            // A closed window whose player keeps playing leaves audio coming from a
+            // window the user cannot see.
+            #expect(controller.player.rate == 0)
+        }
     }
 
     @Test("Closing by the window's own close button tears down like close() does")
@@ -216,47 +233,51 @@ struct EditorWindowControllerTests {
         // `windowWillClose(_:)` is public and `teardown()` is idempotent, so
         // the delegate callback can be invoked directly with a synthetic
         // notification.
-        let before = EditorWindowController.openWindowCount
-        let controller = try await makePreviewController(seconds: 3)
-        let editor = EditorWindowController(controller: controller, title: "demo",
-                                              bundleURL: FileManager.default.temporaryDirectory
-                                                  .appendingPathComponent(UUID().uuidString).appendingPathExtension("snitt"),
-                                              edl: .fullRange(), events: [])
-        editor.show()
-        controller.play()
+        try await EditorWindowTestGate.run {
+            let before = EditorWindowController.openWindowCount
+            let controller = try await makePreviewController(seconds: 3)
+            let editor = EditorWindowController(controller: controller, title: "demo",
+                                                  bundleURL: FileManager.default.temporaryDirectory
+                                                      .appendingPathComponent(UUID().uuidString).appendingPathExtension("snitt"),
+                                                  edl: .fullRange(), events: [])
+            editor.show()
+            controller.play()
 
-        editor.windowWillClose(Notification(name: NSWindow.willCloseNotification))
+            editor.windowWillClose(Notification(name: NSWindow.willCloseNotification))
 
-        // M4a review finding #3: this used to assert `== 0` outright, which
-        // only held because this suite's serialized tests happened to run
-        // in source order with every other test cleaning up after itself.
-        // Reordering the file — or a future test leaking a window — breaks
-        // an absolute assertion silently. Relative to a captured `before`
-        // count, this only depends on THIS test's own open/close pair.
-        #expect(EditorWindowController.openWindowCount == before)
-        #expect(controller.player.rate == 0)
+            // M4a review finding #3: this used to assert `== 0` outright, which
+            // only held because this suite's serialized tests happened to run
+            // in source order with every other test cleaning up after itself.
+            // Reordering the file — or a future test leaking a window — breaks
+            // an absolute assertion silently. Relative to a captured `before`
+            // count, this only depends on THIS test's own open/close pair.
+            #expect(EditorWindowController.openWindowCount == before)
+            #expect(controller.player.rate == 0)
+        }
     }
 
     // MARK: - Task 5: stopping opens the editor
 
     @Test("Stopping a human recording opens an editor")
     func humanStopOpensEditor() async throws {
-        let before = EditorWindowController.openWindowCount
-        let coordinator = makeEditorTestCoordinator()
-        let bundle = try await stopEditorTestCoordinator(coordinator, initiator: .human)
-        _ = bundle
-        #expect(EditorWindowController.openWindowCount == before + 1)
-        // M4a review finding #3: this test never closed the editor it just
-        // opened, leaking a real window (and a bumped `openWindowCount`) for
-        // the rest of the run. The suite absorbed it because every other
-        // test's assertions are relative to a captured `before` count —
-        // except `closeButtonPathTearsDown`'s absolute `openWindowCount ==
-        // 0`, which only survived by accident of source order (this test
-        // used to run after it). `RecordingCoordinator.openEditor` builds
-        // the `EditorWindowController` internally and never hands it back,
-        // so `closeAllForTesting()` is the only way to tear it down here.
-        EditorWindowController.closeAllForTesting()
-        #expect(EditorWindowController.openWindowCount == before)
+        try await EditorWindowTestGate.run {
+            let before = EditorWindowController.openWindowCount
+            let coordinator = makeEditorTestCoordinator()
+            let bundle = try await stopEditorTestCoordinator(coordinator, initiator: .human)
+            _ = bundle
+            #expect(EditorWindowController.openWindowCount == before + 1)
+            // M4a review finding #3: this test never closed the editor it just
+            // opened, leaking a real window (and a bumped `openWindowCount`) for
+            // the rest of the run. The suite absorbed it because every other
+            // test's assertions are relative to a captured `before` count —
+            // except `closeButtonPathTearsDown`'s absolute `openWindowCount ==
+            // 0`, which only survived by accident of source order (this test
+            // used to run after it). `RecordingCoordinator.openEditor` builds
+            // the `EditorWindowController` internally and never hands it back,
+            // so `closeAllForTesting()` is the only way to tear it down here.
+            EditorWindowController.closeAllForTesting()
+            #expect(EditorWindowController.openWindowCount == before)
+        }
     }
 
     @Test("Stopping an agent recording does NOT open a window")
@@ -264,10 +285,12 @@ struct EditorWindowControllerTests {
         // §5.3: agent recordings happen with no human present. A window
         // appearing on someone's screen because a background agent finished
         // is the surprise the consent rules exist to prevent.
-        let before = EditorWindowController.openWindowCount
-        let coordinator = makeEditorTestCoordinator()
-        _ = try await stopEditorTestCoordinator(coordinator, initiator: .agent)
-        #expect(EditorWindowController.openWindowCount == before)
+        try await EditorWindowTestGate.run {
+            let before = EditorWindowController.openWindowCount
+            let coordinator = makeEditorTestCoordinator()
+            _ = try await stopEditorTestCoordinator(coordinator, initiator: .agent)
+            #expect(EditorWindowController.openWindowCount == before)
+        }
     }
 
     @Test("A bundle the builder cannot open still finalises the recording")
@@ -275,11 +298,13 @@ struct EditorWindowControllerTests {
         // The recording is on disk and safe before the editor is even
         // considered. Losing it because a preview could not be built would
         // trade the valuable thing for the convenient one.
-        let before = EditorWindowController.openWindowCount
-        let coordinator = makeEditorTestCoordinator()
-        let bundle = try await stopEditorTestCoordinator(coordinator, initiator: .human,
-                                                         corruptCapture: true)
-        #expect(FileManager.default.fileExists(atPath: bundle.url.path))
-        #expect(EditorWindowController.openWindowCount == before)
+        try await EditorWindowTestGate.run {
+            let before = EditorWindowController.openWindowCount
+            let coordinator = makeEditorTestCoordinator()
+            let bundle = try await stopEditorTestCoordinator(coordinator, initiator: .human,
+                                                             corruptCapture: true)
+            #expect(FileManager.default.fileExists(atPath: bundle.url.path))
+            #expect(EditorWindowController.openWindowCount == before)
+        }
     }
 }
