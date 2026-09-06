@@ -114,9 +114,17 @@ func appcastItemIsComplete() throws {
 
 @Test("An unsigned item is refused, not emitted")
 func unsignedAppcastIsRefused() throws {
-    // Sparkle rejects an unsigned update at INSTALL time — after the user
-    // has downloaded it and waited. Failing here costs a release; failing
-    // there costs the user's trust.
+    // This script refuses to EMIT an unsigned item at all, so the
+    // install-time rejection this guards against is never actually
+    // reached in the branch's current configuration: with no
+    // SUPublicEDKey in the shipped plist (see Scripts/make-app.sh),
+    // Sparkle never reads sparkle:edSignature and so never rejects on it
+    // either way — see Scripts/make-appcast.sh's "CURRENT STATE" note and
+    // docs/superpowers/notes/release-runbook.md. The reasoning below is
+    // this script's OWN rationale for refusing early rather than leaving
+    // Sparkle's client-side rejection (real once a key exists) as the
+    // only guard: failing here costs a release; failing there would cost
+    // the user's trust.
     let zip = try makeFixtureArchive(byteCount: 14)
     defer { try? FileManager.default.removeItem(at: zip) }
 
@@ -128,6 +136,49 @@ func unsignedAppcastIsRefused() throws {
     // THEN exits non-zero would pass a status-only check but still leaves
     // a document a careless caller could redirect to a file and publish.
     #expect(out.stdout.isEmpty)
+}
+
+@Test("A signature shaped like sign_update's un-'-p' output is refused, not emitted")
+func fullSignUpdateOutputPastedAsSignatureIsRefused() throws {
+    // R47 (fix-wave-rereview.md): `sign_update` WITHOUT `-p` prints the
+    // whole `sparkle:edSignature="…" length="…"` attribute pair, not a
+    // bare signature. Before this test's corresponding fix, pasting that
+    // straight into [signature] produced a nested, quote-escaped garbage
+    // attribute this script emitted without complaint — masked today
+    // (nothing reads it with no SUPublicEDKey configured) but scheduled to
+    // arm itself the moment a real key exists. Verified this fails
+    // against the wrong implementation it exists to catch: temporarily
+    // removed the `case … esac` shape check from make-appcast.sh and
+    // re-ran — this test failed because the script exited 0 and emitted
+    // the malformed attribute verbatim; restoring the check passed again.
+    let zip = try makeFixtureArchive(byteCount: 14)
+    defer { try? FileManager.default.removeItem(at: zip) }
+
+    let wrongInput = "sparkle:edSignature=\"AbCdEf123==\" length=\"4096\""
+    let out = runScript(["1.2.0", zip.path, "https://example.test/S.zip", wrongInput], env: [:])
+
+    #expect(out.status != 0)
+    #expect(out.stderr.contains("-p"), "the error should point the maintainer at sign_update -p: \(out.stderr)")
+    // Same discipline as unsignedAppcastIsRefused: no partial document may
+    // reach stdout, and the malformed attribute must never appear anywhere
+    // in the output this script produced.
+    #expect(out.stdout.isEmpty)
+    #expect(!out.stdout.contains("sparkle:edSignature=\"sparkle:edSignature"))
+}
+
+@Test("A genuine bare EdDSA signature is still accepted")
+func genuineBareSignatureIsAccepted() throws {
+    // The shape check above must not be so broad it rejects real, valid
+    // signatures — a base64 string legitimately contains letters, digits,
+    // '+', '/', and trailing '=' padding, none of which trip the refusal.
+    let zip = try makeFixtureArchive(byteCount: 14)
+    defer { try? FileManager.default.removeItem(at: zip) }
+
+    let realShapedSignature = "AbCdEf123456+/=="
+    let out = runScript(["1.2.0", zip.path, "https://example.test/S.zip", realShapedSignature], env: [:])
+
+    #expect(out.status == 0, "a well-formed bare signature must be accepted: \(out.stderr)")
+    #expect(out.stdout.contains("sparkle:edSignature=\"\(realShapedSignature)\""))
 }
 
 @Test("Missing arguments and empty-string arguments are distinct failures")

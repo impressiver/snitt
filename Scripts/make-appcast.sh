@@ -65,10 +65,15 @@
 # SPARKLE_SIGNATURE   Fallback source for the signature above, so a CI-less,
 #                     by-hand release doesn't need to quote a base64 blob
 #                     on the command line. Whichever source wins, an EMPTY
-#                     signature is refused outright (see below) — Sparkle
-#                     rejects an unsigned update at INSTALL time, after the
-#                     user has already downloaded it and waited; failing
-#                     here instead costs a release, not a user's trust.
+#                     signature is refused outright (see below). ONCE A
+#                     REAL SUPublicEDKey EXISTS (see CURRENT STATE below —
+#                     not yet the case as of M5b), an unsigned update is
+#                     one Sparkle rejects at INSTALL time, after the user
+#                     has already downloaded it and waited; failing here
+#                     instead costs a release, not a user's trust. Until
+#                     then this script's refusal is the ONLY thing
+#                     enforcing "never unsigned" — nothing on the client
+#                     reads the attribute yet.
 #
 # The maintainer's key. `sign_update` reads the private EdDSA key from the
 # login Keychain by default (`generate_keys`, also shipped alongside
@@ -84,13 +89,14 @@
 # see Scripts/make-app.sh. This script still refuses to emit an item
 # without a signature (below), so the FEED never carries an unsigned
 # entry. But with no SUPublicEDKey in the shipped plist, Sparkle never
-# reads `sparkle:edSignature` at all — the "rejects an unsigned update at
-# install time" language below describes the behaviour ONCE a real key is
-# configured, not today's. Until then, update integrity rests on
-# TLS-to-github.com plus Developer-ID code-signature matching alone; the
-# EdDSA signature this script insists on is generated and published, but
-# not yet checked by any client. See
-# docs/superpowers/notes/release-runbook.md.
+# reads `sparkle:edSignature` at all — every "Sparkle rejects an unsigned
+# update at INSTALL time" sentence in this file (both above, next to
+# SPARKLE_SIGNATURE, and below, next to the refusal check itself)
+# describes the behaviour ONCE a real key is configured, not today's.
+# Until then, update integrity rests on TLS-to-github.com plus
+# Developer-ID code-signature matching alone; the EdDSA signature this
+# script insists on is generated and published, but not yet checked by
+# any client. See docs/superpowers/notes/release-runbook.md.
 #
 # GitHub's own releases.atom is Atom (<feed>/<entry>), not an RSS appcast:
 # Sparkle's SUAppcast parses /rss/channel/item and needs
@@ -215,6 +221,29 @@ if [ -z "$SIGNATURE" ]; then
   echo "an unsigned appcast item will not be emitted; see this script's header" >&2
   exit 1
 fi
+
+# R47: `sign_update` WITHOUT `-p` prints the whole
+# `sparkle:edSignature="…" length="…"` attribute pair, not a bare
+# signature — a maintainer who runs it without `-p` and pastes the output
+# here would otherwise get a nested, quote-escaped garbage attribute
+# written into the feed without complaint. That failure has NO symptom
+# today (with no SUPublicEDKey configured, nothing reads the attribute at
+# all — see the CURRENT STATE note above) and would only surface once a
+# real key is added, at which point every install would start failing
+# signature verification. Reject the unmistakable shapes of that mistake
+# outright: a `"` (bare EdDSA base64 never contains one), the literal
+# `sparkle:edSignature` or `length=` substrings, or embedded whitespace/
+# newlines (a single base64 token has none). This is deliberately not a
+# full base64 grammar check — that would risk false positives on a
+# genuinely valid signature — just a targeted refusal of the exact wrong
+# input this finding describes.
+case "$SIGNATURE" in
+  *'"'*|*'sparkle:edSignature'*|*'length='*|*[[:space:]]*)
+    echo "error: SIGNATURE does not look like a bare EdDSA signature (contains a quote, 'sparkle:edSignature', 'length=', or whitespace)" >&2
+    echo "did you run sign_update WITHOUT -p? use: sign_update -p <zip> — see docs/superpowers/notes/release-runbook.md" >&2
+    exit 1
+    ;;
+esac
 
 # Byte length of the artifact Sparkle will download, not a line count or an
 # estimate. `stat`'s own failure must not be swallowed by a bare command

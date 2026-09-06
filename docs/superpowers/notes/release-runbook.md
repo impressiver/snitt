@@ -93,13 +93,23 @@ time, and only a user who can't reach Apple's servers ever sees it fail.
    exists — see "Before the first real release" below):
 
    ```sh
-   sign_update Snitt-<version>.zip
+   SIGNATURE="$(.build/artifacts/sparkle/Sparkle/bin/sign_update -p Snitt-<version>.zip)"
    ```
 
-   (`sign_update` ships alongside Sparkle — see `Scripts/make-appcast.sh`'s
-   header for exactly where the SPM checkout or prebuilt binary puts it.)
-   Prints a base64 signature. Pass it to the next step as `[signature]` or
-   via `SPARKLE_SIGNATURE`.
+   `sign_update` is not on `PATH` — it ships inside the Sparkle SPM
+   checkout at `.build/artifacts/sparkle/Sparkle/bin/sign_update` (see
+   `Scripts/make-appcast.sh`'s header for the equivalent
+   `.build/checkouts/Sparkle` location if the artifact path differs on
+   your machine). **The `-p` flag is required.** Without it, `sign_update`
+   prints the whole `sparkle:edSignature="…" length="…"` attribute pair,
+   not a bare signature — pasting that into step 6's `[signature]`
+   argument would produce a nested, quote-escaped garbage attribute in the
+   appcast. `make-appcast.sh` now refuses a signature shaped like that
+   mistake (a `"`, `sparkle:edSignature`, `length=`, or embedded
+   whitespace) as a defense in depth, but don't rely on it — run `-p` and
+   get a clean signature in the first place. `-p` alone prints just the
+   base64 signature, which is what `$SIGNATURE` must hold for the next
+   step.
 
 6. **Generate the appcast item.**
 
