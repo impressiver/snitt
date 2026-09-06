@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import SnittCapture
 import SnittDocument
+import UniformTypeIdentifiers
 
 /// Menu-bar app entry point.
 ///
@@ -11,6 +12,12 @@ import SnittDocument
 /// does, not about whether the app has a shell.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    // §4.14: File ▸ Open / Open Recent / Finder double-click all funnel into
+    // `openURLs`, and a failure there is surfaced with this logger — the
+    // project's factory (`SnittLog.logger`), never a hand-rolled `Logger`,
+    // or the failure becomes invisible to `snitt diagnostics export`.
+    private static let log = SnittLog.logger(.automation, target: "SnittApp")
+
     private let statusItem = StatusItemController()
     private var hotkey: HotkeyMonitor?
     private var markerHotkey: HotkeyMonitor?
@@ -163,6 +170,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 NSApp.terminate(nil)
             }
         }
+
+        // A submenu built once at install time (AppShell.buildMainMenu) is
+        // permanently stale — it never reflects a document opened after
+        // launch. Becoming its delegate is what makes `menuNeedsUpdate(_:)`
+        // fire each time the user actually opens the submenu.
+        if let recentMenu = NSApp.mainMenu?
+            .item(withTitle: "File")?.submenu?
+            .item(withTitle: "Open Recent")?.submenu {
+            recentMenu.delegate = self
+        }
     }
 
     private func handleHotkey() {
@@ -273,6 +290,82 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// here so the menu's selector resolves and ⌘, is not silently dead.
     @objc func showSettings(_ sender: Any?) {
         NSSound.beep()
+    }
+
+    // MARK: - §4.14: File ▸ Open, Open Recent, Finder double-click
+
+    @objc func openDocument(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType("com.impressiver.snitt.recording")].compactMap { $0 }
+        panel.allowsMultipleSelection = true
+        // A .snitt is a package: without this the panel descends into it
+        // instead of letting it be selected — the same class of bug as
+        // Task 3's `com.apple.package` conformance, on a different surface.
+        panel.treatsFilePackagesAsDirectories = false
+        guard panel.runModal() == .OK else { return }
+        openURLs(panel.urls)
+    }
+
+    @objc func openRecentDocument(_ sender: NSMenuItem) {
+        guard let url = sender.representedObject as? URL else { return }
+        openURLs([url])
+    }
+
+    @objc func clearRecentDocuments(_ sender: Any?) {
+        NSDocumentController.shared.clearRecentDocuments(sender)
+    }
+
+    /// Finder double-click, `open(1)`, and drag-onto-Dock all arrive here.
+    /// Can arrive before OR after `applicationDidFinishLaunching` on a cold
+    /// launch — this must not depend on anything that method sets up.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        openURLs(urls)
+    }
+
+    private func openURLs(_ urls: [URL]) {
+        for url in urls {
+            Task { @MainActor in
+                do {
+                    _ = try await DocumentOpener.open(bundleURL: url)
+                } catch {
+                    // Privacy: the bundle filename comes from the git branch
+                    // (BundleNaming), so it can name a customer or an
+                    // unreleased feature. Domain/code/description only —
+                    // never a path, never `String(describing:)` on the error.
+                    let ns = error as NSError
+                    Self.log.error("Could not open the document: \(ns.domain, privacy: .public) \(ns.code, privacy: .public) \(error.localizedDescription, privacy: .public)")
+                    presentOpenFailure(error)
+                }
+            }
+        }
+    }
+
+    /// A double-click that does nothing is the failure users report as "the
+    /// app is broken" — this is what turns a swallowed error into something
+    /// the person in front of the screen can see.
+    private func presentOpenFailure(_ error: Error) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Snitt could not open this recording."
+        alert.informativeText = error.localizedDescription
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+}
+
+extension AppDelegate: NSMenuDelegate {
+    /// A submenu built once at launch never reflects a document opened
+    /// afterwards. Rebuilding here — rather than trusting whatever items
+    /// `AppShell.buildMainMenu()` populated it with at install time — is
+    /// what keeps Open Recent live for the life of the app.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let fresh = RecentDocuments.buildMenu()
+        menu.removeAllItems()
+        for item in fresh.items {
+            fresh.removeItem(item)
+            menu.addItem(item)
+        }
     }
 }
 

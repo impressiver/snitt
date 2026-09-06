@@ -52,6 +52,9 @@ enum DocumentOpener {
                                                 title: bundle.url.lastPathComponent,
                                                 edl: edl, events: events)
             editor.show()
+            // Recorded only after `show()` succeeds — a document that failed
+            // to open does not belong in the recents list.
+            RecentDocuments.note(bundle.url)
             return editor
         } catch {
             // Same redaction discipline as `RecordingCoordinator`'s catch

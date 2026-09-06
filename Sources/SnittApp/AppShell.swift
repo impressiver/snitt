@@ -71,9 +71,17 @@ enum AppShell {
     private static func fileMenuItem() -> NSMenuItem {
         let item = NSMenuItem(title: "File", action: nil, keyEquivalent: "")
         let menu = NSMenu(title: "File")
-        // File ▸ Open and Open Recent are filled in by Task 4, which owns
-        // the open path. Kept as its own task so a reviewer can reject the
-        // opening behaviour without rejecting the shell.
+
+        let open = NSMenuItem(title: "Open…",
+                              action: #selector(AppDelegate.openDocument(_:)),
+                              keyEquivalent: "o")
+        menu.addItem(open)
+
+        let recent = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
+        recent.submenu = RecentDocuments.buildMenu()
+        menu.addItem(recent)
+        menu.addItem(.separator())
+
         menu.addItem(withTitle: "Close",
                      action: #selector(NSWindow.performClose(_:)),
                      keyEquivalent: "w")

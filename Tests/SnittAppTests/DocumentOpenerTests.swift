@@ -89,4 +89,28 @@ struct DocumentOpenerTests {
         }
         #expect(EditorWindowController.openWindowCount == before)
     }
+
+    @Test("Opening a bundle records it in the recent documents list")
+    func openingNotesARecentDocument() async throws {
+        let url = try await makeFixtureBundle()
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            // NSDocumentController's recents list is real per-process state
+            // (§ "Do not pollute the maintainer's real recents list"); leave
+            // it as we found it rather than accumulating fixture URLs across
+            // test runs.
+            NSDocumentController.shared.clearRecentDocuments(nil)
+        }
+
+        let controller = try await DocumentOpener.open(bundleURL: url)
+        defer { controller.close() }
+
+        // The observable outcome, not "note() was called": a menu built after
+        // opening must contain the document. Resolved against symlinks: the
+        // fixture lives under `/tmp`, which macOS reports back through
+        // `NSDocumentController` as `/private/tmp` — a path difference, not
+        // a different document.
+        let resolvedRecents = RecentDocuments.urls().map { $0.resolvingSymlinksInPath() }
+        #expect(resolvedRecents.contains(url.resolvingSymlinksInPath()))
+    }
 }

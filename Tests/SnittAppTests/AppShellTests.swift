@@ -79,4 +79,54 @@ struct AppShellTests {
         // nothing looks identical in a title-only assertion.
         #expect(quit.action == #selector(NSApplication.terminate(_:)))
     }
+
+    @Test("File menu has Open on Command-O")
+    func fileMenuHasOpen() throws {
+        let menu = AppShell.buildMainMenu()
+        let file = try #require(menu.items.first { $0.title == "File" }?.submenu)
+        let open = try #require(file.items.first { $0.title == "Open…" }, "no Open item")
+        #expect(open.keyEquivalent == "o")
+        #expect(open.action == #selector(AppDelegate.openDocument(_:)))
+    }
+
+    @Test("File menu has an Open Recent submenu")
+    func fileMenuHasOpenRecent() throws {
+        let menu = AppShell.buildMainMenu()
+        let file = try #require(menu.items.first { $0.title == "File" }?.submenu)
+        let recent = try #require(file.items.first { $0.title == "Open Recent" })
+        #expect(recent.submenu != nil)
+    }
+
+    /// F: an Open Recent submenu built once at install time and never
+    /// refreshed passes `fileMenuHasOpenRecent` above forever, because that
+    /// test only checks the submenu EXISTS — it never opens a document
+    /// first. This test is the one that actually exercises staleness: a
+    /// submenu built before a document existed must still surface it once
+    /// `menuNeedsUpdate(_:)` runs, which is what AppKit calls right before
+    /// the submenu is shown.
+    @Test("Open Recent's submenu rebuilds via menuNeedsUpdate, not just once at launch")
+    func openRecentSubmenuRebuildsOnDemand() throws {
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "recent-fixture-\(UUID().uuidString).snitt")
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: url)
+            // Don't leave this fixture's URL sitting in the maintainer's
+            // real recents list (NSDocumentController) beyond this test.
+            NSDocumentController.shared.clearRecentDocuments(nil)
+        }
+
+        // A submenu as it would look right after launch: built before this
+        // document ever existed.
+        let staleSubmenu = NSMenu(title: "Open Recent")
+        staleSubmenu.addItem(withTitle: "Clear Menu", action: nil, keyEquivalent: "")
+
+        RecentDocuments.note(url)
+
+        let delegate = AppDelegate()
+        delegate.menuNeedsUpdate(staleSubmenu)
+
+        let titles = staleSubmenu.items.map(\.title)
+        #expect(titles.contains(url.lastPathComponent))
+    }
 }
