@@ -124,6 +124,21 @@ private func makeFakeBin(name: String, script: String) throws -> URL {
     return dir
 }
 
+/// Same as `makeFakeBin`, but for stubbing OUT MULTIPLE binaries (e.g. both
+/// `xcrun` and `spctl`) into a single directory so one `extraPath` prefix
+/// shadows all of them.
+private func makeFakeBinDir(_ files: [String: String]) throws -> URL {
+    let dir = FileManager.default.temporaryDirectory
+        .appending(path: "snitt-notarize-fakebin-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    for (name, script) in files {
+        let binPath = dir.appending(path: name)
+        try script.write(to: binPath, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: binPath.path)
+    }
+    return dir
+}
+
 @Test("Missing arguments fail loudly, before touching the network")
 func notarizeRejectsMissingArgument() throws {
     // This script runs rarely and under release pressure. A silent or
@@ -430,4 +445,81 @@ func notarizeFailsWhenNotarytoolSubcommandAbsent() throws {
     let result = runScript([app.path], env: ["NOTARY_PROFILE": "synthetic-test-profile"], extraPath: fakeBin.path)
     #expect(result.status != 0)
     #expect(result.stderr.contains("notarytool not found"))
+}
+
+// R26: the brief's own emphasised requirement — "It must staple and then
+// verify... fail on either" — had zero coverage. Swallowing both `stapler
+// staple` and `spctl --assess` failures with `|| true` passed the full
+// suite green. These two tests close that: a fake `xcrun` reports
+// notarytool present and lets `submit` "succeed" without ever touching the
+// network, so each test isolates exactly one of the two final steps.
+
+/// A fake `xcrun` that reports notarytool present, lets `notarytool submit`
+/// "succeed" (so the run reaches stapling), and lets `stapler staple`
+/// succeed or fail as directed — never touching the real network.
+private func fakeXcrunScript(stapleSucceeds: Bool) -> String {
+    """
+    #!/bin/sh
+    if [ "$1" = "--find" ]; then
+      exit 0
+    fi
+    if [ "$1" = "notarytool" ] && [ "$2" = "submit" ]; then
+      exit 0
+    fi
+    if [ "$1" = "stapler" ] && [ "$2" = "staple" ]; then
+      \(stapleSucceeds ? "exit 0" : "exit 1")
+    fi
+    exit 1
+    """
+}
+
+@Test("A stapler failure is fatal, and spctl is never reached")
+func notarizeFailsWhenStaplingFails() throws {
+    // Wrong implementation this catches: `xcrun stapler staple "$APP" ||
+    // true` (or any variant that logs and continues). Verified by mutation
+    // — applying exactly that to the committed script makes this test fail
+    // (spctl marker present, or status == 0).
+    let app = try makeStubApp()
+    defer { try? FileManager.default.removeItem(at: app) }
+    #expect(try signAdHoc(app) == 0)
+
+    let spctlMarker = FileManager.default.temporaryDirectory.appending(path: "snitt-notarize-spctl-marker-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: spctlMarker) }
+    let fakeBin = try makeFakeBinDir([
+        "xcrun": fakeXcrunScript(stapleSucceeds: false),
+        // spctl must never run if stapling failed — instrumented so the
+        // test can prove absence, not just read a message.
+        "spctl": "#!/bin/sh\ntouch \"\(spctlMarker.path)\"\nexit 0\n",
+    ])
+    defer { try? FileManager.default.removeItem(at: fakeBin) }
+
+    let result = runScript([app.path], env: ["NOTARY_PROFILE": "synthetic-test-profile"], extraPath: fakeBin.path)
+    #expect(result.status != 0, "a failed staple must be a fatal error, not a warning")
+    #expect(result.stderr.contains("stapler staple failed"))
+    #expect(!FileManager.default.fileExists(atPath: spctlMarker.path), "notarize.sh ran spctl despite a failed staple")
+    #expect(!result.stdout.contains("Notarized, stapled, and verified"), "must not print the success line after a failed staple")
+}
+
+@Test("An spctl rejection is fatal, even after a successful staple")
+func notarizeFailsWhenSpctlAssessmentFails() throws {
+    // Wrong implementation this catches: `spctl --assess ... || true`, or
+    // any variant that treats spctl's verdict as advisory. This is the
+    // exact failure mode the brief calls out by name: a stapled bundle
+    // that LOOKS distributable but Gatekeeper will reject on a clean
+    // machine. Verified by mutation — `|| true` on the spctl check alone
+    // makes this test fail (status == 0, success line printed).
+    let app = try makeStubApp()
+    defer { try? FileManager.default.removeItem(at: app) }
+    #expect(try signAdHoc(app) == 0)
+
+    let fakeBin = try makeFakeBinDir([
+        "xcrun": fakeXcrunScript(stapleSucceeds: true),
+        "spctl": "#!/bin/sh\nexit 3\n",
+    ])
+    defer { try? FileManager.default.removeItem(at: fakeBin) }
+
+    let result = runScript([app.path], env: ["NOTARY_PROFILE": "synthetic-test-profile"], extraPath: fakeBin.path)
+    #expect(result.status != 0, "an spctl rejection must be a fatal error")
+    #expect(result.stderr.contains("will not be trusted"))
+    #expect(!result.stdout.contains("Notarized, stapled, and verified"), "must not print the success line after a failed spctl assessment")
 }

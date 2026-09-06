@@ -50,9 +50,15 @@ usage() {
   echo "see Scripts/notarize.sh's header comment for how to create a keychain profile." >&2
 }
 
-# ${1-} not ${1:-}: an explicitly empty first argument ("") is a distinct,
-# reportable case from no argument at all ($# -eq 0) — R15 already burned
-# this project once on exactly this distinction.
+# An explicitly empty first argument ("") is a distinct, reportable case
+# from no argument at all ($# -eq 0) — R15 already burned this project once
+# on exactly this distinction. The protection here is the `$# -lt 1` guard
+# below PLUS the separate `-z "$APP"` check further down — NOT the `${1-}`
+# expansion form on its own: once the guard has confirmed $# >= 1, $1 is
+# always set, so `${1-}` and `${1:-}` are identical from this point on and
+# neither one "covers" the empty-string case by itself. Do not read this as
+# license to drop the `-z` check below — that check is the only thing
+# actually distinguishing an empty argument from a real path.
 if [ $# -lt 1 ]; then
   echo "error: missing required argument: <path-to-app>" >&2
   usage
@@ -86,6 +92,16 @@ fi
 if ! xcrun --find notarytool >/dev/null 2>&1; then
   echo "error: xcrun notarytool not found — notarytool ships with Xcode 13+ command line tools" >&2
   echo "run: xcode-select --install (or update Xcode if it's older than 13)" >&2
+  exit 1
+fi
+
+# R30: spctl ships at /usr/sbin on every macOS install and `set -e` would
+# fail loudly anyway if it were somehow missing, but probe it explicitly
+# for the same reason as xcrun/notarytool above — a named, specific error
+# here beats an unexplained failure three network round-trips later, on
+# whichever machine happens to be missing it.
+if ! command -v spctl >/dev/null 2>&1; then
+  echo "error: spctl not found — this script requires macOS's Gatekeeper assessment tool" >&2
   exit 1
 fi
 
@@ -149,6 +165,15 @@ if ! xcrun notarytool submit "$ZIP" "${NOTARIZE_ARGS[@]}" --wait; then
   echo "error: xcrun notarytool submit failed — see output above" >&2
   exit 1
 fi
+# Known, unverified-here uncertainty (review finding, not a bug): on some
+# Xcode versions `notarytool submit --wait` has been reported to exit 0
+# even when the submission's own status is "Invalid" rather than
+# "Accepted". If that happens, this script does not stop here — but the
+# next step cannot silently succeed either: `stapler staple` has no ticket
+# to attach for a rejected submission and fails loudly, so the run still
+# ends in a correct, non-distributable failure rather than a false
+# success. If notarytool ever prints a non-Accepted status above, treat it
+# as a real rejection even if this script's own exit code doesn't catch it.
 
 # A successful submit does NOT mean the app is stapled. An unstapled app
 # only works while the machine running it can reach Apple's servers to

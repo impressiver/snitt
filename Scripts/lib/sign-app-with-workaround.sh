@@ -14,7 +14,10 @@
 #
 # SNITT_FAKE_TEAM_IDENTIFIER_LINE, if set, replaces the `codesign -dvv`
 # TeamIdentifier read below. Never set this in normal use — only tests set
-# it, to run this real script against a synthetic identity.
+# it, to run this real script against a synthetic identity. R28: the
+# override REFUSES to apply if the signature just produced already carries
+# a genuine (non-"not set") Team ID — see below — so it cannot mask a real
+# identity even if left exported in a shell.
 set -euo pipefail
 
 APP="$1"
@@ -48,10 +51,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # can also be unit-tested in isolation with a synthetic TeamIdentifier line.
 codesign --force --sign "$SIGN_ID" --options runtime "$APP"
 
+REAL_TEAM_LINE="$(codesign -dvv "$APP" 2>&1 | grep '^TeamIdentifier=' || true)"
+
 if [ -n "${SNITT_FAKE_TEAM_IDENTIFIER_LINE:-}" ]; then
+  # R28: refuse to substitute a fake TeamIdentifier when the signature we
+  # JUST PRODUCED already carries a genuine one. The override exists only
+  # so a test can exercise the "real Team ID, skip the workaround" branch
+  # without a real Developer ID in this repo; it must be structurally
+  # incapable of MASKING a real identity once one exists — which is
+  # exactly the moment this matters: the maintainer's first Developer-ID
+  # run, under release pressure, with this variable possibly still
+  # exported in a shell from an earlier test session.
+  if [ -n "$REAL_TEAM_LINE" ] && [ "$REAL_TEAM_LINE" != "TeamIdentifier=not set" ]; then
+    echo "error: SNITT_FAKE_TEAM_IDENTIFIER_LINE is set but the signature just produced already carries a genuine Team ID ($REAL_TEAM_LINE) — refusing to override a real identity" >&2
+    exit 1
+  fi
   TEAM_LINE="$SNITT_FAKE_TEAM_IDENTIFIER_LINE"
 else
-  TEAM_LINE="$(codesign -dvv "$APP" 2>&1 | grep '^TeamIdentifier=' || true)"
+  TEAM_LINE="$REAL_TEAM_LINE"
 fi
 
 if [ -z "$TEAM_LINE" ]; then
