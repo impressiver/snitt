@@ -211,6 +211,18 @@ click, type, or navigate, and it does not upload (§3). The agent already has
 tools for driving a UI and for attaching files; Snitt wraps a recording around
 work the agent is already doing.
 
+**But recording alone does not produce a good demo, so Snitt coordinates** (D49):
+the agent drives the UI with its own tools while Snitt supplies what those tools
+cannot — **pause/resume** so deliberation is not filmed as dead air,
+**screenshot** so the agent can see the state of the window it is recording, and
+**markers carrying a transcript** so it can narrate what it is demonstrating.
+
+That split is a **provisional** decision, not a settled boundary. Its cost is
+that synthetic input is not on the recording clock, so a click and the marker
+describing it correlate only as well as the agent's own timing. If demos come
+out poor for that reason, D49 says so explicitly and names it as grounds to
+reopen.
+
 **Two frontends, one core.** A `snitt` CLI for universal access (any agent, any
 shell, CI) and a bundled MCP server for agents that speak MCP natively. Both are
 thin wrappers over a single `SnittAutomation` module — the same core the GUI uses
@@ -843,6 +855,12 @@ before it is allowed to gate anything. Sampling happens during the existing
   policy for bundles accumulating in `~/Desktop`. All three are §11 promises the
   code never implemented — found by review, not by use, and unlisted anywhere
   before D47
+- **M5e** Agent demo production (§4.8, D49, D50): pause/resume, screenshot,
+  marker transcripts exported as WebVTT, and microphone capture surfaced as a
+  setting rather than only a CLI flag. **Gates v0**: §13's second validation
+  question asks whether an agent actually records with Snitt and attaches the
+  result to a PR, and an agent that cannot pause, see, or narrate produces a
+  recording nobody wants to attach
 - **▶ v0 SHIP — validation gate**
 - **M6** Overlay desirability probe
 - **M7** Custom compositor + overlay rendering *(conditional on M6)*
@@ -1169,6 +1187,9 @@ since it looks like an answer.
 | D46 | **GUI edits persist, with multi-level undo.** The editor autosaves the EDL to the bundle after each applied change; ⌘Z/⇧⌘Z walk a real undo stack and each step persists too. A GUI **Export** affordance calls the existing `CompositionBuilder`/`MovieExporter` path, and exporting re-copies to the clipboard, superseding the stale stop-time copy | Six independent sources — a Phase 2 code check plus five personas reasoning from different mandates and unable to see one another — found the same defect: `EditorWindowController.onTrim` appended to an in-memory `edl.cuts` and re-applied the preview, so a trim **looked** applied and was discarded on window close. The only EDL writers were `Recorder.swift:288` (full-range, at capture) and `AutomationHost.swift:387` (the CLI). Export was likewise CLI/MCP-only. §13's first validation question is the record → trim → share loop; it was unanswerable through the GUI. Autosave alone would be unsafe — it commits a mistaken cut instantly — so undo is part of this decision rather than a follow-on, and undo persists for the same reason the trim does | `EditorWindowController.swift:79-84`; `PreviewController.swift:107-121`; grep: no EDL write in `Sources/SnittApp/` outside `AutomationHost`; §4.5, §4.14, §13 | Decided | capability-reachable-by-machines-not-people |
 | D47 | **A spec promise must map to a test, a task, or an explicit "not yet."** Checked mechanically, so a normative claim cannot silently go unimplemented | Three verified instances of the same shape: §4.7's app shell went unbuilt through five milestones and was caught only when the product owner used the app; §11's "disk full mid-recording: finalize the partial file" and "unfinalized bundle found at launch: offer recovery" are both absent from the code and appeared nowhere on the roadmap. Under this project's own recurrence rule, three hits means patching instances is off the table and the class needs a structural guard. The spec is the binding authority for every plan, so a promise it makes that nothing implements is a defect in the authority itself | §4.7, §11, §4.14, D45; Operator + Platform persona findings, both code-verified | Decided | promise-with-no-conformance-check |
 | D48 | **A human stop opens the recording in the editor**; §4.11's "without opening a window" governs the START only | The spec contradicted the built app and the contradiction was latent until an M5c reviewer hit it: §4.11 said the hotkey starts *and stops* with no window, while §9 and the `humanStopOpensEditor` test deliberately open the editor on a human stop. Both behaviours are intended; only the wording was wrong. Confirmed by the product owner — "definitely open the recording in the app on stop". Resolved in favour of the app's actual behaviour, which is also the better product: the moment a recording ends is exactly when someone wants to trim it, and D46 now makes that edit persist. Agent-initiated stops still open nothing, since no human is present | §4.11, §9, D46; `humanStopOpensEditor`; direct product-owner confirmation | Decided | spec-contradicted-intended-behaviour |
+
+| D49 | **Snitt coordinates agent demos; it does not drive input.** The agent keeps using its own UI-driving tools. Snitt adds pause/resume, screenshot, and markers with transcripts. **Provisional** | A compelling product needs an agent to *produce* a demo, not merely film one — and generic control tools cannot coordinate with the recording: they cannot pause while the agent thinks, cannot mark the moment being demonstrated, and cannot see the recorded window. Coordination supplies exactly that gap. Driving input from Snitt was considered and deferred, for a reason worth keeping: posting synthetic events needs an **Accessibility grant**, the most powerful TCC permission on the machine, and it would mean a prompt-injected agent could drive the Mac rather than only film it. Recording observes; control acts, and §5's posture makes that Snitt's problem rather than the agent's. **Revisit trigger, named in advance:** if agent-produced demos are poor *because* input is not on the recording clock — clicks and their markers drifting apart — that is new evidence qualifying a reopen under the revisit gate, and the answer becomes an opt-in, audit-logged control surface rather than an unconditional one | §4.8, §4.12, §5, §12; product-owner direction 2026-09-06 | Decided (provisional) | scoped-to-avoid-a-permission |
+| D50 | **A marker carries a transcript, exported as WebVTT** — subtitles first, synthesized speech later | §4.12 already generates WebVTT chapters from markers, so the sidecar and its plumbing exist; a transcript field rides the same path. Burning captions into the video was rejected for now because it needs the compositor M7 defers, and would collide with the overlay work. The honest cost is that Slack and Discord will not render a sidecar `.vtt`, so a narrated demo is only narrated for someone who downloads it — accepted, because text-to-speech is the intended endpoint and burned-in captions would be built twice | §4.12, §7, §13 (M7 deferral) | Decided | smallest-change-that-makes-it-real |
 
 `conformance: 2026-09-06` (post-M5c refinement)
 
