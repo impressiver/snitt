@@ -1114,6 +1114,234 @@ git commit -m "feat(shell): one window per document, and a Window menu"
 
 ---
 
+## Task 7: Persist edits, with multi-level undo
+
+**Files:**
+- Modify: `Sources/SnittApp/EditorWindowController.swift:79-84` (`onTrim`), `Sources/SnittApp/PreviewController.swift`
+- Test: `Tests/SnittAppTests/EditorPersistenceTests.swift` *(new)*
+
+**Interfaces:**
+- Consumes: `DocumentOpener` (Task 2), `EditDecisionList.write(to:)` (`Sources/SnittDocument/EditDecisionList.swift:55`).
+
+**Why this task exists — read this before writing code.** `onTrim` currently appends to an in-memory `edl.cuts` and calls `controller.apply(edl:events:)`, which rebuilds the preview. **Nothing writes the EDL.** The only writers in the codebase are `Recorder.swift:288` (full-range, once, at capture) and `AutomationHost.swift:387` (the `snitt trim` CLI path). So a GUI trim shows correctly in the preview and is **discarded on window close** — and Task 4's File ▸ Open then reopens the document showing it untrimmed. Six independent reviewers found this; it is the reason M5c cannot ship without this task (D46).
+
+**Autosave makes undo load-bearing.** Persisting on every applied change means a mistaken cut reaches disk immediately, so ⌘Z is the only way back. That is why undo is in this task and not a later one. **Undo must persist too** — reverting in memory while the file keeps the cut recreates the same screen-vs-disk divergence in the opposite direction.
+
+- [ ] **Step 1: Write the failing tests**
+
+```swift
+import Testing
+import AppKit
+import Foundation
+@testable import SnittApp
+@testable import SnittDocument
+
+@Suite(.serialized)
+struct EditorPersistenceTests {
+    init() { _ = NSApplication.shared }
+
+    @Test("A trim is on disk before the window closes")
+    func trimPersists() async throws {
+        let url = try makeFixtureBundle()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = try await DocumentOpener.open(bundleURL: url)
+        defer { controller.close() }
+
+        controller.applyTrimForTesting(TimeRange(start: 1.0, duration: 2.0))
+        try await controller.waitForPendingSaveForTesting()
+
+        // Read the EDL back OFF DISK. Asserting the in-memory edl has the cut
+        // is what the old code already did correctly — it is the adjacent
+        // property, and it passes against the bug this test exists to catch.
+        let reloaded = try EditDecisionList.read(from: SnittBundle(url: url))
+        #expect(reloaded.cuts.count == 1)
+    }
+
+    @Test("Reopening a trimmed document shows the trim")
+    func trimSurvivesReopen() async throws {
+        let url = try makeFixtureBundle()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let first = try await DocumentOpener.open(bundleURL: url)
+        first.applyTrimForTesting(TimeRange(start: 1.0, duration: 2.0))
+        try await first.waitForPendingSaveForTesting()
+        first.close()
+
+        let second = try await DocumentOpener.open(bundleURL: url)
+        defer { second.close() }
+        // The end-to-end property D45 claimed and did not deliver.
+        #expect(second.currentEDLForTesting().cuts.count == 1)
+    }
+
+    @Test("Undo removes the cut, and the removal persists")
+    func undoPersists() async throws {
+        let url = try makeFixtureBundle()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = try await DocumentOpener.open(bundleURL: url)
+        defer { controller.close() }
+
+        controller.applyTrimForTesting(TimeRange(start: 1.0, duration: 2.0))
+        try await controller.waitForPendingSaveForTesting()
+        controller.undoManager?.undo()
+        try await controller.waitForPendingSaveForTesting()
+
+        // Undo that reverts memory but not disk is the same divergence this
+        // task exists to remove, pointing the other way.
+        let reloaded = try EditDecisionList.read(from: SnittBundle(url: url))
+        #expect(reloaded.cuts.isEmpty)
+    }
+
+    @Test("Undo is multi-level, not one-deep")
+    func undoIsMultiLevel() async throws {
+        let url = try makeFixtureBundle()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let controller = try await DocumentOpener.open(bundleURL: url)
+        defer { controller.close() }
+
+        controller.applyTrimForTesting(TimeRange(start: 1.0, duration: 1.0))
+        controller.applyTrimForTesting(TimeRange(start: 5.0, duration: 1.0))
+        controller.applyTrimForTesting(TimeRange(start: 9.0, duration: 1.0))
+        try await controller.waitForPendingSaveForTesting()
+
+        controller.undoManager?.undo()
+        controller.undoManager?.undo()
+        try await controller.waitForPendingSaveForTesting()
+
+        // A single-level undo passes a one-undo test. Three cuts and two undos
+        // is the smallest case that distinguishes a stack from a last-value.
+        let reloaded = try EditDecisionList.read(from: SnittBundle(url: url))
+        #expect(reloaded.cuts.count == 1)
+    }
+}
+```
+
+- [ ] **Step 2: Run them and watch them fail**
+
+```bash
+swift test --filter EditorPersistenceTests 2>&1 | grep -E "Test run with|error:"
+```
+
+Expected: FAIL — no persistence, no undo, no test hooks.
+
+- [ ] **Step 3: Register undo and persist**
+
+Give `EditorTimelineState` an `UndoManager` (the window's, via `NSWindow.undoManager`, so the Edit menu's `undo:`/`redo:` from Task 1 resolve through the responder chain — those menu items are currently wired to selectors nothing implements).
+
+```swift
+    func onTrim(_ range: TimeRange) {
+        applyCut(range)
+    }
+
+    private func applyCut(_ range: TimeRange) {
+        let previous = edl
+        undoManager?.registerUndo(withTarget: self) { target in
+            // Restoring the whole EDL, not popping one cut: a stack of
+            // whole-value restores is multi-level by construction and cannot
+            // drift from the applied state the way an inverse-op stack can.
+            target.restore(previous)
+        }
+        edl.cuts.append(range)
+        applyAndSave()
+    }
+
+    private func restore(_ snapshot: EditDecisionList) {
+        let current = edl
+        undoManager?.registerUndo(withTarget: self) { $0.restore(current) }
+        edl = snapshot
+        applyAndSave()
+    }
+
+    private func applyAndSave() {
+        let edl = self.edl
+        let events = self.events
+        Task {
+            try? await controller.apply(edl: edl, events: events)
+            // Persist AFTER apply succeeds: writing an EDL the compositor
+            // rejected would put a state on disk the app cannot reopen.
+            try? edl.write(to: bundle)
+        }
+    }
+```
+
+Add `applyTrimForTesting`, `currentEDLForTesting`, and `waitForPendingSaveForTesting` on `EditorWindowController`, forwarding to the state. The wait hook must await the actual save task — a test that sleeps is a flake this project has already paid for once.
+
+- [ ] **Step 4: Verify**
+
+```bash
+swift build -Xswiftc -strict-concurrency=complete 2>&1 | grep -E "warning:|error:"
+swift test 2>&1 | grep -E "Test run with|signal code|error:"
+```
+
+- [ ] **Step 5: Mutation-verify each test against its own wrong implementation**
+
+Remove `try? edl.write(to: bundle)` → `trimPersists` and `trimSurvivesReopen` must fail. Restore. Drop the `registerUndo` inside `restore` → `undoIsMultiLevel` must fail while `undoPersists` still passes, proving the multi-level test is the discriminating one. Restore. Move the write to *before* `apply` → confirm nothing regresses, then decide whether ordering deserves its own test.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add Sources/SnittApp/EditorWindowController.swift Sources/SnittApp/PreviewController.swift \
+        Tests/SnittAppTests/EditorPersistenceTests.swift
+git commit -m "feat(editor): persist edits, with multi-level undo"
+```
+
+---
+
+## Task 8: Export from the GUI, and re-copy on export
+
+**Files:**
+- Modify: `Sources/SnittApp/EditorWindowController.swift`, `Sources/SnittApp/AppShell.swift` (File menu)
+- Test: `Tests/SnittAppTests/EditorExportTests.swift` *(new)*
+
+**Why this task exists:** export is reachable only over the CLI and MCP (`AutomationHost.swift`); `EditorWindowController` has no export path at all. And `RecordingCoordinator.swift:446` copies the **raw** `capture.mov` to the clipboard at stop, before the editor opens — so after trimming, the clipboard silently holds the untrimmed original. A user trims, feels finished, pastes, and ships the wrong clip with no error anywhere.
+
+**Scope discipline (Pragmatist's ruling):** this task **calls the existing export path from a button**. It does not design an export UI. Reuse what `AutomationHost` already uses.
+
+- [ ] **Step 1: Write the failing test**
+
+```swift
+@Test("Exporting writes a file whose duration reflects the trim")
+func exportHonoursTheTrim() async throws {
+    let url = try makeFixtureBundle()
+    defer { try? FileManager.default.removeItem(at: url) }
+    let controller = try await DocumentOpener.open(bundleURL: url)
+    defer { controller.close() }
+
+    controller.applyTrimForTesting(TimeRange(start: 1.0, duration: 2.0))
+    let out = FileManager.default.temporaryDirectory
+        .appending(path: "export-\(UUID().uuidString).mp4")
+    defer { try? FileManager.default.removeItem(at: out) }
+
+    try await controller.exportForTesting(to: out)
+
+    // Assert the DURATION, not that a file exists. An export that ignored the
+    // EDL still produces a file, and file-exists passes against exactly the
+    // bug this task exists to fix.
+    let asset = AVURLAsset(url: out)
+    let seconds = try await asset.load(.duration).seconds
+    let source = try await AVURLAsset(url: SnittBundle(url: url).captureURL).load(.duration).seconds
+    #expect(seconds < source - 1.5)
+}
+
+@Test("Exporting supersedes the stale stop-time clipboard copy")
+func exportRecopies() async throws {
+    // ... export, then assert the pasteboard holds the exported file URL,
+    // not bundle.captureURL. The stop-time copy is what makes this necessary.
+}
+```
+
+- [ ] **Step 2–6:** run-fail, wire `File ▸ Export…` (⌘E) to an `NSSavePanel` and the existing `MovieExporter` path, re-copy via `ClipboardDestination.copy` on success with a visible confirmation, verify, mutation-verify (export ignoring the EDL must fail `exportHonoursTheTrim`; skipping the re-copy must fail `exportRecopies`), commit.
+
+---
+
+## Task 9: Dock reopen and the app icon
+
+**Files:** `Sources/SnittApp/main.swift`, `Scripts/make-app.sh`, `Resources/`
+
+- [ ] **Dock reopen.** `applicationShouldHandleReopen(_:hasVisibleWindows:)` is not implemented. Under Task 1's permanent `.regular` policy the Dock icon is always present, so once the last editor closes, clicking it does nothing — a dead click on the most common macOS "bring it back" gesture. Reopen the most recent document, or show an empty-state affordance when there is none.
+- [ ] **App icon.** No `CFBundleIconFile` in the generated plist, so Snitt shows a generic icon in the Dock, the Finder, and ⌘-Tab. Add an `.icns` and declare it. **No backticks in the plist heredoc** — it is unquoted, so they execute; two tests pin this.
+
+---
+
 ## Definition of Done
 
 - [ ] `NSApp.activationPolicy() == .regular` permanently; the promote/demote dance is gone.
@@ -1124,6 +1352,10 @@ git commit -m "feat(shell): one window per document, and a Window menu"
 - [ ] One window per document; the same bundle twice focuses rather than duplicates.
 - [ ] **§4.11 verified by hand:** the hotkey records with no window opening, and the picker still appears every time.
 - [ ] The status item still works, including the kill switch.
+- [ ] **A trim survives closing and reopening the document** — the property D45 claimed and the original plan did not deliver.
+- [ ] **⌘Z undoes multiple steps, and each undo persists.**
+- [ ] **A person can export a trimmed recording from the GUI**, and the clipboard afterwards holds the export rather than the raw capture.
+- [ ] Clicking the Dock icon with no windows open does something.
 - [ ] Full suite green, twice, with the trustworthy summary line; strict-concurrency build clean.
 - [ ] The real preference domain's mtime is unchanged across a full run.
 
