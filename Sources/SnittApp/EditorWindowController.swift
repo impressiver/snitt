@@ -384,6 +384,19 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         // property below), so the default release-on-close would fight that
         // ownership; keep the NSWindow alive until we drop our own reference.
         window.isReleasedWhenClosed = false
+        // Found by hand (manual "quit and reopen" test after Task 6 made
+        // several editor windows open at once): quitting with more than one
+        // editor window open segfaulted in `objc_release` inside
+        // `-[_NSWindowTransformAnimation dealloc]`, torn down mid-`CATransaction`
+        // commit on the main run loop — AppKit's own window-close transform
+        // animation racing against several windows closing back-to-back as
+        // `-[NSApplication terminate:]` tears them down for quit. `.none`
+        // means AppKit never constructs that animation object for this
+        // window at all, which removes the crashing class from this app's
+        // code path entirely rather than trying to win a race against it.
+        // A preview/editor window closing without a zoom/fade transition is
+        // not a loss worth keeping this crash for.
+        window.animationBehavior = .none
         self.window = window
         super.init()
         window.delegate = self

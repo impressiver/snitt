@@ -24,15 +24,36 @@ enum EventLoggingToggle {
     /// checkbox), since the user may have just checked a box that must now
     /// show unchecked.
     ///
-    /// The three closures exist for testing: `PermissionOnboarding.preExplain`
-    /// shows a real alert and `InputMonitoringAccess.ensureGranted` touches
-    /// real, per-machine, one-shot TCC state, neither of which a unit test
-    /// can drive.
+    /// The closures exist for testing: `PermissionOnboarding.preExplain`
+    /// and `.showAlreadyDenied` show real alerts, and
+    /// `InputMonitoringAccess.ensureGranted` touches real, per-machine,
+    /// one-shot TCC state — none of which a unit test can drive.
+    ///
+    /// Found by hand (manual test of the M5c Settings window): this used
+    /// to call `showAlreadyDenied()` on EVERY refused grant, including the
+    /// very first one. The doc comment even named the reason it shouldn't
+    /// — "a request returns false even while the user is granting" — but
+    /// never acted on it, unlike `ensureScreenRecordingGrant` in
+    /// `main.swift`, which gates the same alert behind
+    /// `PermissionOnboarding.followUp(deniedHavingAskedBefore:)`. Without
+    /// that gate, checking "Log input events" opens the real System
+    /// Settings ▸ Input Monitoring pane (via `CGRequestListenEventAccess`)
+    /// AND immediately raises Snitt's own "already denied, open System
+    /// Settings" alert on top of it — the alert and the dialog it is
+    /// contradicting on screen at once. `hasRequested`/`markRequested` are
+    /// what let this distinguish "first ask, awaiting relaunch" (silent)
+    /// from "asked before and refused again" (worth telling the user).
     @discardableResult
     static func apply(_ enabled: Bool,
                        defaults: UserDefaults = .standard,
                        preExplain: (UserDefaults) -> Bool = {
                            PermissionOnboarding.preExplain(.inputMonitoring, defaults: $0)
+                       },
+                       hasRequested: () -> Bool = {
+                           PermissionOnboarding.hasRequested(.inputMonitoring)
+                       },
+                       markRequested: () -> Void = {
+                           PermissionOnboarding.markRequested(.inputMonitoring)
                        },
                        ensureGranted: () -> Bool = { InputMonitoringAccess.ensureGranted() },
                        showAlreadyDenied: () -> Void = {
@@ -41,11 +62,20 @@ enum EventLoggingToggle {
         if enabled {
             // First use of the feature that needs it — never at launch.
             guard preExplain(defaults) else { return false }
+
+            let askedBefore = hasRequested()
+            markRequested()
             if !ensureGranted() {
-                // Same shape as Screen Recording: a request returns false
-                // even while the user is granting, so this is "relaunch,"
-                // not "denied."
-                showAlreadyDenied()
+                switch PermissionOnboarding.followUp(deniedHavingAskedBefore: askedBefore) {
+                case .awaitingRelaunch:
+                    // Deliberately silent — see `ensureScreenRecordingGrant`.
+                    // macOS's own System Settings dialog is on screen and is
+                    // the only thing the user should be reading right now;
+                    // the grant takes effect on the next launch.
+                    break
+                case .alreadyDenied:
+                    showAlreadyDenied()
+                }
                 return false
             }
         }
