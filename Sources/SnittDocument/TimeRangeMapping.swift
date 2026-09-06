@@ -41,4 +41,72 @@ public enum TimeRangeMapping {
         // instants landing in the same cut would collapse onto one instant.
         return nil
     }
+
+    /// The inverse of `trimmedTime(of:keptRanges:)`: maps an instant in the
+    /// TRIMMED (output) timeline back to where it sits in the source
+    /// recording.
+    ///
+    /// M4b whole-branch review, Critical finding #1: the editor's timeline
+    /// view draws on the SOURCE clock (cuts only have a position there — by
+    /// definition a cut is absent from the output), but the playhead and
+    /// jump points the rest of the editor tracks are naturally in trimmed
+    /// time — the player plays the composition, and `MarkerJumpPoints`
+    /// already maps markers into it. Drawing them on the source axis without
+    /// this inverse would place them at the wrong pixel the moment anything
+    /// has been cut.
+    ///
+    /// Unlike the forward direction, this can never fall in a "gap" — the
+    /// trimmed timeline has no cuts in it by construction, `keptRanges` tile
+    /// it edge to edge — so every `trimmedTime` in `0...totalDuration` maps
+    /// to exactly one source instant. `nil` here only means `trimmedTime`
+    /// itself was out of range (negative, past the end, or `keptRanges` is
+    /// empty).
+    ///
+    /// Boundary rule mirrors `trimmedTime(of:keptRanges:)`: every kept range
+    /// except the last claims its trimmed span half-open, the last one
+    /// closed at both ends — so the two functions round-trip.
+    /// The trimmed-time position for a source instant, snapping to the
+    /// nearest kept boundary when the instant falls inside a cut.
+    ///
+    /// `trimmedTime(of:keptRanges:)` returns nil there, which is honest —
+    /// a cut instant has no frame. But a user clicking a cut region on the
+    /// timeline has clicked something visibly drawn, and answering with
+    /// nothing at all is the silent no-op this project keeps finding. The
+    /// nearest kept edge is the moment they can actually see, and it is
+    /// what every editor does.
+    public static func nearestTrimmedTime(toSourceTime sourceTime: Double,
+                                          keptRanges: [TimeRange]) -> Double? {
+        guard !keptRanges.isEmpty else { return nil }
+        var cursor = 0.0
+        for range in keptRanges {
+            // Before this range means inside the cut that precedes it (or
+            // before the recording). The answer is the cut's own position in
+            // trimmed time, which is everything kept so far.
+            if sourceTime < range.start { return cursor }
+            if sourceTime <= range.end { return cursor + (sourceTime - range.start) }
+            cursor += range.end - range.start
+        }
+        // Past the last kept range: the end of the output.
+        return cursor
+    }
+
+    public static func sourceTime(ofTrimmedTime trimmedTime: Double,
+                                  keptRanges: [TimeRange]) -> Double? {
+        guard !keptRanges.isEmpty else { return nil }
+
+        var cursor = 0.0
+        for (index, range) in keptRanges.enumerated() {
+            let length = range.end - range.start
+            let isLastRange = index == keptRanges.count - 1
+            let withinRange = isLastRange
+                ? (trimmedTime >= cursor && trimmedTime <= cursor + length)
+                : (trimmedTime >= cursor && trimmedTime < cursor + length)
+            if withinRange {
+                return range.start + (trimmedTime - cursor)
+            }
+            cursor += length
+        }
+        // trimmedTime was negative, or past the trimmed timeline's own end.
+        return nil
+    }
 }

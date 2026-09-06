@@ -20,6 +20,24 @@ import Foundation
 /// fixture whose EDL can produce a non-nil `AVAudioMix` (a muted track) —
 /// `built.audioMix` is nil whenever there are no audio tracks at all.
 ///
+/// What pixels a synthetic frame is filled with.
+///
+/// `.flat` (the default) writes a solid gray frame, identical across every
+/// frame of the movie — fine for every test that only cares that a movie
+/// exists, plays, or has the right duration. But "which frame is on screen"
+/// is unobservable against it: spike S7 found every seek fingerprinted
+/// identically against a flat fixture, which was a defect in the instrument,
+/// not a finding. `.ramp` gives each frame a distinct fill value so
+/// frame-identity assertions (M4b scrubbing) have something to discriminate
+/// against. See `Tests/SnittExportTests/SyntheticMovie.swift`'s
+/// `SyntheticFrameContent` doc comment for the sibling copy of this enum —
+/// kept in step by convention, not by sharing code across the
+/// `SnittExport`/`SnittCapture` boundary.
+enum SyntheticFrameContent {
+    case flat
+    case ramp
+}
+
 /// - Parameter maxKeyFrameInterval: opt-in `AVVideoMaxKeyFrameIntervalKey`.
 ///   `nil` (the default) leaves the encoder's own keyframe placement alone —
 ///   no existing test's fixture changes. With this left unset, the encoder
@@ -37,7 +55,8 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
                          size: CGSize = CGSize(width: 320, height: 240),
                          fps: Int32 = 30,
                          maxKeyFrameInterval: Int32? = nil,
-                         audioTrackCount: Int = 0) async throws {
+                         audioTrackCount: Int = 0,
+                         content: SyntheticFrameContent = .flat) async throws {
     nonisolated(unsafe) let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
 
     var videoOutputSettings: [String: Any] = [
@@ -169,8 +188,17 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
 
             CVPixelBufferLockBaseAddress(buffer, [])
             if let base = CVPixelBufferGetBaseAddress(buffer) {
-                memset(base, 128,
-                       CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer))
+                let byteCount = CVPixelBufferGetBytesPerRow(buffer) * CVPixelBufferGetHeight(buffer)
+                switch content {
+                case .flat:
+                    memset(base, 128, byteCount)
+                case .ramp:
+                    // Each frame a different value, so "which frame is on
+                    // screen" is observable at all. The default `.flat` fills
+                    // every frame identically (spike S7), which makes every
+                    // frame-identity assertion pass vacuously.
+                    memset(base, Int32(20 + (videoProgress.value * 7) % 200), byteCount)
+                }
             }
             CVPixelBufferUnlockBaseAddress(buffer, [])
 

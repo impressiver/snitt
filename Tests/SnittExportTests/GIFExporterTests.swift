@@ -105,6 +105,7 @@ func degenerateRenderSizeRefused() async throws {
         videoComposition: AVMutableVideoComposition(),   // renderSize .zero
         audioMix: built.audioMix,
         duration: built.duration,
+        sourceDuration: built.sourceDuration,
         keptRanges: built.keptRanges)
     let out = FileManager.default.temporaryDirectory
         .appendingPathComponent("d-\(UUID().uuidString).gif")
@@ -147,6 +148,7 @@ func unfulfillableFrameFailsExport() async throws {
         videoComposition: built.videoComposition,
         audioMix: built.audioMix,
         duration: built.duration + 5,
+        sourceDuration: built.sourceDuration,
         keptRanges: built.keptRanges)
     let out = FileManager.default.temporaryDirectory
         .appendingPathComponent("f-\(UUID().uuidString).gif")
@@ -196,6 +198,7 @@ func throwingWriteDoesNotDestroyAPreviousGoodFile() async throws {
         videoComposition: built.videoComposition,
         audioMix: built.audioMix,
         duration: built.duration + 5,
+        sourceDuration: built.sourceDuration,
         keptRanges: built.keptRanges)
     await #expect(throws: (any Error).self) {
         try await GIFExporter.write(inflated, to: out, framesPerSecond: 5)

@@ -55,6 +55,13 @@ import Foundation
 enum SyntheticFrameContent {
     case flat
     case noise
+    // Each frame filled with a value derived from its index, so "which frame
+    // is on screen" is observable — needed once `AVPlayerItemVideoOutput`
+    // fingerprinting (spike S7) is exercised. See the `SnittAppTests` copy of
+    // this enum, which is the one Task 1 of the M4b plan actually wires up;
+    // added here too so the two enums don't drift on this case specifically,
+    // even though nothing in this target currently constructs `.ramp`.
+    case ramp
 }
 
 /// What samples a synthetic audio track is filled with.
@@ -236,6 +243,12 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
                     // output byte-for-byte reproducible across runs.
                     fillWithSeededNoise(base, byteCount: byteCount,
                                         seed: UInt64(videoProgress.value) &+ 1)
+                case .ramp:
+                    // Kept in step with the `SnittAppTests` copy's `.ramp`
+                    // fill so the two enums agree on more than just the case
+                    // name. See that copy's `writeSyntheticMovie` doc comment
+                    // for why (spike S7 / M4b frame-identity scrubbing).
+                    memset(base, Int32(20 + (videoProgress.value * 7) % 200), byteCount)
                 }
             }
             CVPixelBufferUnlockBaseAddress(buffer, [])

@@ -7,14 +7,16 @@ import Testing
 
 private func makeTestBundle(seconds: Double = 4,
                              maxKeyFrameInterval: Int32? = nil,
-                             audioTrackCount: Int = 0) async throws -> SnittBundle {
+                             audioTrackCount: Int = 0,
+                             content: SyntheticFrameContent = .flat) async throws -> SnittBundle {
     let url = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString)
         .appendingPathExtension(SnittBundle.fileExtension)
     let bundle = try SnittBundle(creatingAt: url)
     try await writeSyntheticMovie(to: bundle.captureURL, seconds: seconds,
                                   maxKeyFrameInterval: maxKeyFrameInterval,
-                                  audioTrackCount: audioTrackCount)
+                                  audioTrackCount: audioTrackCount,
+                                  content: content)
     return bundle
 }
 
@@ -37,7 +39,7 @@ func attachesTheGivenComposition() async throws {
     let built = try await CompositionBuilder.build(
         bundle: bundle, edl: edl, scale: 0.5)
 
-    let controller = PreviewController(built: built, jumpPoints: [])
+    let controller = PreviewController(built: built, jumpPoints: [], bundle: bundle, scale: 0.5)
     let item = try #require(controller.player.currentItem)
 
     // Identity, not equality. A controller that rebuilds its own composition
@@ -97,7 +99,7 @@ func itemBecomesReady() async throws {
     let bundle = try await makeTestBundle(seconds: 3)
     let built = try await CompositionBuilder.build(
         bundle: bundle, edl: EditDecisionList(), scale: 1.0)
-    let controller = PreviewController(built: built, jumpPoints: [])
+    let controller = PreviewController(built: built, jumpPoints: [], bundle: bundle, scale: 1.0)
     let item = try #require(controller.player.currentItem)
 
     var waited = 0.0
@@ -144,7 +146,7 @@ func seekIsExact() async throws {
         seconds: seconds, maxKeyFrameInterval: Int32((seconds * Double(syntheticMovieFPS)).rounded()))
     let built = try await CompositionBuilder.build(
         bundle: bundle, edl: EditDecisionList(), scale: 1.0)
-    let controller = PreviewController(built: built, jumpPoints: [])
+    let controller = PreviewController(built: built, jumpPoints: [], bundle: bundle, scale: 1.0)
 
     await controller.seek(toSeconds: 2.5)
 
@@ -167,9 +169,112 @@ func jumpSeeksToMarkerTime() async throws {
     let built = try await CompositionBuilder.build(
         bundle: bundle, edl: EditDecisionList(), scale: 1.0)
     let point = JumpPoint(timeSeconds: 1.75, label: "here")
-    let controller = PreviewController(built: built, jumpPoints: [point])
+    let controller = PreviewController(built: built, jumpPoints: [point], bundle: bundle, scale: 1.0)
 
     await controller.jump(to: point)
 
     #expect(abs(CMTimeGetSeconds(controller.player.currentTime()) - 1.75) < 0.05)
+}
+
+@MainActor
+@Test("Applying an edit rebuilds through CompositionBuilder")
+func applyRebuildsComposition() async throws {
+    let bundle = try await makeTestBundle(seconds: 4)
+    let built = try await CompositionBuilder.build(
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0)
+    let controller = PreviewController(built: built, jumpPoints: [], bundle: bundle, scale: 1.0)
+    let before = controller.player.currentItem?.asset
+
+    var edited = EditDecisionList()
+    edited.cuts = [TimeRange(start: 1.0, end: 2.0)]
+    try await controller.apply(edl: edited, events: [])
+
+    let after = try #require(controller.player.currentItem?.asset)
+    // A controller that mutates the existing AVMutableComposition in place
+    // keeps the same object and passes any duration-only assertion.
+    #expect(after !== before)
+    #expect(abs(controller.durationSeconds - 3.0) < 0.1)
+}
+
+@MainActor
+@Test("Applying an edit moves the jump points with it")
+func applyRecomputesJumpPoints() async throws {
+    let bundle = try await makeTestBundle(seconds: 6)
+    let built = try await CompositionBuilder.build(
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0)
+    let marker = LoggedEvent(timeSeconds: 5.0, kind: .marker, label: "late")
+    let points = MarkerJumpPoints.compute(events: [marker], keptRanges: built.keptRanges)
+    let controller = PreviewController(built: built, jumpPoints: points, bundle: bundle, scale: 1.0)
+    #expect(abs((controller.jumpPoints.first?.timeSeconds ?? -1) - 5.0) < 0.01)
+
+    var edited = EditDecisionList()
+    edited.cuts = [TimeRange(start: 1.0, end: 3.0)]
+    try await controller.apply(edl: edited, events: [marker])
+
+    // The marker sat at 5s; a 2s cut before it moves it to 3s in the trimmed
+    // timeline. A controller that rebuilds the composition but keeps the old
+    // jump points leaves it at 5s, and the scrub bar disagrees with the
+    // exported chapters — the exact divergence §9 exists to prevent.
+    #expect(abs((controller.jumpPoints.first?.timeSeconds ?? -1) - 3.0) < 0.01)
+}
+
+@MainActor
+@Test("Seeking to different times shows different frames")
+func seekingShowsDifferentFrames() async throws {
+    // Requires `.ramp` content — with the default flat fixture every frame
+    // is identical and this passes no matter what seeking does (spike S7).
+    //
+    // Deviation from the brief: also uses the sparse-keyframe fixture
+    // (`maxKeyFrameInterval` set to the whole clip, as `seekIsExact` does)
+    // rather than the brief's default (dense) keyframes. Measured: with
+    // dense keyframes there is nowhere for a tolerant seek to snap TO but
+    // the exact target, so this test passes identically whether or not
+    // `PreviewController.seek` drops its `toleranceBefore/After: .zero` —
+    // the same non-discriminating result Task 3 found reusing the dense
+    // fixture for `currentTime()`-based assertions. With one keyframe at
+    // the very start, a tolerant seek collapses all three fingerprints to
+    // the frame at t=0 (confirmed: 78, 78, 78, `distinct == 1`), which is
+    // exactly what this test now catches.
+    let seconds = 4.0
+    let bundle = try await makeTestBundle(
+        seconds: seconds,
+        maxKeyFrameInterval: Int32((seconds * Double(syntheticMovieFPS)).rounded()),
+        content: .ramp)
+    let built = try await CompositionBuilder.build(
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0)
+    let controller = PreviewController(built: built, jumpPoints: [], bundle: bundle, scale: 1.0)
+
+    var seen: Set<Int> = []
+    for t in [0.5, 2.0, 3.5] {
+        await controller.seek(toSeconds: t)
+        seen.insert(try #require(await controller.currentFrameFingerprint()))
+    }
+    #expect(seen.count == 3)
+}
+
+@MainActor
+@Test("Seeking twice to the same time shows the same frame")
+func seekingIsRepeatable() async throws {
+    // Same sparse-keyframe + `.ramp` fixture as `seekingShowsDifferentFrames`,
+    // for the same reason: see that test's comment.
+    let seconds = 4.0
+    let bundle = try await makeTestBundle(
+        seconds: seconds,
+        maxKeyFrameInterval: Int32((seconds * Double(syntheticMovieFPS)).rounded()),
+        content: .ramp)
+    let built = try await CompositionBuilder.build(
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0)
+    let controller = PreviewController(built: built, jumpPoints: [], bundle: bundle, scale: 1.0)
+
+    await controller.seek(toSeconds: 2.0)
+    let first = try #require(await controller.currentFrameFingerprint())
+    await controller.seek(toSeconds: 0.5)
+    await controller.seek(toSeconds: 2.0)
+    let second = try #require(await controller.currentFrameFingerprint())
+
+    // Discriminating against tolerant seeking: with keyframe tolerance the
+    // second seek can land on a different frame than the first, which is
+    // exactly the bug `toleranceBefore/.zero` prevents and which
+    // `currentTime()` could never reveal.
+    #expect(first == second)
 }
