@@ -705,3 +705,52 @@ func skipTimestampEnvVarActuallySkipsIt() throws {
     let (_, dvv) = runCodesign(["-dvv", tempFile.path])
     #expect(!dvv.contains("Timestamp="), "SNITT_SKIP_TIMESTAMP=1 should omit the secure timestamp:\n\(dvv)")
 }
+
+// make-app.sh writes Info.plist from a heredoc whose delimiter is
+// deliberately UNQUOTED — $APP_VERSION and $BUNDLE_ID have to expand. That
+// also makes backticks inside the body command substitution, so prose like
+//   the key `sign_update` signs with
+// runs `sign_update`, prints "command not found" to stderr, and silently
+// substitutes empty into the shipped plist. Both a real instance of that
+// (the words vanished from two comments) and its predecessor shipped before
+// anyone noticed: the plist still parsed, every key was still correct, and
+// the only symptom was two lines of build noise.
+//
+// These two tests pin the class rather than the two instances. The first
+// catches any backtick reintroduced into the heredoc body — the mechanism.
+// The second catches the observable damage in the generated plist, so a
+// future heredoc built some other way is still covered.
+private let makeAppScript = URL(fileURLWithPath: "Scripts/make-app.sh")
+
+@Test("make-app.sh's Info.plist heredoc contains no backticks, which the unquoted delimiter would execute")
+func infoPlistHeredocHasNoCommandSubstitution() throws {
+    let source = try String(contentsOf: makeAppScript, encoding: .utf8)
+    let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+
+    // The heredoc runs from the `<<PLIST` line to the closing `PLIST`.
+    let start = try #require(lines.firstIndex { $0.hasSuffix("<<PLIST") }, "make-app.sh no longer has a <<PLIST heredoc — update this test")
+    let end = try #require(lines[start...].firstIndex { $0 == "PLIST" }, "unterminated <<PLIST heredoc in make-app.sh")
+
+    let offenders = lines[start...end].enumerated()
+        .filter { $0.element.contains("`") }
+        .map { "line \(start + $0.offset + 1): \($0.element)" }
+
+    #expect(offenders.isEmpty, """
+        Backticks inside make-app.sh's unquoted heredoc are executed as commands, \
+        and their output replaces the text in the generated Info.plist. \
+        Use plain words or single quotes in that prose:
+        \(offenders.joined(separator: "\n"))
+        """)
+}
+
+@Test("The generated Info.plist keeps the comment text make-app.sh wrote", .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason))
+func infoPlistCommentsSurviveGeneration() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
+    let plistText = try String(contentsOf: app.appending(path: "Contents/Info.plist"), encoding: .utf8)
+
+    // Both words were eaten by command substitution before this was fixed.
+    // Asserting on the *generated* file, not on the script, is what makes
+    // this catch the damage rather than the mechanism.
+    #expect(plistText.contains("sign_update"), "the sign_update reference vanished from the generated plist — command substitution in the heredoc?")
+    #expect(plistText.contains("--output"), "the --output reference vanished from the generated plist — command substitution in the heredoc?")
+}
