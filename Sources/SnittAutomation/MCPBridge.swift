@@ -354,7 +354,8 @@ public enum MCPBridge {
                 return .failure(MCPBridgeError(
                     "snitt_trim requires end (\(end)) to be after start (\(start))"))
             }
-            return .success(.trim(bundlePath: path, start: start, end: end, auto: auto))
+            return .success(.trim(bundlePath: PathResolver.resolve(path), start: start,
+                                   end: end, auto: auto))
 
         case "snitt_export":
             guard let path = arguments["bundlePath"] as? String else {
@@ -405,7 +406,8 @@ public enum MCPBridge {
                 }
                 maxSizeBytes = bytes
             }
-            return .success(.export(bundlePath: path, format: format, outputPath: outputPath,
+            return .success(.export(bundlePath: PathResolver.resolve(path), format: format,
+                                     outputPath: PathResolver.resolve(outputPath),
                                      scale: scale, chapters: chapters, maxSizeBytes: maxSizeBytes))
 
         case "snitt_diagnostics_export":
@@ -415,14 +417,12 @@ public enum MCPBridge {
             // `.diagnostics`'s own doc comment declares `outputPath` arrives
             // already resolved against the CALLER's working directory —
             // `snitt-cli` honours that (`PathResolver.resolve`, done before
-            // the request is sent); this bridge did not, so a relative
-            // `outputPath` from an MCP client resolved against whatever cwd
-            // `Snitt.app`/the automation host happened to have, not the
-            // caller's. `snitt_trim`/`snitt_export` have the same gap (they
-            // also forward `bundlePath`/`outputPath` verbatim through this
-            // same function) — left alone here, for a following change that
-            // closes all of them together rather than fixing one MCP tool
-            // at a time.
+            // the request is sent), and so does this bridge, for `bundlePath`
+            // and `outputPath` on every tool that carries one (`snitt_trim`,
+            // `snitt_export`, `snitt_diagnostics_export`) — otherwise a
+            // relative path from an MCP client would resolve against
+            // whatever cwd `Snitt.app`/the automation host happened to have,
+            // not the caller's.
             return .success(.diagnostics(outputPath: PathResolver.resolve(outputPath)))
 
         default:
