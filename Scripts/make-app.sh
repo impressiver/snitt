@@ -47,6 +47,12 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>$BUNDLE_ID</string>
   <key>CFBundleName</key><string>Snitt</string>
   <key>CFBundlePackageType</key><string>APPL</string>
+  <!-- Without this key Snitt shows the generic document icon in the Dock,
+       the Finder, and Cmd-Tab. Resources/AppIcon.icns is generated from
+       Resources/AppIcon.png by Scripts/make-app-icon.sh (source: Scripts
+       generate-app-icon.swift), and copied into place below alongside the
+       rest of this script's asset copies. -->
+  <key>CFBundleIconFile</key><string>AppIcon.icns</string>
   <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
   <!-- Sparkle's SUHost.validVersion reads ONLY CFBundleVersion (not
        CFBundleShortVersionString above). Without it, SPUUpdater's own
@@ -143,6 +149,14 @@ PLIST
 if [ -f ".build/debug/SnittApp" ]; then
   cp ".build/debug/SnittApp" "$APP/Contents/MacOS/Snitt"
 fi
+
+# Must exist before signing: codesign seals Contents/Resources into the
+# app's signature, so an icon dropped in afterward would invalidate it.
+if [ ! -f "Resources/AppIcon.icns" ]; then
+  echo "error: Resources/AppIcon.icns not found — run ./Scripts/make-app-icon.sh first" >&2
+  exit 1
+fi
+cp "Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 
 # Embed Sparkle at Contents/MacOS, not the conventional Contents/Frameworks:
 # spike S9 measured the rpath SwiftPM emits for SnittApp as @loader_path,

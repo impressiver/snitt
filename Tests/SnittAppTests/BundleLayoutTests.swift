@@ -774,6 +774,35 @@ func infoPlistHeredocHasNoCommandSubstitution() throws {
         """)
 }
 
+@Test(
+    "The built app declares an app icon, and the file it names actually exists in the bundle",
+    .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason)
+)
+func infoPlistDeclaresAnIconThatActuallyExists() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
+    let plist = try plistOf(app)
+
+    // A missing CFBundleIconFile is the observable Task 9 exists to fix —
+    // Snitt shows the generic document icon in the Dock, the Finder, and
+    // Cmd-Tab without it.
+    let iconFile = try #require(plist["CFBundleIconFile"] as? String, "CFBundleIconFile missing from Info.plist")
+
+    // The adjacent-property trap this project has hit twenty-six times: a
+    // plist naming a FILE THAT ISN'T THERE produces the exact same generic
+    // icon as no declaration at all, while every key still looks correct
+    // in isolation. `CFBundleIconFile` is conventionally written without
+    // the ".icns" extension (AppKit appends it), so check both spellings —
+    // whichever make-app.sh actually wrote, the file it names must be on
+    // disk in Contents/Resources.
+    let resources = app.appending(path: "Contents/Resources")
+    let withExtension = iconFile.hasSuffix(".icns") ? iconFile : "\(iconFile).icns"
+    let bareIconPath = resources.appending(path: iconFile).path
+    let icnsIconPath = resources.appending(path: withExtension).path
+    let iconExists = FileManager.default.fileExists(atPath: bareIconPath)
+        || FileManager.default.fileExists(atPath: icnsIconPath)
+    #expect(iconExists, "CFBundleIconFile names \"\(iconFile)\", but neither \(bareIconPath) nor \(icnsIconPath) exists")
+}
+
 @Test("The generated Info.plist keeps the comment text make-app.sh wrote", .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason))
 func infoPlistCommentsSurviveGeneration() throws {
     try #require(appIsBuilt, appBundleSkipReason)

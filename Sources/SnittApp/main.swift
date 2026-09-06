@@ -341,6 +341,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openURLs(urls)
     }
 
+    /// The Dock icon (or ⌘-Tab, or Launch Services) asking to be brought
+    /// back with no window already visible. Under Task 1's permanent
+    /// `.regular` policy the Dock icon is present even after the last
+    /// editor window closes — without this, clicking it does nothing.
+    ///
+    /// §4.11 note: this fires only from an explicit reopen gesture with
+    /// `flag == false`. It never runs at launch (`hasVisibleWindows` is not
+    /// consulted there) and it does not fight the no-window-at-launch
+    /// design the hotkey depends on — it only answers a click the user
+    /// deliberately made.
+    ///
+    /// The decision (reopen the most recent document, or explain there is
+    /// none) is delegated to `DockReopen.handle` so it can be tested
+    /// without a real `NSAlert` or a real bundle on disk; `openURLs` is the
+    /// exact same path File ▸ Open / Open Recent / Finder double-click use,
+    /// so an already-open window for that document is focused rather than
+    /// duplicated.
+    ///
+    /// Returns `false` unconditionally when there were no visible windows:
+    /// this method has already decided what to do, so AppKit's own default
+    /// handling — which does nothing useful for a non-`NSDocument` app with
+    /// no windows — should not also run.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard !flag else { return true }
+        DockReopen.handle(
+            recentURLs: RecentDocuments.urls(),
+            open: { [weak self] url in self?.openURLs([url]) },
+            explainNoRecents: { [weak self] in
+                self?.notify("Snitt has no recent recordings to reopen. Use ⌥⌘5 to "
+                            + "start one, or File ▸ Open to pick a file.")
+            }
+        )
+        return false
+    }
+
     private func openURLs(_ urls: [URL]) {
         for url in urls {
             Task { @MainActor in
