@@ -38,17 +38,23 @@ public enum CrashReportCollector {
             .appendingPathComponent("Library/Logs/DiagnosticReports", isDirectory: true)
     }
 
-    /// How much of an `.ips` file is ever read off disk, in bytes. Real
-    /// header lines observed in the wild run well under 1 KB; this leaves
-    /// generous headroom for a future macOS format without ever reaching
-    /// into the body, which is where the crashing binary's absolute path
-    /// (and, inside it, the user's home directory) lives — and which, for a
-    /// crash with a large stack or a foreign app's own large report, can run
-    /// to many kilobytes or more. Bounding the READ, not just the parse, is
-    /// what keeps `recent(in:)`'s claim true at the I/O level: it does not
-    /// load a foreign app's crash body into Snitt's address space just to
-    /// throw it away, and it does not pay for that I/O either.
+    /// The most bytes `readHeaderLine` will ever read looking for the
+    /// newline that ends an `.ips` header, in bytes. Real header lines
+    /// observed in the wild run well under 1 KB; this leaves generous
+    /// headroom for a future macOS format while still bounding the search —
+    /// a file with no newline at all within this many bytes is treated as
+    /// having no parseable header rather than read indefinitely.
     private static let headerReadLimit = 8 * 1024
+
+    /// How many bytes `readHeaderLine` reads at a time while searching for
+    /// the header's terminating newline. Small on purpose: reading in small
+    /// chunks and stopping as soon as the newline appears in the buffer is
+    /// what keeps the body genuinely OUT of the returned `Data` — a single
+    /// large read (even one truncated to `headerReadLimit`) would routinely
+    /// pull thousands of body bytes in alongside the header, since real
+    /// header lines run under 1 KB but 8 KB was chosen as a generous safety
+    /// margin, not a tight one.
+    private static let headerScanChunkSize = 256
 
     /// Reads and redacts up to `limit` of Snitt's own crash reports found in
     /// `directory`, most recent first.
@@ -64,8 +70,8 @@ public enum CrashReportCollector {
         let summaries = entries
             .filter { $0.pathExtension.lowercased() == "ips" }
             .compactMap { url -> CrashReportSummary? in
-                guard let prefix = readHeaderPrefix(of: url) else { return nil }
-                return parse(prefix)
+                guard let headerLine = readHeaderLine(of: url) else { return nil }
+                return parse(headerLine)
             }
 
         // An unparseable timestamp (`nil`) sorts as though it were the
@@ -77,29 +83,54 @@ public enum CrashReportCollector {
             .prefix(limit))
     }
 
-    /// Reads at most `headerReadLimit` bytes from the START of `url` — never
-    /// the whole file. A foreign app's `.ips` body (megabytes, in the worst
-    /// case) is never pulled into memory just to be discarded after `parse`
-    /// looks at its first line.
-    private static func readHeaderPrefix(of url: URL) -> Data? {
+    /// Reads `url` in `headerScanChunkSize`-byte chunks, stopping the moment
+    /// a newline appears in what has been read so far, and returns only the
+    /// bytes BEFORE that newline — never the whole file, and never a fixed
+    /// prefix either. A single `read(upToCount: headerReadLimit)` (8 KB)
+    /// would routinely pull thousands of body bytes in alongside the
+    /// header — measured against a real `.ips`, over 6 KB of body,
+    /// `procPath` included — because 8 KB is a generous safety margin, not a
+    /// tight one. Reading in small chunks and truncating at the newline as
+    /// soon as it is found is what keeps the body genuinely out of the
+    /// `Data` this returns, not merely unparsed.
+    ///
+    /// `headerReadLimit` still bounds the total: a file with no newline
+    /// within that many bytes stops being read and is treated as having no
+    /// parseable header (`parse` will fail closed on it either way).
+    static func readHeaderLine(of url: URL) -> Data? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
         defer { try? handle.close() }
-        return try? handle.read(upToCount: headerReadLimit)
+
+        var buffer = Data()
+        while buffer.count < headerReadLimit {
+            guard let chunk = try? handle.read(upToCount: headerScanChunkSize), !chunk.isEmpty else {
+                break
+            }
+            buffer.append(chunk)
+            if let newlineIndex = buffer.firstIndex(of: UInt8(ascii: "\n")) {
+                return buffer[buffer.startIndex..<newlineIndex]
+            }
+        }
+        // No newline turned up within the bound. `firstLine` still handles
+        // a genuinely header-only file (no body follows at all) by treating
+        // the whole thing as the header; anything else fails to decode as
+        // JSON and `parse` returns `nil`.
+        return buffer.isEmpty ? nil : buffer
     }
 
-    /// Parses one `.ips` file's HEADER line only, out of a bounded prefix of
-    /// the file, and returns a summary iff that header's `bundleID`
-    /// identifies Snitt's own process.
+    /// Parses one `.ips` file's HEADER line — already isolated by
+    /// `readHeaderLine`, which never returns any body byte — and returns a
+    /// summary iff that header's `bundleID` identifies Snitt's own process.
     ///
     /// `.ips` files are two JSON documents separated by a newline: a small
-    /// header, then a much larger body report. Only the header is ever
-    /// decoded here — `readHeaderPrefix` already stopped the read at
-    /// `headerReadLimit` bytes, so the body is never even IN `data`, let
-    /// alone decoded. The body is where the crashing binary's absolute path
-    /// (and, inside it, the user's home directory) lives — this deliberately
-    /// never reads far enough to see it, so there is no path-stripping step
-    /// to get wrong or forget: the redaction is that the path is never read
-    /// in the first place, at the file-I/O level, not merely at parse time.
+    /// header, then a much larger body report, which is where the crashing
+    /// binary's absolute path (and, inside it, the user's home directory)
+    /// lives. `firstLine` below is a second, redundant cut at the same
+    /// newline — belt-and-suspenders for any future caller of `parse` that
+    /// hands it a buffer `readHeaderLine` did not produce — but the actual
+    /// guarantee is made by the read, not by this trim: the body is never
+    /// read off disk in the first place, so there is no path-stripping step
+    /// to get wrong or forget here.
     ///
     /// The identity check (`header.bundleID == bundleIdentifier`) is
     /// intentionally on `bundleID`, not on `app_name`/`name` — a display

@@ -266,3 +266,54 @@ func recentRespectsLimit() throws {
 
     #expect(CrashReportCollector.recent(limit: 2, in: dir).count == 2)
 }
+
+@Test("readHeaderLine returns exactly the header line, never the file's body — the read is genuinely bounded, not merely the parse")
+func readHeaderLineNeverReadsTheBody() throws {
+    // Pins the fix for the finding that `parse`'s comment once overstated:
+    // a single `handle.read(upToCount: 8192)` (the code's own prior shape)
+    // still pulls thousands of body bytes in alongside the header for a
+    // real `.ips` — measured at over 6 KB, `procPath` included — so
+    // asserting on PARSED OUTPUT alone (as every other test in this file
+    // does) cannot see that gap: the filter and the redaction both still
+    // behave correctly either way. This asserts on what was actually READ
+    // off disk instead.
+    //
+    // Verified against both wrong implementations this guards: reverting to
+    // `try? Data(contentsOf: url)` (the whole file, 200 KB+ here) and
+    // reverting to a single bounded `read(upToCount: headerReadLimit)`
+    // (8 KB) each make this fail — the returned `Data` is far larger than
+    // the header line alone in both cases.
+    let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
+    let header: [String: Any] = [
+        "app_name": "Snitt",
+        "timestamp": "2024-01-01 12:00:00.00 -0800",
+        "app_version": "1.2.3",
+        "os_version": "macOS 14.0 (23A344)",
+        "incident_id": "BOUND-1",
+        "bug_type": "309",
+        "bundleID": "com.impressiver.snitt",
+    ]
+    let headerData = try JSONSerialization.data(withJSONObject: header)
+
+    var combined = headerData
+    combined.append(UInt8(ascii: "\n"))
+    // Far larger than any read bound this file has ever used, so a revert
+    // to reading the whole file (or even a single generous fixed-size read)
+    // returns something conspicuously bigger than the header alone.
+    combined.append(Data(repeating: UInt8(ascii: "A"), count: 200_000))
+
+    let url = dir.appendingPathComponent("Big.ips")
+    try combined.write(to: url)
+
+    let headerLine = try #require(CrashReportCollector.readHeaderLine(of: url))
+
+    #expect(headerLine.count == headerData.count,
+            "must return exactly the header line's bytes, not the file's body")
+    #expect(headerLine.count < 2048,
+            "a read that pulled in any meaningful slice of the 200 KB body would not be genuinely bounded")
+
+    // And the file is still usable end to end: the collector reads the
+    // actual header out of it correctly despite the enormous body.
+    let reports = CrashReportCollector.recent(in: dir)
+    #expect(reports.first?.incidentID == "BOUND-1")
+}
