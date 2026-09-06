@@ -314,4 +314,48 @@ struct EventLoggingToggleTests {
         #expect(ladderConsulted == false)
         #expect(EventLoggingSettings.load(defaults).enabled == false)
     }
+
+
+    /// F7 (whole-branch review): with the Settings window left open, a
+    /// status-item toggle changes the shared store without changing this
+    /// window's checkbox — and the window's handlers derive the value they
+    /// write from `sender.state`, not from the store. So the next click on
+    /// that stale checkbox writes a value computed from the stale visual
+    /// state, silently reverting what the user just did from the menu.
+    ///
+    /// Both halves are asserted, in that order: the checkbox catches up, and
+    /// a click after catching up writes the value the user actually sees.
+    /// A wrong implementation that refreshed only on construction, or that
+    /// refreshed the display without the handlers ever seeing it, fails one
+    /// of the two.
+    @Test("A settings change made elsewhere shows up when the window becomes key")
+    func windowRefreshesFromTheStoreWhenItBecomesKey() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            SettingsWindowController.resetForTesting()
+        }
+
+        let updater = UpdaterController(settings: UpdateSettings.load(defaults))
+        SettingsWindowController.show(updater: updater, defaults: defaults, activate: false)
+        let controller = try #require(SettingsWindowController.shared)
+        let checkbox = try #require(
+            controller.checkbox(titled: SettingsWindowController.agentRecordingTitle))
+        #expect(checkbox.state == .off)
+
+        // The status item's own toggle, which writes the shared store
+        // directly and knows nothing about this window.
+        var settings = AgentSettings.load(defaults)
+        settings.agentRecordingEnabled = true
+        settings.save(to: defaults)
+
+        controller.windowDidBecomeKey(
+            Notification(name: NSWindow.didBecomeKeyNotification, object: controller.window))
+        #expect(checkbox.state == .on, "the window must show the value the store actually holds")
+
+        // And a click from here turns it OFF, rather than writing `true`
+        // again off a stale unchecked box.
+        checkbox.performClick(nil)
+        #expect(AgentSettings.load(defaults).agentRecordingEnabled == false)
+    }
 }

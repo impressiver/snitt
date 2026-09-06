@@ -14,8 +14,16 @@ import SnittExport
 /// editors is an export that does not match the preview" — and a preview that
 /// constructs its own composition, video composition or audio mix is how that
 /// guarantee is lost, one small tweak at a time.
+/// Not `final`: a test subclass overrides `apply(edl:events:)` to make it
+/// take a chosen amount of time, which is the only way to force a
+/// DETERMINISTIC completion-order inversion between two autosaves
+/// (`EditorPersistenceTests.laterTrimIsNotOverwrittenByAnEarlierSave`,
+/// whole-branch review F2). Two real builds of two real EDLs finish in
+/// whatever order the machine happens to pick, so a test written against
+/// real timing would pass against the unserialized code most of the time —
+/// the shape of non-test this project has already paid for.
 @MainActor
-public final class PreviewController {
+public class PreviewController {
     public private(set) var jumpPoints: [JumpPoint]
     public private(set) var durationSeconds: Double
     /// The SOURCE recording's media duration (`BuiltComposition.sourceDuration`)

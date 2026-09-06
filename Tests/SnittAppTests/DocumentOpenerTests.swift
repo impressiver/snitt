@@ -210,4 +210,37 @@ struct DocumentOpenerTests {
             #expect(first.window === second.window)
         }
     }
+
+    /// F3 (whole-branch review): the dedup check runs BEFORE
+    /// `await CompositionBuilder.build`, but a controller only joins the
+    /// registry inside `show()` — after the build. Two opens of one bundle
+    /// issued while the first build is in flight therefore both pass the
+    /// check and both show a window: two windows, two EDLs, last-save-wins.
+    /// That is the same data loss `sameBundleReusesItsWindow` above exists
+    /// to prevent, arriving through a door every sequential `await` in this
+    /// suite steps over. Reachable in the wild by a second Finder
+    /// double-click during a multi-second build of a long recording.
+    ///
+    /// `async let` is what makes this deterministic rather than a race:
+    /// the first open runs on the main actor until it suspends inside the
+    /// composition build, which is exactly when the second open gets to run
+    /// its own `existing(for:)` check against a registry nothing has joined
+    /// yet.
+    @Test("Two opens of one bundle issued during the same build produce one window")
+    func concurrentOpensOfOneBundleShareOneWindow() async throws {
+        let url = try await makeFixtureBundle()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        try await EditorWindowTestGate.run {
+            let before = EditorWindowController.openWindowCount
+            async let first = DocumentOpener.open(bundleURL: url)
+            async let second = DocumentOpener.open(bundleURL: url)
+            let (a, b) = try await (first, second)
+            defer { a.close(); b.close() }
+
+            #expect(EditorWindowController.openWindowCount == before + 1,
+                    "a second open during the first one's build must join it, not open a second window")
+            #expect(a === b)
+        }
+    }
 }

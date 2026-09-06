@@ -34,15 +34,38 @@ final class EditorTimelineState: ObservableObject {
     /// nothing.
     weak var undoManager: UndoManager?
 
-    /// The in-flight `apply` + `persist` from the most recent trim or undo,
-    /// for `waitForPendingSaveForTesting` to await. A test that instead
-    /// slept a fixed interval would be a flake this project has already
-    /// paid for once (M4/M5 review history).
+    /// The TAIL of the autosave chain: every save awaits the one before it,
+    /// so awaiting this one awaits all of them (whole-branch review F2).
+    ///
+    /// This used to be "the most recent save", overwritten on every trim and
+    /// never awaited or cancelled — two trims inside one compositor-build
+    /// window ran concurrently, and if the OLDER one's `persist` landed last
+    /// the disk kept one cut while the screen showed two. Chaining is what
+    /// makes the last write the latest state rather than the slowest task's
+    /// state; `EditorPersistenceTests.laterTrimIsNotOverwrittenByAnEarlierSave`
+    /// is the test that walks into that inversion deliberately.
     private var pendingSaveTask: Task<Void, Never>?
+
+    /// Saves enqueued but not yet finished. Read at termination (F9): ⌘Q
+    /// immediately after a trim must not exit before that trim is on disk.
+    private(set) var outstandingSaves = 0
+
+    /// The last EDL that both APPLIED and PERSISTED — the state on disk, and
+    /// the state the preview is actually showing. A rejected edit reverts
+    /// to this rather than leaving the screen claiming a change that never
+    /// reached the file.
+    private var lastSavedEDL: EditDecisionList
+
+    /// Called when the compositor refuses an edit, so the window can tell
+    /// the user. A refused trim that merely skips the write still leaves a
+    /// silent no-op in front of a person who just dragged across the
+    /// timeline (whole-branch review F1).
+    var onEditRejected: ((Error) -> Void)?
 
     init(controller: PreviewController, edl: EditDecisionList, events: [LoggedEvent]) {
         self.controller = controller
         self.edl = edl
+        self.lastSavedEDL = edl
         self.events = events
     }
 
@@ -120,24 +143,70 @@ final class EditorTimelineState: ObservableObject {
         applyAndSave()
     }
 
-    /// Rebuilds the preview, THEN persists (Task 7 ordering) — never the
-    /// reverse. Writing an EDL the compositor rejected would put a state on
-    /// disk the app cannot reopen, turning a bad edit into a broken
-    /// document instead of a recoverable one.
+    /// Rebuilds the preview and persists ONLY IF that rebuild succeeded
+    /// (Task 7 ordering, corrected by whole-branch review F1).
+    ///
+    /// The previous spelling was `try? await apply` followed by an
+    /// unconditional `try? persist`, under a comment claiming the ordering
+    /// protected the document. It did not: ordering alone accomplishes
+    /// nothing, only GATING does. `CompositionBuilder` throws
+    /// `everythingCut` for a drag across the whole timeline, that EDL was
+    /// written anyway, and `DocumentOpener.open` then threw `everythingCut`
+    /// forever — D45's own defect ("a `.snitt` could be written and never
+    /// reopened") reintroduced by D46's autosave, reachable by one gesture.
+    ///
+    /// Each save is chained onto the previous one (F2) rather than racing
+    /// it, so the last write is the latest state and never the slowest
+    /// task's stale one.
     private func applyAndSave() {
         let edl = self.edl
         let events = self.events
         let controller = self.controller
-        pendingSaveTask = Task {
-            try? await controller.apply(edl: edl, events: events)
-            try? controller.persist(edl)
+        let previousSave = pendingSaveTask
+        outstandingSaves += 1
+        pendingSaveTask = Task { @MainActor [weak self] in
+            await previousSave?.value
+            do {
+                try await controller.apply(edl: edl, events: events)
+                try controller.persist(edl)
+                self?.lastSavedEDL = edl
+            } catch {
+                self?.editWasRejected(error)
+            }
+            self?.outstandingSaves -= 1
         }
+    }
+
+    /// The compositor refused this edit, so nothing was written — put the
+    /// editor back on the state that IS on disk and say so.
+    ///
+    /// No re-apply is needed: `PreviewController.apply` builds before it
+    /// touches the player, so a build that threw has changed nothing and
+    /// the preview is still showing `lastSavedEDL`. Reverting `edl` is what
+    /// makes the timeline agree with it again.
+    ///
+    /// The undo entry the refused gesture registered is deliberately left
+    /// on the stack: `UndoManager` has no way to pop one, and clearing the
+    /// stack would throw away the user's real history to tidy up a failed
+    /// edit. It restores the state we have just reverted to, so pressing
+    /// ⌘Z once after a refusal is a no-op rather than a surprise.
+    private func editWasRejected(_ error: Error) {
+        edl = lastSavedEDL
+        onEditRejected?(error)
     }
 
     // MARK: - Testing seam
 
+    /// Awaits the WHOLE chain of enqueued saves, not just the newest task.
+    /// Awaiting only the newest is what let F2's older-save-lands-last
+    /// inversion slip past every test in this suite.
     func waitForPendingSave() async {
-        await pendingSaveTask?.value
+        while let task = pendingSaveTask {
+            await task.value
+            // Another save may have been enqueued while we were awaiting
+            // this one; that new task is now the tail.
+            if pendingSaveTask == task { return }
+        }
     }
 }
 
@@ -275,7 +344,11 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// `URL(fileURLWithPath:)` right before resolving forces both sides to
     /// recompute that hint against the SAME (current, real) filesystem
     /// state, so the trailing slash can no longer differ.
-    private static func normalizedBundleURL(_ url: URL) -> URL {
+    ///
+    /// Not `private`: `DocumentOpener` keys its in-flight registry (F3) on
+    /// exactly this identity, and a second normalization written next door
+    /// would be a second answer to "is this the same document".
+    static func normalizedBundleURL(_ url: URL) -> URL {
         URL(fileURLWithPath: url.path).resolvingSymlinksInPath()
     }
 
@@ -319,6 +392,42 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         // menu already resolves `undo:`/`redo:` against through the
         // responder chain.
         state.undoManager = window.undoManager
+        // A refused edit has to reach the person who made it (F1). The
+        // state cannot present an alert itself — it has no window — so the
+        // window controller owns the presentation, exactly as it does for
+        // an export failure.
+        state.onEditRejected = { [weak self] in self?.presentEditRejection($0) }
+    }
+
+    /// Test seam: an alert here runs modal and would hang a test target
+    /// that has no one to click it — the same reason `exportForTesting`
+    /// exists rather than driving `presentExportPanel`. Set by a test that
+    /// needs to observe a refusal; `nil` in production, where the alert is
+    /// the whole point.
+    var onEditRejectedForTesting: ((Error) -> Void)?
+
+    /// Tells the user that the edit they just made was refused and undone.
+    ///
+    /// Skipping the write alone would leave a silent no-op: the drag
+    /// appears to have done nothing, and the reason (the trim removed the
+    /// entire recording) is invisible. `localizedDescription` is NOT shown
+    /// or logged here — Snitt's error types are plain enums, so it renders
+    /// as an opaque `CompositionError` string that tells a user nothing.
+    private func presentEditRejection(_ error: Error) {
+        let ns = error as NSError
+        Self.log.error("Refused an edit the compositor rejected: \(ns.domain, privacy: .public) \(ns.code, privacy: .public)")
+        if let observe = onEditRejectedForTesting {
+            observe(error)
+            return
+        }
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Snitt could not make that edit."
+        alert.informativeText = "The edit was undone and nothing was saved. "
+            + "A trim that removes the whole recording is the usual cause."
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     /// Brings the window to the front.
@@ -424,13 +533,22 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         alert.runModal()
     }
 
-    /// Same redaction discipline as `DocumentOpener`'s catch: domain, code,
-    /// and `localizedDescription` only, never `String(describing:)` on the
-    /// error and never a path — `bundleURL`'s filename is branch-derived
-    /// (`BundleNaming`) and can name a customer.
+    /// Same redaction discipline as `DocumentOpener`'s catch — domain, code,
+    /// never `String(describing:)` on the error and never a path — with one
+    /// deliberate difference: `localizedDescription` is `.private` here.
+    ///
+    /// `RecordingCoordinator`'s `.public` on the same field is justified by
+    /// "localizedDescription names only fixed sidecar filenames", which is
+    /// true on the open paths (`manifest.json`, `edit.json`, `events.jsonl`,
+    /// `capture.mov`) and FALSE here (whole-branch review F6): the export
+    /// destination is chosen by the user in an `NSSavePanel` and can be
+    /// anywhere, so a Cocoa write failure names a folder of theirs in a
+    /// field `snitt diagnostics export` collects verbatim.
+    /// `UpdaterController` already marks this field `.private` for the same
+    /// reason; this matches it rather than adding a third convention.
     private func presentExportFailure(_ error: Error) {
         let ns = error as NSError
-        Self.log.error("Export failed: \(ns.domain, privacy: .public) \(ns.code, privacy: .public) \(error.localizedDescription, privacy: .public)")
+        Self.log.error("Export failed: \(ns.domain, privacy: .public) \(ns.code, privacy: .public) \(error.localizedDescription, privacy: .private)")
         NSApp.activate()
         let alert = NSAlert()
         alert.alertStyle = .warning
@@ -482,11 +600,32 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         state.edl
     }
 
-    /// Awaits the actual in-flight apply-then-persist `Task`, not a fixed
+    /// Awaits the actual in-flight apply-then-persist chain, not a fixed
     /// sleep — a test that slept would be a flake this project has already
     /// paid for once.
     func waitForPendingSaveForTesting() async {
         await state.waitForPendingSave()
+    }
+
+    // MARK: - Termination (F9)
+
+    /// Whether any open editor still has an autosave in flight.
+    ///
+    /// Autosave runs an unstructured `Task`, so ⌘Q (or the status item's
+    /// Quit) pressed straight after a trim used to terminate the process
+    /// before `apply` + `persist` finished, silently losing the edit. With
+    /// F1's gate in place this is the last remaining path by which an edit
+    /// disappears.
+    static var hasPendingSaves: Bool {
+        open.contains { $0.state.outstandingSaves > 0 }
+    }
+
+    /// Drains every open editor's autosave chain. Called from
+    /// `applicationShouldTerminate` before the process exits.
+    static func flushPendingSaves() async {
+        for editor in open {
+            await editor.state.waitForPendingSave()
+        }
     }
 }
 

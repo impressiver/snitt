@@ -204,6 +204,35 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         onChange?()
     }
 
+    /// Re-reads all four settings from the store into the checkboxes
+    /// (whole-branch review F7).
+    ///
+    /// `refreshStatusItemFromSettings` syncs window → menu; there was no
+    /// menu → window direction, and these handlers derive the new value from
+    /// `sender.state` rather than from the store. So with the Settings
+    /// window left open, a status-item toggle changed the store without
+    /// changing this checkbox, and the next click on it wrote a value
+    /// derived from the stale checkmark — silently reverting what the user
+    /// had just done from the menu.
+    func refreshFromStore() {
+        checkbox(titled: Self.agentRecordingTitle)?.state =
+            AgentSettings.load(defaults).agentRecordingEnabled ? .on : .off
+        checkbox(titled: Self.eventLoggingTitle)?.state =
+            EventLoggingSettings.load(defaults).enabled ? .on : .off
+        checkbox(titled: Self.automaticUpdatesTitle)?.state =
+            UpdateSettings.load(defaults).automaticChecksEnabled ? .on : .off
+        checkbox(titled: Self.crashReportsTitle)?.state =
+            CrashReportSettings.load(defaults).enabled ? .on : .off
+    }
+
+    /// The window coming forward is the moment a stale checkbox is about to
+    /// be believed — and, on macOS, the moment right after the user was
+    /// somewhere else (the status menu, for instance) changing the same
+    /// setting.
+    func windowDidBecomeKey(_ notification: Notification) {
+        refreshFromStore()
+    }
+
     func windowWillClose(_ notification: Notification) {
         Self.shared = nil
     }

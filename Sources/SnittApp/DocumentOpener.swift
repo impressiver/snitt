@@ -40,6 +40,20 @@ enum DocumentOpener {
         try await open(bundle: SnittBundle(opening: bundleURL))
     }
 
+    /// Opens in flight, keyed by the SAME normalized identity
+    /// `EditorWindowController.existing(for:)` uses.
+    ///
+    /// Whole-branch review F3: checking `existing(for:)` before the
+    /// composition build was not enough, because a controller only joins the
+    /// open registry inside `show()` — after the build. Two opens of one
+    /// bundle issued while the first build was in flight both passed the
+    /// check and both showed a window: two windows, two EDLs, last-save-wins
+    /// — the exact data loss the check exists to prevent, reachable by a
+    /// second Finder double-click during a multi-second build. Closing that
+    /// window means registering the WORK, not just the finished window, so
+    /// there is no moment in which one document has no representative.
+    private static var inFlight: [URL: Task<EditorWindowController, Error>] = [:]
+
     static func open(bundle: SnittBundle) async throws -> EditorWindowController {
         // Before the composition, not after: building it first wastes the
         // work and can leave a half-built preview behind on the reuse path.
@@ -50,6 +64,28 @@ enum DocumentOpener {
             NSApp.activate(ignoringOtherApps: true)
             return existing
         }
+        let key = EditorWindowController.normalizedBundleURL(bundle.url)
+        if let running = inFlight[key] {
+            // Someone is already building this document. Join that build and
+            // focus its window rather than starting a second one — the same
+            // outcome the `existing(for:)` branch above gives, one step
+            // earlier in the document's life. A failed build is failed for
+            // both callers, and each surfaces it on its own path.
+            let editor = try await running.value
+            editor.window.makeKeyAndOrderFront(nil)
+            NSApp.activate(ignoringOtherApps: true)
+            return editor
+        }
+        let task = Task { @MainActor in try await build(bundle: bundle) }
+        inFlight[key] = task
+        // Runs after `task.value` resolves, on success and on failure alike:
+        // a build that threw must not leave a poisoned entry that every
+        // later open of this bundle joins.
+        defer { inFlight[key] = nil }
+        return try await task.value
+    }
+
+    private static func build(bundle: SnittBundle) async throws -> EditorWindowController {
         do {
             let edl = (try? EditDecisionList.read(from: bundle)) ?? .fullRange()
             let events = try EventLog.read(from: bundle).events

@@ -376,9 +376,62 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return false
     }
 
+    /// In-flight `openURLs` work, so a test can AWAIT an open instead of
+    /// polling with a deadline (whole-branch review F5): on a timeout the
+    /// escaped `Task` opens a real window inside another suite's
+    /// before/after snapshot — a flake that propagates from a flake. Each
+    /// task removes its own entry, so this does not grow with use.
+    private var openTasks: [UUID: Task<Void, Never>] = [:]
+
+    /// Awaits every in-flight `openURLs` `Task`, including any started while
+    /// awaiting an earlier one.
+    func waitForOpensForTesting() async {
+        while !openTasks.isEmpty {
+            let running = openTasks.values
+            for task in running { await task.value }
+        }
+    }
+
+    // MARK: - Termination (whole-branch review F9)
+
+    /// What to tell AppKit once pending saves are flushed.
+    ///
+    /// A stored closure rather than a direct call so a test can pin the
+    /// termination decision without poking
+    /// `reply(toApplicationShouldTerminate:)` outside a real termination
+    /// sequence — the one call in this file that could take the test
+    /// process down with it.
+    var replyToTerminate: (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }
+
+    /// The in-flight flush, for tests to await.
+    private var terminationFlush: Task<Void, Never>?
+
+    func waitForTerminationFlushForTesting() async {
+        await terminationFlush?.value
+    }
+
+    /// ⌘Q — or the status item's Quit — pressed immediately after a trim
+    /// used to terminate before that trim's autosave finished, silently
+    /// losing it. Autosave is an unstructured `Task`; nothing waited for it.
+    /// With F1's apply-gate in place this was the last remaining path by
+    /// which a completed edit could vanish.
+    ///
+    /// `.terminateNow` when there is nothing outstanding, so the common quit
+    /// is unchanged and never waits.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard EditorWindowController.hasPendingSaves else { return .terminateNow }
+        terminationFlush = Task { @MainActor [weak self] in
+            await EditorWindowController.flushPendingSaves()
+            self?.replyToTerminate(true)
+        }
+        return .terminateLater
+    }
+
     private func openURLs(_ urls: [URL]) {
         for url in urls {
-            Task { @MainActor in
+            let id = UUID()
+            openTasks[id] = Task { @MainActor [weak self] in
+                defer { self?.openTasks[id] = nil }
                 do {
                     _ = try await DocumentOpener.open(bundleURL: url)
                 } catch {
@@ -388,7 +441,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     // never a path, never `String(describing:)` on the error.
                     let ns = error as NSError
                     Self.log.error("Could not open the document: \(ns.domain, privacy: .public) \(ns.code, privacy: .public) \(error.localizedDescription, privacy: .public)")
-                    presentOpenFailure(error)
+                    self?.presentOpenFailure(error)
                 }
             }
         }
