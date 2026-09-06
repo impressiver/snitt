@@ -102,6 +102,17 @@ final class StatusItemController: NSObject {
         eventsItem.target = self
         eventsItem.state = eventLoggingEnabled ? .on : .off
         menu.addItem(eventsItem)
+
+        // §12's opt-in: with this off, `snitt diagnostics export` never reads
+        // `~/Library/Logs/DiagnosticReports/` at all. This menu item is the
+        // ONLY way a user can ever turn it on — a setting nothing can set is
+        // not a setting (M5b).
+        let crashReportsItem = NSMenuItem(title: "Include crash reports in diagnostics",
+                                          action: #selector(toggleCrashReporting),
+                                          keyEquivalent: "")
+        crashReportsItem.target = self
+        crashReportsItem.state = crashReportingEnabled ? .on : .off
+        menu.addItem(crashReportsItem)
         menu.addItem(.separator())
 
         // A manual check must always be available regardless of the
@@ -178,6 +189,16 @@ final class StatusItemController: NSObject {
 
     @objc private func toggleEventLogging() {
         onToggleEventLogging?(!eventLoggingEnabled)
+    }
+
+    /// Mirrors the persisted setting so the menu can show a checkmark.
+    var crashReportingEnabled = false
+
+    /// Invoked when the user toggles crash-report collection from the menu.
+    var onToggleCrashReporting: ((Bool) -> Void)?
+
+    @objc private func toggleCrashReporting() {
+        onToggleCrashReporting?(!crashReportingEnabled)
     }
 
     func update(_ newState: RecordingState) {

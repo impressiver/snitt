@@ -92,6 +92,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.statusItem.eventLoggingEnabled = enabled
         }
 
+        // §12's opt-in crash reporting: no handler, no network — purely
+        // whether `snitt diagnostics export` reads Snitt's own `.ips` files
+        // and folds redacted summaries into the bundle it already writes.
+        statusItem.crashReportingEnabled = CrashReportSettings.load().enabled
+        statusItem.onToggleCrashReporting = { [weak self] enabled in
+            guard let self else { return }
+            var settings = CrashReportSettings.load()
+            settings.enabled = enabled
+            settings.save()
+            self.statusItem.crashReportingEnabled = enabled
+        }
+
         // §5.3 requires a visible indicator for the WHOLE duration of a
         // recording, agent-initiated ones included. The indicator is driven by
         // whoever calls the coordinator, and until this sink existed only

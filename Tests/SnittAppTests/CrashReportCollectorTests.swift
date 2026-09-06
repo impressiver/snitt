@@ -1,0 +1,221 @@
+import Testing
+import Foundation
+@testable import SnittApp
+
+private func tempDirectory() -> URL {
+    let url = FileManager.default.temporaryDirectory
+        .appendingPathComponent("CrashReportCollectorTests-\(UUID().uuidString)", isDirectory: true)
+    try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+    return url
+}
+
+/// Writes a fixture `.ips` file: a JSON header line, a newline, then a JSON
+/// body — the real on-disk shape macOS writes to
+/// `~/Library/Logs/DiagnosticReports/`. `procPath`/`parentPath` in the body
+/// stand in for the real fields that carry the crashing binary's absolute
+/// path and the user's home directory, which is why every fixture below
+/// plants one: a fixture with no path in it could not catch a redaction
+/// that forgot to omit one.
+@discardableResult
+private func writeIPS(
+    in directory: URL,
+    named name: String,
+    bundleID: String?,
+    appName: String = "Snitt",
+    incidentID: String = UUID().uuidString,
+    timestamp: String = "2024-01-01 12:00:00.00 -0800",
+    osVersion: String = "macOS 14.0 (23A344)",
+    appVersion: String = "1.2.3",
+    bugType: String = "309",
+    procPath: String = "/Users/testuser/Applications/Snitt.app/Contents/MacOS/Snitt"
+) throws -> URL {
+    var header: [String: Any] = [
+        "app_name": appName,
+        "timestamp": timestamp,
+        "app_version": appVersion,
+        "os_version": osVersion,
+        "incident_id": incidentID,
+        "bug_type": bugType,
+    ]
+    if let bundleID { header["bundleID"] = bundleID }
+    let headerData = try JSONSerialization.data(withJSONObject: header)
+
+    let body: [String: Any] = [
+        "procPath": procPath,
+        "parentPath": "/Users/testuser/Library/CoreServices",
+        "exception": ["type": "EXC_CRASH"],
+    ]
+    let bodyData = try JSONSerialization.data(withJSONObject: body)
+
+    var combined = headerData
+    combined.append(UInt8(ascii: "\n"))
+    combined.append(bodyData)
+
+    let url = directory.appendingPathComponent(name)
+    try combined.write(to: url)
+    return url
+}
+
+@Test("A directory holding only Snitt's own crash report is collected")
+func collectsSnittsOwnCrashReport() throws {
+    let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
+    try writeIPS(in: dir, named: "Snitt-2024-01-01-120000.ips",
+                bundleID: "com.impressiver.snitt", incidentID: "AAA-111")
+
+    let reports = CrashReportCollector.recent(in: dir)
+
+    #expect(reports.count == 1)
+    #expect(reports.first?.incidentID == "AAA-111")
+}
+
+@Test("A foreign app's crash report is dropped even though it sits in the same directory")
+func dropsForeignCrashReports() throws {
+    // The trap this whole feature exists to avoid:
+    // `~/Library/Logs/DiagnosticReports/` holds every app's crashes, not
+    // just Snitt's. A fixture containing only Snitt reports cannot exercise
+    // the filter at all — this one plants a foreign report ALONGSIDE
+    // Snitt's own and asserts only the latter survives.
+    //
+    // Verified against the wrong implementation this guards: relaxing
+    // `parse`'s `bundleID == bundleIdentifier` check to `true` (accept
+    // everything) makes this fail — both reports come back instead of one.
+    let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
+    try writeIPS(in: dir, named: "Snitt-2024-01-01-120000.ips",
+                bundleID: "com.impressiver.snitt", incidentID: "OURS-1")
+    try writeIPS(in: dir, named: "SomeBrowser-2024-01-01-130000.ips",
+                bundleID: "com.example.browser", incidentID: "FOREIGN-1",
+                procPath: "/Users/testuser/Applications/SomeBrowser.app/Contents/MacOS/SomeBrowser")
+
+    let reports = CrashReportCollector.recent(in: dir)
+
+    #expect(reports.count == 1, "exactly one of the two on-disk reports is Snitt's own")
+    #expect(reports.first?.incidentID == "OURS-1")
+    #expect(!reports.contains { $0.incidentID == "FOREIGN-1" })
+}
+
+@Test("A foreign report that merely NAMES itself Snitt is still dropped")
+func dropsCrashReportsThatOnlyShareTheDisplayName() throws {
+    // Identity is `bundleID`, not `app_name`/`name` — a display name can
+    // collide (or be spoofed by a differently-identified process); a bundle
+    // identifier can't, by construction. This fixture's `app_name` is
+    // "Snitt" but its `bundleID` is a different app entirely, so a filter
+    // that matched on name instead of identity would wrongly let it
+    // through.
+    let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
+    try writeIPS(in: dir, named: "NotActuallySnitt.ips",
+                bundleID: "com.impostor.snitt", appName: "Snitt", incidentID: "IMPOSTOR-1")
+
+    let reports = CrashReportCollector.recent(in: dir)
+
+    #expect(reports.isEmpty, "matching on name instead of bundle identity would wrongly include this")
+}
+
+@Test("A crash report with no bundleID at all is dropped, not treated as ours")
+func dropsCrashReportsMissingBundleID() throws {
+    // Failing OPEN here (treating "no identity present" as "assume it's
+    // ours") would be the same shape of mistake as accepting everything.
+    let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
+    try writeIPS(in: dir, named: "NoBundleID.ips", bundleID: nil, incidentID: "NOBID-1")
+
+    let reports = CrashReportCollector.recent(in: dir)
+
+    #expect(reports.isEmpty)
+}
+
+@Test("The collected summary never carries the crashing binary's path or the user's home directory")
+func summaryOmitsPathsEntirely() throws {
+    // `.ips`'s body carries `procPath`/`parentPath` with the user's home
+    // directory embedded in them. This asserts the redaction holds not just
+    // on the struct's known fields but on its full ENCODED form — the
+    // artefact that actually leaves the machine inside a diagnostics
+    // bundle — so a future field added to `CrashReportSummary` that
+    // accidentally captures a path would still be caught here.
+    let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
+    try writeIPS(in: dir, named: "Snitt.ips", bundleID: "com.impressiver.snitt",
+                procPath: "/Users/testuser/Applications/Snitt.app/Contents/MacOS/Snitt")
+
+    let reports = CrashReportCollector.recent(in: dir)
+    #expect(reports.count == 1)
+
+    let encoder = JSONEncoder()
+    encoder.dateEncodingStrategy = .iso8601
+    let encoded = String(data: try encoder.encode(reports), encoding: .utf8) ?? ""
+
+    #expect(!encoded.contains("testuser"), "the username embedded in the crash path must never appear")
+    #expect(!encoded.contains("/Users/"), "no absolute path may appear in a collected summary")
+    #expect(!encoded.contains("procPath"))
+}
+
+@Test("A directory that does not exist yields no crash reports, not an error")
+func missingDirectoryYieldsNoReports() {
+    // Mirrors `AuditLog.recent`'s handling of a machine that has never run
+    // an agent session (`DiagnosticsBundleTests.noSessionsStillExports`): a
+    // machine that has never crashed must still get a diagnostics bundle.
+    let neverCreated = FileManager.default.temporaryDirectory
+        .appendingPathComponent("CrashReportCollectorTests-never-\(UUID().uuidString)")
+    #expect(CrashReportCollector.recent(in: neverCreated).isEmpty)
+}
+
+@Test("A malformed .ips file is skipped rather than aborting the whole collection")
+func malformedFileIsSkipped() throws {
+    let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
+    try Data("not json at all".utf8).write(to: dir.appendingPathComponent("garbage.ips"))
+    try writeIPS(in: dir, named: "Snitt.ips", bundleID: "com.impressiver.snitt", incidentID: "GOOD-1")
+
+    let reports = CrashReportCollector.recent(in: dir)
+
+    #expect(reports.count == 1)
+    #expect(reports.first?.incidentID == "GOOD-1")
+}
+
+@Test("A non-.ips file in the directory is ignored")
+func nonIPSFilesAreIgnored() throws {
+    let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
+    try Data("hello".utf8).write(to: dir.appendingPathComponent("readme.txt"))
+    try writeIPS(in: dir, named: "Snitt.ips", bundleID: "com.impressiver.snitt", incidentID: "GOOD-1")
+
+    let reports = CrashReportCollector.recent(in: dir)
+
+    #expect(reports.count == 1)
+}
+
+@Test("The header's timestamp, OS version, app version and bug type all survive into the summary")
+func summaryCarriesHeaderFields() throws {
+    let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
+    try writeIPS(in: dir, named: "Snitt.ips", bundleID: "com.impressiver.snitt",
+                timestamp: "2024-03-15 09:30:00.00 -0700",
+                osVersion: "macOS 14.4 (23E214)", appVersion: "2.0.0", bugType: "309")
+
+    let report = try #require(CrashReportCollector.recent(in: dir).first)
+
+    #expect(report.osVersion == "macOS 14.4 (23E214)")
+    #expect(report.appVersion == "2.0.0")
+    #expect(report.bugType == "309")
+    // 2024-03-15 09:30:00 -0700 == 2024-03-15T16:30:00Z
+    #expect(abs(report.timestamp.timeIntervalSince1970 - 1_710_520_200) < 1)
+}
+
+@Test("Reports are returned most-recent first")
+func reportsAreSortedMostRecentFirst() throws {
+    let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
+    try writeIPS(in: dir, named: "old.ips", bundleID: "com.impressiver.snitt",
+                incidentID: "OLD", timestamp: "2023-01-01 00:00:00.00 -0800")
+    try writeIPS(in: dir, named: "new.ips", bundleID: "com.impressiver.snitt",
+                incidentID: "NEW", timestamp: "2024-06-01 00:00:00.00 -0700")
+
+    let reports = CrashReportCollector.recent(in: dir)
+
+    #expect(reports.map(\.incidentID) == ["NEW", "OLD"])
+}
+
+@Test("recent(limit:) never returns more than the requested limit")
+func recentRespectsLimit() throws {
+    let dir = tempDirectory(); defer { try? FileManager.default.removeItem(at: dir) }
+    for index in 0..<5 {
+        try writeIPS(in: dir, named: "s\(index).ips", bundleID: "com.impressiver.snitt",
+                    incidentID: "R\(index)",
+                    timestamp: "2024-01-0\(index + 1) 00:00:00.00 -0800")
+    }
+
+    #expect(CrashReportCollector.recent(limit: 2, in: dir).count == 2)
+}

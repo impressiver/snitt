@@ -242,10 +242,12 @@ public enum MCPBridge {
             ToolDefinition(
                 name: "snitt_diagnostics_export",
                 description: "Write a support bundle — recent app logs, app/CLI versions, "
-                           + "permission states, and recent agent session history — to a "
-                           + "JSON file. Contains no window titles, file paths, or input "
-                           + "detail. Use this to hand a person something to attach to a "
-                           + "support thread, or to see whether Screen Recording is granted.",
+                           + "permission states, recent agent session history, and (only if "
+                           + "the user has opted in) redacted summaries of Snitt's own crash "
+                           + "reports — to a JSON file. Contains no window titles, file "
+                           + "paths, or input detail. Use this to hand a person something to "
+                           + "attach to a support thread, or to see whether Screen Recording "
+                           + "is granted.",
                 inputSchema: [
                     "type": "object",
                     "properties": [

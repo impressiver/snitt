@@ -122,9 +122,16 @@ func describe(_ response: AutomationResponse) -> String {
 func diagnosticsSummary(_ report: DiagnosticsReport, outputPath: String) -> String {
     let permissions = report.permissions.sorted { $0.key < $1.key }
         .map { "\($0.key)=\($0.value)" }.joined(separator: ", ")
+    // Crash reporting is opt-in and off by default (§12) — say which
+    // happened, not just how many: "0 crash reports" reads the same whether
+    // nothing crashed or nobody turned collection on.
+    let crashReportsNote = report.crashReportingEnabled
+        ? "\(report.crashReports.count) crash report(s)"
+        : "crash reporting off"
     return "Wrote diagnostics bundle to \(outputPath): "
          + "\(report.recentSessions.count) recent session(s), "
          + "\(report.logLines.count) log line(s), "
+         + "\(crashReportsNote), "
          + "app \(report.appVersion), protocol \(report.protocolVersion)"
          + (permissions.isEmpty ? "" : " — \(permissions)")
 }
