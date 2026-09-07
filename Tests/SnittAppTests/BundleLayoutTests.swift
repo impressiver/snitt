@@ -821,3 +821,119 @@ func infoPlistCommentsSurviveGeneration() throws {
     #expect(plistText.contains("sign_update"), "the sign_update reference vanished from the generated plist — command substitution in the heredoc?")
     #expect(plistText.contains("--output"), "the --output reference vanished from the generated plist — command substitution in the heredoc?")
 }
+
+// ─── The client frontends ship inside the bundle (D63) ───────────────────────
+//
+// Until v0.1.0 they did not: make-app.sh copied SnittApp, Sparkle and the icon
+// and nothing else, so an installed Snitt.app carried no `snitt` and no
+// `snitt-mcp` anywhere on the machine. §13's second validation question — does
+// an agent record with Snitt and attach the result to a PR — was unanswerable
+// against the artifact that had been signed, notarized and released.
+//
+// Contents/Helpers, NOT Contents/MacOS: macOS filesystems are case-insensitive
+// by default, so `Contents/MacOS/snitt` and `Contents/MacOS/Snitt` are the same
+// path and copying the CLI there REPLACES the app binary with it. That is not
+// hypothetical — it happened on the first build after the copy was written, and
+// the resulting bundle signed and verified cleanly while launching a
+// command-line tool with no UI.
+private let helpers = app.appending(path: "Contents/Helpers")
+private let clientNames = ["snitt", "snitt-mcp"]
+
+@Test("The built app embeds both client executables", .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason))
+func builtAppEmbedsClientExecutables() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
+    for name in clientNames {
+        let url = helpers.appending(path: name)
+        #expect(FileManager.default.isExecutableFile(atPath: url.path),
+                "\(name) is missing or not executable at Contents/Helpers — the agent surface ships nowhere")
+    }
+}
+
+@Test("No two destinations in make-app.sh differ only by case")
+func bundleDestinationsDoNotCollideCaseInsensitively() throws {
+    // Checked against the SCRIPT, not the built bundle, because the built
+    // bundle cannot show this defect: on a case-insensitive volume the second
+    // copy overwrites the first, so afterwards only one file exists and
+    // enumerating the result looks perfectly correct. The collision is only
+    // visible in the set of paths the script intends to write.
+    let script = try String(contentsOf: URL(fileURLWithPath: "Scripts/make-app.sh"), encoding: .utf8)
+    let pattern = try NSRegularExpression(pattern: #"\$APP/Contents/[A-Za-z0-9_./-]+"#)
+    let paths = Set(pattern.matches(in: script, range: NSRange(script.startIndex..., in: script))
+        .compactMap { Range($0.range, in: script).map { String(script[$0]) } })
+    #expect(paths.count > 2, "regex matched almost nothing — it has drifted from the script")
+
+    var byLowercase: [String: Set<String>] = [:]
+    for path in paths { byLowercase[path.lowercased(), default: []].insert(path) }
+    for (lowered, variants) in byLowercase where variants.count > 1 {
+        Issue.record("make-app.sh writes \(variants.sorted()) — one path on a case-insensitive volume (\(lowered))")
+    }
+}
+
+@Test("The embedded clients carry the app's signing identity", .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason))
+func embeddedClientsCarryAppsSigningIdentity() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
+    // Nested code that is unsigned, or signed with anything but the app's own
+    // identity, fails notarization — the same defect that sent the first real
+    // submission back Invalid for Sparkle's XPC services. Copying the binaries
+    // in and forgetting to sign them is the obvious wrong implementation, and
+    // it is invisible locally: the app still launches.
+    let appAuthority = codesignAuthority(app)
+    for name in clientNames {
+        let authority = codesignAuthority(helpers.appending(path: name))
+        #expect(authority != nil, "\(name) has no Authority= — it was embedded but never signed")
+        #expect(authority == appAuthority, "\(name) Authority (\(authority ?? "nil")) != app Authority (\(appAuthority ?? "nil"))")
+    }
+}
+
+@Test("Sparkle never links into the embedded clients either (§4.9)", .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason))
+func sparkleNeverLinksIntoEmbeddedClients() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
+    // `sparkleNeverLinksIntoThinClients` asserts this of `.build/debug/`, which
+    // is what was BUILT. This asserts it of what SHIPS. They can differ: the
+    // copy could name the wrong source, and a bundle carrying an updater-linked
+    // client would breach the thin-client boundary in the artifact rather than
+    // in the build tree.
+    for name in clientNames {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/otool")
+        process.arguments = ["-L", helpers.appending(path: name).path]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        try process.run()
+        let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        process.waitUntilExit()
+        #expect(!output.lowercased().contains("sparkle"), "embedded \(name) links Sparkle:\n\(output)")
+    }
+}
+
+@Test("The embedded MCP server answers initialize with its instructions", .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason))
+func embeddedMCPServerAnswersInitialize() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
+    // The whole chain in one assertion: built, copied, renamed, signed, and
+    // still able to run and speak JSON-RPC. A binary that is present, executable
+    // and correctly signed can still be the wrong binary or a stale one, and
+    // every check above would pass. This is also the only place the
+    // `instructions` field (D63) is verified through the real process rather
+    // than by calling the function that produces it.
+    let process = Process()
+    process.executableURL = helpers.appending(path: "snitt-mcp")
+    let stdin = Pipe(), stdout = Pipe()
+    process.standardInput = stdin
+    process.standardOutput = stdout
+    process.standardError = Pipe()
+    try process.run()
+    let request = #"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"# + "\n"
+    stdin.fileHandleForWriting.write(Data(request.utf8))
+    // Closing stdin ends the server's readLine loop, so this cannot hang
+    // waiting for a process that is waiting for us.
+    try stdin.fileHandleForWriting.close()
+    let output = String(data: stdout.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+    process.waitUntilExit()
+
+    let line = try #require(output.split(separator: "\n").first, "server produced no output")
+    let json = try #require(try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
+    let result = try #require(json["result"] as? [String: Any], "no result in: \(line)")
+    let instructions = try #require(result["instructions"] as? String, "initialize carried no instructions")
+    #expect(instructions.contains("snitt_start_recording"))
+}

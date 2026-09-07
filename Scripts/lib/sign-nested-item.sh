@@ -1,7 +1,9 @@
 #!/bin/bash
-# Signs one nested Sparkle code object (an XPC service, Updater.app,
-# Autoupdate, or the Sparkle.framework bundle itself) with Snitt's own
-# identity, hardened runtime, and (by default) a secure timestamp.
+# Signs one nested code object with Snitt's own identity, hardened runtime,
+# and (by default) a secure timestamp. Callers: the Sparkle items (an XPC
+# service, Updater.app, Autoupdate, or the framework bundle itself) and
+# Snitt's own client executables, `snitt` and `snitt-mcp` (D63), which are
+# nested code under the same notarization rules.
 #
 # Factored out of make-app.sh's sign_nested() helper for the same reason
 # Scripts/lib/sign-app-with-workaround.sh already was: so this exact

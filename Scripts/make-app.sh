@@ -30,10 +30,22 @@ fi
 
 swift build -c debug --product SnittApp
 
-if [ ! -f ".build/debug/SnittApp" ]; then
-  echo "error: swift build did not produce .build/debug/SnittApp" >&2
-  exit 1
-fi
+# The two client frontends ship INSIDE the app (D63). Until v0.1.0 they were
+# built and then left in .build/, so an installed Snitt.app carried no `snitt`
+# and no `snitt-mcp` at all — the entire agent surface §13's second validation
+# question depends on was absent from the artifact that was signed, notarized
+# and released. They are thin clients by construction (§4.9): they hold no TCC
+# grant and only ask the running app to act, so shipping them inside the bundle
+# costs nothing but bytes and gives `snitt setup` one fixed place to point at.
+swift build -c debug --product snitt-cli
+swift build -c debug --product snitt-mcp
+
+for required in SnittApp snitt-cli snitt-mcp; do
+  if [ ! -f ".build/debug/$required" ]; then
+    echo "error: swift build did not produce .build/debug/$required" >&2
+    exit 1
+  fi
+done
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -150,6 +162,22 @@ if [ -f ".build/debug/SnittApp" ]; then
   cp ".build/debug/SnittApp" "$APP/Contents/MacOS/Snitt"
 fi
 
+# `snitt-cli` builds under its target name; it ships as `snitt`, which is the
+# name §8's whole CLI surface is written in and the name a person or an agent
+# types. Renaming here rather than in Package.swift keeps the target name
+# matching its Sources/ directory.
+#
+# NOT Contents/MacOS: macOS filesystems are case-INSENSITIVE by default, so
+# `Contents/MacOS/snitt` and the app's own `Contents/MacOS/Snitt` are one path
+# — copying the CLI there silently REPLACES the app binary with it, producing a
+# bundle that looks complete, signs and notarizes cleanly, and launches a
+# command-line tool with no UI. Caught by BundleLayoutTests' rpath check on the
+# first build after this was written. A separate directory removes the
+# collision rather than relying on nobody renaming anything.
+mkdir -p "$APP/Contents/Helpers"
+cp ".build/debug/snitt-cli" "$APP/Contents/Helpers/snitt"
+cp ".build/debug/snitt-mcp" "$APP/Contents/Helpers/snitt-mcp"
+
 # Must exist before signing: codesign seals Contents/Resources into the
 # app's signature, so an icon dropped in afterward would invalidate it.
 if [ ! -f "Resources/AppIcon.icns" ]; then
@@ -233,6 +261,13 @@ fi
 sign_nested() {
   ./Scripts/lib/sign-nested-item.sh "$1" "$SIGN_ID"
 }
+
+# The client executables are nested code too, and nested code that is
+# unsigned — or signed with anything other than the app's own identity —
+# fails notarization exactly the way the Sparkle items did. Signed BEFORE
+# the app bundle below, because sealing the bundle hashes what is inside it.
+sign_nested "$APP/Contents/Helpers/snitt"
+sign_nested "$APP/Contents/Helpers/snitt-mcp"
 
 sign_nested "$FRAMEWORK_DEST/Versions/B/XPCServices/Downloader.xpc"
 sign_nested "$FRAMEWORK_DEST/Versions/B/XPCServices/Installer.xpc"
