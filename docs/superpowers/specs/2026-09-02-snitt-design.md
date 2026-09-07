@@ -1238,6 +1238,8 @@ since it looks like an answer.
 =======
 >>>>>>> 33e82c4 (spec(D57): conservative / default / aggressive)
 
+| D58 | **M5f — the editor — is built before validation is judged**, ahead of M5d and M5e. Bundles D55, D56 (both tiers) and D57 | The product owner's judgement after v0 shipped: *"Nobody will like this if the UI sucks."* That is D45's argument applied where I had failed to apply it — I used it to justify the app shell gating v0 (testing with a UI you do not intend to keep risks a "no" indistinguishable from a real one) and then queued the editor work behind evidence anyway. §13's first validation question asks whether anyone prefers this trim/export loop to `Cmd+Shift+5`; a timeline that shows source duration, draws cuts as irremovable overlays, and cannot separate selecting from cutting is not that loop, so a "no" from it would measure the UI rather than the premise. **This is a deliberate exception to D52, not a repeal of it**: D52's rule was that milestones stop being inserted before an *unopened* gate. v0 has shipped, so this is post-gate work being sequenced ahead of other post-gate work, on the strength of the one judgement no review process can supply | §4.4, §13, D45, D52, D55, D56, D57 | Decided | applied-my-own-argument-late |
+
 `conformance: 2026-09-06` (post-M5c refinement)
 
 ### Termination
