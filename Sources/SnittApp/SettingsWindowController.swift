@@ -119,6 +119,19 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                           backing: .buffered,
                           defer: false)
         window.title = "Settings"
+        // A programmatically created NSWindow defaults `isReleasedWhenClosed`
+        // to TRUE. Under ARC that is an over-release: this controller holds a
+        // strong reference, and AppKit's own window-animation objects hold one
+        // too, so closing the window frees it out from under both. The dangling
+        // object then surfaces as EXC_BAD_ACCESS in `objc_release` inside
+        // `-[_NSWindowTransformAnimation dealloc]` during a CATransaction
+        // commit — which is exactly the crash a user hit by toggling
+        // "Log input events" in this window on v0.1.0.
+        //
+        // EditorWindowController has set this since M4a; this window was added
+        // in M5c and never did. `WindowLifetimeTests` now pins BOTH, so a third
+        // window cannot repeat it.
+        window.isReleasedWhenClosed = false
         window.center()
         super.init()
         window.delegate = self
