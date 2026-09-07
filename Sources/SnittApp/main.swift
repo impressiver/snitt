@@ -19,8 +19,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let log = SnittLog.logger(.automation, target: "SnittApp")
 
     private let statusItem = StatusItemController()
-    private var hotkey: HotkeyMonitor?
-    private var markerHotkey: HotkeyMonitor?
+    /// Owns both real hotkey registrations (D55) — see `HotkeyRegistrar`'s
+    /// own doc comment for why persistence and re-registration must move
+    /// together. Optional for the same reason `coordinator` below is: real
+    /// construction (closures capturing `self`) happens in
+    /// `applicationDidFinishLaunching`, never at `AppDelegate.init` — a
+    /// test constructing a bare `AppDelegate()` must not touch real Carbon
+    /// hotkey registration as a side effect.
+    private var hotkeyRegistrar: HotkeyRegistrar?
     private var coordinator: RecordingCoordinator?
     private var automationHost: AutomationHost?
     private let updaterController = UpdaterController(settings: UpdateSettings.load())
@@ -103,30 +109,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         host.start()
         automationHost = host
 
-        let monitor = HotkeyMonitor(combination: .defaultCombination) { [weak self] in
-            self?.handleHotkey()
+        // D55: combinations are now customizable via the Settings window, so
+        // launch registers whatever `HotkeySettings` has stored — today's
+        // ⌥⌘5 / ⌥⌘M for a user who has never changed either (see
+        // `HotkeySettings.load`'s own doc comment). `HotkeyRegistrar` is the
+        // one place persistence and live registration move together; see
+        // its own doc comment for why that matters (M5b's R22 defect, in a
+        // new place, is exactly what a stored-but-unregistered combination
+        // would be).
+        let registrar = HotkeyRegistrar(
+            onRecord: { [weak self] in self?.handleHotkey() },
+            onMarker: { [weak self] in self?.handleMarkerHotkey() })
+        registrar.start { [weak self] action, combination in
+            self?.reportHotkeyRegistrationFailure(action, combination)
         }
-        do {
-            try monitor.start()
-        } catch {
-            notify("Snitt could not register the ⌥⌘5 shortcut — another app may be "
-                 + "using it. You can still start and stop recording from the menu bar.")
-        }
-        hotkey = monitor
-
-        let markerHotkey = HotkeyMonitor(combination: .markerCombination) { [weak self] in
-            self?.handleMarkerHotkey()
-        }
-        do {
-            try markerHotkey.start()
-        } catch {
-            // Reported for the same reason the record hotkey's failure is: a
-            // silently dead marker hotkey means a person presses it through a
-            // whole demo and finds no markers afterwards.
-            notify("Snitt could not register the ⌥⌘M marker shortcut — another app "
-                 + "may be using it. Recording is unaffected.")
-        }
-        self.markerHotkey = markerHotkey
+        hotkeyRegistrar = registrar
 
         // §5.3's kill switch: clicking the menu-bar item does the same thing as
         // the hotkey, so a recording can always be stopped by mouse alone —
@@ -265,14 +262,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
+    /// A hotkey combination another app already owns must say so (D55) —
+    /// this is the exact alert `main.swift` always raised for this failure,
+    /// extracted so `HotkeyRegistrar.start()` at launch and the Settings
+    /// window's key recorder (via `SettingsWindowController.show`'s
+    /// `hotkeyRegistrar`) report it identically regardless of when the
+    /// conflict is discovered. Recording stays reachable from the menu bar
+    /// either way — §5.3's kill switch never depended on either hotkey.
+    private func reportHotkeyRegistrationFailure(_ action: HotkeyAction, _ combination: HotkeyCombination) {
+        notify("Snitt could not register \(combination.displayString) for the \(action.label) — "
+             + "another app may be using it. You can still start and stop recording, and drop "
+             + "markers, from the menu bar.")
+    }
+
     @objc func showSettings(_ sender: Any?) {
         // Routes the update toggle through `updaterController` rather than
         // writing UserDefaults directly — see SettingsWindowController's
-        // doc comment. `onChange` re-reads all four settings back into the
-        // status item's own cached properties, so a change made in the
-        // window shows up as the correct checkmark the next time the status
-        // menu is opened, rather than only after the next launch.
-        SettingsWindowController.show(updater: updaterController) { [weak self] in
+        // doc comment. `onChange` re-reads all four checkbox settings back
+        // into the status item's own cached properties, so a change made in
+        // the window shows up as the correct checkmark the next time the
+        // status menu is opened, rather than only after the next launch.
+        //
+        // `hotkeyRegistrar` is optional only because a test can construct a
+        // bare `AppDelegate()` without ever running
+        // `applicationDidFinishLaunching` (see that property's own doc
+        // comment) — in the shipping app, launch always runs first, so this
+        // is never nil when a person can actually click Settings.
+        guard let hotkeyRegistrar else {
+            SettingsWindowController.show(updater: updaterController) { [weak self] in
+                self?.refreshStatusItemFromSettings()
+            }
+            return
+        }
+        SettingsWindowController.show(updater: updaterController, hotkeyRegistrar: hotkeyRegistrar) { [weak self] in
             self?.refreshStatusItemFromSettings()
         }
     }

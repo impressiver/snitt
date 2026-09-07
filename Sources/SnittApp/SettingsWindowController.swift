@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import Carbon.HIToolbox
 
 /// The Settings window (§4.14, Command-comma).
 ///
@@ -10,6 +11,15 @@ import AppKit
 /// `CrashReportSettings`). A settings window with its own storage would be
 /// two settings wearing one name: the menu says off, the window says on, and
 /// the user cannot tell which one the app obeys.
+///
+/// D55 (M5f Task 7) adds two `HotkeyRecorderButton`s alongside those four
+/// checkboxes, for the record and marker hotkeys. They read/write
+/// `HotkeySettings` against the SAME `defaults` — no status-item equivalent
+/// exists for a hotkey the way one does for the four checkboxes, but the
+/// single-store discipline still applies — and, unlike a checkbox, changing
+/// one must also re-register the REAL `HotkeyMonitor` `hotkeyRegistrar`
+/// owns; see `HotkeyRegistrar`'s own doc comment for why storing a new
+/// combination without doing that would be M5b's R22 defect again.
 @MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// Internal (not private) so tests can confirm a second `show()` reuses
@@ -19,8 +29,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     let window: NSWindow
     private let updater: UpdaterController
     private let defaults: UserDefaults
+    private let hotkeyRegistrar: HotkeyRegistrar
     private let onChange: (() -> Void)?
     private let eventLoggingToggle: (Bool, UserDefaults) -> Bool
+    private let hotkeyConflictAlert: @MainActor (HotkeyAction, HotkeyCombination) -> Void
+    private var hotkeyButtons: [HotkeyAction: HotkeyRecorderButton] = [:]
 
     static let agentRecordingTitle = "Allow agent recording"
     static let eventLoggingTitle = "Log input events"
@@ -45,10 +58,20 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     ///     properties, refreshed only when the menu's own handlers run,
     ///     so without this a change made in the window would not show up
     ///     in the menu until the next launch.
+    ///   - hotkeyRegistrar: owns the app's two REAL hotkey registrations
+    ///     (D55); the record/marker recorder buttons re-register through it
+    ///     rather than writing `HotkeySettings` directly. Defaults to a
+    ///     fresh, inert registrar — fine for any test that never interacts
+    ///     with a hotkey button — so existing callers need not be touched;
+    ///     production (`AppDelegate.showSettings`) always passes the SAME
+    ///     registrar `applicationDidFinishLaunching` created, so a recorded
+    ///     combination re-registers the hotkey that is actually live.
     static func show(updater: UpdaterController,
                       defaults: UserDefaults = .standard,
+                      hotkeyRegistrar: HotkeyRegistrar = HotkeyRegistrar(onRecord: {}, onMarker: {}),
                       onChange: (() -> Void)? = nil) {
-        show(updater: updater, defaults: defaults, onChange: onChange, activate: true)
+        show(updater: updater, defaults: defaults, hotkeyRegistrar: hotkeyRegistrar,
+             onChange: onChange, activate: true)
     }
 
     /// `activate` is `false` only from tests. Two real front-ordered,
@@ -67,13 +90,24 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// drive. Tests substitute a fake that reports the grant as refused, so
     /// the checkbox's return-to-off behavior can be pinned without a real
     /// dialog appearing.
+    ///
+    /// `hotkeyConflictAlert` is also test-only, mirroring
+    /// `eventLoggingToggle` immediately above: production always uses the
+    /// default, which raises a real `NSAlert` (D55 — a combination another
+    /// app owns must say so, the same rule `main.swift`'s launch-time
+    /// registration already follows). A test substitutes a spy so the
+    /// button's revert-on-failure behavior can be pinned without a real,
+    /// blocking dialog appearing.
     static func show(updater: UpdaterController,
                       defaults: UserDefaults = .standard,
+                      hotkeyRegistrar: HotkeyRegistrar = HotkeyRegistrar(onRecord: {}, onMarker: {}),
                       onChange: (() -> Void)? = nil,
                       activate: Bool,
                       eventLoggingToggle: @escaping (Bool, UserDefaults) -> Bool = {
                           EventLoggingToggle.apply($0, defaults: $1)
-                      }) {
+                      },
+                      hotkeyConflictAlert: @escaping @MainActor (HotkeyAction, HotkeyCombination) -> Void =
+                          SettingsWindowController.presentHotkeyConflictAlert) {
         // A second Command-comma focuses the existing window rather than
         // opening a second one — two Settings windows can disagree on
         // screen.
@@ -85,12 +119,27 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             return
         }
         let controller = SettingsWindowController(updater: updater, defaults: defaults,
-                                                  onChange: onChange, eventLoggingToggle: eventLoggingToggle)
+                                                  hotkeyRegistrar: hotkeyRegistrar, onChange: onChange,
+                                                  eventLoggingToggle: eventLoggingToggle,
+                                                  hotkeyConflictAlert: hotkeyConflictAlert)
         shared = controller
         if activate {
             controller.window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
         }
+    }
+
+    /// The production `hotkeyConflictAlert`: a real, modal `NSAlert` naming
+    /// the combination that failed and which hotkey it was for — D55's
+    /// "must say so", the Settings-window half of what `main.swift`'s
+    /// launch-time registration already does for the same failure.
+    static func presentHotkeyConflictAlert(action: HotkeyAction, combination: HotkeyCombination) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Snitt could not use \(combination.displayString) for the "
+                           + "\(action.label) — another app may already be using it."
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
     }
 
     /// Test-only: tears the singleton down between tests, so each test gets
@@ -108,13 +157,17 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         shared = nil
     }
 
-    private init(updater: UpdaterController, defaults: UserDefaults, onChange: (() -> Void)?,
-                eventLoggingToggle: @escaping (Bool, UserDefaults) -> Bool) {
+    private init(updater: UpdaterController, defaults: UserDefaults, hotkeyRegistrar: HotkeyRegistrar,
+                onChange: (() -> Void)?,
+                eventLoggingToggle: @escaping (Bool, UserDefaults) -> Bool,
+                hotkeyConflictAlert: @escaping @MainActor (HotkeyAction, HotkeyCombination) -> Void) {
         self.updater = updater
         self.defaults = defaults
+        self.hotkeyRegistrar = hotkeyRegistrar
         self.onChange = onChange
         self.eventLoggingToggle = eventLoggingToggle
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 200),
+        self.hotkeyConflictAlert = hotkeyConflictAlert
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 280),
                           styleMask: [.titled, .closable],
                           backing: .buffered,
                           defer: false)
@@ -165,6 +218,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             isOn: CrashReportSettings.load(defaults).enabled,
             action: #selector(toggleCrashReports(_:))))
 
+        stack.addArrangedSubview(hotkeyRecorderButton(for: .record))
+        stack.addArrangedSubview(hotkeyRecorderButton(for: .marker))
+
         return stack
     }
 
@@ -180,6 +236,57 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         (window.contentView as? NSStackView)?.arrangedSubviews
             .compactMap { $0 as? NSButton }
             .first { $0.title == title }
+    }
+
+    /// Builds one hotkey recorder button, wired to re-register through
+    /// `hotkeyRegistrar` (D55) rather than writing `HotkeySettings`
+    /// directly — see this type's own doc comment on why the two must move
+    /// together.
+    private func hotkeyRecorderButton(for action: HotkeyAction) -> HotkeyRecorderButton {
+        let button = HotkeyRecorderButton(hotkeyAction: action)
+        button.setDisplayedCombination(HotkeySettings.load(defaults)[action])
+        button.onCapture = { [weak self] combination in
+            self?.applyHotkey(combination, for: action)
+        }
+        // Escape cancels the recording — restore whatever is CURRENTLY
+        // registered/stored rather than leaving the "press keys…" prompt
+        // showing.
+        button.onCancel = { [weak self] in
+            self?.refreshHotkeyButton(for: action)
+        }
+        hotkeyButtons[action] = button
+        return button
+    }
+
+    /// Test-only: looks a hotkey recorder button up by its action, mirroring
+    /// `checkbox(titled:)` above.
+    func hotkeyButton(for action: HotkeyAction) -> HotkeyRecorderButton? {
+        hotkeyButtons[action]
+    }
+
+    /// A key was captured for `action` (D55). Re-registers through
+    /// `hotkeyRegistrar` FIRST — `apply` persists the new combination to
+    /// `defaults` only once it is confirmed live, so this can trust
+    /// `refreshHotkeyButton` below to show the right thing either way: the
+    /// NEW combination on success, or the unchanged OLD one (`apply`
+    /// restores the previous registration and writes nothing) on failure.
+    /// M5b's R22 defect — a setting that reads back correctly and changes
+    /// nothing — is exactly what skipping `hotkeyRegistrar` in favor of a
+    /// plain `HotkeySettings(...).save(to:)` here would reintroduce.
+    private func applyHotkey(_ combination: HotkeyCombination, for action: HotkeyAction) {
+        // `hotkeyConflictAlert` (invoked by `apply` on failure, via
+        // `reportFailure`) already tells the user why; nothing else to
+        // branch on here — `refreshHotkeyButton` below shows the right
+        // thing either way, and `onChange?()` still fires so the status
+        // item stays in sync with whatever else might be pending.
+        hotkeyRegistrar.apply(combination, to: action, defaults: defaults,
+                              reportFailure: hotkeyConflictAlert)
+        refreshHotkeyButton(for: action)
+        onChange?()
+    }
+
+    private func refreshHotkeyButton(for action: HotkeyAction) {
+        hotkeyButtons[action]?.setDisplayedCombination(HotkeySettings.load(defaults)[action])
     }
 
     @objc private func toggleAgentRecording(_ sender: NSButton) {
@@ -236,6 +343,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             UpdateSettings.load(defaults).automaticChecksEnabled ? .on : .off
         checkbox(titled: Self.crashReportsTitle)?.state =
             CrashReportSettings.load(defaults).enabled ? .on : .off
+        // Hotkeys have no status-item equivalent to drift from, but a
+        // future launch (or another window, if one ever exists) could still
+        // change `HotkeySettings` underneath this one — refresh for the
+        // same reason the four checkboxes above do.
+        refreshHotkeyButton(for: .record)
+        refreshHotkeyButton(for: .marker)
     }
 
     /// The window coming forward is the moment a stale checkbox is about to
@@ -248,5 +361,88 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         Self.shared = nil
+    }
+}
+
+/// A button that shows a hotkey combination (D55) and, once clicked, waits
+/// for the next key combination pressed anywhere in this window and reports
+/// it — the Settings-window half of customizable hotkeys.
+///
+/// Overrides `performKeyEquivalent(with:)` rather than `keyDown(with:)` or
+/// an `NSEvent` local monitor: AppKit gives every view in a window's
+/// content-view hierarchy a chance at `performKeyEquivalent` for EVERY
+/// keyDown — the same mechanism menu-bar key equivalents use — before
+/// ordinary first-responder `keyDown` dispatch ever runs, so this control
+/// needs no first-responder juggling to see a keypress typed anywhere in
+/// the window while armed. Guarded by `isRecording`: while not recording,
+/// this returns `false` immediately, so ordinary window shortcuts (⌘W, ⌘,)
+/// are completely unaffected.
+@MainActor
+final class HotkeyRecorderButton: NSButton {
+    let hotkeyAction: HotkeyAction
+    private(set) var isRecording = false
+    var onCapture: ((HotkeyCombination) -> Void)?
+    var onCancel: (() -> Void)?
+
+    init(hotkeyAction: HotkeyAction) {
+        self.hotkeyAction = hotkeyAction
+        super.init(frame: .zero)
+        bezelStyle = .rounded
+        target = self
+        action = #selector(handleClick)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("HotkeyRecorderButton does not support NSCoding")
+    }
+
+    func setDisplayedCombination(_ combination: HotkeyCombination) {
+        isRecording = false
+        title = "\(hotkeyAction.label): \(combination.displayString)"
+    }
+
+    @objc private func handleClick(_ sender: Any?) {
+        beginRecording()
+    }
+
+    /// Test seam alongside `capture(_:)`: arms recording without a real
+    /// click event. Production always reaches this through `handleClick`.
+    func beginRecording() {
+        isRecording = true
+        title = "\(hotkeyAction.label): press keys… (Esc to cancel)"
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard isRecording else { return false }
+        capture(event)
+        return true
+    }
+
+    /// Test seam: production keypresses arrive via `performKeyEquivalent`
+    /// above while this window is key; a test calls this directly with a
+    /// synthetic `NSEvent` (`NSEvent.keyEvent(with:...)`) instead of routing
+    /// one through a real key window, which this concurrent test target
+    /// cannot safely share (see `SettingsWindowController.show`'s own
+    /// `activate: false` seam for the same reason).
+    func capture(_ event: NSEvent) {
+        // Escape cancels rather than recording ⎋ itself as the new
+        // combination — the one key someone pressing this button is more
+        // likely to mean "never mind" than "bind this".
+        guard event.keyCode != UInt16(kVK_Escape) else {
+            isRecording = false
+            onCancel?()
+            return
+        }
+        let combination = HotkeyCombination(fromKeyEvent: event)
+        // A bare key with no modifier would hijack ordinary typing anywhere
+        // else in macOS — the same reasoning `HotkeyCombination
+        // .defaultCombination`'s own doc comment gives for shipping with a
+        // modifier at all. Stay in recording mode rather than accept it, so
+        // the next real attempt still lands here instead of silently
+        // failing registration a moment later.
+        guard combination.modifiers != 0 else { return }
+        isRecording = false
+        onCapture?(combination)
     }
 }
