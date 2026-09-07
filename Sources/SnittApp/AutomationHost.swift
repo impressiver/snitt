@@ -414,11 +414,14 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             updated.cuts = cuts
             try updated.write(to: bundle)
 
-            let kept = KeptRanges.compute(duration: duration, cuts: cuts)
+            // `TrimSummary`/`KeptRanges.compute` predate cut identity and
+            // only need the ranges — a CLI caller reads seconds, not ids.
+            let cutRanges = cuts.map(\.range)
+            let kept = KeptRanges.compute(duration: duration, cuts: cutRanges)
             let keptSeconds = kept.reduce(0) { $0 + ($1.end - $1.start) }
             return .trimmed(TrimSummary(keptSeconds: keptSeconds,
                                         cutSeconds: duration - keptSeconds,
-                                        cuts: cuts))
+                                        cuts: cutRanges))
         } catch AutoTrimError.noInputEvents {
             return .failure(AutomationError(
                 code: .internalError,

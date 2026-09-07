@@ -36,7 +36,7 @@ func trimWritesTheEDL() async throws {
     }
     #expect(summary.cuts.count == 2)
     let written = try EditDecisionList.read(from: bundle)
-    #expect(written.cuts == summary.cuts)
+    #expect(written.cuts.map(\.range) == summary.cuts)
 }
 
 @Test("Auto-trim on a log with no input events is REFUSED, not applied")
@@ -79,7 +79,8 @@ func autoTrimPreservesManualInteriorCuts() async throws {
     let bundle = try await bundleWithMetadata(duration: 30, events: events)
     // Overwrite the fresh full-range EDL `bundleWithMetadata` wrote with one
     // that already carries a manual interior cut, as if made in the GUI.
-    try EditDecisionList(cuts: [TimeRange(start: 10, end: 12)]).write(to: bundle)
+    let guiMade = Cut(range: TimeRange(start: 10, end: 12))
+    try EditDecisionList(cuts: [guiMade]).write(to: bundle)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
 
     let host = AutomationHost.forTesting()
@@ -92,7 +93,13 @@ func autoTrimPreservesManualInteriorCuts() async throws {
     #expect(summary.cuts.contains(TimeRange(start: 10, end: 12)),
             "the manual interior cut must survive an auto-trim, got \(summary.cuts)")
     let written = try EditDecisionList.read(from: bundle)
-    #expect(written.cuts == summary.cuts, "the written edit.json must match what was reported")
+    #expect(written.cuts.map(\.range) == summary.cuts, "the written edit.json must match what was reported")
+    // §4.8/§6: the CLI and the GUI drive ONE shared model, not two — a cut
+    // the GUI created and the CLI never touched (it never overlapped either
+    // auto-trim bookend) must come back through the CLI's own write with
+    // the SAME id it went in with, not one the CLI minted along the way.
+    #expect(written.cuts.contains { $0.id == guiMade.id },
+            "a CLI trim must preserve the id of a cut it did not itself create, got \(written.cuts)")
 }
 
 @Test("A bad bundle path fails with an actionable error rather than crashing")

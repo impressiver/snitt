@@ -92,7 +92,7 @@ final class EditorTimelineState: ObservableObject {
             return JumpPoint(timeSeconds: source, label: point.label)
         }
         return DisplayState(duration: controller.sourceDurationSeconds,
-                            cuts: edl.cuts,
+                            cuts: edl.cuts.map(\.range),
                             jumpPoints: sourceJumpPoints,
                             playhead: sourcePlayhead)
     }
@@ -129,7 +129,9 @@ final class EditorTimelineState: ObservableObject {
         undoManager?.registerUndo(withTarget: self) { target in
             target.restore(previous)
         }
-        edl.cuts.append(range)
+        // A drag on the timeline is always a brand-new cut — it has no
+        // established identity to preserve, so it mints its own id here.
+        edl.cuts.append(Cut(range: range))
         applyAndSave()
     }
 

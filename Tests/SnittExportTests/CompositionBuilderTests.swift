@@ -33,7 +33,7 @@ func headCutShortens() async throws {
     defer { try? FileManager.default.removeItem(at: bundle.url) }
 
     var edl = EditDecisionList.fullRange()
-    edl.cuts = [TimeRange(start: 0, end: 2)]
+    edl.cuts = [Cut(range: TimeRange(start: 0, end: 2))]
     let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
     #expect(abs(built.duration - 2) < 0.2)
 }
@@ -75,7 +75,7 @@ func cuttingEverythingThrows() async throws {
     defer { try? FileManager.default.removeItem(at: bundle.url) }
 
     var edl = EditDecisionList.fullRange()
-    edl.cuts = [TimeRange(start: 0, end: 4)]
+    edl.cuts = [Cut(range: TimeRange(start: 0, end: 4))]
     await #expect(throws: CompositionError.everythingCut) {
         _ = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
     }
@@ -94,7 +94,7 @@ func sliverKeptRangeThrows() async throws {
 
     var edl = EditDecisionList.fullRange()
     // Leaves a kept range of ~0.0000005s — far below one frame at 1/60s.
-    edl.cuts = [TimeRange(start: 0, end: 3.9999995)]
+    edl.cuts = [Cut(range: TimeRange(start: 0, end: 3.9999995))]
     await #expect(throws: CompositionError.everythingCut) {
         _ = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
     }

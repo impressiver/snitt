@@ -11,7 +11,7 @@ struct TimebaseTests {
     @Test("Output time skips cut spans")
     func outputTimeSkipsCuts() {
         // 10s source, one 2s cut at 3s. Output is 8s long.
-        let edl = EditDecisionList(cuts: [TimeRange(start: 3, end: 5)])
+        let edl = EditDecisionList(cuts: [Cut(range: TimeRange(start: 3, end: 5))])
         let base = Timebase(sourceDuration: 10, edl: edl)
 
         #expect(base.outputDuration == 8)
@@ -27,7 +27,7 @@ struct TimebaseTests {
 
     @Test("Source time round-trips through output time")
     func roundTrip() {
-        let edl = EditDecisionList(cuts: [TimeRange(start: 3, end: 5)])
+        let edl = EditDecisionList(cuts: [Cut(range: TimeRange(start: 3, end: 5))])
         let base = Timebase(sourceDuration: 10, edl: edl)
         for t in stride(from: 0.0, to: 10.0, by: 0.25) {
             guard let out = base.outputTime(forSource: SourceTime(t)) else { continue }
@@ -58,7 +58,7 @@ struct TimebaseTests {
 
     @Test("Cutting everything leaves zero output and no valid position in it")
     func cuttingEverythingLeavesNothing() {
-        let edl = EditDecisionList(cuts: [TimeRange(start: 0, end: 10)])
+        let edl = EditDecisionList(cuts: [Cut(range: TimeRange(start: 0, end: 10))])
         let base = Timebase(sourceDuration: 10, edl: edl)
         #expect(base.outputDuration == 0)
         // A wrong implementation might invent position 0 as "the output"
@@ -72,8 +72,8 @@ struct TimebaseTests {
         // Source: [0,2) kept, [2,4) cut, [4,7) kept, [7,9) cut, [9,10] kept.
         // Output is 2 + 3 + 1 = 6s long.
         let edl = EditDecisionList(cuts: [
-            TimeRange(start: 2, end: 4),
-            TimeRange(start: 7, end: 9),
+            Cut(range: TimeRange(start: 2, end: 4)),
+            Cut(range: TimeRange(start: 7, end: 9)),
         ])
         let base = Timebase(sourceDuration: 10, edl: edl)
         #expect(base.outputDuration == 6)
@@ -94,7 +94,7 @@ struct TimebaseTests {
 
     @Test("An out-of-range output time maps to nothing, not a clamp")
     func outOfRangeOutputTimeIsNil() {
-        let edl = EditDecisionList(cuts: [TimeRange(start: 3, end: 5)])
+        let edl = EditDecisionList(cuts: [Cut(range: TimeRange(start: 3, end: 5))])
         let base = Timebase(sourceDuration: 10, edl: edl)
         // outputDuration is 8; both sides of that range are out of bounds.
         #expect(base.sourceTime(forOutput: OutputTime(-1)) == nil)
@@ -103,7 +103,7 @@ struct TimebaseTests {
 
     @Test("An out-of-range source time maps to nothing, not a clamp")
     func outOfRangeSourceTimeIsNil() {
-        let edl = EditDecisionList(cuts: [TimeRange(start: 3, end: 5)])
+        let edl = EditDecisionList(cuts: [Cut(range: TimeRange(start: 3, end: 5))])
         let base = Timebase(sourceDuration: 10, edl: edl)
         // A mutant that clamps an out-of-range source instant to the nearest
         // valid output edge would answer OutputTime(0) / OutputTime(8)
@@ -128,9 +128,9 @@ struct TimebaseTests {
         // `outputDuration` must inherit by reducing over the normalised
         // `keptRanges` rather than re-deriving the arithmetic from raw cuts.
         let edl = EditDecisionList(cuts: [
-            TimeRange(start: 2, end: 5),
-            TimeRange(start: 4, end: 7),
-            TimeRange(start: 8, end: 999),
+            Cut(range: TimeRange(start: 2, end: 5)),
+            Cut(range: TimeRange(start: 4, end: 7)),
+            Cut(range: TimeRange(start: 8, end: 999)),
         ])
         let base = Timebase(sourceDuration: 10, edl: edl)
         #expect(base.outputDuration == 3)

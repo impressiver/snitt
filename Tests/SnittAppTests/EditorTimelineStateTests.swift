@@ -82,8 +82,8 @@ struct EditorTimelineStateTests {
         view.mouseUp(with: .synthetic(at: NSPoint(x: 200, y: 20), in: view))
 
         let firstCut = try #require(state.edl.cuts.first)
-        #expect(abs(firstCut.start - 0.0) < 0.05)
-        #expect(abs(firstCut.end - 2.0) < 0.05)
+        #expect(abs(firstCut.range.start - 0.0) < 0.05)
+        #expect(abs(firstCut.range.end - 2.0) < 0.05)
 
         // Let the rebuild from the first trim land, THEN refresh the view —
         // giving the bug every chance to reintroduce itself: if the view
@@ -103,8 +103,8 @@ struct EditorTimelineStateTests {
 
         #expect(state.edl.cuts.count == 2)
         let secondCut = try #require(state.edl.cuts.last)
-        #expect(abs(secondCut.start - 4.0) < 0.05)
-        #expect(abs(secondCut.end - 6.0) < 0.05)
+        #expect(abs(secondCut.range.start - 4.0) < 0.05)
+        #expect(abs(secondCut.range.end - 6.0) < 0.05)
         // The two cuts must be genuinely distinct regions, not the same
         // range recorded twice.
         #expect(firstCut != secondCut)
@@ -152,7 +152,7 @@ struct EditorTimelineStateTests {
         view.mouseUp(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
         await waitForDuration(controller, toApproach: sourceSeconds - 2.0)
 
-        view.update(duration: sourceSeconds, cuts: state.edl.cuts, jumpPoints: [], playhead: 0)
+        view.update(duration: sourceSeconds, cuts: state.edl.cuts.map(\.range), jumpPoints: [], playhead: 0)
         await controller.seek(toSeconds: 0)
 
         // x300 is source 3.0s — squarely inside the removed 2-4s region.

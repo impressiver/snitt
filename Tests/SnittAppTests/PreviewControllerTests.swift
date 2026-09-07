@@ -186,7 +186,7 @@ func applyRebuildsComposition() async throws {
     let before = controller.player.currentItem?.asset
 
     var edited = EditDecisionList()
-    edited.cuts = [TimeRange(start: 1.0, end: 2.0)]
+    edited.cuts = [Cut(range: TimeRange(start: 1.0, end: 2.0))]
     try await controller.apply(edl: edited, events: [])
 
     let after = try #require(controller.player.currentItem?.asset)
@@ -208,7 +208,7 @@ func applyRecomputesJumpPoints() async throws {
     #expect(abs((controller.jumpPoints.first?.timeSeconds ?? -1) - 5.0) < 0.01)
 
     var edited = EditDecisionList()
-    edited.cuts = [TimeRange(start: 1.0, end: 3.0)]
+    edited.cuts = [Cut(range: TimeRange(start: 1.0, end: 3.0))]
     try await controller.apply(edl: edited, events: [marker])
 
     // The marker sat at 5s; a 2s cut before it moves it to 3s in the trimmed

@@ -9,11 +9,23 @@ private func marker(_ t: Double) -> LoggedEvent {
     LoggedEvent(timeSeconds: t, kind: .marker, label: "m")
 }
 
+/// Builds a `Cut` for a test without caring about its id — most of these
+/// tests only pin down RANGES (`ranges(_:)` below strips ids back off for
+/// comparison); the id-preservation tests further down compare `.id`
+/// directly instead.
+private func cut(_ start: Double, _ end: Double) -> Cut {
+    Cut(range: TimeRange(start: start, end: end))
+}
+
+private func ranges(_ cuts: [Cut]) -> [TimeRange] {
+    cuts.map(\.range)
+}
+
 @Test("Trimming to a range cuts the head and the tail")
 func trimKeepsTheNamedRange() {
     let edl = EditDecisionList.fullRange()
         .trimmed(keeping: TimeRange(start: 5, end: 25), duration: 30)
-    #expect(edl.cuts == [TimeRange(start: 0, end: 5), TimeRange(start: 25, end: 30)])
+    #expect(ranges(edl.cuts) == [TimeRange(start: 0, end: 5), TimeRange(start: 25, end: 30)])
 }
 
 @Test("Trimming preserves track states — it edits time, not audio")
@@ -39,12 +51,18 @@ func trimPreservesAnInteriorCutInsideTheKeptRange() {
     // not "trim produced two bookend cuts" (true even of the broken code on
     // a fresh recording with nothing interior to lose) but "a cut someone
     // already made is still there afterward."
-    let edl = EditDecisionList(cuts: [TimeRange(start: 10, end: 12)])
+    let interior = cut(10, 12)
+    let edl = EditDecisionList(cuts: [interior])
         .trimmed(keeping: TimeRange(start: 5, end: 25), duration: 30)
-    #expect(edl.cuts.contains(TimeRange(start: 10, end: 12)),
+    #expect(ranges(edl.cuts).contains(TimeRange(start: 10, end: 12)),
             "an interior cut fully inside the kept range must not be discarded by a trim")
     #expect(edl.cuts.count == 3,
             "expected the two new bookends plus the untouched interior cut, got \(edl.cuts)")
+    // Untouched means untouched: same id, not just the same seconds — it
+    // never overlapped either bookend, so `merged` never had to pick a
+    // survivor between candidates.
+    #expect(edl.cuts.contains { $0.id == interior.id },
+            "an interior cut that never overlaps a bookend must keep its own id, got \(edl.cuts)")
 }
 
 @Test("An existing cut straddling the new head boundary is clipped, merging into the head bookend")
@@ -58,10 +76,17 @@ func trimClipsACutStraddlingTheHeadBoundary() {
     // the new head boundary at 5; only [5,8) of it is still inside the kept
     // range, and that sliver is contiguous with the head bookend [0,5), so
     // the two coalesce into one [0,8) entry.
-    let edl = EditDecisionList(cuts: [TimeRange(start: 3, end: 8)])
+    let straddling = cut(3, 8)
+    let edl = EditDecisionList(cuts: [straddling])
         .trimmed(keeping: TimeRange(start: 5, end: 25), duration: 30)
-    #expect(edl.cuts == [TimeRange(start: 0, end: 8), TimeRange(start: 25, end: 30)],
+    #expect(ranges(edl.cuts) == [TimeRange(start: 0, end: 8), TimeRange(start: 25, end: 30)],
             "got \(edl.cuts)")
+    // Decision (also recorded at `EditDecisionList.merged`): the merged
+    // entry keeps the PRE-EXISTING cut's id, not the head bookend's freshly
+    // minted one — from the fold UI's perspective this is the same edit
+    // someone already made, now extended, not a new one.
+    #expect(edl.cuts.first?.id == straddling.id,
+            "a cut merged with a fresh bookend must keep the pre-existing id, got \(edl.cuts)")
 }
 
 @Test("An existing cut straddling the new tail boundary is clipped, merging into the tail bookend")
@@ -69,36 +94,47 @@ func trimClipsACutStraddlingTheTailBoundary() {
     // Mirror of the head-boundary case: [22,27) straddles the new tail
     // boundary at 25; the [22,25) sliver still inside the kept range
     // coalesces with the tail bookend [25,30) into [22,30).
-    let edl = EditDecisionList(cuts: [TimeRange(start: 22, end: 27)])
+    let straddling = cut(22, 27)
+    let edl = EditDecisionList(cuts: [straddling])
         .trimmed(keeping: TimeRange(start: 5, end: 25), duration: 30)
-    #expect(edl.cuts == [TimeRange(start: 0, end: 5), TimeRange(start: 22, end: 30)],
+    #expect(ranges(edl.cuts) == [TimeRange(start: 0, end: 5), TimeRange(start: 22, end: 30)],
             "got \(edl.cuts)")
+    #expect(edl.cuts.last?.id == straddling.id,
+            "a cut merged with a fresh bookend must keep the pre-existing id, got \(edl.cuts)")
 }
 
-@Test("An existing cut entirely outside the kept range is dropped as redundant, not kept as a duplicate")
+@Test("An existing cut entirely outside the kept range is dropped as a separate entry, not kept as a duplicate")
 func trimDropsACutEntirelyOutsideTheKeptRange() {
-    // Decision: dropped. A cut entirely outside [range.start, range.end] is,
-    // by construction, wholly a subset of the new head or tail bookend's
-    // span — so it carries no information the bookend doesn't already
-    // carry. Keeping it as a second entry would only accumulate junk across
-    // repeated trims (see the idempotence test below) for no benefit: this
-    // format has no cut identity yet (that's M5f/D60's `schemaVersion`-gated
-    // future work), so there's nothing about the redundant entry worth
-    // preserving today.
-    let edl = EditDecisionList(cuts: [TimeRange(start: 26, end: 28)])
+    // Decision: absorbed into the bookend, not kept as a second entry. A
+    // cut entirely outside [range.start, range.end] is, by construction,
+    // wholly a subset of the new head or tail bookend's span — so it
+    // carries no RANGE information the bookend doesn't already carry.
+    // Keeping it as a second entry would only accumulate junk across
+    // repeated trims (see the idempotence test below) for no benefit. Its
+    // id is not simply discarded, though (M5f Task 2) — `merged` still
+    // prefers it for the one surviving entry; see the assertion below.
+    let outside = cut(26, 28)
+    let edl = EditDecisionList(cuts: [outside])
         .trimmed(keeping: TimeRange(start: 5, end: 25), duration: 30)
-    #expect(edl.cuts == [TimeRange(start: 0, end: 5), TimeRange(start: 25, end: 30)],
+    #expect(ranges(edl.cuts) == [TimeRange(start: 0, end: 5), TimeRange(start: 25, end: 30)],
             "the old cut at [26,28) is already covered by the tail bookend [25,30) and must not survive as a separate entry — got \(edl.cuts)")
+    #expect(edl.cuts.last?.id == outside.id,
+            "the absorbed cut's id should survive on the merged bookend entry, got \(edl.cuts)")
 }
 
 @Test("Running the same trim twice does not accumulate duplicate or overlapping cuts")
 func trimIsIdempotentAcrossRepeatedApplication() {
     let range = TimeRange(start: 5, end: 25)
-    let once = EditDecisionList(cuts: [TimeRange(start: 10, end: 12), TimeRange(start: 26, end: 28)])
+    let once = EditDecisionList(cuts: [cut(10, 12), cut(26, 28)])
         .trimmed(keeping: range, duration: 30)
     let twice = once.trimmed(keeping: range, duration: 30)
-    #expect(twice.cuts == once.cuts,
+    #expect(ranges(twice.cuts) == ranges(once.cuts),
             "trimming to the same range a second time must reproduce the exact same cuts, not grow the array — once: \(once.cuts), twice: \(twice.cuts)")
+    // Stronger than the ranges alone: a second, no-op-in-effect trim must
+    // not spuriously reassign ids either, or a fold left open across a
+    // second trim of the SAME range would silently point at nothing.
+    #expect(twice.cuts == once.cuts,
+            "a repeated trim over the same range must not change any cut's id, got once: \(once.cuts), twice: \(twice.cuts)")
 }
 
 @Test("Auto-trim's keep range matches the bookends autoTrimCuts computes")

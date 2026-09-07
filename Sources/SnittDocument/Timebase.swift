@@ -57,7 +57,7 @@ public struct Timebase: Sendable {
     public init(sourceDuration: Double, edl: EditDecisionList) {
         self.sourceDuration = sourceDuration
         self.edl = edl
-        self.keptRanges = KeptRanges.compute(duration: sourceDuration, cuts: edl.cuts)
+        self.keptRanges = KeptRanges.compute(duration: sourceDuration, cuts: edl.cuts.map(\.range))
     }
 
     /// The trimmed timeline's total length: the source duration minus every

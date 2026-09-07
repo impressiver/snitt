@@ -82,7 +82,7 @@ func markerAfterHeadCutIsShiftedInManifest() async throws {
     let bundle = try await makeTestBundle(seconds: 10)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
     var edl = EditDecisionList.fullRange()
-    edl.cuts = [TimeRange(start: 0, end: 5)]
+    edl.cuts = [Cut(range: TimeRange(start: 0, end: 5))]
     try edl.write(to: bundle)
     let events = EventLog(events: [LoggedEvent(timeSeconds: 8, kind: .marker, label: "fix")])
     try events.write(to: bundle)
@@ -109,7 +109,7 @@ func markerInsideCutIsDroppedFromManifest() async throws {
     let bundle = try await makeTestBundle(seconds: 10)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
     var edl = EditDecisionList.fullRange()
-    edl.cuts = [TimeRange(start: 4, end: 6)]
+    edl.cuts = [Cut(range: TimeRange(start: 4, end: 6))]
     try edl.write(to: bundle)
     let events = EventLog(events: [
         LoggedEvent(timeSeconds: 2, kind: .marker, label: "before"),

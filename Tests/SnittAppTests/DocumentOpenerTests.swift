@@ -106,6 +106,37 @@ struct DocumentOpenerTests {
         }
     }
 
+    @Test("Opening a bundle whose edit.json declares a future schemaVersion throws rather than silently opening with an empty EDL")
+    func rejectsFutureSchemaVersionRatherThanSilentlyDefaulting() async throws {
+        // D60/M5f: `build(bundle:)` used to read edit.json with `(try?
+        // EditDecisionList.read(from: bundle)) ?? .fullRange()` — the same
+        // collapsing pattern a whole-branch review already fixed at the
+        // CLI's two `AutomationHost` call sites
+        // (`TrimAndExportHostTests.exportWithCorruptEDLFailsExplicitly`/
+        // `trimWithCorruptEDLFailsExplicitly`), left standing here. A
+        // `schemaVersion` newer than this build understands is a real
+        // edit.json that EXISTS and fails to decode — collapsing that into
+        // `.fullRange()` would silently show an EMPTY timeline for a
+        // recording a newer Snitt build had already trimmed, and the next
+        // autosave would overwrite edit.json with that empty EDL,
+        // destroying the newer build's cuts permanently. Updates are
+        // hand-delivered (D54), so an old and a new build coexisting on
+        // one machine is not a hypothetical.
+        let url = try await makeFixtureBundle()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let bundle = try SnittBundle(opening: url)
+        try Data(#"{"schemaVersion":99,"cuts":[],"trackStates":[]}"#.utf8).write(to: bundle.editURL)
+
+        try await EditorWindowTestGate.run {
+            let before = EditorWindowController.openWindowCount
+            await #expect(throws: EditDecisionListError.self) {
+                _ = try await DocumentOpener.open(bundleURL: url)
+            }
+            #expect(EditorWindowController.openWindowCount == before,
+                    "a future-schemaVersion edit.json must not open a window at all, let alone an empty one")
+        }
+    }
+
     @Test("Opening a bundle records it in the recent documents list")
     func openingNotesARecentDocument() async throws {
         let url = try await makeFixtureBundle()

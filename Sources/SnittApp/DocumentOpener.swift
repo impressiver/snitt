@@ -85,9 +85,38 @@ enum DocumentOpener {
         return try await task.value
     }
 
+    /// The absent-vs-unreadable distinction `AutomationHost.readEDL` and
+    /// `MovieExporter.readBundleEvents` already draw for the CLI/MCP paths
+    /// (§8): a MISSING `edit.json` is legitimate — a fresh recording nobody
+    /// has trimmed yet — and defaults to `.fullRange()`, but a file that
+    /// EXISTS and fails to decode must be refused, not silently treated as
+    /// "nothing was ever cut".
+    ///
+    /// This was the one remaining `(try? EditDecisionList.read(from:
+    /// bundle)) ?? .fullRange()` — the exact collapsing pattern a
+    /// whole-branch review already fixed at the CLI's two call sites — left
+    /// standing on the GUI's open path. It is now doubly load-bearing
+    /// (D60, M5f): a `schemaVersion` newer than this build understands
+    /// throws from `EditDecisionList.init(from:)`, and `try?` used to turn
+    /// that refusal into a silently empty `EditDecisionList` — opening a
+    /// `.snitt` written by a newer Snitt build would show an empty
+    /// timeline, and the next autosave would overwrite `edit.json` with
+    /// that empty EDL, destroying the newer build's cuts permanently.
+    /// Updates are hand-delivered (D54), so an old and a new build
+    /// coexisting on one machine is not a hypothetical. Propagating the
+    /// error here reaches `build`'s own `catch` below, which logs it and
+    /// rethrows to `openURLs`'s `presentOpenFailure` — a visible alert
+    /// instead of a silent, unrecoverable loss.
+    private static func readEDL(for bundle: SnittBundle) throws -> EditDecisionList {
+        guard FileManager.default.fileExists(atPath: bundle.editURL.path) else {
+            return .fullRange()
+        }
+        return try EditDecisionList.read(from: bundle)
+    }
+
     private static func build(bundle: SnittBundle) async throws -> EditorWindowController {
         do {
-            let edl = (try? EditDecisionList.read(from: bundle)) ?? .fullRange()
+            let edl = try Self.readEDL(for: bundle)
             let events = try EventLog.read(from: bundle).events
             let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
             let jumpPoints = MarkerJumpPoints.compute(events: events, keptRanges: built.keptRanges)

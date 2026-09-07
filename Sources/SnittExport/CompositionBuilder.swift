@@ -185,7 +185,7 @@ public enum CompositionBuilder {
         else { throw CompositionError.noVideoTrack }
         let sourceAudio = try await asset.loadTracks(withMediaType: .audio)
 
-        let kept = KeptRanges.compute(duration: assetDuration, cuts: edl.cuts)
+        let kept = KeptRanges.compute(duration: assetDuration, cuts: edl.cuts.map(\.range))
             .filter { $0.end - $0.start >= minimumKeptDuration }
         guard !kept.isEmpty else { throw CompositionError.everythingCut }
 
