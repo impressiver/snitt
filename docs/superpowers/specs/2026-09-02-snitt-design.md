@@ -144,6 +144,32 @@ Head/tail trim, interior ripple delete, per-track mute and gain, scrub and
 preview. Enough for the overwhelming majority of demo recordings, consistent
 with the speed goal in §1.
 
+**D56 expands this**, in two tiers that are deliberately separated because only
+the second changes what an edit *is*:
+
+**Tier 1 — a richer editor over the same model.** The timeline represents
+**output** duration, so a cut shortens it. **Selection is independent of cutting**:
+selecting a span is UI state, and a cut is an operation applied to one (selection
+renders transparent blue). A cut collapses to a **red line — a fold, not a gap**,
+with the two edges touching; clicking expands it to show the folded segment on a
+transparent red ground, and an expanded cut still contributes **nothing** to
+duration and is still skipped during playback. Right-clicking offers removal,
+restoring the segment. **Cuts are therefore reversible objects with identity**,
+which `TimeRange` does not currently have. Audio and video render as separate
+tracks, cuts synchronised across them by default. Markers get their own thinner
+track above, and become **moveable and editable**, carrying the metadata D50's
+transcripts need.
+
+**Tier 2 — a different editing model, and priced as such.** Unlocking
+audio/video sync makes `cuts` **per-track** rather than one global list, which
+changes the `.snitt` format (§7) and `snitt trim`'s semantics. **Slice** cuts at
+a point to permit **reordering segments** — and that is the one that reaches
+furthest: today the EDL means "the source, minus these ranges," so order is
+implicit and monotonic. Reordering makes it an **ordered sequence of segments**,
+which is a real NLE model and changes `CompositionBuilder`, `TimeRangeMapping`,
+`MarkerMapping`, export, and §9's data flow. Marker remapping stops being
+monotonic, which is the assumption `MarkerMapping` is built on.
+
 ### 4.5 Pipeline: pristine capture, non-destructive edit, overlays as sidecar data
 
 **Chosen over** burning overlays into frames at capture time, and over a custom
@@ -1197,6 +1223,12 @@ since it looks like an answer.
 
 | D52 | **Ship v0 before M5d and M5e.** The release runbook runs first; M5d is rescoped to what protects an unattended agent run and replanned; M5e splits, agent primitives before export UI | A refinement pass found three milestones inserted before a gate whose stated purpose is to stop exactly that, each with a good local argument, while the gate itself never moved closer. The deciding fact was a mechanism rather than an argument: `Recorder.stop()` finalizes unconditionally even when `finish()` throws, so in a **human** session every M5d failure still ends in a saved take — the window closes, the status item lies, the user presses stop, the data survives. Confusing and disclosable, not validation-corrupting the way D45's unopenable bundle was. The exception is an **unattended agent** run, where nobody presses stop and `maxDuration` is the only backstop — which is exactly §13's second gate question, and why M5d survives at reduced scope rather than being cut. **The release itself was unstarted, uncosted work already on the critical path**: seven runbook items are marked unverifiable in-repo, including a Gatekeeper-clean launch on a second machine and a full 0.1.0 → 0.1.1 update cycle | §13, §11, D45, D47, D49; `Recorder.stop()`; `docs/superpowers/notes/release-runbook.md` | Decided | gate-receding-one-good-argument-at-a-time |
 | D53 | **The agent surface gains a correlation primitive and a `paused` state** whenever M5e is built | `mark` stamps at IPC-processing time (`Recorder.swift:249`) — after the agent's own tool reports done, after a subprocess spawn or MCP round trip — so the click-to-marker drift D49 named as its own revisit trigger is **already structural**, before the feature that would supposedly cause it. Pause/resume inherit the same call-and-stamp shape. Having `screenshot` implicitly drop a marker at the frame it captured gives "what I saw" and "what I said about it" one shared offset rather than two independent call times. Separately `StatusInfo` is exactly `{recording, sessionID, elapsedSeconds}` with no session-listing verb, so an agent that pauses, crashes and is restarted cannot discover its own live session; `paused` must also settle whether paused time counts against `maxDuration`, and §5.3's visible indicator must show it distinctly — a human at the machine is the only fallback when an agent forgets to resume | `Protocol.swift:84,132-141`; `Recorder.swift:249`; §5.3, §12, D49 | Decided | trigger-already-firing-before-the-feature-ships |
+
+| D54 | **v0 is hand-delivered; the repo stays private and update hosting is deferred.** `SUFeedURL` is knowingly a dead URL until hosting is decided | The release published correctly — notarized, stapled, `spctl`-clean, both assets uploaded — and then `releases/latest/download/appcast.xml` returned **404 to any unauthenticated request**, because the repository is private. Every check built across eight milestones ran *authenticated*, so `gh` saw the assets and no one saw the hole: the same shape as the unstapled archive, correct on the machine that made it and broken everywhere else. The product owner is keeping the repo private until licensing is settled and it is GA-ready, which makes hand-delivery the right call rather than merely the expedient one — v0 goes to 5-10 known people as a zip, and the hosting decision waits until there is a **second** version to ship, which is the first moment it actually pays for itself. Consequence accepted: automatic checks are already off by default (R3), so nothing fails silently in the background, but a user who clicks **Check for Updates…** will see an error until a feed exists | §4.3, §13, R3; `gh repo view --json isPrivate`; the 404 above | Decided | verified-only-while-authenticated |
+
+| D55 | **Customizable record and marker hotkeys** — queued as the first post-v0 item, deliberately NOT inserted before the gate | Requested by the product owner immediately after v0 shipped. Right-sized on inspection: `HotkeyCombination` already carries `keyCode`/`modifiers` and `HotkeyMonitor(combination:)` already takes one, so the work is persistence, a key-recorder in the Settings window M5c shipped, and re-registration on change. It is **not urgent**, because the failure it addresses already degrades well: `main.swift:112` surfaces an alert naming the conflict and pointing at the menu bar, so a tester whose ⌥⌘5 is already bound is told rather than left with a dead app. **Queued rather than built for the reason D52 exists**: three milestones were inserted before a gate designed to stop exactly that, each with a good local argument, and this is a good local argument arriving four commits after the gate finally opened. If tester feedback names hotkey conflicts as a real friction, that is evidence and it moves up; if nobody mentions it, that is also evidence | §4.11, D52; `HotkeyMonitor.swift:6-24`, `main.swift:106-125` | Decided (queued) | good-argument-arriving-right-after-a-gate |
+
+| D56 | **The editor gains a real timeline model** (§4.4, two tiers). Tier 1: output-duration timeline, selection independent of cutting, cuts as reversible identified folds that expand in place, separate audio/video tracks, an editable marker track. Tier 2: per-track cuts when sync is unlocked, and **slice for reordering** | Product-owner direction after v0 shipped. Split into tiers because Tier 1 is a richer UI over the model that already exists — the one real model change being that cuts need **identity**, since `TimeRange` is `{start, end}` with nothing to address a cut by for removal — while Tier 2 changes what an edit *is*. Reordering in particular retires the EDL's founding assumption: "source minus ranges" is order-implicit and monotonic, and a sequence of reorderable segments is neither. Everything downstream that maps a source time to an output time — `TimeRangeMapping`, `MarkerMapping`, `CompositionBuilder`, WebVTT burn-in timing — assumes that monotonicity today. This project has already shipped one output-time-versus-source-time defect (M4b, where the timeline fed output-time durations while the EDL consumed source-time cuts and a second trim silently did nothing); Tier 2 makes that class structural rather than incidental. **Sequencing per D52:** recorded now, built on evidence — Tier 1 is what a v0 user will feel, Tier 2 is what an editor eventually needs, and nothing about which comes first should be decided before someone has trimmed a real recording | §4.4, §7, §9, D50, D52; `EditDecisionList.swift`, `MarkerMapping.swift` | Decided (queued, tiered) | ui-request-with-a-model-change-inside |
 
 `conformance: 2026-09-06` (post-M5c refinement)
 
