@@ -690,6 +690,34 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// Not `private`: `DocumentOpener` keys its in-flight registry (F3) on
     /// exactly this identity, and a second normalization written next door
     /// would be a second answer to "is this the same document".
+    /// Where an editor window opens: **centred, at 75% of the screen**.
+    ///
+    /// The previous fixed 640x420 opened small, wherever AppKit chose to
+    /// cascade it. A timeline is a wide scrubbing surface — at 640pt a
+    /// ten-minute recording is roughly 0.75 seconds per pixel, the density
+    /// `TrimGesture` documents as the reason a deliberate short cut gets
+    /// swallowed. Opening larger is the cheap half of that; zoom is the other.
+    ///
+    /// `visibleFrame`, not `frame`: it excludes the menu bar and the Dock, so
+    /// 75% of it is 75% of the space a window can actually occupy.
+    ///
+    /// Pure and screen-free so it is testable — a test host has no screen and
+    /// `NSScreen.main` is nil there. A nil or empty screen falls back to the
+    /// old fixed size rather than guessing, keeping headless behaviour
+    /// unchanged instead of inventing a geometry nobody can see.
+    static func openingContentRect(on visibleFrame: NSRect?,
+                                   scale: Double = 0.75) -> NSRect {
+        guard let visibleFrame, visibleFrame.width > 0, visibleFrame.height > 0 else {
+            return NSRect(x: 0, y: 0, width: 640, height: 420)
+        }
+        let width = visibleFrame.width * scale
+        let height = visibleFrame.height * scale
+        return NSRect(x: visibleFrame.minX + (visibleFrame.width - width) / 2,
+                      y: visibleFrame.minY + (visibleFrame.height - height) / 2,
+                      width: width,
+                      height: height)
+    }
+
     static func normalizedBundleURL(_ url: URL) -> URL {
         URL(fileURLWithPath: url.path).resolvingSymlinksInPath()
     }
@@ -716,7 +744,7 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         self.state = state
         let hosting = NSHostingView(rootView: EditorContentView(state: state))
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 420),
+            contentRect: Self.openingContentRect(on: NSScreen.main?.visibleFrame),
             styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered,
             defer: false)
