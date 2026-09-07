@@ -108,13 +108,20 @@ final class EditorTimelineState: ObservableObject {
     }
 
     /// Everything `TimelineView` needs. `duration`/`cuts`/`selection` stay on
-    /// the SOURCE clock: `edl.cuts` are already source-time ranges, and the
-    /// view's own interaction (dragging out a selection) must keep computing
-    /// against the recording's FULL, unchanging length regardless of what
-    /// has already been cut (M4b whole-branch review, Critical finding #1 —
-    /// feeding the view a duration that shrinks as cuts land makes a later
-    /// drag's pixel range mean a different span each time, walking straight
-    /// back into the region a prior cut already removed).
+    /// the SOURCE clock because that is the clock they ARE: `edl.cuts` and a
+    /// `Selection` destined to become one are source-time ranges, and
+    /// `duration` is `capture.mov`'s own length — the INPUT the view builds
+    /// its `Timebase` (and therefore its one output-axis `TimelineGeometry`)
+    /// from, not an axis it interprets anything against.
+    ///
+    /// This comment used to say the view's own interaction "must keep
+    /// computing against the recording's FULL, unchanging length regardless
+    /// of what has already been cut", citing M4b Critical finding #1. The
+    /// M5f whole-branch review measured that arrangement and found it
+    /// REPRODUCED the finding it cited: a fixed axis makes the same pixels
+    /// mean the same source span forever, so a second drag over them cuts
+    /// nothing. Interaction is interpreted on the axis being drawn — see
+    /// `TimelineView.time(for:)`.
     ///
     /// `jumpPoints`/`playhead`, by contrast, are OUTPUT time, UNCONVERTED
     /// (M5f Task 3): `TimelineGeometry` now draws on the export's own axis

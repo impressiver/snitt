@@ -105,11 +105,21 @@ struct EditorTimelineStateTests {
         await waitForDuration(controller, toApproach: sourceSeconds - 2.0)
         refreshView()
 
-        // Second drag on the SAME view: source 4..6s — a region distinct
-        // from the first cut. On the bug, the view's axis had shrunk to the
-        // 6s trimmed duration, so this same pixel range (400..600 of 800px)
-        // would compute against a 6s clock instead of 8s and land at a
-        // different, already-partly-cut position.
+        // Second drag on the SAME view. 800px now shows the 6s of OUTPUT
+        // that remain, so pixels 400..600 are output 3.0..4.5 — SOURCE
+        // 5.0..6.5, a region distinct from the first cut and, crucially,
+        // one that is still there to remove. The pixel range covers 1.5
+        // OUTPUT seconds and that is exactly what it must take away.
+        //
+        // These numbers were 4.0..6.0 until the M5f whole-branch review.
+        // That was the arithmetic of a FIXED 8s source gesture scale, which
+        // this milestone adopted citing the very M4b finding this test
+        // exists for — and which reproduces it: on a scale that never
+        // shrinks, the same pixels mean the same source span forever, so a
+        // second drag over pixels already cut appends a duplicate `Cut` and
+        // removes nothing. `GestureAxisTests
+        // .repeatedDragOverTheSamePixelsCutsTwice` is that case stated
+        // directly.
         view.mouseDown(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
         view.mouseDragged(with: .synthetic(at: NSPoint(x: 600, y: 20), in: view))
         view.mouseUp(with: .synthetic(at: NSPoint(x: 600, y: 20), in: view))
@@ -118,18 +128,25 @@ struct EditorTimelineStateTests {
 
         #expect(state.edl.cuts.count == 2)
         let secondCut = try #require(state.edl.cuts.last)
-        #expect(abs(secondCut.range.start - 4.0) < 0.05)
-        #expect(abs(secondCut.range.end - 6.0) < 0.05)
+        #expect(abs(secondCut.range.start - 5.0) < 0.05)
+        #expect(abs(secondCut.range.end - 6.5) < 0.05)
         // The two cuts must be genuinely distinct regions, not the same
         // range recorded twice.
         #expect(firstCut != secondCut)
+        // The second cut removed KEPT footage, not ground the first already
+        // took: the drag covered 1.5 output seconds, so the output timeline
+        // must be exactly 1.5s shorter. This is the property the M4b
+        // Critical is about, and it is stated here in the units the person
+        // was actually looking at.
+        let timebase = Timebase(sourceDuration: sourceSeconds, edl: state.edl)
+        #expect(abs(timebase.outputDuration - 4.5) < 0.05)
 
-        // Duration falls a SECOND time: 8s source, two 2s cuts removed ->
-        // 4s of output. On the bug, the second cut lands inside the region
-        // the first cut already removed and the composition rebuild leaves
-        // duration unchanged after the first drop to 6s.
-        await waitForDuration(controller, toApproach: sourceSeconds - 4.0)
-        #expect(abs(controller.durationSeconds - (sourceSeconds - 4.0)) < 0.2)
+        // Duration falls a SECOND time. On the bug, the second cut lands
+        // inside the region the first cut already removed and the
+        // composition rebuild leaves duration unchanged after the first
+        // drop to 6s.
+        await waitForDuration(controller, toApproach: 4.5)
+        #expect(abs(controller.durationSeconds - 4.5) < 0.2)
     }
 
     /// A click inside a drawn cut region must SEEK, not do nothing.
@@ -146,7 +163,20 @@ struct EditorTimelineStateTests {
     /// because the arithmetic was already covered while the wiring was not:
     /// swapping `nearestTrimmedTime` back to `trimmedTime` in `onScrub`
     /// compiled and passed the whole suite.
-    @Test("Clicking inside a cut seeks to the nearest kept edge rather than doing nothing")
+    ///
+    /// It drives the CUT through the real view, then calls `onScrub`
+    /// directly with a source instant inside it. Until the M5f whole-branch
+    /// review the click could come from the view too — gestures were
+    /// interpreted on a fixed source axis that still had the removed
+    /// footage on it, so a pixel could land inside a cut. On the output
+    /// axis it cannot: removed footage is not drawn, so there is no pixel
+    /// pointing at it, and a click at the fold's own pixel is claimed by
+    /// `TimelineView.foldHit(atX:)` before scrubbing is considered.
+    /// `onScrub`'s snap is therefore a guard for callers handing it a
+    /// source instant from somewhere other than a click — and going through
+    /// the view for the assertion would now pass against `trimmedTime` too,
+    /// which is a test that proves nothing.
+    @Test("Scrubbing to an instant inside a cut seeks to the nearest kept edge rather than doing nothing")
     func clickInsideACutStillSeeks() async throws {
         let sourceSeconds = 8.0
         let bundle = try await makeTimelineStateTestBundle(seconds: sourceSeconds)
@@ -173,9 +203,11 @@ struct EditorTimelineStateTests {
         view.update(duration: sourceSeconds, cuts: state.edl.cuts, jumpPoints: [], playhead: 0)
         await controller.seek(toSeconds: 0)
 
-        // x300 is source 3.0s — squarely inside the removed 2-4s region.
-        view.mouseDown(with: .synthetic(at: NSPoint(x: 300, y: 20), in: view))
-        view.mouseUp(with: .synthetic(at: NSPoint(x: 300, y: 20), in: view))
+        // Source 3.0s — squarely inside the removed 2-4s region, and the
+        // one input `trimmedTime` answers `nil` for while
+        // `nearestTrimmedTime` answers 2.0. A handler that returns on `nil`
+        // leaves the playhead at 0 and this test fails on that alone.
+        state.onScrub(3.0)
 
         var waited = 0.0
         while CMTimeGetSeconds(controller.player.currentTime()) < 1.9, waited < 5.0 {

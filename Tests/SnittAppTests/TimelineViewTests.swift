@@ -209,13 +209,17 @@ struct TimelineViewTests {
 /// `TimelineGeometryTests`/`TimelineZoomTests` (SnittDocument) pin the pure
 /// `zoomed(by:anchoredAt:)` arithmetic; this drives the real `TimelineView`
 /// wiring on top of it — that `zoomIn()`/`zoomOut()` actually reach the
-/// gesture math a drag uses (`sourceTime(atX:)`, routed through
-/// `gestureGeometry` now, not a bare `x / bounds.width * duration`), and
-/// that a drag's resolved endpoint snaps onto a nearby marker, cut edge, or
-/// the playhead — the same "adjacent property" trap this project keeps
-/// finding elsewhere: a `TimelineGeometry` that zooms correctly in isolation
-/// proves nothing about whether `TimelineView` actually asks it before
-/// interpreting a click.
+/// gesture math a drag uses, and that a drag's resolved endpoint snaps onto
+/// a nearby marker, fold, or the playhead — the same "adjacent property"
+/// trap this project keeps finding elsewhere: a `TimelineGeometry` that
+/// zooms correctly in isolation proves nothing about whether `TimelineView`
+/// actually asks it before interpreting a click.
+///
+/// Every case here uses ONE cut or none, at one zoom level, which is what
+/// left the axis defect C1/C2 invisible: `zoomChangesTheGestureScale` and
+/// the keyboard case below run on `cuts: []`, where the two axes the view
+/// used to carry coincide exactly. `GestureAxisTests` is the cut-bearing,
+/// zoom-sweeping half.
 @MainActor
 struct TimelineViewZoomAndSnappingTests {
     @Test("Zooming in shrinks the SOURCE time a fixed pixel drag covers, and zooming back out restores it")
@@ -262,88 +266,113 @@ struct TimelineViewZoomAndSnappingTests {
         #expect(abs((restored.range.end - restored.range.start) - 30.0) < 0.1)
     }
 
-    @Test("A drag ending near an existing cut's edge snaps exactly onto it")
+    /// The three snap tests below all changed pixels — never expected times —
+    /// in the M5f whole-branch review's fix wave (Criticals C1/C2). Each one
+    /// aimed its drag at where the deleted fixed-SOURCE gesture axis put a
+    /// snap target, which for every one of them was NOT where the thing
+    /// being snapped to is drawn: the cut's edges sat 44px and 200px from
+    /// its own fold, the marker's target 40px from its own glyph. Snapping
+    /// to something other than the thing on screen is not snapping.
+    ///
+    /// The pixel each drag now ends on is derived from a real
+    /// `TimelineGeometry` rather than written out, so the test names the
+    /// PROPERTY (a drag ending near a drawn target lands exactly on it)
+    /// instead of a coordinate that has to be recomputed by hand whenever
+    /// the fixture changes.
+    @Test("A drag ending near an existing cut's fold snaps exactly onto it")
     func dragSnapsToCutEdge() throws {
         let cut = Cut(range: TimeRange(start: 10, end: 12))
+        let geometry = TimelineGeometry(
+            width: 800, timebase: Timebase(sourceDuration: 20, edl: EditDecisionList(cuts: [cut])))
+        let foldX = geometry.x(atFold: cut)
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
         view.update(duration: 20, cuts: [cut], jumpPoints: [], playhead: 0)
         var selected: Selection?
         view.onSelect = { selected = $0 }
 
-        // Gesture scale (fixed SOURCE, unzoomed): 800px / 20s = 40px/s, so
-        // the cut's start (source 10) sits at pixel 400. Ending the drag 3px
-        // off it, well inside the 6px tolerance, must snap the SELECTION
-        // edge to exactly 10.0 — not the raw, unsnapped 403/40 = 10.075 a
-        // build with no snapping (or a mistakenly seconds-based tolerance
-        // that this zoom level puts under a pixel) would report instead.
+        // 18s of output across 800px (44.4px/s), so the fold for [10,12]
+        // draws at ~444px. Ending the drag 3px off it, well inside the 6px
+        // tolerance, must snap the SELECTION edge to exactly the instant
+        // that fold IS — output 10.0, which is SOURCE 12.0, the cut's far
+        // edge and the first frame still kept after it. A build with no
+        // snapping (or with a mistakenly seconds-based tolerance this zoom
+        // level puts under a pixel) reports the raw ~12.07 instead.
         view.mouseDown(with: .synthetic(at: NSPoint(x: 100, y: 20), in: view))
-        view.mouseDragged(with: .synthetic(at: NSPoint(x: 403, y: 20), in: view))
-        view.mouseUp(with: .synthetic(at: NSPoint(x: 403, y: 20), in: view))
+        view.mouseDragged(with: .synthetic(at: NSPoint(x: foldX + 3, y: 20), in: view))
+        view.mouseUp(with: .synthetic(at: NSPoint(x: foldX + 3, y: 20), in: view))
 
         let selection = try #require(selected)
-        #expect(abs(selection.range.end - 10.0) < 0.001)
+        #expect(abs(selection.range.end - 12.0) < 0.001)
     }
 
     @Test("A drag ending just past the snap margin does not snap")
     func dragJustOutsideSnapMarginDoesNotSnap() throws {
         let cut = Cut(range: TimeRange(start: 10, end: 12))
+        let geometry = TimelineGeometry(
+            width: 800, timebase: Timebase(sourceDuration: 20, edl: EditDecisionList(cuts: [cut])))
+        let foldX = geometry.x(atFold: cut)
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
         view.update(duration: 20, cuts: [cut], jumpPoints: [], playhead: 0)
         var selected: Selection?
         view.onSelect = { selected = $0 }
 
-        // 10px off the cut's start (pixel 400) clears any reasonable pixel
-        // margin without landing far enough away that a generous margin
-        // would coincidentally also miss it — the same discriminating
-        // distance `TrackLayoutTests`/`CutFoldTests` use for their own hit
-        // margins.
+        // 10px past the fold clears any reasonable pixel margin without
+        // landing far enough away that a generous margin would
+        // coincidentally also miss it — the same discriminating distance
+        // `TrackLayoutTests`/`CutFoldTests` use for their own hit margins.
         view.mouseDown(with: .synthetic(at: NSPoint(x: 100, y: 20), in: view))
-        view.mouseDragged(with: .synthetic(at: NSPoint(x: 410, y: 20), in: view))
-        view.mouseUp(with: .synthetic(at: NSPoint(x: 410, y: 20), in: view))
+        view.mouseDragged(with: .synthetic(at: NSPoint(x: foldX + 10, y: 20), in: view))
+        view.mouseUp(with: .synthetic(at: NSPoint(x: foldX + 10, y: 20), in: view))
 
         let selection = try #require(selected)
-        #expect(abs(selection.range.end - 10.25) < 0.001)
-        #expect(abs(selection.range.end - 10.0) > 0.01)
+        let unsnapped = 12.0 + 10.0 / geometry.pixelsPerSecond
+        #expect(abs(selection.range.end - unsnapped) < 0.001)
+        #expect(abs(selection.range.end - 12.0) > 0.01)
     }
 
-    @Test("A drag ending near a marker snaps to its SOURCE time, converted from the OUTPUT time it is stored/drawn at")
+    @Test("A drag ending near a marker snaps onto the glyph that is drawn, and reports its SOURCE time")
     func dragSnapsToMarkerConvertedFromOutputTime() throws {
         // A 2s cut [2,4) means OUTPUT and SOURCE time diverge past it:
         // marker output 5.0 is SOURCE 7.0 (2s of cut sits between them).
-        // Snapping against the raw, unconverted 5.0 instead would be the
-        // M4b clock confusion this milestone exists to prevent, one more
-        // place — this test fails against exactly that mistake, since an
-        // unconverted comparison sits nowhere near this drag's endpoint.
+        // The marker is COMPARED where it is drawn — `geometry.x(atOutput:)`,
+        // no conversion, since a marker is already output time — and the
+        // conversion happens once, on the way out, because a `Selection` is
+        // source time. Doing it the other way round (converting first, then
+        // comparing on a source-scaled axis) is what put this marker's snap
+        // target 40px from its own glyph until the whole-branch review.
         let cut = Cut(range: TimeRange(start: 2, end: 4))
         let marker = JumpPoint(timeSeconds: 5.0, label: "m")
+        let geometry = TimelineGeometry(
+            width: 800, timebase: Timebase(sourceDuration: 20, edl: EditDecisionList(cuts: [cut])))
+        let markerX = geometry.x(atOutput: OutputTime(marker.timeSeconds))
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
         view.update(duration: 20, cuts: [cut], jumpPoints: [marker], playhead: 0)
         var selected: Selection?
         view.onSelect = { selected = $0 }
 
-        // Gesture scale is fixed-source, 40px/s: SOURCE 7.0 sits at pixel
-        // 280. 3px off, inside the 6px tolerance.
         view.mouseDown(with: .synthetic(at: NSPoint(x: 50, y: 20), in: view))
-        view.mouseDragged(with: .synthetic(at: NSPoint(x: 283, y: 20), in: view))
-        view.mouseUp(with: .synthetic(at: NSPoint(x: 283, y: 20), in: view))
+        view.mouseDragged(with: .synthetic(at: NSPoint(x: markerX + 3, y: 20), in: view))
+        view.mouseUp(with: .synthetic(at: NSPoint(x: markerX + 3, y: 20), in: view))
 
         let selection = try #require(selected)
         #expect(abs(selection.range.end - 7.0) < 0.001)
     }
 
-    @Test("A drag ending near the playhead snaps to it, converted from OUTPUT to SOURCE time")
+    @Test("A drag ending near the playhead snaps onto where it is drawn, and reports its SOURCE time")
     func dragSnapsToPlayheadConvertedFromOutputTime() throws {
         // Same 2s cut; OUTPUT playhead 6.0 is SOURCE 8.0.
         let cut = Cut(range: TimeRange(start: 2, end: 4))
+        let geometry = TimelineGeometry(
+            width: 800, timebase: Timebase(sourceDuration: 20, edl: EditDecisionList(cuts: [cut])))
+        let playheadX = geometry.x(atOutput: OutputTime(6.0))
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
         view.update(duration: 20, cuts: [cut], jumpPoints: [], playhead: 6.0)
         var selected: Selection?
         view.onSelect = { selected = $0 }
 
-        // SOURCE 8.0 sits at pixel 320 on the 40px/s fixed gesture scale.
         view.mouseDown(with: .synthetic(at: NSPoint(x: 50, y: 20), in: view))
-        view.mouseDragged(with: .synthetic(at: NSPoint(x: 317, y: 20), in: view))
-        view.mouseUp(with: .synthetic(at: NSPoint(x: 317, y: 20), in: view))
+        view.mouseDragged(with: .synthetic(at: NSPoint(x: playheadX - 3, y: 20), in: view))
+        view.mouseUp(with: .synthetic(at: NSPoint(x: playheadX - 3, y: 20), in: view))
 
         let selection = try #require(selected)
         #expect(abs(selection.range.end - 8.0) < 0.001)

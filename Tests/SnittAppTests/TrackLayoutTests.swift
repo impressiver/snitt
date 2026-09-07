@@ -328,7 +328,16 @@ struct MarkerEditingPersistenceTests {
         }
     }
 
-    @Test("Moving a marker is undoable through the same UndoManager")
+    /// M5f whole-branch review, F5: this and `editIsUndoable` below asserted
+    /// only `currentEventsForTesting()` — MEMORY. Stripping
+    /// `applyAndSaveEvents()` out of `EditorTimelineState.restoreEvents`, so
+    /// an undo never reaches `events.json` at all, left all 688 tests
+    /// passing. The implementation was right; nothing held it there, and the
+    /// cut-side equivalents (`EditorPersistenceTests.undoPersists`,
+    /// `CutFoldTests`' "Undo after removing a cut persists the cut's
+    /// return") both read disk. The disk read-back below is what makes that
+    /// mutant fail.
+    @Test("Moving a marker is undoable through the same UndoManager, and the undo reaches disk")
     func moveIsUndoable() async throws {
         let marker = LoggedEvent(timeSeconds: 3.0, kind: .marker, label: "m")
         let url = try await makeFixtureBundle(marker: marker)
@@ -341,16 +350,27 @@ struct MarkerEditingPersistenceTests {
             await editor.waitForPendingSaveForTesting()
             let moved = try #require(editor.currentEventsForTesting().first { $0.id == marker.id })
             #expect(abs(moved.timeSeconds - 7.0) < 0.05)
+            // The move itself is on disk before the undo — otherwise the
+            // read-back after the undo could pass simply because nothing
+            // ever wrote anything.
+            let movedOnDisk = try #require(
+                try EventLog.read(from: SnittBundle(opening: url)).events.first { $0.id == marker.id })
+            #expect(abs(movedOnDisk.timeSeconds - 7.0) < 0.05)
 
             editor.undoManager?.undo()
             await editor.waitForPendingSaveForTesting()
 
             let restored = try #require(editor.currentEventsForTesting().first { $0.id == marker.id })
             #expect(abs(restored.timeSeconds - 3.0) < 0.05)
+
+            let restoredOnDisk = try #require(
+                try EventLog.read(from: SnittBundle(opening: url)).events.first { $0.id == marker.id })
+            #expect(abs(restoredOnDisk.timeSeconds - 3.0) < 0.05,
+                    "undo must persist, not merely revert the in-memory events")
         }
     }
 
-    @Test("Editing a marker's label/transcript is undoable")
+    @Test("Editing a marker's label/transcript is undoable, and the undo reaches disk")
     func editIsUndoable() async throws {
         let marker = LoggedEvent(timeSeconds: 3.0, kind: .marker, label: "old")
         let url = try await makeFixtureBundle(marker: marker)
@@ -361,6 +381,9 @@ struct MarkerEditingPersistenceTests {
             defer { editor.close() }
             editor.updateMarkerForTesting(id: marker.id, label: "new", transcript: "text")
             await editor.waitForPendingSaveForTesting()
+            let editedOnDisk = try #require(
+                try EventLog.read(from: SnittBundle(opening: url)).events.first { $0.id == marker.id })
+            #expect(editedOnDisk.label == "new")
 
             editor.undoManager?.undo()
             await editor.waitForPendingSaveForTesting()
@@ -368,6 +391,12 @@ struct MarkerEditingPersistenceTests {
             let restored = try #require(editor.currentEventsForTesting().first { $0.id == marker.id })
             #expect(restored.label == "old")
             #expect(restored.transcript == nil)
+
+            let restoredOnDisk = try #require(
+                try EventLog.read(from: SnittBundle(opening: url)).events.first { $0.id == marker.id })
+            #expect(restoredOnDisk.label == "old",
+                    "undo must persist, not merely revert the in-memory events")
+            #expect(restoredOnDisk.transcript == nil)
         }
     }
 }

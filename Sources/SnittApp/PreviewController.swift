@@ -28,13 +28,16 @@ public class PreviewController {
     public private(set) var durationSeconds: Double
     /// The SOURCE recording's media duration (`BuiltComposition.sourceDuration`)
     /// — never `durationSeconds` above, which is the TRIMMED (output)
-    /// duration. The editor timeline's INTERACTION stays on this clock (M4b
-    /// whole-branch review, Critical finding #1): `edl.cuts` are source-time
-    /// ranges, and a drag must keep computing against the recording's full,
-    /// unchanging length regardless of what has already been cut, or a
-    /// second drag on the same view lands on a shifted scale. The timeline's
-    /// DRAWING, by contrast, is on the OUTPUT clock as of M5f Task 3 (D56) —
-    /// see `TimelineGeometry` and `EditorTimelineState.displayState`.
+    /// duration. The editor timeline needs BOTH: this is the INPUT it builds
+    /// its `Timebase` from (together with `edl.cuts`, which are source-time
+    /// ranges), and `Timebase.outputDuration` is the axis it then draws and
+    /// interprets every gesture on (M5f Task 3, D56).
+    ///
+    /// This comment used to say the timeline's INTERACTION stays on the
+    /// source clock, citing M4b whole-branch review Critical finding #1.
+    /// The M5f whole-branch review measured that arrangement and found it
+    /// reproduced the finding rather than preventing it — see
+    /// `TimelineView.time(for:)` and `duration`.
     public private(set) var sourceDurationSeconds: Double
     /// The kept ranges the CURRENT composition was built from — the same set
     /// `CompositionBuilder.build` inserted into it. Lets a caller (the

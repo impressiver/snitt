@@ -131,8 +131,12 @@ public struct EditDecisionList: Codable, Sendable {
     /// `Codable`'s default synthesis run to completion on a too-new file
     /// would decode whatever fields it recognizes and quietly ignore the
     /// rest — a partial, wrong-looking success, not the loud refusal this
-    /// format needs. `encode(to:)` is left to synthesis: nothing about
-    /// writing needs the same gate.
+    /// format needs.
+    ///
+    /// The decoded value is PRESERVED here rather than normalised, so
+    /// `schemaVersion` still reports what the file on disk actually said —
+    /// `encode(to:)` is where the stamp belongs, and it stamps
+    /// unconditionally.
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
@@ -143,6 +147,38 @@ public struct EditDecisionList: Codable, Sendable {
         self.schemaVersion = schemaVersion
         self.cuts = try container.decode([Cut].self, forKey: .cuts)
         self.trackStates = try container.decode([TrackState].self, forKey: .trackStates)
+    }
+
+    /// Custom rather than synthesized so a WRITE always declares the version
+    /// this build actually writes, whatever version the value was read as
+    /// (M5f whole-branch review, F4).
+    ///
+    /// Synthesis wrote `self.schemaVersion` back, and `init(from:)`
+    /// preserves the decoded value — so a v0.1.0 bundle opened, edited and
+    /// saved by this build kept declaring `schemaVersion: 1` while carrying
+    /// schema-2, `id`-bearing cuts. D60's gate compares declared versions,
+    /// so it never fired for any bundle that actually exists: an older build
+    /// read the file without refusal, and the loud refusal this format needs
+    /// was decorative for every real case.
+    ///
+    /// It was harmless only by accident. `Cut`'s encoding happens to be flat
+    /// and additive (`{id, start, end}`), so a v0.1.0 `TimeRange` decoder
+    /// ignores the extra key; the next non-additive change to this file
+    /// turns the same situation into exactly the silent, unrecoverable loss
+    /// `EditDecisionListError`'s own message promises to prevent. Stamping
+    /// on encode — rather than at `write(to:)` — covers every caller that
+    /// encodes an EDL, `snitt trim`'s write path included.
+    ///
+    /// `events.json` never had the problem, and not deliberately:
+    /// `PreviewController.persistEvents` builds a fresh `EventLog(events:)`
+    /// whose defaulted `schemaVersion` is `currentSchemaVersion`, so a
+    /// legacy log is upgraded 1 -> 2 on write as a side effect of how it is
+    /// constructed. This makes the two files agree on purpose.
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(Self.currentSchemaVersion, forKey: .schemaVersion)
+        try container.encode(cuts, forKey: .cuts)
+        try container.encode(trackStates, forKey: .trackStates)
     }
 
     /// The default EDL for a fresh recording: nothing cut, nothing muted.

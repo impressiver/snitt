@@ -18,20 +18,21 @@ import SnittDocument
 /// applied a cut the instant a drag ended, which is the defect D56 exists
 /// to fix.
 ///
-/// `TimelineGeometry` (SnittDocument) answers pixel-to-time for DRAWING —
-/// the OUTPUT axis, per D56 (M5f Task 3) — but gesture math
-/// (`sourceTime(atX:)`) deliberately does NOT go through `geometry` itself:
-/// see `duration`'s doc comment below for why interaction stays on its own,
-/// fixed SOURCE scale (`gestureGeometry`) instead.
+/// `TimelineGeometry` (SnittDocument) answers pixel-to-time, on the OUTPUT
+/// axis, per D56 (M5f Task 3) — for DRAWING **and for GESTURES**. There is
+/// exactly one geometry here and interaction is interpreted on the axis
+/// being drawn; see `time(for:)`'s doc comment for the rule and for the
+/// pair of Critical findings that established it.
 ///
 /// M5f Task 8: the first draft of this milestone shipped nothing that
 /// changed pixels-per-second — `TrimGesture.ended`'s own doc comment names
 /// the resulting bottleneck ("a ten-minute recording at 800px is
-/// ~0.75s/pixel"). `zoomFactor`/`zoomAnchorOutput` (applied to BOTH
-/// `geometry` and `gestureGeometry` identically, so drawing and gesture math
-/// stay in visual agreement at the zoom level actually in effect) and
-/// `snappedSourceTime(atX:)`'s pixel-tolerance snap are the fix — see each
-/// property's own doc comment.
+/// ~0.75s/pixel"). `zoomFactor`/`zoomAnchorOutput` and
+/// `snappedOutputTime(atX:)`'s pixel-tolerance snap are the fix — see each
+/// property's own doc comment. Zoom applies to the one geometry every
+/// pixel and every gesture already share, so a click keeps meaning the
+/// instant under the cursor at any zoom level, by construction rather than
+/// by two axes being kept in step.
 ///
 /// D56 (M5f Task 5): a cut draws as a FOLD — its own two edges collapsed to
 /// the single OUTPUT position they meet at (`TimelineGeometry.x(atFold:)`),
@@ -78,10 +79,11 @@ public final class TimelineView: NSView {
     /// deliberate selection rather than jitter. This is a PIXEL constant
     /// deliberately: a hand wobbles by roughly the same number of pixels on
     /// any click regardless of what the timeline shows. Converting it to a
-    /// number of seconds requires knowing how much SOURCE media time is
-    /// packed into this view's current width — see `minimumDragSeconds` and
-    /// `sourceTime(atX:)`. `TrimGesture` itself never sees pixels; it takes
-    /// the converted threshold as a parameter to `ended(atTime:minimumSeconds:)`.
+    /// number of seconds requires knowing how much OUTPUT media time is
+    /// packed into this view's current width at the current zoom — see
+    /// `minimumDragSeconds`, which asks `geometry` for exactly that.
+    /// `TrimGesture` itself never sees pixels; it takes the converted
+    /// threshold as a parameter to `ended(atTime:minimumSeconds:)`.
     private static let minimumDragPixels: Double = 3.0
 
     /// Pixels of slop a click gets around a fold's own line (drawn just 2px
@@ -117,9 +119,10 @@ public final class TimelineView: NSView {
     private var geometry = TimelineGeometry(
         width: 0, timebase: Timebase(sourceDuration: 0, edl: EditDecisionList()))
     /// The `Timebase` `geometry` was last built from — kept alongside it so
-    /// `snappedSourceTime(atX:)` can convert a marker's or the playhead's OUTPUT time
-    /// back to SOURCE time without rebuilding a third `Timebase` on every
-    /// mouse-moved event.
+    /// the one conversion this view still performs (an OUTPUT instant a
+    /// gesture resolved to, into the SOURCE instant a `Selection` is
+    /// expressed in) does not rebuild a second `Timebase` on every mouse
+    /// event. See `sourceSeconds(forOutput:)`.
     private var timebase = Timebase(sourceDuration: 0, edl: EditDecisionList())
     private var gesture = TrimGesture()
 
@@ -141,32 +144,24 @@ public final class TimelineView: NSView {
 
     private static let minZoomFactor: Double = 1
     private static let maxZoomFactor: Double = 200
-    /// The FIXED-SOURCE-scale counterpart of `geometry` — same width, same
-    /// zoom, but built over the recording's own uncut length (an EMPTY
-    /// `EditDecisionList`) rather than `Timebase.outputDuration`. This is
-    /// the axis `sourceTime(atX:)`/`minimumDragSeconds`/`snappedSourceTime(atX:)` have
-    /// always used and must keep using (`duration`'s own doc comment, M4b
-    /// Critical #1: a scale that shrinks as cuts land makes a later drag's
-    /// pixel range mean a different source span each time). Zooming this
-    /// view still has to shrink `TrimGesture`'s own stated per-pixel-second
-    /// problem, so the SAME `zoomFactor`/`zoomAnchorOutput` applies here as
-    /// it does to `geometry` — an empty EDL means `Timebase.outputDuration`
-    /// can never shrink from a real cut, only from a deliberate zoom.
-    private var gestureGeometry: TimelineGeometry {
-        let base = TimelineGeometry(
-            width: bounds.width, timebase: Timebase(sourceDuration: duration, edl: EditDecisionList()))
-        guard zoomFactor > Self.minZoomFactor else { return base }
-        return base.zoomed(by: zoomFactor, anchoredAt: OutputTime(zoomAnchorOutput))
-    }
 
-    /// SOURCE duration — deliberately NOT re-derived from `geometry.duration`
-    /// (the OUTPUT duration). `time(for:)`/`minimumDragSeconds` fix their
-    /// scale to this directly and never to `geometry`, so a drag's meaning
-    /// does not shift as cuts are applied mid-session (M4b whole-branch
-    /// review, Critical finding #1: a view whose pixel-to-time scale shrinks
-    /// with every cut makes the SAME pixel range mean a different source
-    /// span on the second drag, landing inside the region a prior cut
-    /// already removed instead of a fresh one).
+    /// The recording's own SOURCE duration, as handed down by
+    /// `EditorTimelineState.displayState` — the input `rebuildGeometry`
+    /// builds `timebase` (and therefore `geometry`) from, together with
+    /// `cuts`. NOTHING interprets a gesture against this: it is the
+    /// recording's length, not an axis.
+    ///
+    /// It used to be one. Until the M5f whole-branch review, a second
+    /// geometry built over this value drove every gesture while `geometry`
+    /// drove every pixel, citing M4b Critical #1 ("a drag's meaning must not
+    /// shift as cuts land"). That defence WAS the defect it named: on a
+    /// fixed source scale the same pixels resolve to the same source span
+    /// forever, so a second deliberate drag over them appended a duplicate
+    /// `Cut` and changed nothing — "a second trim silently did nothing",
+    /// verbatim. The real M4b defect was never "the axis shrinks"; it was
+    /// "the picture and the math disagree". A shrinking axis is correct
+    /// precisely BECAUSE the picture shrinks with it: footage that has been
+    /// cut is no longer drawn, so it can no longer be pointed at.
     private var duration: Double = 0
     /// SOURCE-time cuts, WITH identity — `edl.cuts` exactly as the owner
     /// already has them. Feeds `rebuildGeometry`'s `Timebase`; unlike before
@@ -386,30 +381,30 @@ public final class TimelineView: NSView {
         return nil
     }
 
-    /// Maps a pixel to SOURCE time using a scale fixed to the recording's
-    /// own (uncut) length — deliberately never routed through `geometry`,
-    /// which shrinks the same width to a smaller apparent duration as cuts
-    /// land. See `duration`'s doc comment for why interaction must stay off
-    /// that shrinking axis. M5f Task 8: routed through `gestureGeometry`
-    /// rather than a bare `x / bounds.width * duration` so THIS scale zooms
-    /// too — without it, zooming would move everything `geometry` draws
-    /// while leaving clicks interpreted at the old, unzoomed scale, which
-    /// would defeat the entire point of zooming in to place a cut more
-    /// precisely (`TrimGesture.ended`'s own stated problem).
-    private func sourceTime(atX x: Double) -> Double {
-        gestureGeometry.outputTime(atX: x).seconds
+    /// The SOURCE instant `output` names, or `nil` when there is no output
+    /// timeline for it to name one on (everything cut — the single case
+    /// `Timebase.sourceTime(forOutput:)` can fail, since the output axis has
+    /// no cuts in it by construction).
+    ///
+    /// The ONE conversion this view performs, and it happens at the moment
+    /// a `SourceTime` is actually needed — building a `Selection` for
+    /// `edl.cuts`, or handing `onScrub` the source instant its own contract
+    /// is written in. Everything upstream of it (hit-testing, the gesture
+    /// state machine, snapping, the drag threshold) stays on the output
+    /// axis, which is the axis being drawn.
+    private func sourceSeconds(forOutput output: OutputTime) -> Double? {
+        timebase.sourceTime(forOutput: output)?.seconds
     }
 
-    /// The pixel budget above, converted at the FIXED source scale, AT THE
-    /// CURRENT ZOOM. `TimelineGeometry.duration(ofPixels:)` divides by
+    /// `minimumDragPixels` converted at the current zoom, on the same axis
+    /// `gesture` is fed — `TimelineGeometry.duration(ofPixels:)` divides by
     /// `pixelsPerSecond` directly rather than differencing two
-    /// `sourceTime(atX:)` calls (mathematically the same result, since the
-    /// `visibleOffset` term cancels either way) — this is simply the more
-    /// direct route to it, and the one Task 8 added `duration(ofPixels:)`
-    /// for. Zero pixels-per-second (zero width) makes this 0, exactly as
-    /// the old subtraction did.
+    /// `outputTime(atX:)` calls (mathematically the same result, since the
+    /// `visibleOffset` term cancels either way). Zero pixels-per-second
+    /// (zero width, or everything cut) makes this 0; `TrimGesture.ended`
+    /// checks `length > 0` separately for exactly that case.
     private var minimumDragSeconds: Double {
-        gestureGeometry.duration(ofPixels: Self.minimumDragPixels)
+        geometry.duration(ofPixels: Self.minimumDragPixels)
     }
 
     /// Pixels of slop a drag's endpoint gets before it snaps onto a nearby
@@ -421,59 +416,82 @@ public final class TimelineView: NSView {
     /// would defeat the reason zoom exists at all.
     private static let snapMarginPixels: Double = 6.0
 
-    private func time(for event: NSEvent) -> Double {
+    /// The OUTPUT instant `event` points at — the one axis this view draws
+    /// on, and therefore the one it interprets interaction on.
+    ///
+    /// M5f whole-branch review, Criticals C1 and C2. This used to answer in
+    /// SOURCE time off a second, fixed-source geometry, which made every
+    /// primary interaction resolve to a different instant than the pixels
+    /// the person was looking at the moment anything had been cut: on a
+    /// 10s recording with one 2s cut at 800px, a click at x=400 drew the
+    /// playhead at x=300, and a drag from 400 to 600 removed source 5.0-7.5
+    /// while the pixels pointed at 6.0-8.0. Zoom multiplied the error
+    /// rather than correcting it, because the same zoom NUMBER applied to
+    /// two axes on different clocks pivots them around different instants.
+    ///
+    /// The rule, which Task 6's marker drag already followed: interaction is
+    /// interpreted on the axis being drawn. A `SourceTime` is produced only
+    /// where one is actually needed (`sourceSeconds(forOutput:)`), never as
+    /// the currency gestures are carried in.
+    private func time(for event: NSEvent) -> OutputTime {
         let point = convert(event.locationInWindow, from: nil)
-        return snappedSourceTime(atX: point.x)
+        return snappedOutputTime(atX: point.x)
     }
 
-    /// `sourceTime(atX:)`, pulled onto the nearest marker/cut-edge/playhead
-    /// when one sits within `snapMarginPixels` of `x` at the CURRENT zoom
-    /// (`gestureGeometry`, the same fixed-source axis `sourceTime(atX:)`
-    /// itself already uses — see that method's own doc comment). Markers
-    /// and the playhead arrive in OUTPUT time (Task 3) and are converted
-    /// back to SOURCE time via `timebase` before comparing — an unconverted
-    /// comparison would silently misplace every snap the instant anything
-    /// has been cut, the same clock confusion this milestone exists to
-    /// prevent everywhere else. Cut edges (`cut.range.start`/`.end`) need no
-    /// conversion — `Cut.range` is already SOURCE time.
+    /// `geometry.outputTime(atX:)`, pulled onto the nearest fold, marker or
+    /// playhead when one is DRAWN within `snapMarginPixels` of `x` at the
+    /// current zoom.
+    ///
+    /// Every candidate is compared as a pixel on `geometry` — the same call
+    /// `draw` makes for the same thing, so a snap target is always exactly
+    /// where the thing it snaps to is on screen. Markers and the playhead
+    /// are already OUTPUT time (Task 3) and need no conversion at all; a
+    /// cut contributes ONE candidate, not two, because both of its edges
+    /// collapse onto the single instant its fold is drawn at
+    /// (`Timebase.foldPosition(for:)` via `geometry.x(atFold:)`) — snapping
+    /// to a cut's start and its end as separate targets would name two
+    /// pixels for something drawn as one line.
+    ///
+    /// A candidate scrolled out of the viewport is NOT filtered out, and
+    /// that is deliberate: `x(atOutput:)` clamps an off-viewport instant to
+    /// 0 or `width`, and `draw` clamps the same way for the same thing, so
+    /// a fold scrolled off the left really is drawn as a red line at x=0.
+    /// Snapping to it there keeps this method's whole contract — a snap
+    /// target is where the thing it snaps to is ON SCREEN. A visibility
+    /// filter here would make a drag refuse to snap to a line the person
+    /// can see, which is the same picture-and-math disagreement C1 was.
+    /// Whether the view should pile off-screen content at its edges at all
+    /// is a DRAWING question, adjacent to the review's own undetermined
+    /// item about `visibleOffset`'s upper clamp; if that changes, this
+    /// method needs nothing — it already follows `draw`.
     ///
     /// The closest candidate within tolerance wins, not the first one found
     /// — two candidates both inside the margin (a marker sitting right next
-    /// to a cut edge) should snap to whichever is actually nearer, not
-    /// whichever happens to be earlier in `cuts`/`jumpPoints`.
-    private func snappedSourceTime(atX x: Double) -> Double {
-        let raw = sourceTime(atX: x)
-        guard bounds.width > 0, duration > 0 else { return raw }
-        var candidates: [Double] = []
-        for cut in cuts {
-            candidates.append(cut.range.start)
-            candidates.append(cut.range.end)
-        }
-        for marker in jumpPoints {
-            if let source = timebase.sourceTime(forOutput: OutputTime(marker.timeSeconds))?.seconds {
-                candidates.append(source)
-            }
-        }
-        if let playheadSource = timebase.sourceTime(forOutput: OutputTime(playhead))?.seconds {
-            candidates.append(playheadSource)
-        }
-        var best: (source: Double, distance: Double)?
+    /// to a fold) should snap to whichever is actually nearer, not whichever
+    /// happens to be earlier in `cuts`/`jumpPoints`.
+    private func snappedOutputTime(atX x: Double) -> OutputTime {
+        let raw = geometry.outputTime(atX: x)
+        guard bounds.width > 0, geometry.duration > 0 else { return raw }
+        var candidates: [OutputTime] = cuts.map { timebase.foldPosition(for: $0) }
+        candidates.append(contentsOf: jumpPoints.map { OutputTime($0.timeSeconds) })
+        candidates.append(OutputTime(playhead))
+
+        var best: (output: OutputTime, distance: Double)?
         for candidate in candidates {
-            let candidateX = gestureGeometry.x(atOutput: OutputTime(candidate))
-            let distance = abs(candidateX - x)
+            let distance = abs(geometry.x(atOutput: candidate) - x)
             guard distance <= Self.snapMarginPixels else { continue }
             if best == nil || distance < best!.distance {
                 best = (candidate, distance)
             }
         }
-        return best?.source ?? raw
+        return best?.output ?? raw
     }
 
     // MARK: - Zoom (Step 3, M5f Task 8)
 
     /// Applies `factor` to the current zoom, anchored at `anchor` (an OUTPUT
     /// instant), clamped to `Self.minZoomFactor...Self.maxZoomFactor`, and
-    /// rebuilds `geometry`/`gestureGeometry` against it. The one place
+    /// rebuilds `geometry` against it. The one place
     /// `zoomFactor`/`zoomAnchorOutput` change — `zoomIn()`, `zoomOut()`,
     /// `scrollWheel(with:)` and `magnify(with:)` all funnel through this
     /// rather than mutating either property directly, so the clamp can
@@ -575,9 +593,15 @@ public final class TimelineView: NSView {
             return
         }
         activeFoldClick = nil
-        let time = time(for: event)
-        gesture.began(atTime: time)
-        onScrub(time)
+        let output = time(for: event)
+        gesture.began(atTime: output.seconds)
+        // `onScrub`'s contract is SOURCE time (see
+        // `EditorTimelineState.onScrub`), so the conversion happens here,
+        // at the call that needs it. Nothing to scrub to when there is no
+        // output timeline at all — `EditorTimelineState.onScrub` already
+        // returns for that case, so skipping the call changes nothing
+        // observable.
+        if let source = sourceSeconds(forOutput: output) { onScrub(source) }
         needsDisplay = true
     }
 
@@ -589,7 +613,7 @@ public final class TimelineView: NSView {
             return
         }
         guard activeFoldClick == nil else { return }
-        gesture.moved(toTime: time(for: event))
+        gesture.moved(toTime: time(for: event).seconds)
         needsDisplay = true
     }
 
@@ -623,20 +647,65 @@ public final class TimelineView: NSView {
             activeFoldClick = nil
             return
         }
-        let time = time(for: event)
-        let range = gesture.ended(atTime: time, minimumSeconds: minimumDragSeconds)
+        let output = time(for: event)
+        let outputRange = gesture.ended(atTime: output.seconds, minimumSeconds: minimumDragSeconds)
+        let resolved = outputRange.flatMap(sourceRange(ofOutput:))
         // D56 (M5f Task 4): a resolved drag REPLACES the selection — it
         // never appends a `Cut`. A plain click (nil `range`) clears any
         // prior selection and scrubs, matching the pre-D56 behaviour for
         // clicks exactly; a deliberate drag reports the new selection and,
         // as before this task, does NOT also scrub — its own `mouseDown`
         // already moved the playhead to the drag's start.
-        selection = range.map { Selection(range: $0) }
+        selection = resolved.map { Selection(range: $0) }
         onSelect(selection)
-        if range == nil {
-            onScrub(time)
+        if resolved == nil, let source = sourceSeconds(forOutput: output) {
+            // A drag that resolved to a range but could not be expressed in
+            // source time falls through to the click path deliberately,
+            // rather than being dropped: an unreported gesture is the silent
+            // no-op this project keeps finding. It is unreachable today —
+            // the only way the conversion fails is an empty output timeline,
+            // where `geometry` is degenerate, every pixel maps to output 0
+            // and `TrimGesture.ended`'s `length > 0` guard has already
+            // returned nil.
+            onScrub(source)
         }
         needsDisplay = true
+    }
+
+    /// The SOURCE span an OUTPUT span covers: each endpoint converted
+    /// independently, giving the SOURCE-CONTIGUOUS reading of a drag.
+    ///
+    /// The question the M5f whole-branch review left undetermined, now that
+    /// gestures are on the output axis: should a drag spanning a fold select
+    /// the source-contiguous span (endpoints converted, everything between
+    /// them included — the already-removed footage among it) or the
+    /// output-contiguous one (only the kept pieces, as several disjoint
+    /// spans)? Source-contiguous, for three reasons:
+    ///
+    ///  - The two are OBSERVATIONALLY IDENTICAL in what gets removed. The
+    ///    span between the endpoints that a previous cut already removed
+    ///    contributes zero output seconds, so `Timebase.outputDuration`
+    ///    falls by exactly the number of output seconds the drag covered
+    ///    either way, and `draw` renders the same rectangle either way
+    ///    (both ends map through `geometry.x(atSource:)`).
+    ///  - Output-contiguous would need `Selection` to carry N ranges and
+    ///    `cutSelection()` to append N `Cut`s for one gesture — N folds
+    ///    stacked on the single pixel they all collapse onto, N separate
+    ///    "Remove Cut" targets there — for no visible difference.
+    ///  - One gesture producing one `Cut` keeps one undo step meaning one
+    ///    thing.
+    ///
+    /// The cost, recorded rather than hidden: the new cut can fully contain
+    /// an older one, and removing the older fold then restores nothing
+    /// visible. That is pre-existing (overlapping cuts have always been
+    /// possible) and bounded — the containing cut's own fold still restores
+    /// the whole span — but it is a genuine, if minor, no-op the fold UI can
+    /// present. Coalescing overlapping cuts on append would close it; that
+    /// is a `EditDecisionList`-level change, deliberately not made here.
+    private func sourceRange(ofOutput range: TimeRange) -> TimeRange? {
+        guard let start = sourceSeconds(forOutput: OutputTime(range.start)),
+              let end = sourceSeconds(forOutput: OutputTime(range.end)) else { return nil }
+        return TimeRange(start: start, end: end)
     }
 
     /// AppKit's right-click entry point: returning `nil` suppresses any
@@ -731,13 +800,23 @@ public final class TimelineView: NSView {
         // once the drag ends, `previewRange` goes nil and `selection` (set
         // in `mouseUp`) takes over, so the rectangle persists on screen
         // until a new drag replaces it or a cut clears it.
-        if let range = gesture.previewRange ?? selection?.range,
-           let startX = geometry.x(atSource: SourceTime(range.start)),
-           let endX = geometry.x(atSource: SourceTime(range.end)) {
-            // Both ends can still fail to map (e.g. a selection sitting over
-            // ground an earlier cut already removed) — skipped rather than
-            // clamped, so a half-inside-a-cut selection isn't drawn as
-            // spanning territory it does not actually cover.
+        // `gesture.previewRange` is OUTPUT time (the axis gestures are
+        // interpreted on) while `selection` is SOURCE time (the clock
+        // `edl.cuts` is expressed in, which is what a selection is destined
+        // to become) — so the two take different mapping calls to reach a
+        // pixel. Both ends of a SELECTION can still fail to map (a
+        // selection sitting over ground a later cut removed) — skipped
+        // rather than clamped, so a half-inside-a-cut selection isn't drawn
+        // as spanning territory it does not actually cover.
+        let previewX = gesture.previewRange.map {
+            (geometry.x(atOutput: OutputTime($0.start)), geometry.x(atOutput: OutputTime($0.end)))
+        }
+        let selectionX = selection.flatMap { selection -> (Double, Double)? in
+            guard let startX = geometry.x(atSource: SourceTime(selection.range.start)),
+                  let endX = geometry.x(atSource: SourceTime(selection.range.end)) else { return nil }
+            return (startX, endX)
+        }
+        if let (startX, endX) = previewX ?? selectionX {
             //
             // Alpha 0.35 is the same value the old orange cut-preview used —
             // already tuned, in this same method, to read clearly over both

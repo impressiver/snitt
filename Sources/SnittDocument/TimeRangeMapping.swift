@@ -42,38 +42,43 @@ public enum TimeRangeMapping {
         return nil
     }
 
-    /// The inverse of `trimmedTime(of:keptRanges:)`: maps an instant in the
-    /// TRIMMED (output) timeline back to where it sits in the source
-    /// recording.
-    ///
-    /// M4b whole-branch review, Critical finding #1: the editor's timeline
-    /// view draws on the SOURCE clock (cuts only have a position there — by
-    /// definition a cut is absent from the output), but the playhead and
-    /// jump points the rest of the editor tracks are naturally in trimmed
-    /// time — the player plays the composition, and `MarkerJumpPoints`
-    /// already maps markers into it. Drawing them on the source axis without
-    /// this inverse would place them at the wrong pixel the moment anything
-    /// has been cut.
-    ///
-    /// Unlike the forward direction, this can never fall in a "gap" — the
-    /// trimmed timeline has no cuts in it by construction, `keptRanges` tile
-    /// it edge to edge — so every `trimmedTime` in `0...totalDuration` maps
-    /// to exactly one source instant. `nil` here only means `trimmedTime`
-    /// itself was out of range (negative, past the end, or `keptRanges` is
-    /// empty).
-    ///
-    /// Boundary rule mirrors `trimmedTime(of:keptRanges:)`: every kept range
-    /// except the last claims its trimmed span half-open, the last one
-    /// closed at both ends — so the two functions round-trip.
     /// The trimmed-time position for a source instant, snapping to the
     /// nearest kept boundary when the instant falls inside a cut.
     ///
     /// `trimmedTime(of:keptRanges:)` returns nil there, which is honest —
-    /// a cut instant has no frame. But a user clicking a cut region on the
-    /// timeline has clicked something visibly drawn, and answering with
-    /// nothing at all is the silent no-op this project keeps finding. The
-    /// nearest kept edge is the moment they can actually see, and it is
-    /// what every editor does.
+    /// a cut instant has no frame. But answering with nothing at all is the
+    /// silent no-op this project keeps finding, and every instant inside a
+    /// cut has a well-defined place on the output timeline regardless: the
+    /// single point immediately after everything kept before it and
+    /// immediately before everything kept after it. That is the moment a
+    /// person can actually see, and it is what every editor does.
+    ///
+    /// Handling the gap IS this function's purpose — the property that makes
+    /// it usable for `Timebase.foldPosition(for:)`, which asks exactly this
+    /// question of a cut's own start. Do not confuse it with
+    /// `sourceTime(ofTrimmedTime:keptRanges:)` below, which converts the
+    /// other direction and genuinely cannot land in a gap: this doc block
+    /// used to be that function's, misattached here, complete with a "can
+    /// never fall in a 'gap'" claim that is false of this function and was
+    /// contradicted by its own next paragraph. It was also the only place in
+    /// `Sources/` citing M4b Critical #1, and said the editor's timeline
+    /// "draws on the SOURCE clock" — true when written, false since M5f Task
+    /// 3 moved the view onto the output axis. Two implementers read it while
+    /// deciding which axis to interpret gestures on, and the M5f
+    /// whole-branch review found they had reproduced the very defect the
+    /// citation names (Criticals C1/C2). A stale comment on load-bearing
+    /// code is not a tidiness problem.
+    ///
+    /// ORDER DEPENDENCE, the other half of `Timebase.foldPosition`'s warning
+    /// (M5f whole-branch review, F7): this walks `keptRanges` accumulating
+    /// `cursor` in ARRAY order and assumes that order is also ASCENDING TIME
+    /// order — true for everything `KeptRanges.compute` produces today. The
+    /// refinement pass for slice/reorder (Tier 2) named this function as
+    /// the one that genuinely breaks under a reordered timeline: with
+    /// out-of-order ranges every answer past the first misordered one is
+    /// wrong, silently, and both consumers (`onScrub`'s snap and every
+    /// fold's drawn position) would be wrong together. Whoever lands
+    /// reorder must revisit this function, not just its callers.
     public static func nearestTrimmedTime(toSourceTime sourceTime: Double,
                                           keptRanges: [TimeRange]) -> Double? {
         guard !keptRanges.isEmpty else { return nil }
@@ -90,6 +95,30 @@ public enum TimeRangeMapping {
         return cursor
     }
 
+    /// The inverse of `trimmedTime(of:keptRanges:)`: maps an instant in the
+    /// TRIMMED (output) timeline back to where it sits in the source
+    /// recording.
+    ///
+    /// M4b whole-branch review, Critical finding #1: the editor tracks its
+    /// playhead and jump points in trimmed time — the player plays the
+    /// composition, and `MarkerJumpPoints` already maps markers into it —
+    /// while cuts, selections and everything written to `edit.json` are
+    /// source time. Anything crossing between the two clocks needs this
+    /// conversion, and doing it at the wrong moment (or not at all) puts
+    /// the value at the wrong instant the moment anything has been cut.
+    /// `Timebase.sourceTime(forOutput:)` is the typed entry point the
+    /// editor actually calls; this is its implementation.
+    ///
+    /// Unlike the forward direction, this can never fall in a "gap" — the
+    /// trimmed timeline has no cuts in it by construction, `keptRanges` tile
+    /// it edge to edge — so every `trimmedTime` in `0...totalDuration` maps
+    /// to exactly one source instant. `nil` here only means `trimmedTime`
+    /// itself was out of range (negative, past the end, or `keptRanges` is
+    /// empty).
+    ///
+    /// Boundary rule mirrors `trimmedTime(of:keptRanges:)`: every kept range
+    /// except the last claims its trimmed span half-open, the last one
+    /// closed at both ends — so the two functions round-trip.
     public static func sourceTime(ofTrimmedTime trimmedTime: Double,
                                   keptRanges: [TimeRange]) -> Double? {
         guard !keptRanges.isEmpty else { return nil }

@@ -49,14 +49,17 @@ public struct OutputTime: Equatable, Hashable, Comparable, Sendable {
 /// `Timebase` only adds the typed, EDL-shaped entry point and the
 /// `outputDuration` these lower-level functions don't compute for you.
 public struct Timebase: Sendable {
-    /// The source recording's own duration (`capture.mov`'s), before cuts.
-    public let sourceDuration: Double
-    public let edl: EditDecisionList
+    /// The ONLY state this type carries. `sourceDuration` and `edl` were
+    /// stored alongside it as public properties and read by nothing in
+    /// `Sources/` or `Tests/` (M5f whole-branch review, F8) — dead public
+    /// surface on the type this milestone introduced to BE the clock
+    /// boundary, and an invitation to reach past the conversions for the
+    /// raw inputs. They are constructor parameters now, nothing more; a
+    /// caller that needs the source duration or the EDL already has them,
+    /// since it is the one that passed them in.
     private let keptRanges: [TimeRange]
 
     public init(sourceDuration: Double, edl: EditDecisionList) {
-        self.sourceDuration = sourceDuration
-        self.edl = edl
         self.keptRanges = KeptRanges.compute(duration: sourceDuration, cuts: edl.cuts.map(\.range))
     }
 
@@ -119,6 +122,17 @@ public struct Timebase: Sendable {
     /// nothing kept, nowhere on the (empty) output axis for anything to fold
     /// onto — where 0 is as good an answer as any other, since there is no
     /// timeline left to be wrong on.
+    ///
+    /// ORDER DEPENDENCE, recorded here rather than only in the plan's ledger
+    /// (M5f whole-branch review, F7): `nearestTrimmedTime` walks
+    /// `keptRanges` in ARRAY order accumulating output seconds, and is
+    /// correct only while that order is ascending TIME order. The refinement
+    /// pass for slice/reorder (Tier 2) named it as the one function that
+    /// genuinely breaks under a reordered timeline, and this is now its
+    /// SECOND consumer — every fold's drawn position, and every fold's
+    /// hit-test, resolve through it. Whoever lands reorder must revisit
+    /// `nearestTrimmedTime` itself; reading only this call site will not
+    /// show the assumption.
     public func foldPosition(for cut: Cut) -> OutputTime {
         let trimmed = TimeRangeMapping.nearestTrimmedTime(
             toSourceTime: cut.range.start, keptRanges: keptRanges) ?? 0

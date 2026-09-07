@@ -114,10 +114,46 @@ enum DocumentOpener {
         return try EditDecisionList.read(from: bundle)
     }
 
+    /// The `events.json` twin of `readEDL(for:)`, and for the same reason
+    /// (M5f whole-branch review, F9): a MISSING `events.json` is
+    /// legitimate — a recording interrupted before `Recorder` finalizes has
+    /// none, and a recording with no markers and no logged input has nothing
+    /// to write — while a file that EXISTS and fails to decode must be
+    /// refused, D60's `schemaVersion` gate among the reasons it can.
+    ///
+    /// This was a bare `try EventLog.read(from: bundle)`, the only one of
+    /// the four `events.json` readers without the distinction the rest of
+    /// this milestone standardised (`InspectReport.readEvents`,
+    /// `MovieExporter.readBundleEvents`,
+    /// `AutomationHost.readEventsForAutoTrim`). It refused to open an
+    /// otherwise perfectly good bundle — the GUI's open path being the odd
+    /// one out, exactly as it was for `edit.json` before Task 2.
+    private static func readEvents(for bundle: SnittBundle) throws -> [LoggedEvent] {
+        guard FileManager.default.fileExists(atPath: bundle.eventsURL.path) else {
+            return []
+        }
+        return try EventLog.read(from: bundle).events
+    }
+
     private static func build(bundle: SnittBundle) async throws -> EditorWindowController {
         do {
+            // `capture.mov` is the one file a bundle cannot be missing — it
+            // is written once during recording and never mutated (§7), and
+            // there is nothing to open without it. Checked HERE, ahead of
+            // the two JSON reads, because those two are now both allowed to
+            // be absent (a fresh recording has no `edit.json`, and one with
+            // no markers or logged input has no `events.json`): before this
+            // milestone made them tolerant, a plain folder renamed `.snitt`
+            // was rejected only as an accident of `EventLog.read` failing
+            // first, and would otherwise have fallen through to an opaque
+            // AVFoundation error from `CompositionBuilder`.
+            // `SnittBundleError.missingCapture` was declared and compared
+            // nowhere until now.
+            guard FileManager.default.fileExists(atPath: bundle.captureURL.path) else {
+                throw SnittBundleError.missingCapture
+            }
             let edl = try Self.readEDL(for: bundle)
-            let events = try EventLog.read(from: bundle).events
+            let events = try Self.readEvents(for: bundle)
             let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
             let jumpPoints = MarkerJumpPoints.compute(events: events, keptRanges: built.keptRanges)
 

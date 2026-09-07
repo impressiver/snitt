@@ -302,13 +302,20 @@ struct CutFoldTimelineViewTests {
         view.onScrub = { scrubbed = $0 }
         view.onToggleExpansion = { toggled = $0 }
 
-        // x=100 on an 800px/20s view is source time 2.5s — nowhere near
-        // this cut's fold (which sits well past the middle of the view).
+        // x=100 is nowhere near this cut's fold (which sits well past the
+        // middle of the view). The view shows 18s of OUTPUT across 800px
+        // with [10,12] removed, so x=100 is output 2.25 — and source 2.25,
+        // since nothing before it has been cut.
+        //
+        // This number was 2.5 until the M5f whole-branch review: gestures
+        // were interpreted on a fixed 20s SOURCE scale while every pixel
+        // was drawn on the 18s output one, so a click resolved to an
+        // instant 100px from where it landed. 2.5 pinned that, not this.
         view.mouseDown(with: .synthetic(at: NSPoint(x: 100, y: 20), in: view))
         view.mouseUp(with: .synthetic(at: NSPoint(x: 100, y: 20), in: view))
 
         #expect(toggled == nil)
-        #expect(abs((scrubbed ?? -1) - 2.5) < 0.01)
+        #expect(abs((scrubbed ?? -1) - 2.25) < 0.01)
     }
 
     @Test("A click just past the fold's hit margin scrubs rather than toggling")

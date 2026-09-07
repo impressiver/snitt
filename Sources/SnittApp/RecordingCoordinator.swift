@@ -487,6 +487,20 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     /// same stamp `Recorder` writes via `initiator(isAgent:)` — rather than
     /// from `agentSessionID`, which `stopRecording()` has already cleared by
     /// the time this runs.
+    ///
+    /// THE `try?` BELOW IS A SWALLOW WITH A DEADLINE (M5f whole-branch
+    /// review, F10). It is harmless only because
+    /// `RecordingMetadata.schemaVersion` is declared and compared NOWHERE —
+    /// the one remaining unguarded version field, and the ledger already
+    /// schedules its gate. The moment that gate lands, this line turns a
+    /// loud "this bundle was written by a newer Snitt" refusal into "not a
+    /// human recording, don't open the editor": a recording that finished
+    /// successfully, silently never opens, and nothing says why. That is
+    /// the fifth instance of the swallow class this project has now found
+    /// four times (`DocumentOpener` twice, `AutomationHost` twice,
+    /// `InspectReport`), each time because a gate was added in front of an
+    /// existing `try?`. Whoever adds the `RecordingMetadata` gate must fix
+    /// this line in the same change, or ship the gate decorative.
     private func openEditorIfHuman(for bundle: SnittBundle) async {
         guard let metadata = try? RecordingMetadata.read(from: bundle),
               metadata.initiator == .human else { return }
