@@ -20,6 +20,14 @@ import Carbon.HIToolbox
 /// one must also re-register the REAL `HotkeyMonitor` `hotkeyRegistrar`
 /// owns; see `HotkeyRegistrar`'s own doc comment for why storing a new
 /// combination without doing that would be M5b's R22 defect again.
+///
+/// M5f also adds a row for `OutputDirectorySettings` — where recordings are
+/// saved (D56/M5d's deferred output-location item). No status-item
+/// equivalent exists for this one either (there is no natural "toggle" for
+/// a folder path), but the same single-store discipline applies: the row
+/// reads and writes the SAME `defaults` and the SAME settings type
+/// `RecordingCoordinator` reads at record time, so this window is never a
+/// second, independently-correct opinion about where recordings go.
 @MainActor
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// Internal (not private) so tests can confirm a second `show()` reuses
@@ -34,13 +42,17 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let eventLoggingToggle: (Bool, UserDefaults) -> Bool
     private let microphoneToggle: (Bool, UserDefaults) -> Bool
     private let hotkeyConflictAlert: @MainActor (HotkeyAction, HotkeyCombination) -> Void
+    private let outputDirectoryUnwritableAlert: @MainActor (URL) -> Void
     private var hotkeyButtons: [HotkeyAction: HotkeyRecorderButton] = [:]
+    private var outputDirectoryLabel: NSTextField?
 
     static let agentRecordingTitle = "Allow agent recording"
     static let eventLoggingTitle = "Log input events"
     static let microphoneTitle = "Record voiceover"
     static let automaticUpdatesTitle = "Check for updates automatically"
     static let crashReportsTitle = "Include crash reports in diagnostics"
+    static let outputDirectoryCaption = "Save recordings to"
+    static let outputDirectoryButtonTitle = "Choose…"
 
     /// - Parameters:
     ///   - updater: the app's one `UpdaterController`. The automatic-updates
@@ -49,8 +61,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     ///     bug: a value stored but never forwarded to Sparkle's own
     ///     `automaticallyChecksForUpdates`, so the setting read back
     ///     correctly and changed nothing.
-    ///   - defaults: the store all five settings types load from and save
-    ///     to. Defaults to `.standard`, the same store the status item uses
+    ///   - defaults: the store all settings types (five checkboxes' worth,
+    ///     plus `HotkeySettings` and `OutputDirectorySettings`) load from and
+    ///     save to. Defaults to `.standard`, the same store the status item uses
     ///     in production, so both surfaces agree without either one naming
     ///     the other. Tests inject a `UserDefaults(suiteName:)` fixture here
     ///     instead, so nothing touches the real preference domain.
@@ -105,6 +118,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// down the ladder: production forwards to `MicrophoneToggle.apply`
     /// against the real `PermissionOnboarding`/`MicrophoneAccess`; a test
     /// substitutes a fake for the same reason.
+    ///
+    /// `outputDirectoryUnwritableAlert` is also test-only, mirroring
+    /// `hotkeyConflictAlert` immediately above: production always uses the
+    /// default, which raises a real `NSAlert` naming the folder that was
+    /// rejected. A test substitutes a spy so `applyOutputDirectory`'s
+    /// reject-and-keep-the-old-value behavior can be pinned without a real,
+    /// blocking dialog appearing.
     static func show(updater: UpdaterController,
                       defaults: UserDefaults = .standard,
                       hotkeyRegistrar: HotkeyRegistrar = HotkeyRegistrar(onRecord: {}, onMarker: {}),
@@ -117,7 +137,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                           MicrophoneToggle.apply($0, defaults: $1)
                       },
                       hotkeyConflictAlert: @escaping @MainActor (HotkeyAction, HotkeyCombination) -> Void =
-                          SettingsWindowController.presentHotkeyConflictAlert) {
+                          SettingsWindowController.presentHotkeyConflictAlert,
+                      outputDirectoryUnwritableAlert: @escaping @MainActor (URL) -> Void =
+                          SettingsWindowController.presentOutputDirectoryUnwritableAlert) {
         // A second Command-comma focuses the existing window rather than
         // opening a second one — two Settings windows can disagree on
         // screen.
@@ -132,7 +154,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                                                   hotkeyRegistrar: hotkeyRegistrar, onChange: onChange,
                                                   eventLoggingToggle: eventLoggingToggle,
                                                   microphoneToggle: microphoneToggle,
-                                                  hotkeyConflictAlert: hotkeyConflictAlert)
+                                                  hotkeyConflictAlert: hotkeyConflictAlert,
+                                                  outputDirectoryUnwritableAlert: outputDirectoryUnwritableAlert)
         shared = controller
         if activate {
             controller.window.makeKeyAndOrderFront(nil)
@@ -149,6 +172,21 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let alert = NSAlert()
         alert.messageText = "Snitt could not use \(combination.displayString) for the "
                            + "\(action.label) — another app may already be using it."
+        alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    /// The production `outputDirectoryUnwritableAlert`: a real, modal
+    /// `NSAlert` naming the folder that was rejected. Checked and reported
+    /// HERE, at the moment a person picks a folder, for the same reason
+    /// `RecordingCoordinator.prepareOutputDirectory` checks again before a
+    /// recording starts: better to find out a folder will not work the
+    /// moment it is chosen than the next time the record hotkey is pressed.
+    static func presentOutputDirectoryUnwritableAlert(_ directory: URL) {
+        NSApp.activate(ignoringOtherApps: true)
+        let alert = NSAlert()
+        alert.messageText = "Snitt cannot save recordings to \(directory.path)."
+        alert.informativeText = "Choose a folder Snitt can write to."
         alert.addButton(withTitle: "OK")
         alert.runModal()
     }
@@ -172,7 +210,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                 onChange: (() -> Void)?,
                 eventLoggingToggle: @escaping (Bool, UserDefaults) -> Bool,
                 microphoneToggle: @escaping (Bool, UserDefaults) -> Bool,
-                hotkeyConflictAlert: @escaping @MainActor (HotkeyAction, HotkeyCombination) -> Void) {
+                hotkeyConflictAlert: @escaping @MainActor (HotkeyAction, HotkeyCombination) -> Void,
+                outputDirectoryUnwritableAlert: @escaping @MainActor (URL) -> Void) {
         self.updater = updater
         self.defaults = defaults
         self.hotkeyRegistrar = hotkeyRegistrar
@@ -180,6 +219,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         self.eventLoggingToggle = eventLoggingToggle
         self.microphoneToggle = microphoneToggle
         self.hotkeyConflictAlert = hotkeyConflictAlert
+        self.outputDirectoryUnwritableAlert = outputDirectoryUnwritableAlert
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 280),
                           styleMask: [.titled, .closable],
                           backing: .buffered,
@@ -238,6 +278,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
         stack.addArrangedSubview(hotkeyRecorderButton(for: .record))
         stack.addArrangedSubview(hotkeyRecorderButton(for: .marker))
+
+        stack.addArrangedSubview(outputDirectoryRow())
 
         return stack
     }
@@ -307,6 +349,87 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         hotkeyButtons[action]?.setDisplayedCombination(HotkeySettings.load(defaults)[action])
     }
 
+    /// Builds the "Save recordings to" row: a caption, the current path
+    /// (truncated in the middle, since a long path's END — the folder name
+    /// actually chosen — matters more than its middle), and a button that
+    /// opens `NSOpenPanel`.
+    private func outputDirectoryRow() -> NSView {
+        let container = NSStackView()
+        container.orientation = .vertical
+        container.alignment = .leading
+        container.spacing = 4
+
+        let caption = NSTextField(labelWithString: "\(Self.outputDirectoryCaption):")
+        container.addArrangedSubview(caption)
+
+        let row = NSStackView()
+        row.orientation = .horizontal
+        row.spacing = 8
+
+        let pathLabel = NSTextField(labelWithString:
+            OutputDirectorySettings.load(defaults).directory.path)
+        pathLabel.lineBreakMode = .byTruncatingMiddle
+        pathLabel.maximumNumberOfLines = 1
+        outputDirectoryLabel = pathLabel
+
+        let button = NSButton(title: Self.outputDirectoryButtonTitle,
+                              target: self, action: #selector(chooseOutputDirectory(_:)))
+        row.addArrangedSubview(pathLabel)
+        row.addArrangedSubview(button)
+        container.addArrangedSubview(row)
+        return container
+    }
+
+    /// Test-only: reads the currently displayed path, mirroring
+    /// `checkbox(titled:)`/`hotkeyButton(for:)` above.
+    func outputDirectoryPathText() -> String? {
+        outputDirectoryLabel?.stringValue
+    }
+
+    /// Opens the real, modal `NSOpenPanel` (D56/M5d's deferred item, per the
+    /// brief: directories only, no files). Not reachable from a test — see
+    /// `SettingsWindowController.show`'s `activate: false` doc comment for
+    /// the same class of AppKit-modal limitation `HotkeyRecorderButton`'s
+    /// `capture(_:)` test seam already works around; `applyOutputDirectory`
+    /// below is that seam for this control.
+    @objc private func chooseOutputDirectory(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = OutputDirectorySettings.load(defaults).directory
+        guard panel.runModal() == .OK, let url = panel.urls.first else { return }
+        applyOutputDirectory(url)
+    }
+
+    /// Test seam alongside `chooseOutputDirectory` above: production reaches
+    /// this only via a real, un-drivable `NSOpenPanel`; a test calls this
+    /// directly with a synthetic URL instead.
+    ///
+    /// Checked for writability HERE, before saving — not merely round-tripped
+    /// through `UserDefaults` — for the same reason
+    /// `RecordingCoordinator.prepareOutputDirectory` checks again
+    /// immediately before a recording starts: telling someone their chosen
+    /// folder will not work the moment they pick it is far more useful than
+    /// only discovering it the next time the record hotkey is pressed. A
+    /// rejected folder changes nothing — the previously stored value (or the
+    /// default) stays in effect, exactly like `applyHotkey`'s revert-on-
+    /// failure above.
+    func applyOutputDirectory(_ url: URL, fileManager: FileManager = .default) {
+        guard fileManager.isWritableFile(atPath: url.path) else {
+            outputDirectoryUnwritableAlert(url)
+            return
+        }
+        OutputDirectorySettings(directory: url).save(to: defaults)
+        refreshOutputDirectoryLabel()
+        onChange?()
+    }
+
+    private func refreshOutputDirectoryLabel() {
+        outputDirectoryLabel?.stringValue = OutputDirectorySettings.load(defaults).directory.path
+    }
+
     @objc private func toggleAgentRecording(_ sender: NSButton) {
         var settings = AgentSettings.load(defaults)
         settings.agentRecordingEnabled = (sender.state == .on)
@@ -351,8 +474,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         onChange?()
     }
 
-    /// Re-reads all five settings from the store into the checkboxes
-    /// (whole-branch review F7).
+    /// Re-reads all five checkbox settings, both hotkeys, and the output
+    /// directory from the store (whole-branch review F7).
     ///
     /// `refreshStatusItemFromSettings` syncs window → menu; there was no
     /// menu → window direction, and these handlers derive the new value from
@@ -378,6 +501,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // same reason the five checkboxes above do.
         refreshHotkeyButton(for: .record)
         refreshHotkeyButton(for: .marker)
+        // Same reasoning: the output-directory row has no status-item
+        // equivalent either, but nothing stops the value underneath from
+        // changing (a future second surface, or a test poking `defaults`
+        // directly) while this window is key.
+        refreshOutputDirectoryLabel()
     }
 
     /// The window coming forward is the moment a stale checkbox is about to

@@ -20,8 +20,10 @@ public enum AutomationProtocol {
     /// v2 was amended a third time to add `.trim`/`.trimmed` and
     /// `.export`/`.exported`, for the same reason: still no released v2
     /// client. Trim and export run in the app rather than the CLI, for the
-    /// same reason `.inspect` does — the client cannot read the bundle
-    /// (§4.9, TCC-gated by default under `~/Desktop`).
+    /// same reason `.inspect` does — the client cannot assume it can read
+    /// the bundle (§4.9): the output directory is user-configurable and,
+    /// even at its current default (`~/Documents/Snitt`), may still be
+    /// pointed at a TCC-gated location like `~/Desktop`.
     ///
     /// v2 was amended a fourth time to add `maxSizeBytes` to `.export`
     /// (M3d), for the same reason: still no released v2 client.

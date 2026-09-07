@@ -568,9 +568,11 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
 
     /// Reads the bundle IN THE APP, not the client.
     ///
-    /// The CLI cannot read `~/Desktop` — it is gated by the Files-and-Folders
-    /// TCC service, which is exactly how M3a's health block silently reported
-    /// nothing on every real machine. The app wrote the file and can read it.
+    /// The CLI cannot assume it can read the app's (user-configurable)
+    /// output directory — at the time this was found it defaulted to
+    /// `~/Desktop`, gated by the Files-and-Folders TCC service, which is
+    /// exactly how M3a's health block silently reported nothing on every
+    /// real machine. The app wrote the file and can always read it.
     ///
     /// Deliberately NOT gated by `ConsentPolicy`: reading a bundle the agent
     /// was handed the path to discloses nothing it did not already have, and

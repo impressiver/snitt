@@ -298,9 +298,10 @@ func agentStartAndStopDriveTheIndicator() async throws {
 @Test("Stop reports health from the coordinator, not from the filesystem")
 func stopReportsHealthFromCoordinator() async throws {
     // The discriminating check for the health-reporting regression found on a
-    // real machine: the CLI's default output directory (~/Desktop) is gated
-    // by the Files-and-Folders TCC service, so reading RecordingMetadata back
-    // off disk silently produced no health block at all — no test caught it
+    // real machine: the CLI's output directory is user-configurable and, at
+    // the time this was found, defaulted to `~/Desktop`, gated by the
+    // Files-and-Folders TCC service, so reading RecordingMetadata back off
+    // disk silently produced no health block at all — no test caught it
     // because every existing test writes bundles to a temp directory it CAN
     // read. Health must instead arrive through the coordinator's response;
     // this asserts the host forwards it rather than dropping it on the floor.

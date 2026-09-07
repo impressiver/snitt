@@ -52,14 +52,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.statusItem.automaticUpdateChecksEnabled = enabled
         }
 
-        let outputDirectory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Desktop")
-
+        // Where recordings are saved (D56/M5d's deferred output-location
+        // item, pulled forward for M5f). No value is captured here: the
+        // coordinator reads `OutputDirectorySettings.load()` itself, FRESH,
+        // on every recording — see that type's own doc comment for why the
+        // default is `~/Documents/Snitt`, not `~/Desktop`, and
+        // `RecordingCoordinator`'s `outputDirectorySettings` doc comment for
+        // why it is read at record time rather than cached here at launch.
         let coordinator = RecordingCoordinator(
             pickerResolver: PickerTargetResolver(),
             cachedResolverFactory: { CachedTargetResolver(reference: $0) },
-            store: TargetStore(fileURL: TargetStore.defaultURL()),
-            outputDirectory: outputDirectory
+            store: TargetStore(fileURL: TargetStore.defaultURL())
         )
         self.coordinator = coordinator
 

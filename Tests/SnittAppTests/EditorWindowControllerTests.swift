@@ -79,7 +79,7 @@ private func makeEditorTestCoordinator() -> RecordingCoordinator {
         pickerResolver: MarkerResolver(),
         cachedResolverFactory: { _ in MarkerResolver() },
         store: store,
-        outputDirectory: FileManager.default.temporaryDirectory,
+        outputDirectorySettings: { OutputDirectorySettings(directory: FileManager.default.temporaryDirectory) },
         ensureAccess: { true })
 }
 
