@@ -1,6 +1,5 @@
 import Testing
-@testable import SnittExport
-import SnittDocument
+@testable import SnittDocument
 
 @Test("No cuts keeps the whole recording")
 func noCutsKeepsEverything() {

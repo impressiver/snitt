@@ -1,5 +1,4 @@
 import Foundation
-import SnittDocument
 
 /// Turns an EDL's cuts into the ranges that survive into the export.
 ///
