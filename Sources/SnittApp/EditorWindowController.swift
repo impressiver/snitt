@@ -69,12 +69,28 @@ final class EditorTimelineState: ObservableObject {
         self.events = events
     }
 
-    /// Everything `TimelineView` needs to draw, expressed entirely on the
-    /// SOURCE clock — the timeline's own axis (M4b whole-branch review,
-    /// Critical finding #1). `edl.cuts` are already source-time ranges, so
-    /// they pass straight through unmapped; the player's playhead and this
-    /// controller's `jumpPoints` are in TRIMMED (output) time and need the
-    /// inverse mapping to land on the same axis.
+    /// Everything `TimelineView` needs. `duration`/`cuts` stay on the SOURCE
+    /// clock: `edl.cuts` are already source-time ranges, and the view's own
+    /// interaction (dragging out a new cut) must keep computing against the
+    /// recording's FULL, unchanging length regardless of what has already
+    /// been cut (M4b whole-branch review, Critical finding #1 — feeding the
+    /// view a duration that shrinks as cuts land makes a later drag's pixel
+    /// range mean a different span each time, walking straight back into
+    /// the region a prior cut already removed).
+    ///
+    /// `jumpPoints`/`playhead`, by contrast, are OUTPUT time, UNCONVERTED
+    /// (M5f Task 3): `TimelineGeometry` now draws on the export's own axis
+    /// (D56's first requirement — a cut shortens the timeline instead of
+    /// leaving a red patch in it), and `controller.player.currentTime()` /
+    /// `controller.jumpPoints` are ALREADY exactly that clock —
+    /// `CompositionBuilder` only ever builds kept ranges into the
+    /// composition. Converting them to source time here, as this method did
+    /// before Task 3, was correct while the view drew on the source axis and
+    /// is BACKWARDS now that it draws on the output axis: it would hand
+    /// `TimelineView` a source-time value for a mapping function that
+    /// expects output time, silently landing the playhead and every marker
+    /// on the wrong pixel the moment anything has been cut — precisely the
+    /// clock confusion this milestone exists to prevent.
     struct DisplayState {
         let duration: Double
         let cuts: [TimeRange]
@@ -83,18 +99,10 @@ final class EditorTimelineState: ObservableObject {
     }
 
     func displayState(playhead outputPlayhead: Double) -> DisplayState {
-        let keptRanges = controller.keptRanges
-        let sourcePlayhead = TimeRangeMapping.sourceTime(
-            ofTrimmedTime: outputPlayhead, keptRanges: keptRanges) ?? 0
-        let sourceJumpPoints: [JumpPoint] = controller.jumpPoints.compactMap { point in
-            guard let source = TimeRangeMapping.sourceTime(
-                ofTrimmedTime: point.timeSeconds, keptRanges: keptRanges) else { return nil }
-            return JumpPoint(timeSeconds: source, label: point.label)
-        }
-        return DisplayState(duration: controller.sourceDurationSeconds,
-                            cuts: edl.cuts.map(\.range),
-                            jumpPoints: sourceJumpPoints,
-                            playhead: sourcePlayhead)
+        DisplayState(duration: controller.sourceDurationSeconds,
+                    cuts: edl.cuts.map(\.range),
+                    jumpPoints: controller.jumpPoints,
+                    playhead: outputPlayhead)
     }
 
     /// `time` arrives in SOURCE time — the view's own axis — and must be

@@ -28,16 +28,19 @@ public class PreviewController {
     public private(set) var durationSeconds: Double
     /// The SOURCE recording's media duration (`BuiltComposition.sourceDuration`)
     /// — never `durationSeconds` above, which is the TRIMMED (output)
-    /// duration. The editor timeline draws on this clock (M4b whole-branch
-    /// review, Critical finding #1): `edl.cuts` are source-time ranges, and
-    /// only a source-time axis gives a cut a coherent position at all — by
-    /// definition a cut has no position in the output.
+    /// duration. The editor timeline's INTERACTION stays on this clock (M4b
+    /// whole-branch review, Critical finding #1): `edl.cuts` are source-time
+    /// ranges, and a drag must keep computing against the recording's full,
+    /// unchanging length regardless of what has already been cut, or a
+    /// second drag on the same view lands on a shifted scale. The timeline's
+    /// DRAWING, by contrast, is on the OUTPUT clock as of M5f Task 3 (D56) —
+    /// see `TimelineGeometry` and `EditorTimelineState.displayState`.
     public private(set) var sourceDurationSeconds: Double
     /// The kept ranges the CURRENT composition was built from — the same set
     /// `CompositionBuilder.build` inserted into it. Lets a caller (the
-    /// editor timeline) map the player's trimmed-time playhead, and this
-    /// controller's own `jumpPoints`, back onto the source clock via
-    /// `TimeRangeMapping.sourceTime(ofTrimmedTime:keptRanges:)`.
+    /// editor timeline's `onScrub`) map a SOURCE-time click into TRIMMED
+    /// (output) time for seeking, via
+    /// `TimeRangeMapping.nearestTrimmedTime(toSourceTime:keptRanges:)`.
     public private(set) var keptRanges: [TimeRange]
     private var item: AVPlayerItem
     public let player: AVPlayer

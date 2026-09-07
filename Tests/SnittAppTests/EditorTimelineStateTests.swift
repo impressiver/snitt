@@ -169,4 +169,58 @@ struct EditorTimelineStateTests {
         // at 0, which is what the un-snapped handler produced.
         #expect(abs(CMTimeGetSeconds(controller.player.currentTime()) - 2.0) < 0.3)
     }
+
+    /// M5f Task 3: `TimelineGeometry` now draws the playhead on the OUTPUT
+    /// axis (D56), and `controller.player.currentTime()` already reports
+    /// exactly that clock — `CompositionBuilder` only ever builds kept
+    /// ranges into the composition, so the player never sees a cut second at
+    /// all. `displayState` must therefore hand the incoming playhead through
+    /// UNCONVERTED. The prior version of this method (correct while the view
+    /// drew on the source axis) mapped it output-to-source instead — with a
+    /// [0,2) cut on an 8s recording, an output playhead of 3.0 would come
+    /// back as 5.0, landing the drawn playhead a full 2 seconds off the
+    /// instant the player is actually showing.
+    @Test("displayState reports the playhead as OUTPUT time, unconverted")
+    func displayStateReportsPlayheadUnconverted() async throws {
+        let sourceSeconds = 8.0
+        let bundle = try await makeTimelineStateTestBundle(seconds: sourceSeconds)
+        let built = try await CompositionBuilder.build(
+            bundle: bundle, edl: EditDecisionList(), scale: 1.0)
+        let controller = PreviewController(built: built, jumpPoints: [],
+                                           bundle: bundle, scale: 1.0)
+        let state = EditorTimelineState(controller: controller, edl: EditDecisionList(), events: [])
+
+        state.onTrim(TimeRange(start: 0, end: 2))
+        await waitForDuration(controller, toApproach: sourceSeconds - 2.0)
+
+        let display = state.displayState(playhead: 3.0)
+        #expect(display.playhead == 3.0)
+    }
+
+    /// The same clock question as `displayStateReportsPlayheadUnconverted`,
+    /// for `jumpPoints` instead of the playhead: `controller.jumpPoints` are
+    /// already OUTPUT time (`MarkerJumpPoints.compute` builds them straight
+    /// from `keptRanges`), so `displayState` must pass them through as-is
+    /// rather than mapping them a second time onto source time.
+    @Test("displayState reports jump points as OUTPUT time, unconverted")
+    func displayStateReportsJumpPointsUnconverted() async throws {
+        let sourceSeconds = 8.0
+        let bundle = try await makeTimelineStateTestBundle(seconds: sourceSeconds)
+        let built = try await CompositionBuilder.build(
+            bundle: bundle, edl: EditDecisionList(), scale: 1.0)
+        let marker = LoggedEvent(timeSeconds: 5.0, kind: .marker, label: "late")
+        let controller = PreviewController(built: built, jumpPoints: [],
+                                           bundle: bundle, scale: 1.0)
+        let state = EditorTimelineState(controller: controller, edl: EditDecisionList(), events: [marker])
+
+        // Cut source 0-2s: the marker at source 5.0 lands at OUTPUT 3.0.
+        state.onTrim(TimeRange(start: 0, end: 2))
+        await waitForDuration(controller, toApproach: sourceSeconds - 2.0)
+
+        let display = state.displayState(playhead: 0)
+        let jumpPoint = try #require(display.jumpPoints.first)
+        // The prior (source-converting) implementation would report 5.0
+        // here instead.
+        #expect(abs(jumpPoint.timeSeconds - 3.0) < 0.2)
+    }
 }

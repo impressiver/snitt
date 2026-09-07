@@ -110,15 +110,16 @@ struct TimelineViewTests {
     // MARK: - M4b whole-branch review, Important finding #2
     //
     // `TrimGestureTests.samePixelJitterYieldsNoCutRegardlessOfLength`
-    // recomputes `geometry.time(atX:3) - geometry.time(atX:0)` itself and
-    // hands the RESULT to `TrimGesture` directly — it pins the arithmetic,
-    // not the wiring. Every case above uses one geometry (800px/20s), where
-    // the reverted `minimumDragSeconds = 0.05` constant happens to agree
-    // with the pixel-derived threshold closely enough that nothing here
-    // discriminated it from the real, geometry-driven implementation. These
-    // four cases drive the real `TimelineView` — the actual call site the
-    // reviewer's fix landed in — at a duration where 0.05s stops agreeing
-    // with 3px, so a reversion to the literal fails them.
+    // recomputes `geometry.outputTime(atX:3) - geometry.outputTime(atX:0)`
+    // itself and hands the RESULT to `TrimGesture` directly — it pins the
+    // arithmetic, not the wiring. Every case above uses one geometry
+    // (800px/20s), where the reverted `minimumDragSeconds = 0.05` constant
+    // happens to agree with the pixel-derived threshold closely enough that
+    // nothing here discriminated it from the real, geometry-driven
+    // implementation. These four cases drive the real `TimelineView` — the
+    // actual call site the reviewer's fix landed in — at a duration where
+    // 0.05s stops agreeing with 3px, so a reversion to the literal fails
+    // them.
 
     @Test("On a long recording, a sub-pixel wobble does not trim")
     func longRecordingSubPixelWobbleDoesNotTrim() {

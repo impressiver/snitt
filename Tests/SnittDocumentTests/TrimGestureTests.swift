@@ -91,17 +91,24 @@ struct TrimGestureTests {
         let thresholdPixels = 3.0
         let wobblePixels = 2.0
 
-        let longGeometry = TimelineGeometry(width: width, duration: 600) // 10 minutes
-        let shortGeometry = TimelineGeometry(width: width, duration: 5)  // 5 seconds
+        // No cuts in either geometry — this test is about the pixel/seconds
+        // scale tracking a recording's length, not about `Timebase`'s
+        // source/output distinction, so `outputTime(atX:)` is the identity
+        // on source time here and stands in for the old `time(atX:)`.
+        let longGeometry = TimelineGeometry(
+            width: width, timebase: Timebase(sourceDuration: 600, edl: EditDecisionList())) // 10 minutes
+        let shortGeometry = TimelineGeometry(
+            width: width, timebase: Timebase(sourceDuration: 5, edl: EditDecisionList()))  // 5 seconds
 
         for geometry in [longGeometry, shortGeometry] {
-            let thresholdSeconds = geometry.time(atX: thresholdPixels) - geometry.time(atX: 0)
+            let thresholdSeconds = geometry.outputTime(atX: thresholdPixels).seconds
+                - geometry.outputTime(atX: 0).seconds
             let startX = 400.0
             let jitteredX = startX + wobblePixels
             var g = TrimGesture()
-            g.began(atTime: geometry.time(atX: startX))
-            g.moved(toTime: geometry.time(atX: jitteredX))
-            let range = g.ended(atTime: geometry.time(atX: jitteredX),
+            g.began(atTime: geometry.outputTime(atX: startX).seconds)
+            g.moved(toTime: geometry.outputTime(atX: jitteredX).seconds)
+            let range = g.ended(atTime: geometry.outputTime(atX: jitteredX).seconds,
                                 minimumSeconds: thresholdSeconds)
             #expect(range == nil)
         }
