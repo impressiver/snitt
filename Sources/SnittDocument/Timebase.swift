@@ -97,4 +97,31 @@ public struct Timebase: Sendable {
         }
         return SourceTime(source)
     }
+
+    /// The OUTPUT instant `cut`'s removed span collapses onto once folded —
+    /// the position `TimelineView` draws a fold's line at (M5f Task 5: "a cut
+    /// collapses to a red line with its two edges touching").
+    ///
+    /// Every source instant inside `cut` — including both of its own
+    /// endpoints — maps to this SAME output instant: `outputTime(forSource:)`
+    /// returns `nil` for all of them (a cut has no position of its own in the
+    /// output, which is exactly what makes it a cut), but the single point
+    /// immediately after everything kept before it and immediately before
+    /// everything kept after it is well-defined regardless. That point is
+    /// exactly what `TimeRangeMapping.nearestTrimmedTime` already computes
+    /// for any source instant that falls inside a gap between kept ranges —
+    /// this reuses it rather than re-deriving the same cumulative-kept-
+    /// duration walk a second time. `cut.range.start` always falls inside
+    /// such a gap by construction (a `Cut`'s own range IS a gap, or is
+    /// entirely contained within a larger one after merging with an
+    /// overlapping neighbour), so the only way `nearestTrimmedTime` returns
+    /// `nil` here is `keptRanges` itself being empty — everything cut,
+    /// nothing kept, nowhere on the (empty) output axis for anything to fold
+    /// onto — where 0 is as good an answer as any other, since there is no
+    /// timeline left to be wrong on.
+    public func foldPosition(for cut: Cut) -> OutputTime {
+        let trimmed = TimeRangeMapping.nearestTrimmedTime(
+            toSourceTime: cut.range.start, keptRanges: keptRanges) ?? 0
+        return OutputTime(trimmed)
+    }
 }

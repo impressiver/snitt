@@ -69,7 +69,7 @@ struct TimelineViewTests {
         // Views are laid out at zero width before their first real layout pass,
         // so this happens on every launch.
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 0, height: 40))
-        view.update(duration: 20, cuts: [TimeRange(start: 1, end: 2)],
+        view.update(duration: 20, cuts: [Cut(range: TimeRange(start: 1, end: 2))],
                     jumpPoints: [], playhead: 5)
         var scrubbed: Double?
         var selected: Selection?

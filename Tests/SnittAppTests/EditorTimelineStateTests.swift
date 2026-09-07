@@ -170,7 +170,7 @@ struct EditorTimelineStateTests {
         state.cutSelection()
         await waitForDuration(controller, toApproach: sourceSeconds - 2.0)
 
-        view.update(duration: sourceSeconds, cuts: state.edl.cuts.map(\.range), jumpPoints: [], playhead: 0)
+        view.update(duration: sourceSeconds, cuts: state.edl.cuts, jumpPoints: [], playhead: 0)
         await controller.seek(toSeconds: 0)
 
         // x300 is source 3.0s — squarely inside the removed 2-4s region.

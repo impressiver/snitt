@@ -334,6 +334,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editor.presentExportPanel()
     }
 
+    /// Edit ▸ Cut Selection (Delete/Backspace), Task 5 (D56). Same nil-target
+    /// resolution as `exportDocument` just above, for the same reason: this
+    /// menu item's target is `nil`, `EditorWindowController` is never in the
+    /// responder chain, and the KEY window picks which open editor a bare
+    /// keypress applies to.
+    ///
+    /// Silently does nothing with no editor key, same as `exportDocument` —
+    /// but UNLIKE that one, this action is also gated by
+    /// `validateMenuItem(_:)` below, so in practice the menu item (and the
+    /// bare delete key it's bound to) is disabled whenever this guard would
+    /// fail, rather than relying on a user never triggering a no-op.
+    @objc func cutTimelineSelection(_ sender: Any?) {
+        guard let editor = EditorWindowController.openEditors.first(where: {
+            $0.window == NSApp.keyWindow
+        }) else { return }
+        editor.cutTimelineSelection()
+    }
+
     /// Finder double-click, `open(1)`, and drag-onto-Dock all arrive here.
     /// Can arrive before OR after `applicationDidFinishLaunching` on a cold
     /// launch — this must not depend on anything that method sets up.
@@ -458,6 +476,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = error.localizedDescription
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+}
+
+/// Task 5 (D56): "a user with nothing selected must not be offered an
+/// action that does nothing." Every other menu item in `AppShell` stays
+/// live unconditionally (see `exportDocument`'s own doc comment on that
+/// convention) — this is the one deliberate exception, and it exists for a
+/// second reason beyond politeness: the Cut Selection item is bound to a
+/// BARE delete/backspace key (`AppShell.editMenuItem`), which AppKit's main
+/// menu intercepts before an ordinary text field ever sees the keystroke.
+/// Left permanently enabled, it would swallow every Backspace typed
+/// anywhere in the app — the Export panel's filename field included —
+/// whenever an editor window happened to be key. Disabling it whenever
+/// there is nothing for it to do is what lets that Backspace fall through
+/// to normal text editing instead.
+extension AppDelegate: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard menuItem.action == #selector(cutTimelineSelection(_:)) else { return true }
+        return EditorWindowController.openEditors.first(where: {
+            $0.window == NSApp.keyWindow
+        })?.hasTimelineSelection ?? false
     }
 }
 

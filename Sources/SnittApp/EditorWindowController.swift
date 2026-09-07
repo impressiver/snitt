@@ -34,6 +34,23 @@ final class EditorTimelineState: ObservableObject {
     /// view for drawing.
     @Published var selection: Selection?
 
+    /// Which folds are currently expanded, by `Cut.id` (D56, M5f Task 5).
+    ///
+    /// UI state ONLY, exactly like `selection` above: nothing here is ever
+    /// written into `edl`, never persisted, and `EditDecisionList`/`Cut`
+    /// have no field for it at all. That is the whole point — the dispatch's
+    /// first trap. Expanding a fold must not change `Timebase.outputDuration`
+    /// or where the playhead maps, and the only way to GUARANTEE that rather
+    /// than merely intend it is for the expansion set to live somewhere
+    /// `edl`-mutating code (`applyCut`, `restore`, `removeCut` below) never
+    /// touches — `toggleExpansion(of:)` is the one place this changes, and it
+    /// does not call `applyAndSave()`, so no compositor rebuild, no
+    /// `persist`, and no undo registration ever happens for it. Compare
+    /// `removeCut(id:)`, which DOES mutate `edl` and goes through exactly
+    /// that machinery, because removing a cut is a real edit and expanding
+    /// one is only ever a way of looking at it.
+    @Published var expandedCutIDs: Set<UUID> = []
+
     /// The window's `UndoManager` (Task 7), set once the window exists —
     /// this type is constructed before the `NSWindow` that owns it. Task
     /// 1's Edit menu already wires `undo:`/`redo:` to the responder chain;
@@ -101,18 +118,26 @@ final class EditorTimelineState: ObservableObject {
     /// clock confusion this milestone exists to prevent.
     struct DisplayState {
         let duration: Double
-        let cuts: [TimeRange]
+        /// WITH identity (M5f Task 5) — `edl.cuts` itself, not
+        /// `.map(\.range)`. `TimelineView.foldHit(atX:)` reports a click back
+        /// by `Cut.id` (to `onToggleExpansion`/`onRemoveCut`), so the id has
+        /// to survive the trip down to the view; a bare `TimeRange` here
+        /// would strip exactly the identity the fold UI needs.
+        let cuts: [Cut]
         let jumpPoints: [JumpPoint]
         let playhead: Double
         let selection: Selection?
+        /// See `expandedCutIDs`'s own doc comment.
+        let expandedCutIDs: Set<UUID>
     }
 
     func displayState(playhead outputPlayhead: Double) -> DisplayState {
         DisplayState(duration: controller.sourceDurationSeconds,
-                    cuts: edl.cuts.map(\.range),
+                    cuts: edl.cuts,
                     jumpPoints: controller.jumpPoints,
                     playhead: outputPlayhead,
-                    selection: selection)
+                    selection: selection,
+                    expandedCutIDs: expandedCutIDs)
     }
 
     /// `time` arrives in SOURCE time — the view's own axis — and must be
@@ -156,6 +181,52 @@ final class EditorTimelineState: ObservableObject {
         guard let selection else { return }
         applyCut(selection.range)
         self.selection = nil
+    }
+
+    /// A fold was clicked (`TimelineView.onToggleExpansion`, D56 M5f Task 5):
+    /// flips whether `id` is expanded. Deliberately the ONLY thing this
+    /// method does — no `applyCut`/`restore`-style undo registration, no
+    /// `applyAndSave()`. See `expandedCutIDs`'s doc comment for why that
+    /// absence is the whole guarantee: a "plausible wrong implementation"
+    /// the dispatch names is one that treats expanding as a temporary
+    /// un-cut (restoring the segment, rebuilding the composition, then
+    /// re-cutting it on collapse) — that WOULD change `outputDuration` and
+    /// briefly make playback stop skipping the span, exactly the leak Task
+    /// 5's first trap exists to catch.
+    func toggleExpansion(of id: UUID) {
+        if expandedCutIDs.contains(id) {
+            expandedCutIDs.remove(id)
+        } else {
+            expandedCutIDs.insert(id)
+        }
+    }
+
+    /// Right-click ▸ Remove Cut (D56, M5f Task 5): restores the segment by
+    /// deleting exactly the `Cut` named by `id` from `edl.cuts` — output
+    /// duration grows by that cut's own length, and nothing else in the EDL
+    /// changes. Mirrors `applyCut`'s undo/save shape exactly (a whole-EDL
+    /// snapshot registered before the mutation, then `applyAndSave()`),
+    /// because removal is a real edit with the same undo/persist
+    /// obligations as a cut — it is NOT the same operation as
+    /// `toggleExpansion(of:)` above just running backwards.
+    ///
+    /// A no-op if `id` doesn't name a current cut — a stale fold (already
+    /// removed by an earlier right-click, or by an undo that has since
+    /// dropped it) offering "Remove Cut" a second time is a plausible,
+    /// harmless double-click, not a programmer error, matching
+    /// `cutSelection()`'s own no-op-over-force-unwrap stance above.
+    func removeCut(id: UUID) {
+        guard edl.cuts.contains(where: { $0.id == id }) else { return }
+        var updated = edl
+        updated.cuts.removeAll { $0.id == id }
+        let previous = edl
+        undoManager?.registerUndo(withTarget: self) { target in
+            target.restore(previous)
+        }
+        edl = updated
+        // The removed cut can no longer be expanded — nothing left to fold.
+        expandedCutIDs.remove(id)
+        applyAndSave()
     }
 
     /// Appends `range` and registers its inverse as a whole-EDL snapshot,
@@ -260,6 +331,8 @@ private struct TimelineViewRepresentable: NSViewRepresentable {
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 480, height: 40))
         view.onScrub = { [weak state] in state?.onScrub($0) }
         view.onSelect = { [weak state] in state?.onSelect($0) }
+        view.onToggleExpansion = { [weak state] in state?.toggleExpansion(of: $0) }
+        view.onRemoveCut = { [weak state] in state?.removeCut(id: $0) }
         return view
     }
 
@@ -273,7 +346,8 @@ private struct TimelineViewRepresentable: NSViewRepresentable {
                      cuts: display.cuts,
                      jumpPoints: display.jumpPoints,
                      playhead: display.playhead,
-                     selection: display.selection)
+                     selection: display.selection,
+                     expandedCutIDs: display.expandedCutIDs)
     }
 }
 
@@ -526,6 +600,33 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         Self.open.removeAll { $0 === self }
     }
 
+    // MARK: - Edit menu: Cut Selection (Task 5)
+
+    /// Whether this editor's timeline currently has something selected —
+    /// the same condition that enables/disables `EditorContentView`'s Cut
+    /// button. Read by `AppDelegate`'s `NSMenuItemValidation` conformance so
+    /// the Edit ▸ Cut Selection menu item (Delete/Backspace, see
+    /// `AppShell.editMenuItem`) is disabled with nothing selected — Task 5's
+    /// own constraint: "a user with nothing selected must not be offered an
+    /// action that does nothing". It is also what keeps the Delete key from
+    /// swallowing an ordinary Backspace anywhere else in the app: the item
+    /// is enabled only while THIS is true for the key window's editor, so a
+    /// Backspace typed into, say, the export panel's filename field — a
+    /// different window, or this editor's own window with nothing
+    /// selected — falls through to normal text editing instead.
+    var hasTimelineSelection: Bool { state.selection != nil }
+
+    /// Edit ▸ Cut Selection (Delete/Backspace), Task 5's second requirement:
+    /// "Task 4 added a Cut button but no keyboard path." `EditorWindowController`
+    /// is not in the responder chain (see `AppDelegate.exportDocument`'s doc
+    /// comment for why), so the menu item's nil target resolves to
+    /// `AppDelegate`, which picks the key window's editor and calls this —
+    /// the exact same decision `EditorContentView`'s Cut button already
+    /// makes, just reachable without a mouse.
+    func cutTimelineSelection() {
+        state.cutSelection()
+    }
+
     // MARK: - Export (Task 8)
 
     /// File ▸ Export…, wired via `AppDelegate.exportDocument(_:)`.
@@ -657,6 +758,23 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     func applyTrimForTesting(_ range: TimeRange) {
         state.onSelect(Selection(range: range))
         state.cutSelection()
+    }
+
+    /// Drives a real right-click ▸ Remove Cut (D56, M5f Task 5) exactly as
+    /// `TimelineView.handleRemoveCutMenuItem` would, without a live
+    /// `NSView`/`NSMenu`.
+    func removeCutForTesting(id: UUID) {
+        state.removeCut(id: id)
+    }
+
+    /// Drives a completed drag that only SELECTS — no Cut decision — exactly
+    /// as `TimelineView.mouseUp` reporting a resolved drag would. Distinct
+    /// from `applyTrimForTesting`, which selects AND immediately cuts: this
+    /// exists for tests (`AppShellTests`'s Cut Selection menu validation)
+    /// that need to observe `hasTimelineSelection` while something is
+    /// selected but not yet turned into a `Cut`.
+    func selectForTesting(_ range: TimeRange) {
+        state.onSelect(Selection(range: range))
     }
 
     /// The in-memory EDL. Deliberately the ADJACENT property to the one

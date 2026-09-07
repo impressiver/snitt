@@ -83,4 +83,16 @@ public struct TimelineGeometry: Equatable, Sendable {
         guard !isDegenerate else { return OutputTime(0) }
         return OutputTime(min(max(x / width * duration, 0), duration))
     }
+
+    /// The pixel position where `cut`'s own two edges meet once folded —
+    /// wraps `Timebase.foldPosition(for:)` exactly as `x(atSource:)` wraps
+    /// `outputTime(forSource:)` (M5f Task 5). Unlike `x(atSource:)`, this
+    /// never has a `nil` case: neither of a cut's own edges has an output
+    /// position by itself (that absence is what makes it a cut), but the
+    /// SINGLE point they collapse onto together always does, as long as
+    /// there is an output timeline at all to place it on.
+    public func x(atFold cut: Cut) -> Double {
+        guard !isDegenerate else { return 0 }
+        return x(atOutput: timebase.foldPosition(for: cut))
+    }
 }

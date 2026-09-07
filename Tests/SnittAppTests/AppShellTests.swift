@@ -119,6 +119,89 @@ struct AppShellTests {
         }
     }
 
+    // MARK: - Edit menu (Task 5, D56): ⌘X stays text Cut; a real keyboard
+    // path exists for the timeline's Cut instead of nothing.
+
+    @Test("Edit's Cut is still text cut: Command-X, still NSText.cut")
+    func textCutRemainsUnchanged() async throws {
+        try await EditorWindowTestGate.run {
+            let menu = AppShell.buildMainMenu()
+            let edit = try #require(menu.items.first { $0.title == "Edit" }?.submenu)
+            let cut = try #require(edit.items.first { $0.title == "Cut" },
+                                   "the original text Cut item must still exist")
+            // A mutant that repoints this item at the timeline (reusing ⌘X
+            // rather than adding a separate shortcut) would still pass a
+            // title-only check; the action and key together are what
+            // distinguish "still text cut" from "now does something else".
+            #expect(cut.keyEquivalent == "x")
+            #expect(cut.action == #selector(NSText.cut(_:)))
+        }
+    }
+
+    @Test("Edit menu adds a Cut Selection item, bound to the bare delete key")
+    func cutSelectionMenuItemShape() async throws {
+        try await EditorWindowTestGate.run {
+            let menu = AppShell.buildMainMenu()
+            let edit = try #require(menu.items.first { $0.title == "Edit" }?.submenu)
+            let cutSelection = try #require(edit.items.first { $0.title == "Cut Selection" },
+                                            "no keyboard path for the timeline's Cut button")
+            #expect(cutSelection.keyEquivalent == "\u{8}")
+            // Without this, AppKit's default (.command) mask would require
+            // ⌘-delete rather than a bare delete press — the one that
+            // actually removes a selected range in every NLE this mirrors.
+            #expect(cutSelection.keyEquivalentModifierMask == [])
+            #expect(cutSelection.action == #selector(AppDelegate.cutTimelineSelection(_:)))
+        }
+    }
+
+    @Test("validateMenuItem stays pass-through (true) for every action except Cut Selection")
+    func validateMenuItemIsPassThroughForOtherActions() async {
+        await EditorWindowTestGate.run {
+            let delegate = AppDelegate()
+            // Any other wired action — `exportDocument` here, but the point
+            // is that this is NOT `cutTimelineSelection` — must stay live
+            // unconditionally, matching every other item in this menu (see
+            // `exportDocument`'s own doc comment on that convention). A
+            // mutant that defaulted the guard to `false` instead of `true`
+            // would disable the ENTIRE menu, not just Cut Selection.
+            let other = NSMenuItem(title: "Export…", action: #selector(AppDelegate.exportDocument(_:)), keyEquivalent: "")
+            #expect(delegate.validateMenuItem(other) == true)
+        }
+    }
+
+    /// `validateMenuItem`'s guard reads `NSApp.keyWindow` — the SAME
+    /// nil-target-resolution pattern `exportDocument` already uses, and
+    /// like `exportDocument`, the "a real window actually becomes key"
+    /// half of that is not exercised end-to-end by this suite: probed
+    /// directly, `makeKeyAndOrderFront` + `NSApp.activate` does not make a
+    /// window key in this headless test host (confirmed empirically —
+    /// `NSApp.keyWindow` stays `nil` and `NSApp.isActive` stays `false`
+    /// even after spinning the run loop), so no test in this file or
+    /// `EditorWindowControllerTests` asserts real key-window status.
+    /// What IS genuinely testable, and load-bearing on its own — the
+    /// property that matters for "must not swallow an ordinary Backspace
+    /// elsewhere" — is that with no matching key editor at all (the actual,
+    /// unavoidable state in this test host), the item is disabled. The
+    /// complementary "becomes enabled once selected" half is covered
+    /// directly at `EditorWindowController.hasTimelineSelection` in
+    /// `CutFoldTests.swift`, which needs no window to be key at all.
+    @Test("Cut Selection is disabled when there is no key editor to apply it to")
+    func cutSelectionDisabledWithNoKeyEditor() async throws {
+        try await EditorWindowTestGate.run {
+            let delegate = AppDelegate()
+            let menu = AppShell.buildMainMenu()
+            let edit = try #require(menu.items.first { $0.title == "Edit" }?.submenu)
+            let cutSelection = try #require(edit.items.first { $0.title == "Cut Selection" })
+
+            // No editor open at all: a bare delete keystroke elsewhere in
+            // the app (e.g. a text field) must not be swallowed. A mutant
+            // that defaulted this guard to `true` (matching every other
+            // item's "stay live" convention) would offer an action with
+            // nothing to act on — exactly what Task 5's dispatch forbids.
+            #expect(delegate.validateMenuItem(cutSelection) == false)
+        }
+    }
+
     @Test("File menu has an Open Recent submenu")
     func fileMenuHasOpenRecent() async throws {
         try await EditorWindowTestGate.run {

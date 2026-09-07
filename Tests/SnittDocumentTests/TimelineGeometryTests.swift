@@ -89,4 +89,35 @@ struct TimelineGeometryTests {
         #expect(zeroWidth.outputTime(atX: 0).seconds.isFinite)
         #expect(zeroDuration.x(atOutput: OutputTime(0)).isFinite)
     }
+
+    // MARK: - x(atFold:) (M5f Task 5: a cut draws as a fold, not a gap)
+
+    @Test("A fold draws at the pixel where the cut's two edges meet, not at x(atSource:)'s nil")
+    func foldDrawsAtTheMeetingPoint() {
+        // 10s source, cut [3,5): 8s of output, cut folds to output 3 (see
+        // `TimebaseTests.interiorCutFoldsWhereKeptContentBeforeItEnds`).
+        // Output 3 of 8 total, across 800px: 300.
+        let cut = Cut(range: TimeRange(start: 3, end: 5))
+        let geometry = TimelineGeometry(width: 800, timebase: Timebase(sourceDuration: 10, edl: EditDecisionList(cuts: [cut])))
+        // `x(atSource:)` on the cut's OWN start (3, the end of the kept
+        // range before it) is `nil` — that instant has no output position —
+        // which is exactly why a fold needs its own dedicated mapping
+        // rather than reusing that one. (The cut's END edge, 5, is a
+        // different case: per `TimeRangeMapping`'s boundary rule it's
+        // exactly the START of the NEXT kept range, so `x(atSource:)` DOES
+        // answer there — it maps to this same output instant, 3, since
+        // that's where the resumed kept content begins. Only the cut's
+        // start is genuinely unanswerable by `x(atSource:)`.)
+        #expect(geometry.x(atSource: SourceTime(3)) == nil)
+        #expect(abs(geometry.x(atFold: cut) - 300) < 0.001)
+    }
+
+    @Test("A fold's x is finite even when everything is cut")
+    func foldXIsFiniteWhenDegenerate() {
+        let cut = Cut(range: TimeRange(start: 0, end: 10))
+        let geometry = TimelineGeometry(
+            width: 800, timebase: Timebase(sourceDuration: 10, edl: EditDecisionList(cuts: [cut])))
+        #expect(geometry.duration == 0)
+        #expect(geometry.x(atFold: cut).isFinite)
+    }
 }

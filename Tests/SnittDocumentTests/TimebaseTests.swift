@@ -135,4 +135,61 @@ struct TimebaseTests {
         let base = Timebase(sourceDuration: 10, edl: edl)
         #expect(base.outputDuration == 3)
     }
+
+    // MARK: - foldPosition(for:) (M5f Task 5: a cut collapses to a fold)
+
+    @Test("An interior cut's fold sits exactly where the kept content before it ends")
+    func interiorCutFoldsWhereKeptContentBeforeItEnds() {
+        // 10s source, cut [3,5): kept is [0,3] then [5,10]. A wrong
+        // implementation might answer the cut's OWN start (3, coincidentally
+        // right here) regardless of what precedes it, which the two cases
+        // below discriminate from the real "cumulative kept duration"
+        // answer.
+        let cut = Cut(range: TimeRange(start: 3, end: 5))
+        let base = Timebase(sourceDuration: 10, edl: EditDecisionList(cuts: [cut]))
+        #expect(base.foldPosition(for: cut) == OutputTime(3))
+    }
+
+    @Test("A cut at the very start folds to output 0")
+    func headCutFoldsToZero() {
+        let cut = Cut(range: TimeRange(start: 0, end: 3))
+        let base = Timebase(sourceDuration: 10, edl: EditDecisionList(cuts: [cut]))
+        // Nothing is kept before a head cut, so there is nothing to
+        // accumulate — the fold sits at the very start of the output, not
+        // at the cut's own end (3), which a mutant that returned
+        // `cut.range.end` instead of "kept time before it" would produce.
+        #expect(base.foldPosition(for: cut) == OutputTime(0))
+    }
+
+    @Test("A cut at the very end folds to the full output duration")
+    func tailCutFoldsToOutputDuration() {
+        let cut = Cut(range: TimeRange(start: 7, end: 10))
+        let base = Timebase(sourceDuration: 10, edl: EditDecisionList(cuts: [cut]))
+        #expect(base.outputDuration == 7)
+        #expect(base.foldPosition(for: cut) == OutputTime(7))
+    }
+
+    @Test("Overlapping cuts that merge into one gap fold to the same output instant")
+    func overlappingCutsShareAFoldPosition() {
+        // [2,5) and [4,7) overlap and merge into one gap [2,7); kept is
+        // [0,2] then [7,10]. Both cuts describe the SAME removed span once
+        // merged, so both must report the SAME meeting point (2) — a
+        // mutant that used each cut's own, un-merged `range.start` naively
+        // would still get this right by coincidence for the first cut, but
+        // the second cut's own start (4) is a different, wrong answer this
+        // discriminates.
+        let cutA = Cut(range: TimeRange(start: 2, end: 5))
+        let cutB = Cut(range: TimeRange(start: 4, end: 7))
+        let base = Timebase(sourceDuration: 10, edl: EditDecisionList(cuts: [cutA, cutB]))
+        #expect(base.foldPosition(for: cutA) == OutputTime(2))
+        #expect(base.foldPosition(for: cutB) == OutputTime(2))
+    }
+
+    @Test("Cutting everything still gives a finite fold position, not a crash")
+    func foldPositionWhenEverythingIsCut() {
+        let cut = Cut(range: TimeRange(start: 0, end: 10))
+        let base = Timebase(sourceDuration: 10, edl: EditDecisionList(cuts: [cut]))
+        #expect(base.outputDuration == 0)
+        #expect(base.foldPosition(for: cut) == OutputTime(0))
+    }
 }

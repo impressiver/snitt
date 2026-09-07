@@ -115,10 +115,34 @@ enum AppShell {
         menu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
         menu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
         menu.addItem(.separator())
+        // This "Cut" is TEXT cut (⌘X, `NSText.cut(_:)`) — left exactly as it
+        // was. Task 5 (D56) deliberately does NOT repoint it at the timeline:
+        // Snitt has no clipboard model for a removed time RANGE, so binding
+        // ⌘X to it would promise a paste that does not exist, and this item
+        // is the one real text-field cut still in use elsewhere in the app
+        // (Settings, the Export panel's filename field).
         menu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         menu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         menu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         menu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        menu.addItem(.separator())
+        // The keyboard path Task 4's Cut button was missing (Task 5's
+        // second fix). Bound to the delete/backspace key — the "remove the
+        // selected range" convention NLEs use — rather than reusing ⌘X,
+        // for the reason above. Nil target: `EditorWindowController` is not
+        // in the responder chain (see `AppDelegate.exportDocument`'s doc
+        // comment), so this resolves to `AppDelegate.cutTimelineSelection(_:)`
+        // the same way `Export…` resolves to `exportDocument(_:)`.
+        // `keyEquivalentModifierMask = []` is what makes a BARE delete
+        // press (no ⌘) match; `AppDelegate`'s `NSMenuItemValidation`
+        // conformance is what keeps that bare key from swallowing an
+        // ordinary Backspace everywhere else in the app — see
+        // `EditorWindowController.hasTimelineSelection`'s doc comment.
+        let cutSelection = NSMenuItem(title: "Cut Selection",
+                                      action: #selector(AppDelegate.cutTimelineSelection(_:)),
+                                      keyEquivalent: "\u{8}")
+        cutSelection.keyEquivalentModifierMask = []
+        menu.addItem(cutSelection)
         item.submenu = menu
         return item
     }
