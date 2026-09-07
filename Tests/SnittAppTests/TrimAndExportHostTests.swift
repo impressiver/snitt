@@ -59,6 +59,42 @@ func autoTrimRefusesWithoutInput() async throws {
     #expect(untouched.cuts.isEmpty, "a refused trim must not have written anything")
 }
 
+@Test("Auto-trim preserves a manually made interior cut instead of replacing the whole cuts array")
+func autoTrimPreservesManualInteriorCuts() async throws {
+    // Decision (D60, auto-trim half): `--auto-trim` is NOT a wholesale
+    // "replace all cuts" operation. `EditDecisionList.autoTrimRange` only
+    // ever computes new head/tail bookends from event timestamps — exactly
+    // what a manual `--start`/`--end` trim computes from typed numbers — so
+    // `AutomationHost.trim` routes BOTH branches through the same
+    // `existing.trimmed(keeping:duration:)` merge. Before this fix, the
+    // auto branch wrote `EditDecisionList.autoTrimCuts(...)`'s result
+    // straight over `updated.cuts`, discarding whatever interior cuts the
+    // GUI (or an earlier manual trim) had already made — the identical
+    // D60 bug, on the `auto` branch of the same `if` in
+    // `AutomationHost.trim` that the manual branch had.
+    let events = [
+        LoggedEvent(timeSeconds: 5, kind: .keystroke, label: nil),
+        LoggedEvent(timeSeconds: 20, kind: .keystroke, label: nil),
+    ]
+    let bundle = try await bundleWithMetadata(duration: 30, events: events)
+    // Overwrite the fresh full-range EDL `bundleWithMetadata` wrote with one
+    // that already carries a manual interior cut, as if made in the GUI.
+    try EditDecisionList(cuts: [TimeRange(start: 10, end: 12)]).write(to: bundle)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+    let host = AutomationHost.forTesting()
+    let response = await host.handle(
+        .trim(bundlePath: bundle.url.path, start: nil, end: nil, auto: true))
+
+    guard case .trimmed(let summary) = response else {
+        Issue.record("expected trimmed, got \(response)"); return
+    }
+    #expect(summary.cuts.contains(TimeRange(start: 10, end: 12)),
+            "the manual interior cut must survive an auto-trim, got \(summary.cuts)")
+    let written = try EditDecisionList.read(from: bundle)
+    #expect(written.cuts == summary.cuts, "the written edit.json must match what was reported")
+}
+
 @Test("A bad bundle path fails with an actionable error rather than crashing")
 func trimOnMissingBundleFails() async {
     let host = AutomationHost.forTesting()
