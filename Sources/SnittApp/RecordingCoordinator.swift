@@ -280,19 +280,42 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         defer { isTransitioning = false }
 
         if active != nil { return await stopRecording() }
-        // The hotkey keeps today's capture defaults: system audio on,
-        // microphone OFF. §4.10 rung 2 — the microphone prompt is paid only
-        // when someone deliberately turns it on. Git context is nil because
-        // Snitt.app's own working directory is "/"; only a client knows which
-        // repository a recording is about (§7).
-        var options = CaptureOptions()
-        // Read at record time rather than cached at launch, so toggling the
-        // menu item takes effect on the next recording without a relaunch.
-        options.logInputEvents = EventLoggingSettings.load().enabled
+        // The hotkey keeps system audio on unconditionally; input-event
+        // logging and microphone capture are read fresh from their own
+        // settings at record time (see `humanCaptureOptions`'s doc comment).
+        // Git context is nil because Snitt.app's own working directory is
+        // "/"; only a client knows which repository a recording is about
+        // (§7).
         return await startRecording(forcedResolver: nil,
                                     suppressFocus: suppressFocus,
                                     git: nil,
-                                    options: options)
+                                    options: Self.humanCaptureOptions())
+    }
+
+    /// Builds the human/hotkey path's `CaptureOptions` from settings read AT
+    /// RECORD TIME, not cached at launch — matching `logInputEvents`'s
+    /// original precedent (see `toggle()`'s own comment history): toggling
+    /// either setting from the menu bar or the Settings window must take
+    /// effect on the very next recording without a relaunch. System audio
+    /// stays the hotkey's fixed default; only the two settings a person can
+    /// actually flip from the UI are threaded through here.
+    ///
+    /// Extracted, like `initiator(isAgent:)` and `usedCache(choice:)` above,
+    /// so the mapping itself is testable: `toggle()`'s own call into
+    /// `startRecording` needs a real `SCContentFilter` to ever reach
+    /// `Recorder.init`, which no test can construct. Leaving
+    /// `options.captureMicrophone` unset here — the exact bug this fixes,
+    /// where the human path never read `MicrophoneSettings` at all — is what
+    /// a test against this function catches directly; a test that only
+    /// round-trips `MicrophoneSettings` through `UserDefaults` would pass
+    /// against that same bug.
+    static func humanCaptureOptions(eventLogging: EventLoggingSettings = EventLoggingSettings.load(),
+                                    microphone: MicrophoneSettings = MicrophoneSettings.load())
+        -> CaptureOptions {
+        var options = CaptureOptions()
+        options.logInputEvents = eventLogging.enabled
+        options.captureMicrophone = microphone.enabled
+        return options
     }
 
     /// No parameter has a default, deliberately, and for the reason

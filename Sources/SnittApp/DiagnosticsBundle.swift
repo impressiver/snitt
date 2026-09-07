@@ -45,11 +45,11 @@ public enum DiagnosticsBundle {
     /// `url`, returning the same report that was written.
     ///
     /// Permission states come from the existing preflight readers
-    /// (`ScreenRecordingAccess.isGranted()`, `InputMonitoringAccess.isGranted()`)
-    /// and only those — never `ensureGranted()`. A support export runs
-    /// unattended or semi-attended and must never raise a system permission
-    /// dialog; that would be the worst version of the preflight/request
-    /// confusion this project has already hit three times.
+    /// (`ScreenRecordingAccess.isGranted()`, `InputMonitoringAccess.isGranted()`,
+    /// `MicrophoneAccess.isGranted()`) and only those — never `ensureGranted()`.
+    /// A support export runs unattended or semi-attended and must never raise
+    /// a system permission dialog; that would be the worst version of the
+    /// preflight/request confusion this project has already hit three times.
     ///
     /// A missing audit log is not a fault: `AuditLog.read` (via
     /// `AuditLog.recent`) returns `[]` for a machine that has never run an
@@ -81,6 +81,7 @@ public enum DiagnosticsBundle {
         let permissions: [String: String] = [
             "screenRecording": ScreenRecordingAccess.isGranted() ? "granted" : "not granted",
             "inputMonitoring": InputMonitoringAccess.isGranted() ? "granted" : "not granted",
+            "microphone": MicrophoneAccess.isGranted() ? "granted" : "not granted",
         ]
 
         // §12's opt-in: crash reports are collected only when the setting is

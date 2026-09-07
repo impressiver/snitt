@@ -313,6 +313,60 @@ func humanFailureClearsTheStore() async throws {
             "a stale cache must be cleared so the next press offers the picker")
 }
 
+// MARK: - The human/hotkey path's microphone wiring
+
+/// The gap this fixes: the human hotkey path built `CaptureOptions()` and
+/// set only `logInputEvents`, so `captureMicrophone` stayed at
+/// `CaptureOptions`'s own `false` default no matter what
+/// `MicrophoneSettings` held — a ticked "Record voiceover" box that could
+/// never actually reach a recording. Only `startForAgent` (fed by the CLI's
+/// `--mic`) ever threaded a caller-supplied `captureMicrophone` through.
+///
+/// Reaching `toggle()`'s own call into `startRecording` needs a real
+/// `SCContentFilter`, which no test can construct (see the other tests in
+/// this file making the same point) — so this exercises `humanCaptureOptions`
+/// directly, the exact function `toggle()` calls to build its options.
+///
+/// Verified to fail against the bug: deleting
+/// `options.captureMicrophone = microphone.enabled` from
+/// `humanCaptureOptions` leaves `options.captureMicrophone` at `false`
+/// regardless of the `microphone` argument, and the first `#expect` below
+/// fails. A test that only round-trips `MicrophoneSettings` through
+/// `UserDefaults` would pass against that exact same bug — this one does
+/// not, because it exercises the code path that actually builds
+/// `CaptureOptions`.
+@Test("The hotkey path threads captureMicrophone from MicrophoneSettings")
+func humanPathThreadsMicrophoneSetting() {
+    let options = RecordingCoordinator.humanCaptureOptions(
+        eventLogging: EventLoggingSettings(enabled: false),
+        microphone: MicrophoneSettings(enabled: true))
+    #expect(options.captureMicrophone == true,
+            "a ticked microphone setting must reach CaptureOptions, not stop at UserDefaults")
+}
+
+@Test("The hotkey path leaves the microphone off unless the setting says otherwise")
+func humanPathMicrophoneOffByDefault() {
+    // §4.10 rung 2: the microphone prompt is paid only when someone
+    // deliberately enables it — mirrors AutomationHostTests's
+    // "microphoneIsOffByDefault" for the agent path.
+    let options = RecordingCoordinator.humanCaptureOptions(
+        eventLogging: EventLoggingSettings(enabled: false),
+        microphone: MicrophoneSettings(enabled: false))
+    #expect(options.captureMicrophone == false)
+}
+
+@Test("logInputEvents keeps threading through alongside the microphone setting")
+func humanPathStillThreadsEventLogging() {
+    // The precedent this function generalizes: `logInputEvents` must keep
+    // working exactly as it did before this fix, not be crowded out by the
+    // new setting.
+    let options = RecordingCoordinator.humanCaptureOptions(
+        eventLogging: EventLoggingSettings(enabled: true),
+        microphone: MicrophoneSettings(enabled: false))
+    #expect(options.logInputEvents == true)
+    #expect(options.captureSystemAudio == true, "system audio stays the hotkey's fixed default")
+}
+
 // Task 5's editor-on-stop tests live in `EditorWindowControllerTests.swift`,
 // as an extension of that file's `@Suite(.serialized)` struct, not here.
 // They construct real editor windows and read `EditorWindowController`'s

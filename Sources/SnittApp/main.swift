@@ -85,6 +85,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.statusItem.eventLoggingEnabled = EventLoggingToggle.apply(enabled)
         }
 
+        statusItem.microphoneEnabled = MicrophoneSettings.load().enabled
+        statusItem.onToggleMicrophone = { [weak self] enabled in
+            guard let self else { return }
+            // Same §4.10 ladder, same reasoning as `onToggleEventLogging`
+            // just above — see `MicrophoneToggle`'s doc comment.
+            self.statusItem.microphoneEnabled = MicrophoneToggle.apply(enabled)
+        }
+
         // §12's opt-in crash reporting: no handler, no network — purely
         // whether `snitt diagnostics export` reads Snitt's own `.ips` files
         // and folds redacted summaries into the bundle it already writes.
@@ -278,7 +286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showSettings(_ sender: Any?) {
         // Routes the update toggle through `updaterController` rather than
         // writing UserDefaults directly — see SettingsWindowController's
-        // doc comment. `onChange` re-reads all four checkbox settings back
+        // doc comment. `onChange` re-reads all five checkbox settings back
         // into the status item's own cached properties, so a change made in
         // the window shows up as the correct checkmark the next time the
         // status menu is opened, rather than only after the next launch.
@@ -308,6 +316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refreshStatusItemFromSettings() {
         statusItem.agentRecordingEnabled = AgentSettings.load().agentRecordingEnabled
         statusItem.eventLoggingEnabled = EventLoggingSettings.load().enabled
+        statusItem.microphoneEnabled = MicrophoneSettings.load().enabled
         statusItem.automaticUpdateChecksEnabled = UpdateSettings.load().automaticChecksEnabled
         statusItem.crashReportingEnabled = CrashReportSettings.load().enabled
     }

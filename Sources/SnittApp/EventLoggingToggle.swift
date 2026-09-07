@@ -14,6 +14,12 @@ import SnittCapture
 /// `true` there left a checkmark on a feature that can never produce an
 /// event). This type is the fix: both surfaces call `apply`, so there is
 /// one ladder, not two that can drift apart.
+///
+/// The ladder's actual mechanics now live in `PermissionLadder`, extracted
+/// when the microphone toggle needed the exact same rule — see that type's
+/// doc comment. This type supplies only what differs: which
+/// `PermissionOnboarding.Service` and `InputMonitoringAccess`, and where the
+/// result persists (`EventLoggingSettings`).
 @MainActor
 enum EventLoggingToggle {
     /// Attempts to apply `enabled`. Turning OFF always succeeds and
@@ -59,29 +65,16 @@ enum EventLoggingToggle {
                        showAlreadyDenied: () -> Void = {
                            PermissionOnboarding.showAlreadyDenied(.inputMonitoring)
                        }) -> Bool {
-        if enabled {
-            // First use of the feature that needs it — never at launch.
-            guard preExplain(defaults) else { return false }
-
-            let askedBefore = hasRequested()
-            markRequested()
-            if !ensureGranted() {
-                switch PermissionOnboarding.followUp(deniedHavingAskedBefore: askedBefore) {
-                case .awaitingRelaunch:
-                    // Deliberately silent — see `ensureScreenRecordingGrant`.
-                    // macOS's own System Settings dialog is on screen and is
-                    // the only thing the user should be reading right now;
-                    // the grant takes effect on the next launch.
-                    break
-                case .alreadyDenied:
-                    showAlreadyDenied()
-                }
-                return false
-            }
-        }
-        var settings = EventLoggingSettings.load(defaults)
-        settings.enabled = enabled
-        settings.save(to: defaults)
-        return enabled
+        PermissionLadder.apply(enabled, defaults: defaults,
+                               preExplain: preExplain,
+                               hasRequested: hasRequested,
+                               markRequested: markRequested,
+                               ensureGranted: ensureGranted,
+                               showAlreadyDenied: showAlreadyDenied,
+                               persist: { newValue in
+                                   var settings = EventLoggingSettings.load(defaults)
+                                   settings.enabled = newValue
+                                   settings.save(to: defaults)
+                               })
     }
 }

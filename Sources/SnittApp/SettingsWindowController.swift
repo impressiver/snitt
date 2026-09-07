@@ -4,18 +4,18 @@ import Carbon.HIToolbox
 
 /// The Settings window (§4.14, Command-comma).
 ///
-/// Consolidates four settings that accumulated as status-item toggles across
+/// Consolidates five settings that accumulated as status-item toggles across
 /// M2b–M5b. The status-item toggles STAY — they are the fast path — so both
 /// surfaces read and write the same `UserDefaults` keys through the same
-/// settings types (`AgentSettings`, `EventLoggingSettings`, `UpdateSettings`,
-/// `CrashReportSettings`). A settings window with its own storage would be
-/// two settings wearing one name: the menu says off, the window says on, and
-/// the user cannot tell which one the app obeys.
+/// settings types (`AgentSettings`, `EventLoggingSettings`, `MicrophoneSettings`,
+/// `UpdateSettings`, `CrashReportSettings`). A settings window with its own
+/// storage would be two settings wearing one name: the menu says off, the
+/// window says on, and the user cannot tell which one the app obeys.
 ///
-/// D55 (M5f Task 7) adds two `HotkeyRecorderButton`s alongside those four
+/// D55 (M5f Task 7) adds two `HotkeyRecorderButton`s alongside those five
 /// checkboxes, for the record and marker hotkeys. They read/write
 /// `HotkeySettings` against the SAME `defaults` — no status-item equivalent
-/// exists for a hotkey the way one does for the four checkboxes, but the
+/// exists for a hotkey the way one does for the five checkboxes, but the
 /// single-store discipline still applies — and, unlike a checkbox, changing
 /// one must also re-register the REAL `HotkeyMonitor` `hotkeyRegistrar`
 /// owns; see `HotkeyRegistrar`'s own doc comment for why storing a new
@@ -32,11 +32,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let hotkeyRegistrar: HotkeyRegistrar
     private let onChange: (() -> Void)?
     private let eventLoggingToggle: (Bool, UserDefaults) -> Bool
+    private let microphoneToggle: (Bool, UserDefaults) -> Bool
     private let hotkeyConflictAlert: @MainActor (HotkeyAction, HotkeyCombination) -> Void
     private var hotkeyButtons: [HotkeyAction: HotkeyRecorderButton] = [:]
 
     static let agentRecordingTitle = "Allow agent recording"
     static let eventLoggingTitle = "Log input events"
+    static let microphoneTitle = "Record voiceover"
     static let automaticUpdatesTitle = "Check for updates automatically"
     static let crashReportsTitle = "Include crash reports in diagnostics"
 
@@ -47,7 +49,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     ///     bug: a value stored but never forwarded to Sparkle's own
     ///     `automaticallyChecksForUpdates`, so the setting read back
     ///     correctly and changed nothing.
-    ///   - defaults: the store all four settings types load from and save
+    ///   - defaults: the store all five settings types load from and save
     ///     to. Defaults to `.standard`, the same store the status item uses
     ///     in production, so both surfaces agree without either one naming
     ///     the other. Tests inject a `UserDefaults(suiteName:)` fixture here
@@ -98,6 +100,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// registration already follows). A test substitutes a spy so the
     /// button's revert-on-failure behavior can be pinned without a real,
     /// blocking dialog appearing.
+    ///
+    /// `microphoneToggle` mirrors `eventLoggingToggle` exactly, one rung
+    /// down the ladder: production forwards to `MicrophoneToggle.apply`
+    /// against the real `PermissionOnboarding`/`MicrophoneAccess`; a test
+    /// substitutes a fake for the same reason.
     static func show(updater: UpdaterController,
                       defaults: UserDefaults = .standard,
                       hotkeyRegistrar: HotkeyRegistrar = HotkeyRegistrar(onRecord: {}, onMarker: {}),
@@ -105,6 +112,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                       activate: Bool,
                       eventLoggingToggle: @escaping (Bool, UserDefaults) -> Bool = {
                           EventLoggingToggle.apply($0, defaults: $1)
+                      },
+                      microphoneToggle: @escaping (Bool, UserDefaults) -> Bool = {
+                          MicrophoneToggle.apply($0, defaults: $1)
                       },
                       hotkeyConflictAlert: @escaping @MainActor (HotkeyAction, HotkeyCombination) -> Void =
                           SettingsWindowController.presentHotkeyConflictAlert) {
@@ -121,6 +131,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let controller = SettingsWindowController(updater: updater, defaults: defaults,
                                                   hotkeyRegistrar: hotkeyRegistrar, onChange: onChange,
                                                   eventLoggingToggle: eventLoggingToggle,
+                                                  microphoneToggle: microphoneToggle,
                                                   hotkeyConflictAlert: hotkeyConflictAlert)
         shared = controller
         if activate {
@@ -160,12 +171,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private init(updater: UpdaterController, defaults: UserDefaults, hotkeyRegistrar: HotkeyRegistrar,
                 onChange: (() -> Void)?,
                 eventLoggingToggle: @escaping (Bool, UserDefaults) -> Bool,
+                microphoneToggle: @escaping (Bool, UserDefaults) -> Bool,
                 hotkeyConflictAlert: @escaping @MainActor (HotkeyAction, HotkeyCombination) -> Void) {
         self.updater = updater
         self.defaults = defaults
         self.hotkeyRegistrar = hotkeyRegistrar
         self.onChange = onChange
         self.eventLoggingToggle = eventLoggingToggle
+        self.microphoneToggle = microphoneToggle
         self.hotkeyConflictAlert = hotkeyConflictAlert
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 280),
                           styleMask: [.titled, .closable],
@@ -207,6 +220,11 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             title: Self.eventLoggingTitle,
             isOn: EventLoggingSettings.load(defaults).enabled,
             action: #selector(toggleEventLogging(_:))))
+
+        stack.addArrangedSubview(checkbox(
+            title: Self.microphoneTitle,
+            isOn: MicrophoneSettings.load(defaults).enabled,
+            action: #selector(toggleMicrophone(_:))))
 
         stack.addArrangedSubview(checkbox(
             title: Self.automaticUpdatesTitle,
@@ -308,6 +326,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         onChange?()
     }
 
+    @objc private func toggleMicrophone(_ sender: NSButton) {
+        // Same ladder, one rung down — see `MicrophoneToggle`'s doc comment
+        // and `toggleEventLogging` immediately above for why this is not a
+        // plain `MicrophoneSettings(...).save(to:)`.
+        let applied = microphoneToggle(sender.state == .on, defaults)
+        sender.state = applied ? .on : .off
+        onChange?()
+    }
+
     @objc private func toggleAutomaticUpdates(_ sender: NSButton) {
         let enabled = sender.state == .on
         var settings = UpdateSettings.load(defaults)
@@ -324,7 +351,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         onChange?()
     }
 
-    /// Re-reads all four settings from the store into the checkboxes
+    /// Re-reads all five settings from the store into the checkboxes
     /// (whole-branch review F7).
     ///
     /// `refreshStatusItemFromSettings` syncs window → menu; there was no
@@ -339,6 +366,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             AgentSettings.load(defaults).agentRecordingEnabled ? .on : .off
         checkbox(titled: Self.eventLoggingTitle)?.state =
             EventLoggingSettings.load(defaults).enabled ? .on : .off
+        checkbox(titled: Self.microphoneTitle)?.state =
+            MicrophoneSettings.load(defaults).enabled ? .on : .off
         checkbox(titled: Self.automaticUpdatesTitle)?.state =
             UpdateSettings.load(defaults).automaticChecksEnabled ? .on : .off
         checkbox(titled: Self.crashReportsTitle)?.state =
@@ -346,7 +375,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // Hotkeys have no status-item equivalent to drift from, but a
         // future launch (or another window, if one ever exists) could still
         // change `HotkeySettings` underneath this one — refresh for the
-        // same reason the four checkboxes above do.
+        // same reason the five checkboxes above do.
         refreshHotkeyButton(for: .record)
         refreshHotkeyButton(for: .marker)
     }

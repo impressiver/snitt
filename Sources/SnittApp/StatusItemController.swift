@@ -103,6 +103,17 @@ final class StatusItemController: NSObject {
         eventsItem.state = eventLoggingEnabled ? .on : .off
         menu.addItem(eventsItem)
 
+        // §4.10 rung 2 — off by default, the mic prompt is paid only when
+        // someone deliberately turns this on. Read at record time (not
+        // cached at launch) by `RecordingCoordinator.humanCaptureOptions`,
+        // mirroring `eventsItem` above exactly.
+        let microphoneItem = NSMenuItem(title: "Record voiceover",
+                                        action: #selector(toggleMicrophone),
+                                        keyEquivalent: "")
+        microphoneItem.target = self
+        microphoneItem.state = microphoneEnabled ? .on : .off
+        menu.addItem(microphoneItem)
+
         // §12's opt-in: with this off, `snitt diagnostics export` never reads
         // `~/Library/Logs/DiagnosticReports/` at all. This menu item is the
         // ONLY way a user can ever turn it on — a setting nothing can set is
@@ -189,6 +200,16 @@ final class StatusItemController: NSObject {
 
     @objc private func toggleEventLogging() {
         onToggleEventLogging?(!eventLoggingEnabled)
+    }
+
+    /// Mirrors the persisted setting so the menu can show a checkmark.
+    var microphoneEnabled = false
+
+    /// Invoked when the user toggles microphone capture from the menu.
+    var onToggleMicrophone: ((Bool) -> Void)?
+
+    @objc private func toggleMicrophone() {
+        onToggleMicrophone?(!microphoneEnabled)
     }
 
     /// Mirrors the persisted setting so the menu can show a checkmark.
