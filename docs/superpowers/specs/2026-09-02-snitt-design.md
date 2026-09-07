@@ -889,7 +889,9 @@ before it is allowed to gate anything. Sampling happens during the existing
   correlation primitive and `paused` state. Deferred: **Share**, **Export As…**
   and subtitle burn-in (D50, D51) — human-facing polish §13's second question
   does not need, and which may never gate v0 if a plain `.mov` attaches to a PR
-  fine
+  fine. **S5 (§14) gates the shape of this milestone**: the CLI
+  and MCP server exist but ship in no bundle and register with no host, so how
+  an agent is told about Snitt is decided before more verbs are added to it
 - **M6** Overlay desirability probe
 - **M7** Custom compositor + overlay rendering *(conditional on M6)*
 - **M8** Licensing; Mac App Store variant
@@ -960,6 +962,44 @@ nothing. **Honest cost: the prompt is monthly, so this needs weeks of observatio
 on a build that uses both paths — it cannot be answered from documentation.**
 Until it is, assume app-wide taint (the conservative reading) and do not claim
 the picker as a product-wide mitigation.
+
+**S5 — How does an agent find out Snitt exists?** §4.8 built the *capability* — a
+CLI and an MCP server over one core — and stopped there. Neither is **installed**
+and neither is **announced**: `Scripts/make-app.sh` copies only `SnittApp`,
+Sparkle and the icon into the bundle, so someone who installs Snitt.app has no
+`snitt` and no `snitt-mcp` on the machine at all, and nothing anywhere tells an
+agent host that either would exist. §13's second validation question — does an
+agent record with Snitt and attach the result to a PR — cannot be answered in
+that state, so this spike gates M5e rather than following it.
+
+Two problems hide inside the one question, and the options split differently
+across them:
+
+- **Registration** — the binary exists and the host knows how to launch it.
+- **Disclosure** — an agent mid-task *thinks to reach for it*. A tool list
+  answers "how do I call this"; it does not answer "why would I record my
+  screen." An agent that never considers making a demo never reads the schema.
+
+The options are not mutually exclusive. Naming which layer does which job is
+the spike's real output:
+
+| Option | Buys | Costs |
+|---|---|---|
+| **MCP server** — built, needs registering | Typed schemas, no shell, and §4.8's shared core means it cannot drift from the CLI | Registration differs per host (`claude mcp add`, `.mcp.json`, Cursor, Codex TOML) and a hand-delivered app (D54) has no installer to do it; a registered server costs context in **every** session forever, whether or not anyone records anything; MCP-speaking hosts only |
+| **Skill / plugin** | Carries *when* and *why* plus the workflow around the verbs — drive the UI with your own tools, mark each step, stop, inspect, attach. Progressive disclosure keeps the standing cost to one description line | Anthropic-specific; installs by writing into `~/.claude/skills`, and an app doing that silently is its own trust question; prose drifts from the flags it describes — the failure §10's version handshake exists to catch, with no equivalent for documentation |
+| **CLI self-description** — `snitt --help`, `snitt agent-guide` | Zero install, any agent with a shell, and generated from the same request types so it cannot go stale | Answers disclosure only *after* discovery: the agent must already know the word `snitt` |
+| **`AGENTS.md` / `CLAUDE.md` snippet** | Cross-agent, cross-host, and per-project so it appears only where recording is wanted | Hand-pasted, goes stale, and is prose rather than capability |
+| **`snitt setup`** — detect installed hosts, write each one's config | Makes registration one command, and is the only option that also repairs "no binary on the machine" | Owning another tool's config format is a maintenance tail; every host that changes it breaks this |
+
+**Cheap and unblocked whatever the answer:** MCP's `initialize` result carries an
+`instructions` field for exactly this — server-level "what this is for" as
+against per-tool "how to call it" — and `Sources/snitt-mcp/main.swift:146-150`
+does not set it.
+
+**What the spike must answer:** whether disclosure needs an artifact of its own
+at all, or whether a registered server with a good `instructions` string is
+enough; and whether the app bundle should embed both binaries behind a `setup`
+command or ship them separately.
 
 *(S2 — A/V drift — was deleted. Raising the floor to macOS 15 (§4.6) removes the
 hand-synchronized mic path the spike existed to de-risk. This is the clearest
@@ -1238,6 +1278,8 @@ since it looks like an answer.
 | D58 | **M5f — the editor — is built before validation is judged**, ahead of M5d and M5e. Bundles D55, D56 (both tiers) and D57 | The product owner's judgement after v0 shipped: *"Nobody will like this if the UI sucks."* That is D45's argument applied where I had failed to apply it — I used it to justify the app shell gating v0 (testing with a UI you do not intend to keep risks a "no" indistinguishable from a real one) and then queued the editor work behind evidence anyway. §13's first validation question asks whether anyone prefers this trim/export loop to `Cmd+Shift+5`; a timeline that shows source duration, draws cuts as irremovable overlays, and cannot separate selecting from cutting is not that loop, so a "no" from it would measure the UI rather than the premise. **This is a deliberate exception to D52, not a repeal of it**: D52's rule was that milestones stop being inserted before an *unopened* gate. v0 has shipped, so this is post-gate work being sequenced ahead of other post-gate work, on the strength of the one judgement no review process can supply | §4.4, §13, D45, D52, D55, D56, D57 | Decided | applied-my-own-argument-late |
 
 | D62 | **Automatic audio transcription, and editing through it** — queued as an enhancement, not scheduled | Product-owner direction. Two capabilities that share one mechanism: transcribe captured audio to timed text, and let that text become an editing surface. **On-device only.** macOS ships speech recognition that runs locally, and using a hosted service would reverse §3's "v1 is local-only" and §5's whole posture in the most sensitive way available — Snitt records screens and microphones, so shipping that audio off the machine is categorically different from shipping a crash log. If no local API is adequate, the feature waits; it does not go to a server. **The pieces already exist**: `LoggedEvent.transcript` (D50) is the field, `WebVTTChapters` is the sidecar, `Timebase` converts source to output time, and both mic and system audio are captured separately (`captureMicrophone`/`captureSystemAudio`), so speaker separation is free rather than inferred. **What it unlocks is larger than captions.** With word-level timestamps, deleting a phrase in the transcript becomes a `Cut` over its span — text-based editing over the EDL that already exists, which is a far better answer to §1's speed budget than dragging pixels. It also gives D57's `auto-deep-trim` a real signal: "nobody is speaking" is a sharper criterion than an RMS threshold, and D57's audio criterion currently has no per-span data at all. **Unresolved, needs a spike before planning**: which local API, its accuracy on screen-recording audio, whether word-level timings are exposed, and its cost on a laptop while recording versus after | §1, §3, §4.12, §5, D50, D51, D57; `EventLog.swift:34`, `WebVTTChapters.swift`, `CaptureSession.swift:7-8` | Decided (queued) | field-exists-mechanism-does-not |
+
+| D63 | **Agent-facing discovery gets a spike (S5) before M5e is planned.** The question is not whether to build an MCP server — one exists — but **registration** (the binary is on the machine and the host can launch it) and **disclosure** (an agent thinks to reach for it). Separately, and not an open question: the shipped bundle carrying neither client binary is a **defect**, not one of the options | Product-owner direction: agents need to be told Snitt exists. Verified while framing it: `Scripts/make-app.sh` copies `SnittApp`, `Sparkle.framework` and `AppIcon.icns` into `Snitt.app` and nothing else, so `snitt` and `snitt-mcp` live only in `.build/` on the machine that compiled them — the entire agent surface §13's second validation question depends on is absent from the artifact that was notarized, signed and released. No script installs them anywhere either. That is D61's shape one layer down: the pipeline was proved, the capability was not delivered. **Why a spike rather than a task:** the two problems have different answers and the cheap-looking one is the wrong one. A tool list is read at *call* time and answers "how do I invoke this"; nothing in it answers "why would I record my screen," which is read at *decide* time — so registering the server may satisfy registration and leave disclosure untouched. The reverse also holds: a skill can describe a workflow perfectly and still name a binary that is not there. Weighing them needs the options laid against both axes, which is what S5 does. **One item needs no spike and no waiting:** MCP's `initialize` result has an `instructions` field for server-level purpose and `snitt-mcp` does not set it | §4.8, §6, §8, §10, §13, §14, D52, D53, D54, D61; `Scripts/make-app.sh:150-170`, `build/Snitt.app/Contents/MacOS/`, `Sources/snitt-mcp/main.swift:146-150`, `MCPBridge.swift:110-250` | Decided (spike queued) | capability-built-shipped-nowhere |
 
 `conformance: 2026-09-06` (post-M5c refinement)
 
