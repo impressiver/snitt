@@ -2,9 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make the editor good enough that "nobody liked it" would be a verdict on the product rather than on the UI.
+**Goal:** Make the editor good enough to hand to someone. Until it is, §13's gate cannot open — nobody has this build but the maintainer (D61).
 
-**Architecture:** The timeline stops representing the *source* and starts representing the *export*. Cuts gain identity so they can be removed, and render as folds rather than overlays. Selection becomes state independent of cutting. Audio, video and markers get their own tracks. Then the model itself changes: cuts become per-track when sync is unlocked, and slice turns the EDL from "source minus ranges" into an ordered sequence of segments.
+**Architecture:** The timeline stops representing the *source* and starts representing the *export*. Cuts gain identity so they can be removed, and render as folds rather than overlays. Selection becomes state independent of cutting. Audio, video and markers get their own tracks. The timeline zooms, so a cut can be placed accurately on a recording longer than a few seconds.
+
+**Scope was cut roughly in half by a six-persona refinement pass (D59)**, run before any of it was built. Per-track cuts, slice/reorder and auto-deep-trim are not here: two rested on refuted premises, and D56's own text says Tier 2 waits until someone has trimmed a real recording.
 
 **Tech Stack:** AppKit (`NSView` drawing, `NSMenu` context menus), SwiftUI shell, AVFoundation composition, Swift 6 strict concurrency, Swift Testing.
 
@@ -118,19 +120,34 @@ func roundTrip() {
 - [ ] **Step 1: Write the failing test**
 
 ```swift
-@Test("A v0.1.0 edit.json still opens")
+@Test("A real v0.1.0 edit.json still opens")
 func readsLegacyCuts() throws {
-    // The exact shape v0.1.0 wrote. If this test needs changing, the format
-    // broke — that is what it is for.
-    let legacy = """
-    {"schemaVersion":1,"cuts":[{"start":1.0,"end":2.0}],"tracks":[]}
-    """
-    let edl = try JSONDecoder().decode(EditDecisionList.self, from: Data(legacy.utf8))
-    #expect(edl.cuts.count == 1)
-    #expect(edl.cuts[0].range == TimeRange(start: 1, end: 2))
-    // Every cut has an id even when the file had none — otherwise the UI
+    // Tests/Fixtures/edit-v0.1.0.json was CAPTURED from the shipping encoder
+    // before this task changed the format — not hand-written. An earlier draft
+    // of this test used a remembered literal with a `tracks` key; the real
+    // field is `trackStates`, which is exactly the error a captured fixture
+    // prevents and a remembered one enshrines.
+    let data = try Data(contentsOf: URL(fileURLWithPath: "Tests/Fixtures/edit-v0.1.0.json"))
+    let edl = try JSONDecoder().decode(EditDecisionList.self, from: data)
+
+    #expect(edl.cuts.count == 2)
+    #expect(edl.cuts[0].range == TimeRange(start: 1.5, end: 3.25))
+    #expect(edl.trackStates.count == 1)          // trackStates survived too
+    // Every cut has an id even though the file has none — otherwise the UI
     // cannot address cuts in a bundle recorded before this milestone.
-    #expect(edl.cuts[0].id != nil)
+    #expect(edl.cuts.allSatisfy { $0.id != nil })
+}
+
+@Test("A newer schemaVersion is refused, loudly")
+func refusesFutureSchema() throws {
+    // D60. Updates are hand-delivered, so old and new builds coexist and
+    // edit.json is the only place cuts live. Codable would happily decode a
+    // newer file into defaults and the next write would destroy what it could
+    // not represent — silent, and unrecoverable.
+    let future = #"{"schemaVersion":99,"cuts":[],"trackStates":[]}"#
+    #expect(throws: (any Error).self) {
+        _ = try EditDecisionList.decode(from: Data(future.utf8))
+    }
 }
 
 @Test("Two identical spans are distinguishable cuts")
@@ -200,6 +217,7 @@ func cutShortensTimeline() {
 - [ ] Playback with a cut expanded still skips the span. Assert against the composition, not the drawing.
 - [ ] Right-click → **Remove Cut** restores the segment: output duration grows by the cut's length, and the EDL loses exactly that `Cut` by id.
 - [ ] Removing a cut is undoable through the same `UndoManager` Task 7 of M5c installed, and persists like any other edit.
+- [ ] **Expanding a fold must not steal the scrub click.** `TimelineView.mouseDown` currently calls `gesture.began` and `onScrub` for *every* mouse-down anywhere on the track, with no hit-test. A fold is drawn as a thin line, so the target is small. Give it a deliberate hit-margin, and **test that a click elsewhere on the track still scrubs while a fold is nearby** — Task 4 tests the drag-versus-cut separation for the same reason; this is the same ambiguity one interaction over.
 
 ---
 
@@ -227,42 +245,59 @@ func cutShortensTimeline() {
 
 ---
 
-## Task 8: D56 Tier 2 — per-track cuts
+## Task 8: Zoom and snapping — the task the first draft missed
 
-**Files:** `EditDecisionList.swift`, `TimelineView.swift`; tests
+**Files:** `Sources/SnittDocument/TimelineGeometry.swift`, `Sources/SnittApp/TimelineView.swift`, `Sources/SnittDocument/TrimGesture.swift`; test `Tests/SnittDocumentTests/TimelineZoomTests.swift`
 
-- [ ] Right-click a cut → **Unlock A/V Sync**, after which audio and video cuts move independently.
-- [ ] The EDL's `cuts` becomes per-track. **The v0.1.0 format still opens** (Task 2's rule): a legacy global cut loads as a synchronised pair.
-- [ ] `snitt trim` must round-trip a per-track EDL without flattening it. Check and report.
+**Why this exists, and why it was nearly omitted.** The first draft had ten tasks and none changed pixels-per-second. `TrimGesture.ended` already contains the argument in its own comment: *"a ten-minute recording at 800px is ~0.75s/pixel… a deliberate short cut is silently swallowed."* The code names the bottleneck; the plan reworked everything around it.
+
+**Task 5's folds make this worse** — collapsing cut spans to a line packs the remaining footage into fewer pixels than today. Zoom is what stops that being a regression.
+
+- [ ] **Step 1: Write the failing test**
+
+```swift
+@Test("Zooming changes pixels-per-second, and the anchor stays put")
+func zoomKeepsTheAnchorFixed() {
+    let base = Timebase(sourceDuration: 600, edl: EditDecisionList(cuts: []))
+    var geometry = TimelineGeometry(width: 800, timebase: base)
+    #expect(abs(geometry.pixelsPerSecond - 800.0 / 600.0) < 1e-9)
+
+    let anchor = OutputTime(300)
+    let xBefore = geometry.x(atOutput: anchor)
+    geometry = geometry.zoomed(by: 4, anchoredAt: anchor)
+
+    #expect(abs(geometry.pixelsPerSecond - 4 * 800.0 / 600.0) < 1e-9)
+    // The anchor must not move. A zoom that changes scale but slides content
+    // under the cursor is what people describe as "fighting the timeline" —
+    // and it passes any test that only checks the scale.
+    #expect(abs(geometry.x(atOutput: anchor) - xBefore) < 0.5)
+}
+
+@Test("A cut shorter than one pixel at 1x is placeable when zoomed in")
+func shortCutSurvivesZoom() {
+    let base = Timebase(sourceDuration: 600, edl: EditDecisionList(cuts: []))
+    let wide = TimelineGeometry(width: 800, timebase: base)
+    #expect(wide.duration(ofPixels: 1) > 0.5)   // TrimGesture's stated problem
+    let zoomed = wide.zoomed(by: 32, anchoredAt: OutputTime(300))
+    #expect(zoomed.duration(ofPixels: 1) < 0.05)
+}
+```
+
+- [ ] **Step 2:** run-fail.
+- [ ] **Step 3:** add `pixelsPerSecond`, `zoomed(by:anchoredAt:)` and a visible offset to `TimelineGeometry`; scroll-to-zoom plus a control in `TimelineView`, anchored on the playhead when there is no cursor.
+- [ ] **Step 4: Snapping.** Dragging a selection edge snaps to markers, existing cut edges and the playhead **within a pixel tolerance, not a seconds tolerance** — a seconds-based tolerance becomes unusable at high zoom, which defeats zooming.
+- [ ] **Step 5:** Mutation: make `zoomed(by:anchoredAt:)` ignore its anchor. `zoomKeepsTheAnchorFixed` must fail *while the scale assertion still passes*, proving the anchor assertion carries the discrimination.
+- [ ] **Step 6: Commit** — `feat(timeline): zoom and snapping`
 
 ---
 
-## Task 9: D56 Tier 2 — slice and reorder
+## Cut from this milestone (D59), and why
 
-**Files:** `EditDecisionList.swift`, `TimeRangeMapping.swift`, `CompositionBuilder.swift`, `MarkerMapping.swift`, `TimelineView.swift`; tests
+Recorded rather than deleted — the reasons are what a later attempt needs.
 
-**Read this before starting.** This is the task that changes what an edit *is*. Today the EDL means *"the source, minus these ranges"* — order is implicit and time maps monotonically forward. Slice-and-reorder makes it *an ordered sequence of segments*, and **every downstream mapping assumes the monotonicity you are removing**: `TimeRangeMapping`, `MarkerMapping`, `CompositionBuilder`, and D51's subtitle burn-in timing.
+**Per-track cuts and slice/reorder (D56 Tier 2).** D56's own rationale said these wait until someone has trimmed a real recording; the first draft bundled them anyway. The mechanism is also bigger than that draft claimed: `KeptRanges.compute()` sorts cuts ascending and walks a single forward cursor, so it **cannot express segment order at all**. Reordering is a schema *and* algorithm replacement. When attempted, `TimeRangeMapping.nearestTrimmedTime` is the one function that genuinely breaks — its siblings test containment and generalise free — and the legacy format cannot distinguish "already ordered" from "needs complementing."
 
-- [ ] Slice cuts at a point without removing anything, producing two adjacent segments.
-- [ ] Segments can be reordered; the export follows segment order.
-- [ ] **Markers follow their segment.** A marker at source 7s inside a segment moved to the front is now near the start of the output. Assert its *output* time after a reorder — this is where non-monotonic mapping either works or silently does not.
-- [ ] Slice is synchronised across audio/video by default, unlockable like cuts.
-- [ ] **Verify the export matches the timeline** for a reordered EDL, end to end. §9 makes preview and export share one builder; reordering is the first thing that could break that guarantee in a way a still frame would not reveal.
-
----
-
-## Task 10: D57 — auto-deep-trim
-
-**Files:** create `Sources/SnittExport/DeadAir.swift`; modify `HealthSampler.swift`; CLI and app surfaces; tests
-
-**A span is dead air only when all hold:** audio is background noise only, video is pixel-identical, no mouse or keyboard events, no marker, and **no subtitle still owed reading time**.
-
-- [ ] **Extend `HealthSampler`'s existing per-frame variance** rather than adding a decode pass. It already samples during the `AVAssetWriter` pass for §12.1; post-hoc detection means decoding the whole movie again.
-- [ ] Presets **conservative / default / aggressive** in the app; the same flag plus per-criterion flags in the CLI.
-- [ ] **Agent recordings log no OS input by construction** (D49) — so for an agent demo the input criterion is always satisfied and frame-change detection decides alone. D44 warned this could see one long gap and delete the entire recording. **Test exactly that case**: an agent-initiated bundle with no input events must not be trimmed to nothing.
-- [ ] Auto-trim produces ordinary `Cut`s — so Task 5's folds make every automatic decision inspectable and individually removable, rather than a bulk edit accepted whole.
-
----
+**auto-deep-trim (D57).** Its cheap path is refuted. `HealthSampler.variance(ofLuma:)` is *spatial* variance within one frame, not a frame delta; `frameVariances` carries **no timestamps**; audio is a **single whole-capture RMS**, so "audio is background noise only" cannot be evaluated per span. It needs a per-timestamp frame-diff pass and windowed audio RMS — the decode cost D57 claimed to avoid — and deserves its own plan.
 
 ## Definition of Done
 
@@ -271,8 +306,9 @@ func cutShortensTimeline() {
 - [ ] Clicking a fold expands it without changing duration or playback; right-click removes it and the segment returns.
 - [ ] Audio, video and markers are separate tracks; markers move and edit, and persist.
 - [ ] Hotkeys are configurable, and a conflicting combination says so.
-- [ ] A/V sync unlocks; slice and reorder work, and the export matches the timeline.
-- [ ] `auto-deep-trim` runs at three presets and never empties an agent recording.
+- [ ] The timeline zooms with its anchor fixed, and a sub-pixel cut is placeable when zoomed in.
+- [ ] Dragging snaps to markers, cut edges and the playhead, with a tolerance in pixels.
+- [ ] `edit.json` refuses a `schemaVersion` newer than the build understands, loudly.
 - [ ] **A `.snitt` written by v0.1.0 still opens**, and `snitt trim` round-trips whatever the GUI writes.
 - [ ] Full suite green twice with the trustworthy summary line; strict-concurrency clean.
 
