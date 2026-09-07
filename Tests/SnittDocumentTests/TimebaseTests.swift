@@ -100,4 +100,39 @@ struct TimebaseTests {
         #expect(base.sourceTime(forOutput: OutputTime(-1)) == nil)
         #expect(base.sourceTime(forOutput: OutputTime(8.5)) == nil)
     }
+
+    @Test("An out-of-range source time maps to nothing, not a clamp")
+    func outOfRangeSourceTimeIsNil() {
+        let edl = EditDecisionList(cuts: [TimeRange(start: 3, end: 5)])
+        let base = Timebase(sourceDuration: 10, edl: edl)
+        // A mutant that clamps an out-of-range source instant to the nearest
+        // valid output edge would answer OutputTime(0) / OutputTime(8)
+        // (outputDuration) here instead of admitting the query was out of
+        // range — the same failure mode outOfRangeOutputTimeIsNil guards on
+        // the inverse side, now pinned on the forward side too.
+        #expect(base.outputTime(forSource: SourceTime(-1)) == nil)
+        #expect(base.outputTime(forSource: SourceTime(10.5)) == nil)
+    }
+
+    @Test("outputDuration accounts for overlap and end-clamping, not a naive subtraction")
+    func outputDurationIsNotANaiveSum() {
+        // Overlapping cuts [2,5] and [4,7] merge into one [2,7] span (3s of
+        // source time, not 3+3=6s counted twice). The cut [8,999] is clamped
+        // to the recording's own end, [8,10] (2s of source time, not 991s).
+        // Kept: [0,2] and [7,8], so outputDuration is 3.
+        //
+        // A naive `sourceDuration - Σ(raw cut lengths)` computes
+        // 10 - (3 + 3 + 991) = -987 — exactly the kind of mistake
+        // `KeptRanges.compute` exists to normalise away (its own doc comment
+        // names both overlap and past-the-end as routine), and which
+        // `outputDuration` must inherit by reducing over the normalised
+        // `keptRanges` rather than re-deriving the arithmetic from raw cuts.
+        let edl = EditDecisionList(cuts: [
+            TimeRange(start: 2, end: 5),
+            TimeRange(start: 4, end: 7),
+            TimeRange(start: 8, end: 999),
+        ])
+        let base = Timebase(sourceDuration: 10, edl: edl)
+        #expect(base.outputDuration == 3)
+    }
 }

@@ -10,7 +10,7 @@ import Foundation
 /// `.seconds` both satisfy, so nothing lets one stand in for the other; the
 /// type checker rejects the mistake instead of a reviewer having to catch it.
 public struct SourceTime: Equatable, Hashable, Comparable, Sendable {
-    public var seconds: Double
+    public let seconds: Double
 
     public init(_ seconds: Double) {
         self.seconds = seconds
@@ -27,7 +27,7 @@ public struct SourceTime: Equatable, Hashable, Comparable, Sendable {
 /// See `SourceTime`'s doc comment for why this is a distinct type rather
 /// than a shared representation.
 public struct OutputTime: Equatable, Hashable, Comparable, Sendable {
-    public var seconds: Double
+    public let seconds: Double
 
     public init(_ seconds: Double) {
         self.seconds = seconds
