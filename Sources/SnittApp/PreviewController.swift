@@ -28,16 +28,22 @@ public class PreviewController {
     public private(set) var durationSeconds: Double
     /// The SOURCE recording's media duration (`BuiltComposition.sourceDuration`)
     /// — never `durationSeconds` above, which is the TRIMMED (output)
-    /// duration. The editor timeline draws on this clock (M4b whole-branch
-    /// review, Critical finding #1): `edl.cuts` are source-time ranges, and
-    /// only a source-time axis gives a cut a coherent position at all — by
-    /// definition a cut has no position in the output.
+    /// duration. The editor timeline needs BOTH: this is the INPUT it builds
+    /// its `Timebase` from (together with `edl.cuts`, which are source-time
+    /// ranges), and `Timebase.outputDuration` is the axis it then draws and
+    /// interprets every gesture on (M5f Task 3, D56).
+    ///
+    /// This comment used to say the timeline's INTERACTION stays on the
+    /// source clock, citing M4b whole-branch review Critical finding #1.
+    /// The M5f whole-branch review measured that arrangement and found it
+    /// reproduced the finding rather than preventing it — see
+    /// `TimelineView.time(for:)` and `duration`.
     public private(set) var sourceDurationSeconds: Double
     /// The kept ranges the CURRENT composition was built from — the same set
     /// `CompositionBuilder.build` inserted into it. Lets a caller (the
-    /// editor timeline) map the player's trimmed-time playhead, and this
-    /// controller's own `jumpPoints`, back onto the source clock via
-    /// `TimeRangeMapping.sourceTime(ofTrimmedTime:keptRanges:)`.
+    /// editor timeline's `onScrub`) map a SOURCE-time click into TRIMMED
+    /// (output) time for seeking, via
+    /// `TimeRangeMapping.nearestTrimmedTime(toSourceTime:keptRanges:)`.
     public private(set) var keptRanges: [TimeRange]
     private var item: AVPlayerItem
     public let player: AVPlayer
@@ -96,15 +102,39 @@ public class PreviewController {
 
     /// Writes `edl` to the bundle this controller was built with (Task 7,
     /// D46). This is the only writer for a GUI trim — before this method
-    /// existed, `EditorWindowController.onTrim` rebuilt the preview through
-    /// `apply(edl:events:)` and never wrote anything, so a trim shown on
-    /// screen was silently discarded when the window closed.
+    /// existed, `EditorTimelineState`'s trim handler (then still named
+    /// `onTrim`; M5f Task 4 split it into `onSelect`/`cutSelection`)
+    /// rebuilt the preview through `apply(edl:events:)` and never wrote
+    /// anything, so a trim shown on screen was silently discarded when the
+    /// window closed.
     ///
     /// Lives here, not on `EditDecisionList` or `EditorTimelineState`,
     /// because `bundle` is `private` to this type (R1: the write belongs
     /// with the owner, not behind a widened-to-internal field).
     public func persist(_ edl: EditDecisionList) throws {
         try edl.write(to: bundle)
+    }
+
+    /// Writes `events` to the bundle this controller was built with (Task
+    /// 6) — the marker-edit sibling of `persist(_:)` for `edl`. Markers live
+    /// in `events.json`, not `edit.json`: a marker's own time/label/
+    /// transcript are stored data distinct from what a cut removes, and
+    /// `events.json` is the only file that has ever held them
+    /// (`DocumentOpener.build`, `SnittBundle.eventsURL`).
+    public func persistEvents(_ events: [LoggedEvent]) throws {
+        try EventLog(events: events).write(to: bundle)
+    }
+
+    /// Recomputes `jumpPoints` from `events` against the CURRENT
+    /// `keptRanges`, without rebuilding the composition (Task 6).
+    ///
+    /// A marker's own position/label/transcript changing affects nothing
+    /// `CompositionBuilder` builds — only `edl.cuts` does — so routing a
+    /// marker-only edit through `apply(edl:events:)` would pay for a real
+    /// AVFoundation rebuild (a new `AVPlayerItem`, a fresh composition) to
+    /// accomplish nothing beyond what this one line already does directly.
+    public func refreshJumpPoints(events: [LoggedEvent]) {
+        self.jumpPoints = MarkerJumpPoints.compute(events: events, keptRanges: keptRanges)
     }
 
     /// Rebuilds the composition through `CompositionBuilder.build` — never

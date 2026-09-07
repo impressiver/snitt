@@ -66,12 +66,16 @@ let package = Package(
         ),
         // No SnittDocument dependency: the CLI used to read RecordingMetadata
         // back from the bundle it just wrote to report health, but the bundle
-        // lives in the APP's output directory — by default `~/Desktop`,
-        // gated by the Files-and-Folders TCC service the CLI does not hold —
-        // so that read silently failed on every real machine. Health now
-        // arrives over the socket in AutomationResponse.stopped, so
-        // SnittAutomation alone (which itself depends on SnittDocument, for
-        // CaptureHealth) is enough.
+        // lives in the APP's output directory — user-configurable
+        // (OutputDirectorySettings) and, at the time this was found,
+        // defaulting to `~/Desktop`, gated by the Files-and-Folders TCC
+        // service the CLI does not hold — so that read silently failed on
+        // every real machine. The default has since moved to
+        // `~/Documents/Snitt` (not TCC-gated), but the directory can still be
+        // pointed anywhere, so the CLI still cannot assume it can read it.
+        // Health now arrives over the socket in AutomationResponse.stopped,
+        // so SnittAutomation alone (which itself depends on SnittDocument,
+        // for CaptureHealth) is enough.
         .executableTarget(name: "snitt-cli",
                           dependencies: ["SnittAutomation", "SnittDocument"],
                           path: "Sources/snitt-cli"),

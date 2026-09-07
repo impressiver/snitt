@@ -25,6 +25,7 @@ struct SettingsWindowTests {
 
         #expect(AgentSettings.load(defaults).agentRecordingEnabled == false)
         #expect(EventLoggingSettings.load(defaults).enabled == false)
+        #expect(MicrophoneSettings.load(defaults).enabled == false)
         #expect(UpdateSettings.load(defaults).automaticChecksEnabled == false)
         #expect(CrashReportSettings.load(defaults).enabled == false)
     }
@@ -225,6 +226,188 @@ struct SettingsWindowTests {
         #expect(checkbox.state == .on)
         #expect(EventLoggingSettings.load(defaults).enabled == true)
     }
+
+    /// The microphone half of `bothSurfacesShareStorage` — the window must
+    /// read the setting the status item already wrote, not a store of its
+    /// own. Verified to fail against the mutation that test's own doc
+    /// comment names: giving `SettingsWindowController` its own
+    /// `UserDefaults(suiteName:)` makes this checkbox show off even though
+    /// `MicrophoneSettings(enabled: true)` was saved to the fixture.
+    @Test("The microphone checkbox reads the store it was given, not one of its own")
+    func microphoneCheckboxSharesStorage() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            SettingsWindowController.resetForTesting()
+        }
+
+        MicrophoneSettings(enabled: true).save(to: defaults)
+
+        let updater = UpdaterController(settings: UpdateSettings.load(defaults))
+        SettingsWindowController.show(updater: updater, defaults: defaults, activate: false)
+
+        let checkbox = try #require(
+            SettingsWindowController.shared?.checkbox(titled: SettingsWindowController.microphoneTitle))
+        #expect(checkbox.state == .on)
+    }
+
+    /// The microphone twin of `eventLoggingRevertsWhenGrantRefused`: a
+    /// refused grant must leave the checkbox unchecked and persist nothing.
+    /// Verified to fail against a `toggleMicrophone` body that skips
+    /// straight to `MicrophoneSettings(enabled:).save(to:)` — both
+    /// `#expect`s below would fail, exactly as the event-logging mutation
+    /// this mirrors does.
+    @Test("The window's microphone checkbox returns to off when the grant is refused, and nothing is persisted")
+    func microphoneRevertsWhenGrantRefused() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            SettingsWindowController.resetForTesting()
+        }
+        let updater = UpdaterController(settings: UpdateSettings.load(defaults))
+
+        SettingsWindowController.show(updater: updater, defaults: defaults, activate: false,
+                                      microphoneToggle: { _, _ in false })
+
+        let checkbox = try #require(
+            SettingsWindowController.shared?.checkbox(titled: SettingsWindowController.microphoneTitle))
+        #expect(checkbox.state == .off)
+        checkbox.performClick(nil)
+
+        #expect(checkbox.state == .off,
+                "a refused grant must leave the checkbox unchecked, not showing the click that was refused")
+        #expect(MicrophoneSettings.load(defaults).enabled == false,
+                "a refused grant must not persist enabled = true")
+    }
+
+    /// The success path through the same injection point, pinning the fake
+    /// above as standing in for a real grant rather than a stub that always
+    /// refuses regardless of what happened.
+    @Test("The window's microphone checkbox stays on when the grant succeeds")
+    func microphonePersistsWhenGrantSucceeds() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            SettingsWindowController.resetForTesting()
+        }
+        let updater = UpdaterController(settings: UpdateSettings.load(defaults))
+
+        SettingsWindowController.show(updater: updater, defaults: defaults, activate: false,
+                                      microphoneToggle: { enabled, defaults in
+                                          MicrophoneSettings(enabled: enabled).save(to: defaults)
+                                          return enabled
+                                      })
+
+        let checkbox = try #require(
+            SettingsWindowController.shared?.checkbox(titled: SettingsWindowController.microphoneTitle))
+        checkbox.performClick(nil)
+
+        #expect(checkbox.state == .on)
+        #expect(MicrophoneSettings.load(defaults).enabled == true)
+    }
+
+    // MARK: - Output directory (M5f)
+
+    /// The output-directory row's half of `bothSurfacesShareStorage`/
+    /// `microphoneCheckboxSharesStorage`: the window must show whatever is
+    /// ALREADY in the shared store, not a value of its own. Verified to fail
+    /// against the same mutation those two name: giving
+    /// `SettingsWindowController` its own `UserDefaults(suiteName:)` would
+    /// show the default here even though a custom directory was saved to
+    /// the fixture.
+    @Test("The output directory row reads the store it was given, not one of its own")
+    func outputDirectoryRowSharesStorage() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            SettingsWindowController.resetForTesting()
+        }
+
+        let custom = URL(fileURLWithPath: "/Volumes/External/MyRecordings", isDirectory: true)
+        OutputDirectorySettings(directory: custom).save(to: defaults)
+
+        let updater = UpdaterController(settings: UpdateSettings.load(defaults))
+        SettingsWindowController.show(updater: updater, defaults: defaults, activate: false)
+
+        #expect(SettingsWindowController.shared?.outputDirectoryPathText() == custom.path)
+    }
+
+    /// Picking a writable folder persists it to the shared store and updates
+    /// the row's own label — the two things a real `NSOpenPanel` selection
+    /// would need to do, exercised through `applyOutputDirectory`'s test
+    /// seam since a real panel cannot be driven from a test (see
+    /// `chooseOutputDirectory`'s own doc comment).
+    @Test("Choosing a writable directory persists it and updates the label")
+    func choosingWritableDirectoryPersists() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            SettingsWindowController.resetForTesting()
+        }
+        let updater = UpdaterController(settings: UpdateSettings.load(defaults))
+        SettingsWindowController.show(updater: updater, defaults: defaults, activate: false)
+        let controller = try #require(SettingsWindowController.shared)
+
+        let chosen = FileManager.default.temporaryDirectory
+            .appendingPathComponent("snitt-settings-window-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: chosen, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: chosen) }
+
+        controller.applyOutputDirectory(chosen)
+
+        // Compared by `.path`, not raw `URL` equality — see
+        // `OutputDirectorySettings.load`'s own doc comment on why two URLs
+        // naming the same folder can otherwise compare unequal.
+        #expect(OutputDirectorySettings.load(defaults).directory.path == chosen.path)
+        #expect(controller.outputDirectoryPathText() == chosen.path)
+    }
+
+    /// The output-directory twin of `microphoneRevertsWhenGrantRefused`: a
+    /// folder that fails the writability check must be rejected, alerted,
+    /// and must leave the previously stored value (here, the default) in
+    /// place — mirroring `RecordingCoordinator.prepareOutputDirectory`'s own
+    /// "better to find out now than at finalize" reasoning, one step
+    /// earlier, at the moment of picking rather than the moment of
+    /// recording.
+    ///
+    /// Verified to fail against an `applyOutputDirectory` that skips
+    /// straight to `OutputDirectorySettings(directory:).save(to:)` without
+    /// checking writability first: both `#expect`s below would fail, and
+    /// the alert spy would never fire.
+    @Test("An unwritable directory is rejected, alerted, and nothing is persisted")
+    func choosingUnwritableDirectoryIsRejected() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            SettingsWindowController.resetForTesting()
+        }
+
+        let unwritable = FileManager.default.temporaryDirectory
+            .appendingPathComponent("snitt-settings-window-test-unwritable-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: unwritable, withIntermediateDirectories: true)
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: unwritable.path)
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: unwritable.path)
+            try? FileManager.default.removeItem(at: unwritable)
+        }
+        #expect(!FileManager.default.isWritableFile(atPath: unwritable.path),
+                "the fixture itself must actually be unwritable, or this test proves nothing")
+
+        var alerted: URL?
+        let updater = UpdaterController(settings: UpdateSettings.load(defaults))
+        SettingsWindowController.show(updater: updater, defaults: defaults, activate: false,
+                                      outputDirectoryUnwritableAlert: { alerted = $0 })
+        let controller = try #require(SettingsWindowController.shared)
+        let before = OutputDirectorySettings.load(defaults).directory
+
+        controller.applyOutputDirectory(unwritable)
+
+        #expect(alerted == unwritable, "the alert must name the folder that was rejected")
+        #expect(OutputDirectorySettings.load(defaults).directory.path == before.path,
+                "a rejected folder must not overwrite the previously stored value")
+        #expect(controller.outputDirectoryPathText() == before.path,
+                "the label must not show a folder that was never actually accepted")
+    }
 }
 
 /// Unit tests for the extracted §4.10 ladder itself — the single place both
@@ -396,5 +579,123 @@ struct EventLoggingToggleTests {
         // again off a stale unchecked box.
         checkbox.performClick(nil)
         #expect(AgentSettings.load(defaults).agentRecordingEnabled == false)
+    }
+}
+
+/// Unit tests for the microphone's §4.10 ladder — mirrors
+/// `EventLoggingToggleTests` exactly, since `MicrophoneToggle.apply` and
+/// `EventLoggingToggle.apply` now share the same `PermissionLadder`
+/// mechanics and differ only in which service and settings type they name.
+@Suite(.serialized)
+@MainActor
+struct MicrophoneToggleTests {
+    init() { _ = NSApplication.shared }
+
+    private func fixtureDefaults() throws -> (UserDefaults, String) {
+        let suiteName = "com.snitt.test.mictoggle.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        return (defaults, suiteName)
+    }
+
+    /// Verified to fail against the bug this whole ladder exists to prevent:
+    /// an `apply` body that skips straight to `MicrophoneSettings(enabled:
+    /// enabled).save(to: defaults)` without consulting `preExplain` makes
+    /// the second `#expect` fail — `enabled` reads back `true` even though
+    /// `preExplain` here declines.
+    @Test("Declining the pre-explain persists nothing and returns false")
+    func decliningPreExplainPersistsNothing() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let applied = MicrophoneToggle.apply(true, defaults: defaults,
+                                              preExplain: { _ in false },
+                                              ensureGranted: { true },
+                                              showAlreadyDenied: {})
+
+        #expect(applied == false)
+        #expect(MicrophoneSettings.load(defaults).enabled == false)
+    }
+
+    /// A first-time refusal must stay silent — `MicrophoneAccess.ensureGranted()`
+    /// fires the request and returns `false` immediately, before the user has
+    /// answered (see its own doc comment), so raising Snitt's own
+    /// "already denied" alert here would contradict a dialog that has not
+    /// even been answered yet.
+    @Test("A first-time refused grant persists nothing, returns false, and stays silent")
+    func firstRefusedGrantStaysSilent() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var showedAlreadyDenied = false
+        var markedRequested = false
+        let applied = MicrophoneToggle.apply(true, defaults: defaults,
+                                              preExplain: { _ in true },
+                                              hasRequested: { false },
+                                              markRequested: { markedRequested = true },
+                                              ensureGranted: { false },
+                                              showAlreadyDenied: { showedAlreadyDenied = true })
+
+        #expect(applied == false)
+        #expect(MicrophoneSettings.load(defaults).enabled == false)
+        #expect(markedRequested, "the first ask must be recorded so a LATER refusal can be told apart")
+        #expect(!showedAlreadyDenied,
+                "the first ask must not contradict whatever the user is currently deciding")
+    }
+
+    /// The other half of the same distinction: once Snitt has already asked
+    /// before (`hasRequested` reporting `true`), the only way the user learns
+    /// anything is Snitt's own alert.
+    @Test("A refusal after an earlier ask persists nothing, returns false, and shows the already-denied alert")
+    func repeatRefusedGrantShowsAlreadyDenied() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        var showedAlreadyDenied = false
+        let applied = MicrophoneToggle.apply(true, defaults: defaults,
+                                              preExplain: { _ in true },
+                                              hasRequested: { true },
+                                              markRequested: {},
+                                              ensureGranted: { false },
+                                              showAlreadyDenied: { showedAlreadyDenied = true })
+
+        #expect(applied == false)
+        #expect(MicrophoneSettings.load(defaults).enabled == false)
+        #expect(showedAlreadyDenied,
+                "macOS will not raise the dialog again, so Snitt's own alert is the only way the user finds out")
+    }
+
+    @Test("Pre-explain accepted and grant available persists enabled = true")
+    func grantedTurnOnPersists() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let applied = MicrophoneToggle.apply(true, defaults: defaults,
+                                              preExplain: { _ in true },
+                                              hasRequested: { false },
+                                              markRequested: {},
+                                              ensureGranted: { true },
+                                              showAlreadyDenied: {})
+
+        #expect(applied == true)
+        #expect(MicrophoneSettings.load(defaults).enabled == true)
+    }
+
+    /// Turning OFF never consults the ladder — only turning ON needs a
+    /// grant.
+    @Test("Turning off always persists, without consulting the ladder")
+    func turningOffNeverConsultsLadder() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        MicrophoneSettings(enabled: true).save(to: defaults)
+
+        var ladderConsulted = false
+        let applied = MicrophoneToggle.apply(false, defaults: defaults,
+                                              preExplain: { _ in ladderConsulted = true; return true },
+                                              ensureGranted: { ladderConsulted = true; return true },
+                                              showAlreadyDenied: {})
+
+        #expect(applied == false)
+        #expect(ladderConsulted == false)
+        #expect(MicrophoneSettings.load(defaults).enabled == false)
     }
 }

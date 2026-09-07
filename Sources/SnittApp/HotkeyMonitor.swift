@@ -52,7 +52,11 @@ public final class HotkeyMonitor {
         idCounter.withLock { value in value += 1; return value }
     }
 
-    private let combination: HotkeyCombination
+    /// Not `private`: `HotkeyRegistrar.combination(for:)` (D55) reads this
+    /// back to report what is ACTUALLY registered, as distinct from what
+    /// `HotkeySettings` merely has stored — the distinction M5b's R22 defect
+    /// shows matters.
+    public let combination: HotkeyCombination
     private let onFire: () -> Void
     private var hotKeyRef: EventHotKeyRef?
     private var handlerRef: EventHandlerRef?

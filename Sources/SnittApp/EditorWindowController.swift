@@ -16,15 +16,47 @@ import UniformTypeIdentifiers
 /// exists so that every trim keeps passing the recording's real events
 /// instead of silently losing every marker.
 ///
-/// Not `private`: `@testable import SnittApp` needs to drive `onTrim` and
-/// read `displayState(playhead:)` directly to verify the M4b Critical
-/// finding — that a SECOND trim in one session removes a distinct region —
-/// without a live `NSWindow` or SwiftUI's runtime.
+/// Not `private`: `@testable import SnittApp` needs to drive `onSelect` /
+/// `cutSelection` and read `displayState(playhead:)` directly to verify the
+/// M4b Critical finding — that a SECOND trim in one session removes a
+/// distinct region — without a live `NSWindow` or SwiftUI's runtime.
 @MainActor
 final class EditorTimelineState: ObservableObject {
     let controller: PreviewController
-    let events: [LoggedEvent]
+    /// Every logged event — markers among them — in SOURCE time. Mutable as
+    /// of M5f Task 6 (D56/D50): a marker drag or edit mutates this array and
+    /// persists it to `events.json` via `applyAndSaveEvents()`, exactly as
+    /// `edl` mutates and persists to `edit.json`. `private(set)`: every
+    /// mutation goes through `moveMarker`/`updateMarker` below, which are
+    /// what register undo and enqueue the save — a caller reaching in and
+    /// assigning this directly would skip both.
+    @Published private(set) var events: [LoggedEvent]
     @Published var edl: EditDecisionList
+
+    /// The current selection (SOURCE time), or `nil`. D56 (M5f Task 4): UI
+    /// state only — never written into `edl`, never persisted, and this is
+    /// the ONLY place it lives; `EditDecisionList` has no field for it.
+    /// `@Published` so `EditorContentView`'s Cut button can enable/disable
+    /// on it and `TimelineViewRepresentable` can feed it back down to the
+    /// view for drawing.
+    @Published var selection: Selection?
+
+    /// Which folds are currently expanded, by `Cut.id` (D56, M5f Task 5).
+    ///
+    /// UI state ONLY, exactly like `selection` above: nothing here is ever
+    /// written into `edl`, never persisted, and `EditDecisionList`/`Cut`
+    /// have no field for it at all. That is the whole point — the dispatch's
+    /// first trap. Expanding a fold must not change `Timebase.outputDuration`
+    /// or where the playhead maps, and the only way to GUARANTEE that rather
+    /// than merely intend it is for the expansion set to live somewhere
+    /// `edl`-mutating code (`applyCut`, `restore`, `removeCut` below) never
+    /// touches — `toggleExpansion(of:)` is the one place this changes, and it
+    /// does not call `applyAndSave()`, so no compositor rebuild, no
+    /// `persist`, and no undo registration ever happens for it. Compare
+    /// `removeCut(id:)`, which DOES mutate `edl` and goes through exactly
+    /// that machinery, because removing a cut is a real edit and expanding
+    /// one is only ever a way of looking at it.
+    @Published var expandedCutIDs: Set<UUID> = []
 
     /// The window's `UndoManager` (Task 7), set once the window exists —
     /// this type is constructed before the `NSWindow` that owns it. Task
@@ -56,6 +88,11 @@ final class EditorTimelineState: ObservableObject {
     /// reached the file.
     private var lastSavedEDL: EditDecisionList
 
+    /// The events-side twin of `lastSavedEDL` (Task 6): the last `events`
+    /// value that both applied and persisted, for `eventEditWasRejected(_:)`
+    /// to revert to.
+    private var lastSavedEvents: [LoggedEvent]
+
     /// Called when the compositor refuses an edit, so the window can tell
     /// the user. A refused trim that merely skips the write still leaves a
     /// silent no-op in front of a person who just dragged across the
@@ -67,34 +104,60 @@ final class EditorTimelineState: ObservableObject {
         self.edl = edl
         self.lastSavedEDL = edl
         self.events = events
+        self.lastSavedEvents = events
     }
 
-    /// Everything `TimelineView` needs to draw, expressed entirely on the
-    /// SOURCE clock — the timeline's own axis (M4b whole-branch review,
-    /// Critical finding #1). `edl.cuts` are already source-time ranges, so
-    /// they pass straight through unmapped; the player's playhead and this
-    /// controller's `jumpPoints` are in TRIMMED (output) time and need the
-    /// inverse mapping to land on the same axis.
+    /// Everything `TimelineView` needs. `duration`/`cuts`/`selection` stay on
+    /// the SOURCE clock because that is the clock they ARE: `edl.cuts` and a
+    /// `Selection` destined to become one are source-time ranges, and
+    /// `duration` is `capture.mov`'s own length — the INPUT the view builds
+    /// its `Timebase` (and therefore its one output-axis `TimelineGeometry`)
+    /// from, not an axis it interprets anything against.
+    ///
+    /// This comment used to say the view's own interaction "must keep
+    /// computing against the recording's FULL, unchanging length regardless
+    /// of what has already been cut", citing M4b Critical finding #1. The
+    /// M5f whole-branch review measured that arrangement and found it
+    /// REPRODUCED the finding it cited: a fixed axis makes the same pixels
+    /// mean the same source span forever, so a second drag over them cuts
+    /// nothing. Interaction is interpreted on the axis being drawn — see
+    /// `TimelineView.time(for:)`.
+    ///
+    /// `jumpPoints`/`playhead`, by contrast, are OUTPUT time, UNCONVERTED
+    /// (M5f Task 3): `TimelineGeometry` now draws on the export's own axis
+    /// (D56's first requirement — a cut shortens the timeline instead of
+    /// leaving a red patch in it), and `controller.player.currentTime()` /
+    /// `controller.jumpPoints` are ALREADY exactly that clock —
+    /// `CompositionBuilder` only ever builds kept ranges into the
+    /// composition. Converting them to source time here, as this method did
+    /// before Task 3, was correct while the view drew on the source axis and
+    /// is BACKWARDS now that it draws on the output axis: it would hand
+    /// `TimelineView` a source-time value for a mapping function that
+    /// expects output time, silently landing the playhead and every marker
+    /// on the wrong pixel the moment anything has been cut — precisely the
+    /// clock confusion this milestone exists to prevent.
     struct DisplayState {
         let duration: Double
-        let cuts: [TimeRange]
+        /// WITH identity (M5f Task 5) — `edl.cuts` itself, not
+        /// `.map(\.range)`. `TimelineView.foldHit(atX:)` reports a click back
+        /// by `Cut.id` (to `onToggleExpansion`/`onRemoveCut`), so the id has
+        /// to survive the trip down to the view; a bare `TimeRange` here
+        /// would strip exactly the identity the fold UI needs.
+        let cuts: [Cut]
         let jumpPoints: [JumpPoint]
         let playhead: Double
+        let selection: Selection?
+        /// See `expandedCutIDs`'s own doc comment.
+        let expandedCutIDs: Set<UUID>
     }
 
     func displayState(playhead outputPlayhead: Double) -> DisplayState {
-        let keptRanges = controller.keptRanges
-        let sourcePlayhead = TimeRangeMapping.sourceTime(
-            ofTrimmedTime: outputPlayhead, keptRanges: keptRanges) ?? 0
-        let sourceJumpPoints: [JumpPoint] = controller.jumpPoints.compactMap { point in
-            guard let source = TimeRangeMapping.sourceTime(
-                ofTrimmedTime: point.timeSeconds, keptRanges: keptRanges) else { return nil }
-            return JumpPoint(timeSeconds: source, label: point.label)
-        }
-        return DisplayState(duration: controller.sourceDurationSeconds,
-                            cuts: edl.cuts,
-                            jumpPoints: sourceJumpPoints,
-                            playhead: sourcePlayhead)
+        DisplayState(duration: controller.sourceDurationSeconds,
+                    cuts: edl.cuts,
+                    jumpPoints: controller.jumpPoints,
+                    playhead: outputPlayhead,
+                    selection: selection,
+                    expandedCutIDs: expandedCutIDs)
     }
 
     /// `time` arrives in SOURCE time — the view's own axis — and must be
@@ -111,13 +174,186 @@ final class EditorTimelineState: ObservableObject {
         Task { await controller.seek(toSeconds: trimmedTime) }
     }
 
-    /// `range` arrives in SOURCE time directly from the view — no mapping
-    /// needed on the way in, since `edl.cuts` wants exactly that (M4b
-    /// Critical finding #1: before this fix, the view's axis was trimmed
-    /// time, and a second drag on the same view produced a range that had
-    /// already been computed against the wrong clock).
-    func onTrim(_ range: TimeRange) {
-        applyCut(range)
+    /// `selection` arrives from the view already resolved (SOURCE time): a
+    /// real drag becomes `Selection(range:)`, a plain click — or a drag too
+    /// short to count — becomes `nil`. D56 (M5f Task 4): this only ever
+    /// REPLACES `self.selection`. It never touches `edl` — a drag selects,
+    /// it does not cut. `cutSelection()`, below, is the one path from a
+    /// selection to an actual `Cut`.
+    ///
+    /// Before this task, this method was `onTrim(_ range: TimeRange)` and
+    /// called `applyCut(range)` directly — a completed drag became a cut
+    /// the instant the mouse came up, with no decision in between. That is
+    /// the defect D56 names.
+    func onSelect(_ selection: Selection?) {
+        self.selection = selection
+    }
+
+    /// Cuts the current selection, if any — the one place a `Selection`
+    /// (UI state, never persisted) turns into a `Cut` (persisted to
+    /// `edit.json`), via the same append-and-save `applyCut` a drag used to
+    /// call directly before D56 separated the two. Clears the selection
+    /// afterwards: once it has become an edit, there is nothing left
+    /// selected. A no-op with no selection, rather than force-unwrapping —
+    /// pressing Cut with nothing selected is a plausible, harmless mistake,
+    /// not a programmer error.
+    func cutSelection() {
+        guard let selection else { return }
+        applyCut(selection.range)
+        self.selection = nil
+    }
+
+    /// A fold was clicked (`TimelineView.onToggleExpansion`, D56 M5f Task 5):
+    /// flips whether `id` is expanded. Deliberately the ONLY thing this
+    /// method does — no `applyCut`/`restore`-style undo registration, no
+    /// `applyAndSave()`. See `expandedCutIDs`'s doc comment for why that
+    /// absence is the whole guarantee: a "plausible wrong implementation"
+    /// the dispatch names is one that treats expanding as a temporary
+    /// un-cut (restoring the segment, rebuilding the composition, then
+    /// re-cutting it on collapse) — that WOULD change `outputDuration` and
+    /// briefly make playback stop skipping the span, exactly the leak Task
+    /// 5's first trap exists to catch.
+    func toggleExpansion(of id: UUID) {
+        if expandedCutIDs.contains(id) {
+            expandedCutIDs.remove(id)
+        } else {
+            expandedCutIDs.insert(id)
+        }
+    }
+
+    /// Right-click ▸ Remove Cut (D56, M5f Task 5): restores the segment by
+    /// deleting exactly the `Cut` named by `id` from `edl.cuts` — output
+    /// duration grows by that cut's own length, and nothing else in the EDL
+    /// changes. Mirrors `applyCut`'s undo/save shape exactly (a whole-EDL
+    /// snapshot registered before the mutation, then `applyAndSave()`),
+    /// because removal is a real edit with the same undo/persist
+    /// obligations as a cut — it is NOT the same operation as
+    /// `toggleExpansion(of:)` above just running backwards.
+    ///
+    /// A no-op if `id` doesn't name a current cut — a stale fold (already
+    /// removed by an earlier right-click, or by an undo that has since
+    /// dropped it) offering "Remove Cut" a second time is a plausible,
+    /// harmless double-click, not a programmer error, matching
+    /// `cutSelection()`'s own no-op-over-force-unwrap stance above.
+    func removeCut(id: UUID) {
+        guard edl.cuts.contains(where: { $0.id == id }) else { return }
+        var updated = edl
+        updated.cuts.removeAll { $0.id == id }
+        let previous = edl
+        undoManager?.registerUndo(withTarget: self) { target in
+            target.restore(previous)
+        }
+        edl = updated
+        // The removed cut can no longer be expanded — nothing left to fold.
+        expandedCutIDs.remove(id)
+        applyAndSave()
+    }
+
+    // MARK: - Markers (D50/D56, M5f Task 6)
+
+    /// A marker was dragged to a new position on the timeline.
+    ///
+    /// `outputTime` arrives in OUTPUT time — the timeline's own drawing
+    /// axis (Task 3) — and MUST be converted back to SOURCE time before
+    /// it is stored: `events.json` holds source time, the same clock
+    /// `edl.cuts` uses, and storing the output value directly would be the
+    /// M4b defect wearing a different hat — a marker that moves on screen
+    /// and lands at the wrong instant in the file, silently, the moment
+    /// anything has been cut. `Timebase.sourceTime(forOutput:)` (Task 3) is
+    /// the one place that conversion lives; this is not a second one.
+    ///
+    /// `Timebase.sourceTime(forOutput:)` can never resolve to an instant
+    /// INSIDE a cut — the output timeline has no cuts in it by construction
+    /// (see that method's own doc comment) — so a drag can never place a
+    /// marker into a cut merely by landing on a pixel; every reachable
+    /// output position already names a kept source instant. The opposite
+    /// case — a marker that already sits inside a cut before any drag — has
+    /// no output position at all, so `TimelineView` never draws it in the
+    /// marker track and this method is never reached for it: there is
+    /// nothing on screen for a person to grab.
+    ///
+    /// A no-op if `id` doesn't name a current event (already moved by a
+    /// concurrent edit, or the marker was removed) or if `outputTime`
+    /// resolves to nothing (everything is currently cut, so there is no
+    /// output timeline to land on) — both plausible, harmless races, not
+    /// programmer errors, matching `removeCut(id:)`'s own no-op stance.
+    func moveMarker(id: UUID, toOutput outputTime: Double) {
+        guard let index = events.firstIndex(where: { $0.id == id }) else { return }
+        let timebase = Timebase(sourceDuration: controller.sourceDurationSeconds, edl: edl)
+        guard let sourceTime = timebase.sourceTime(forOutput: OutputTime(outputTime))?.seconds else { return }
+        let previous = events
+        undoManager?.registerUndo(withTarget: self) { target in
+            target.restoreEvents(previous)
+        }
+        events[index].timeSeconds = sourceTime
+        applyAndSaveEvents()
+    }
+
+    /// A marker's label and transcript (D50) were edited. Both are written
+    /// together — the one UI that calls this always presents both fields at
+    /// once, so there is no partial-edit case to support, and supporting
+    /// one independently would risk a caller silently clobbering the other
+    /// with a stale value.
+    ///
+    /// A no-op if `id` doesn't name a current event, matching `moveMarker`
+    /// and `removeCut(id:)` above.
+    func updateMarker(id: UUID, label: String?, transcript: String?) {
+        guard let index = events.firstIndex(where: { $0.id == id }) else { return }
+        let previous = events
+        undoManager?.registerUndo(withTarget: self) { target in
+            target.restoreEvents(previous)
+        }
+        events[index].label = label
+        events[index].transcript = transcript
+        applyAndSaveEvents()
+    }
+
+    /// The events-side twin of `restore(_:)`: pushes the CURRENT `events`
+    /// back onto the undo stack as the redo before installing `snapshot`, so
+    /// marker undo/redo is multi-level exactly like cut undo/redo.
+    private func restoreEvents(_ snapshot: [LoggedEvent]) {
+        let current = events
+        undoManager?.registerUndo(withTarget: self) { $0.restoreEvents(current) }
+        events = snapshot
+        applyAndSaveEvents()
+    }
+
+    /// The marker-edit sibling of `applyAndSave()`: persists `events.json`
+    /// only, WITHOUT rebuilding the composition. A marker's own position,
+    /// label or transcript changes nothing `CompositionBuilder` builds —
+    /// only `edl.cuts` does — so this calls `controller.refreshJumpPoints`
+    /// directly instead of the full `apply(edl:events:)` rebuild `cuts` need.
+    ///
+    /// Chained onto the SAME `pendingSaveTask` `applyAndSave()` uses, not a
+    /// second, parallel chain: F2's "last write is the latest state" and
+    /// F9's "⌘Q waits for every outstanding save" both need to hold for a
+    /// marker edit exactly as they do for a cut, and two independent chains
+    /// could let a cut and a marker edit race each other onto disk.
+    private func applyAndSaveEvents() {
+        let events = self.events
+        let controller = self.controller
+        let previousSave = pendingSaveTask
+        outstandingSaves += 1
+        pendingSaveTask = Task { @MainActor [weak self] in
+            await previousSave?.value
+            do {
+                try controller.persistEvents(events)
+                controller.refreshJumpPoints(events: events)
+                self?.lastSavedEvents = events
+            } catch {
+                self?.eventEditWasRejected(error)
+            }
+            self?.outstandingSaves -= 1
+        }
+    }
+
+    /// The events-side twin of `editWasRejected(_:)`: reverts to the last
+    /// events value that IS on disk and reuses the same alert path — a
+    /// marker write failing (disk full, permissions) deserves the same
+    /// visible refusal a rejected cut gets, not a silently reverted marker.
+    private func eventEditWasRejected(_ error: Error) {
+        events = lastSavedEvents
+        onEditRejected?(error)
     }
 
     /// Appends `range` and registers its inverse as a whole-EDL snapshot,
@@ -129,7 +365,9 @@ final class EditorTimelineState: ObservableObject {
         undoManager?.registerUndo(withTarget: self) { target in
             target.restore(previous)
         }
-        edl.cuts.append(range)
+        // Cutting a selection is always a brand-new cut — it has no
+        // established identity to preserve, so it mints its own id here.
+        edl.cuts.append(Cut(range: range))
         applyAndSave()
     }
 
@@ -215,11 +453,25 @@ final class EditorTimelineState: ObservableObject {
 private struct TimelineViewRepresentable: NSViewRepresentable {
     @ObservedObject var state: EditorTimelineState
     let playhead: Double
+    /// Surfaces a marker click up to `EditorContentView`'s own `@State`
+    /// (Task 6) — unlike the other callbacks below, this one opens UI
+    /// (a sheet), not a model mutation, so it does not belong on
+    /// `EditorTimelineState` alongside `onSelect`/`toggleExpansion`/
+    /// `removeCut`, which all mutate testable state directly.
+    let onEditMarker: (UUID) -> Void
 
     func makeNSView(context: Context) -> TimelineView {
-        let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 480, height: 40))
+        let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 480, height: 56))
         view.onScrub = { [weak state] in state?.onScrub($0) }
-        view.onTrim = { [weak state] in state?.onTrim($0) }
+        view.onSelect = { [weak state] in state?.onSelect($0) }
+        view.onToggleExpansion = { [weak state] in state?.toggleExpansion(of: $0) }
+        view.onRemoveCut = { [weak state] in state?.removeCut(id: $0) }
+        // D50/D56 (M5f Task 6): a marker drag reports the OUTPUT time it was
+        // dropped at, converted back to SOURCE time by `moveMarker` itself
+        // (see that method's doc comment) — never converted here in the
+        // untestable AppKit seam.
+        view.onMoveMarker = { [weak state] id, outputTime in state?.moveMarker(id: id, toOutput: outputTime) }
+        view.onEditMarker = onEditMarker
         return view
     }
 
@@ -232,7 +484,9 @@ private struct TimelineViewRepresentable: NSViewRepresentable {
         nsView.update(duration: display.duration,
                      cuts: display.cuts,
                      jumpPoints: display.jumpPoints,
-                     playhead: display.playhead)
+                     playhead: display.playhead,
+                     selection: display.selection,
+                     expandedCutIDs: display.expandedCutIDs)
     }
 }
 
@@ -243,22 +497,58 @@ private struct TimelineViewRepresentable: NSViewRepresentable {
 private struct EditorContentView: View {
     @ObservedObject fileprivate var state: EditorTimelineState
     @State private var playhead: Double = 0
+    /// Which marker the edit sheet is open for, if any (Task 6). UI-only,
+    /// like `expandedCutIDs`'s spirit but one level further out: nothing
+    /// tests WHICH marker is currently open in a sheet, only that
+    /// `EditorTimelineState.updateMarker`/`moveMarker` persist and undo
+    /// correctly — see those methods' own tests. This lives here, not on
+    /// `EditorTimelineState`, because it is presentation state a SwiftUI
+    /// runtime test cannot exercise anyway.
+    @State private var editingMarkerID: UUID?
 
     private var controller: PreviewController { state.controller }
+
+    /// The marker the sheet below is editing, re-derived from
+    /// `state.events` on every access rather than cached at click time — a
+    /// concurrent edit (undo, another drag) must not let the sheet open on
+    /// stale label/transcript text.
+    private var editingMarkerBinding: Binding<LoggedEvent?> {
+        Binding(
+            get: { editingMarkerID.flatMap { id in state.events.first { $0.id == id } } },
+            set: { newValue in editingMarkerID = newValue?.id }
+        )
+    }
 
     var body: some View {
         VStack(spacing: 0) {
             PlayerLayerView(player: controller.player)
                 .frame(minWidth: 480, minHeight: 270)
-            TimelineViewRepresentable(state: state, playhead: playhead)
-                .frame(height: 40)
+            // D56 (M5f Task 6): three stacked tracks — a thin marker lane
+            // above, video, then audio — replacing the single undifferentiated
+            // track Task 5 left behind. The taller frame (56, was 40) gives
+            // the marker lane room to be a real click/drag target rather
+            // than a sliver; see `TimelineView`'s own `markerTrackHeight`.
+            TimelineViewRepresentable(state: state, playhead: playhead,
+                                      onEditMarker: { editingMarkerID = $0 })
+                .frame(height: 56)
             HStack(spacing: 12) {
                 Button("Play") { controller.play() }
                 Button("Pause") { controller.pause() }
+                // D56 (M5f Task 4): the only place a selection becomes a
+                // cut. Disabled with nothing selected — dragging alone no
+                // longer cuts anything; this button is the deliberate
+                // decision that does.
+                Button("Cut") { state.cutSelection() }
+                    .disabled(state.selection == nil)
             }
             .padding(8)
             if !controller.jumpPoints.isEmpty {
-                List(controller.jumpPoints, id: \.timeSeconds) { point in
+                // `id: \.id` (Task 6), not `\.timeSeconds`: `JumpPoint` now
+                // carries the source marker's own stable identity, which two
+                // distinct markers can never collide on the way two markers
+                // landing on the same trimmed second (unlikely, but possible)
+                // could collide on the old key.
+                List(controller.jumpPoints, id: \.id) { point in
                     Button(point.label) {
                         Task { await controller.jump(to: point) }
                     }
@@ -274,6 +564,58 @@ private struct EditorContentView: View {
             let seconds = controller.player.currentTime().seconds
             playhead = seconds.isFinite ? seconds : 0
         }
+        .sheet(item: editingMarkerBinding) { marker in
+            MarkerEditSheet(label: marker.label ?? "", transcript: marker.transcript ?? "") { label, transcript in
+                state.updateMarker(id: marker.id,
+                                   label: label.isEmpty ? nil : label,
+                                   transcript: transcript.isEmpty ? nil : transcript)
+                editingMarkerID = nil
+            } onCancel: {
+                editingMarkerID = nil
+            }
+        }
+    }
+}
+
+/// The marker-edit UI (D50/D56, M5f Task 6): label plus transcript, the two
+/// fields `EditorTimelineState.updateMarker(id:label:transcript:)` accepts
+/// together.
+///
+/// A SHEET, not an inline field or a popover: `TimelineView` is a raw
+/// `NSView` with no spare room to grow a second, always-visible editing
+/// surface without competing with the marker track itself for the same few
+/// pixels, and a popover would need this AppKit view's exact click point
+/// translated into a SwiftUI anchor — real plumbing for a feature used
+/// occasionally, not every frame. A modal sheet is the smallest addition on
+/// top of a shell that is already SwiftUI (`EditorContentView`):
+/// `.sheet(item:)` needs only a `Binding` and an `Identifiable` item, and
+/// blocking the rest of the editor while a transcript — potentially a full
+/// sentence, not just a short label — is being typed is the right default,
+/// not an inline field a stray click elsewhere could abandon half-written.
+private struct MarkerEditSheet: View {
+    @State var label: String
+    @State var transcript: String
+    let onSave: (String, String) -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Edit Marker").font(.headline)
+            TextField("Label", text: $label)
+                .textFieldStyle(.roundedBorder)
+            Text("Transcript").font(.caption).foregroundStyle(.secondary)
+            TextEditor(text: $transcript)
+                .frame(minHeight: 80)
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.3)))
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { onCancel() }
+                Button("Save") { onSave(label, transcript) }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(20)
+        .frame(width: 360)
     }
 }
 
@@ -479,6 +821,33 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         Self.open.removeAll { $0 === self }
     }
 
+    // MARK: - Edit menu: Cut Selection (Task 5)
+
+    /// Whether this editor's timeline currently has something selected —
+    /// the same condition that enables/disables `EditorContentView`'s Cut
+    /// button. Read by `AppDelegate`'s `NSMenuItemValidation` conformance so
+    /// the Edit ▸ Cut Selection menu item (Delete/Backspace, see
+    /// `AppShell.editMenuItem`) is disabled with nothing selected — Task 5's
+    /// own constraint: "a user with nothing selected must not be offered an
+    /// action that does nothing". It is also what keeps the Delete key from
+    /// swallowing an ordinary Backspace anywhere else in the app: the item
+    /// is enabled only while THIS is true for the key window's editor, so a
+    /// Backspace typed into, say, the export panel's filename field — a
+    /// different window, or this editor's own window with nothing
+    /// selected — falls through to normal text editing instead.
+    var hasTimelineSelection: Bool { state.selection != nil }
+
+    /// Edit ▸ Cut Selection (Delete/Backspace), Task 5's second requirement:
+    /// "Task 4 added a Cut button but no keyboard path." `EditorWindowController`
+    /// is not in the responder chain (see `AppDelegate.exportDocument`'s doc
+    /// comment for why), so the menu item's nil target resolves to
+    /// `AppDelegate`, which picks the key window's editor and calls this —
+    /// the exact same decision `EditorContentView`'s Cut button already
+    /// makes, just reachable without a mouse.
+    func cutTimelineSelection() {
+        state.cutSelection()
+    }
+
     // MARK: - Export (Task 8)
 
     /// File ▸ Export…, wired via `AppDelegate.exportDocument(_:)`.
@@ -600,10 +969,33 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    /// Drives a trim exactly as the timeline view's gesture would, without
-    /// a live `NSView` or SwiftUI runtime (Task 7).
+    /// Drives a complete select-then-cut exactly as a real drag ending
+    /// followed by pressing Cut would (Task 7; D56/M5f Task 4 inserted the
+    /// selection step), without a live `NSView` or SwiftUI runtime. Kept
+    /// under its original `...TrimForTesting` name for the existing callers
+    /// (`EditorExportTests`, `EditorPersistenceTests`) that only care about
+    /// the resulting `Cut` landing in `state.edl`, not the selection D56
+    /// interposed before it.
     func applyTrimForTesting(_ range: TimeRange) {
-        state.onTrim(range)
+        state.onSelect(Selection(range: range))
+        state.cutSelection()
+    }
+
+    /// Drives a real right-click ▸ Remove Cut (D56, M5f Task 5) exactly as
+    /// `TimelineView.handleRemoveCutMenuItem` would, without a live
+    /// `NSView`/`NSMenu`.
+    func removeCutForTesting(id: UUID) {
+        state.removeCut(id: id)
+    }
+
+    /// Drives a completed drag that only SELECTS — no Cut decision — exactly
+    /// as `TimelineView.mouseUp` reporting a resolved drag would. Distinct
+    /// from `applyTrimForTesting`, which selects AND immediately cuts: this
+    /// exists for tests (`AppShellTests`'s Cut Selection menu validation)
+    /// that need to observe `hasTimelineSelection` while something is
+    /// selected but not yet turned into a `Cut`.
+    func selectForTesting(_ range: TimeRange) {
+        state.onSelect(Selection(range: range))
     }
 
     /// The in-memory EDL. Deliberately the ADJACENT property to the one
@@ -611,6 +1003,31 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// for why asserting only this would pass against the bug Task 7 fixes.
     func currentEDLForTesting() -> EditDecisionList {
         state.edl
+    }
+
+    /// The in-memory events, markers included — the events-side twin of
+    /// `currentEDLForTesting()` (Task 6). Deliberately what tests assert
+    /// against for a marker drag/edit's STORED result (SOURCE time, label,
+    /// transcript), not `controller.jumpPoints`'s OUTPUT-time, display-only
+    /// copy — the same adjacent-property trap `currentEDLForTesting()`'s own
+    /// doc comment names, one field over.
+    func currentEventsForTesting() -> [LoggedEvent] {
+        state.events
+    }
+
+    /// Drives a real marker drag exactly as `TimelineView.mouseUp` reporting
+    /// a resolved marker move would (Task 6), without a live `NSView`.
+    /// `outputTime` matches `onMoveMarker`'s own parameter: OUTPUT time, the
+    /// timeline's own drawing axis, converted back to SOURCE time by
+    /// `EditorTimelineState.moveMarker` itself.
+    func moveMarkerForTesting(id: UUID, toOutput outputTime: Double) {
+        state.moveMarker(id: id, toOutput: outputTime)
+    }
+
+    /// Drives a real marker edit (label + transcript) exactly as saving the
+    /// edit sheet would (Task 6), without live SwiftUI.
+    func updateMarkerForTesting(id: UUID, label: String?, transcript: String?) {
+        state.updateMarker(id: id, label: label, transcript: transcript)
     }
 
     /// Awaits the actual in-flight apply-then-persist chain, not a fixed

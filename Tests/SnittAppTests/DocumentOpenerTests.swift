@@ -88,10 +88,18 @@ struct DocumentOpenerTests {
     func rejectsInvalidBundleDirectory() async throws {
         // The likelier real-world case: a plain folder someone renamed to
         // `.snitt`, or a bundle a failed recording never finished writing.
-        // `SnittBundle(opening:)` only checks "is this a directory" — it
-        // has no `missingCapture` check wired up — so this one gets past
-        // that guard and must be rejected further in, when `EventLog.read`
-        // can't find `events.json`.
+        // `SnittBundle(opening:)` only checks "is this a directory", so this
+        // one gets past that guard and must be rejected further in.
+        //
+        // It used to be rejected by accident: `EventLog.read` threw a
+        // `CocoaError` because `events.json` was missing. M5f whole-branch
+        // review F9 made a missing `events.json` legitimate (a recording
+        // interrupted before `Recorder` finalizes has none), which would
+        // have left this folder falling through to an opaque AVFoundation
+        // failure inside `CompositionBuilder`. `DocumentOpener.build` now
+        // names the real condition — no `capture.mov`, the one file a
+        // bundle cannot be without — so the specific rejection is pinned
+        // here rather than a bare "something threw".
         let empty = FileManager.default.temporaryDirectory
             .appending(path: "not-really-a-bundle-\(UUID().uuidString).snitt")
         try FileManager.default.createDirectory(at: empty, withIntermediateDirectories: true)
@@ -99,10 +107,96 @@ struct DocumentOpenerTests {
 
         try await EditorWindowTestGate.run {
             let before = EditorWindowController.openWindowCount
-            await #expect(throws: CocoaError.self) {
+            await #expect(throws: SnittBundleError.missingCapture) {
                 _ = try await DocumentOpener.open(bundleURL: empty)
             }
             #expect(EditorWindowController.openWindowCount == before)
+        }
+    }
+
+    @Test("A bundle with no events.json still opens — a fresh recording legitimately has no markers")
+    func opensABundleWithNoEventsFile() async throws {
+        // M5f whole-branch review, F9 (pre-existing): `DocumentOpener.build`
+        // was a bare `try EventLog.read(from: bundle)` — the only one of the
+        // four `events.json` readers without the absent-vs-unreadable
+        // distinction this milestone standardised everywhere else. A
+        // recording interrupted before `Recorder` finalizes has no
+        // `events.json` at all, and the GUI refused to open it.
+        //
+        // The complementary refusal — a file that EXISTS and cannot be
+        // decoded — is pinned by
+        // `rejectsFutureEventsSchemaVersionRatherThanSilentlyDroppingMarkers`
+        // below, so a mutant that "fixes" this by swallowing every events
+        // error with `try?` fails there.
+        let url = try await makeFixtureBundle()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try FileManager.default.removeItem(at: SnittBundle(opening: url).eventsURL)
+
+        try await EditorWindowTestGate.run {
+            let before = EditorWindowController.openWindowCount
+            let controller = try await DocumentOpener.open(bundleURL: url)
+            defer { controller.close() }
+            #expect(EditorWindowController.openWindowCount == before + 1)
+            #expect(controller.currentEventsForTesting().isEmpty)
+        }
+    }
+
+    @Test("Opening a bundle whose edit.json declares a future schemaVersion throws rather than silently opening with an empty EDL")
+    func rejectsFutureSchemaVersionRatherThanSilentlyDefaulting() async throws {
+        // D60/M5f: `build(bundle:)` used to read edit.json with `(try?
+        // EditDecisionList.read(from: bundle)) ?? .fullRange()` — the same
+        // collapsing pattern a whole-branch review already fixed at the
+        // CLI's two `AutomationHost` call sites
+        // (`TrimAndExportHostTests.exportWithCorruptEDLFailsExplicitly`/
+        // `trimWithCorruptEDLFailsExplicitly`), left standing here. A
+        // `schemaVersion` newer than this build understands is a real
+        // edit.json that EXISTS and fails to decode — collapsing that into
+        // `.fullRange()` would silently show an EMPTY timeline for a
+        // recording a newer Snitt build had already trimmed, and the next
+        // autosave would overwrite edit.json with that empty EDL,
+        // destroying the newer build's cuts permanently. Updates are
+        // hand-delivered (D54), so an old and a new build coexisting on
+        // one machine is not a hypothetical.
+        let url = try await makeFixtureBundle()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let bundle = try SnittBundle(opening: url)
+        try Data(#"{"schemaVersion":99,"cuts":[],"trackStates":[]}"#.utf8).write(to: bundle.editURL)
+
+        try await EditorWindowTestGate.run {
+            let before = EditorWindowController.openWindowCount
+            await #expect(throws: EditDecisionListError.self) {
+                _ = try await DocumentOpener.open(bundleURL: url)
+            }
+            #expect(EditorWindowController.openWindowCount == before,
+                    "a future-schemaVersion edit.json must not open a window at all, let alone an empty one")
+        }
+    }
+
+    @Test("Opening a bundle whose events.json declares a future schemaVersion throws rather than silently opening with an empty marker list")
+    func rejectsFutureEventsSchemaVersionRatherThanSilentlyDroppingMarkers() async throws {
+        // D60/M5f Task 7: the events.json sibling of
+        // `rejectsFutureSchemaVersionRatherThanSilentlyDefaulting` above.
+        // `EventLog.schemaVersion` was bumped 1 -> 2 by Task 6 with no such
+        // guard — `build(bundle:)` calls `EventLog.read(from: bundle)`
+        // directly (no `try?`), so this was never a SILENT collapse the way
+        // `edit.json`'s was, but until `EventLog.init(from:)` gained this
+        // gate, a newer build's `events.json` decoded ONLY the fields an
+        // older build recognizes and silently dropped `transcript` — the
+        // only place a marker's narration lives — with the very next
+        // autosave making that loss permanent. This pins the refusal at the
+        // GUI's open path specifically, not just at the bare decoder.
+        let url = try await makeFixtureBundle()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let bundle = try SnittBundle(opening: url)
+        try Data(#"{"schemaVersion":99,"events":[]}"#.utf8).write(to: bundle.eventsURL)
+
+        try await EditorWindowTestGate.run {
+            let before = EditorWindowController.openWindowCount
+            await #expect(throws: EventLogError.self) {
+                _ = try await DocumentOpener.open(bundleURL: url)
+            }
+            #expect(EditorWindowController.openWindowCount == before,
+                    "a future-schemaVersion events.json must not open a window at all, let alone an empty one")
         }
     }
 

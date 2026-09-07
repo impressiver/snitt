@@ -9,8 +9,10 @@ public enum SnittBundleError: Error, Equatable {
 /// A `.snitt` recording package.
 ///
 /// The bundle is a directory. `capture.mov` is written once during recording
-/// and never mutated afterwards; `edit.json` is the only file editing touches.
-/// See spec section 7.
+/// and never mutated afterwards. `edit.json` and `events.json` are the two
+/// files editing touches — cuts in the former, marker position/label/
+/// transcript in the latter (M5f Task 6 added writing to `events.json`;
+/// before that, only capture ever wrote it). See spec section 7.
 public struct SnittBundle: Sendable {
     public static let fileExtension = "snitt"
 

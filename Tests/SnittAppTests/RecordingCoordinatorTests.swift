@@ -72,7 +72,7 @@ func concurrentTogglesDoNotDoubleStart() async throws {
         pickerResolver: SlowResolver(gate: gate),
         cachedResolverFactory: { _ in SlowResolver(gate: gate) },
         store: store,
-        outputDirectory: FileManager.default.temporaryDirectory,
+        outputDirectorySettings: { OutputDirectorySettings(directory: FileManager.default.temporaryDirectory) },
         // Granted, deterministically. Otherwise these tests assert their
         // property only on a machine that happens to have the grant and pass
         // vacuously everywhere else.
@@ -119,7 +119,7 @@ func agentStartsWithAnEmptyStore() async throws {
         pickerResolver: MarkerResolver(),   // must never be used by an agent request
         cachedResolverFactory: { _ in MarkerResolver() },
         store: store,
-        outputDirectory: FileManager.default.temporaryDirectory,
+        outputDirectorySettings: { OutputDirectorySettings(directory: FileManager.default.temporaryDirectory) },
         // Granted, deterministically. Otherwise these tests assert their
         // property only on a machine that happens to have the grant and pass
         // vacuously everywhere else.
@@ -167,7 +167,7 @@ func stopForAgentRefusesUnknownSession() async {
         pickerResolver: MarkerResolver(),
         cachedResolverFactory: { _ in MarkerResolver() },
         store: store,
-        outputDirectory: FileManager.default.temporaryDirectory,
+        outputDirectorySettings: { OutputDirectorySettings(directory: FileManager.default.temporaryDirectory) },
         // Granted, deterministically. Otherwise these tests assert their
         // property only on a machine that happens to have the grant and pass
         // vacuously everywhere else.
@@ -264,7 +264,7 @@ func agentFailureLeavesTheHumanStoreIntact() async throws {
         pickerResolver: GoneResolver(),
         cachedResolverFactory: { _ in GoneResolver() },
         store: store,
-        outputDirectory: FileManager.default.temporaryDirectory,
+        outputDirectorySettings: { OutputDirectorySettings(directory: FileManager.default.temporaryDirectory) },
         // Granted, deterministically. Otherwise these tests assert their
         // property only on a machine that happens to have the grant and pass
         // vacuously everywhere else.
@@ -294,7 +294,7 @@ func humanFailureClearsTheStore() async throws {
         pickerResolver: GoneResolver(),
         cachedResolverFactory: { _ in GoneResolver() },
         store: store,
-        outputDirectory: FileManager.default.temporaryDirectory,
+        outputDirectorySettings: { OutputDirectorySettings(directory: FileManager.default.temporaryDirectory) },
         // Granted, deterministically. Otherwise these tests assert their
         // property only on a machine that happens to have the grant and pass
         // vacuously everywhere else.
@@ -311,6 +311,247 @@ func humanFailureClearsTheStore() async throws {
     }
     #expect(store.load() == nil,
             "a stale cache must be cleared so the next press offers the picker")
+}
+
+// MARK: - The human/hotkey path's microphone wiring
+
+/// The gap this fixes: the human hotkey path built `CaptureOptions()` and
+/// set only `logInputEvents`, so `captureMicrophone` stayed at
+/// `CaptureOptions`'s own `false` default no matter what
+/// `MicrophoneSettings` held — a ticked "Record voiceover" box that could
+/// never actually reach a recording. Only `startForAgent` (fed by the CLI's
+/// `--mic`) ever threaded a caller-supplied `captureMicrophone` through.
+///
+/// Reaching `toggle()`'s own call into `startRecording` needs a real
+/// `SCContentFilter`, which no test can construct (see the other tests in
+/// this file making the same point) — so this exercises `humanCaptureOptions`
+/// directly, the exact function `toggle()` calls to build its options.
+///
+/// Verified to fail against the bug: deleting
+/// `options.captureMicrophone = microphone.enabled` from
+/// `humanCaptureOptions` leaves `options.captureMicrophone` at `false`
+/// regardless of the `microphone` argument, and the first `#expect` below
+/// fails. A test that only round-trips `MicrophoneSettings` through
+/// `UserDefaults` would pass against that exact same bug — this one does
+/// not, because it exercises the code path that actually builds
+/// `CaptureOptions`.
+@Test("The hotkey path threads captureMicrophone from MicrophoneSettings")
+func humanPathThreadsMicrophoneSetting() {
+    let options = RecordingCoordinator.humanCaptureOptions(
+        eventLogging: EventLoggingSettings(enabled: false),
+        microphone: MicrophoneSettings(enabled: true))
+    #expect(options.captureMicrophone == true,
+            "a ticked microphone setting must reach CaptureOptions, not stop at UserDefaults")
+}
+
+@Test("The hotkey path leaves the microphone off unless the setting says otherwise")
+func humanPathMicrophoneOffByDefault() {
+    // §4.10 rung 2: the microphone prompt is paid only when someone
+    // deliberately enables it — mirrors AutomationHostTests's
+    // "microphoneIsOffByDefault" for the agent path.
+    let options = RecordingCoordinator.humanCaptureOptions(
+        eventLogging: EventLoggingSettings(enabled: false),
+        microphone: MicrophoneSettings(enabled: false))
+    #expect(options.captureMicrophone == false)
+}
+
+@Test("logInputEvents keeps threading through alongside the microphone setting")
+func humanPathStillThreadsEventLogging() {
+    // The precedent this function generalizes: `logInputEvents` must keep
+    // working exactly as it did before this fix, not be crowded out by the
+    // new setting.
+    let options = RecordingCoordinator.humanCaptureOptions(
+        eventLogging: EventLoggingSettings(enabled: true),
+        microphone: MicrophoneSettings(enabled: false))
+    #expect(options.logInputEvents == true)
+    #expect(options.captureSystemAudio == true, "system audio stays the hotkey's fixed default")
+}
+
+// MARK: - Configurable output directory (M5f)
+
+@Test("A new recording's bundle lands inside the CONFIGURED directory, not a hardcoded one")
+func bundleURLUsesConfiguredDirectory() {
+    // Verified to fail against the bug this whole feature replaces: a
+    // `bundleURL` that ignores `directory` and always returns a path under
+    // `FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop")`
+    // (main.swift's old hardcoded value) would put this URL under Desktop
+    // regardless of what `custom` is here, failing the assertion below.
+    let custom = URL(fileURLWithPath: "/Volumes/External/MyRecordings")
+    let url = RecordingCoordinator.bundleURL(directory: custom, git: nil, timestamp: 100)
+    // Compared by `.path` rather than raw `URL` equality — see
+    // `OutputDirectorySettings.load`'s own doc comment on why two URLs
+    // naming the same folder can otherwise compare unequal.
+    #expect(url.deletingLastPathComponent().path == custom.path)
+}
+
+@Test("A missing output directory is created rather than failing the recording")
+func prepareOutputDirectoryCreatesAMissingFolder() throws {
+    // §"the directory no longer exists" case, and also the ordinary first-run
+    // state now that the default (`~/Documents/Snitt`) will not exist on a
+    // fresh machine. Verified to fail against a wrong implementation that
+    // refuses whenever `fileExists` is false instead of creating the folder:
+    // that would make `prepareOutputDirectory` return a `.failed` outcome
+    // here, failing the first `#expect` below.
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("snitt-output-dir-test-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: directory) }
+    #expect(!FileManager.default.fileExists(atPath: directory.path))
+
+    let outcome = RecordingCoordinator.prepareOutputDirectory(directory)
+    #expect(outcome == nil, "a missing directory must be created, not treated as a failure")
+
+    var isDirectory: ObjCBool = false
+    let exists = FileManager.default.fileExists(atPath: directory.path, isDirectory: &isDirectory)
+    #expect(exists && isDirectory.boolValue, "the directory must actually exist on disk afterward")
+}
+
+@Test("An already-existing, writable directory passes through untouched")
+func prepareOutputDirectoryAcceptsAnExistingWritableFolder() {
+    // Sanity check: the common case (a directory that already exists, e.g.
+    // every recording after the first) must not be treated as a failure.
+    let outcome = RecordingCoordinator.prepareOutputDirectory(FileManager.default.temporaryDirectory)
+    #expect(outcome == nil)
+}
+
+@Test("A configured path that is a FILE, not a folder, refuses rather than writing into it")
+func prepareOutputDirectoryRefusesAFile() throws {
+    // Verified to fail against an implementation that only calls
+    // `createDirectory(withIntermediateDirectories: true)` unconditionally
+    // and treats any thrown error as the only failure signal: on some
+    // filesystems that call no-ops (or throws a confusing low-level error)
+    // when the path already exists as a plain file, so the coordinator
+    // could sail past this check and only discover the mistake much later,
+    // trying to write a bundle "inside" a file.
+    let filePath = FileManager.default.temporaryDirectory
+        .appendingPathComponent("snitt-output-dir-test-file-\(UUID().uuidString)")
+    try Data("not a directory".utf8).write(to: filePath)
+    defer { try? FileManager.default.removeItem(at: filePath) }
+
+    guard case .failed(let message, let reason) = RecordingCoordinator.prepareOutputDirectory(filePath) else {
+        Issue.record("expected a failure — the configured path is a file, not a folder")
+        return
+    }
+    #expect(reason == .internalError)
+    #expect(message.contains(filePath.path), "the message must name the folder that could not be used")
+}
+
+@Test("An unwritable output directory refuses to start rather than failing at finalize")
+func prepareOutputDirectoryRefusesAnUnwritableFolder() throws {
+    // §"the directory is not writable" case. Checked and reported HERE,
+    // before a recording starts, rather than discovered only when
+    // `stopRecording()` tries to finalize the bundle — by which point the
+    // capture itself, not just the save, would be lost.
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("snitt-output-dir-test-unwritable-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: directory.path)
+    defer {
+        try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: directory.path)
+        try? FileManager.default.removeItem(at: directory)
+    }
+    #expect(!FileManager.default.isWritableFile(atPath: directory.path),
+            "the fixture itself must actually be unwritable, or this test proves nothing")
+
+    guard case .failed(_, let reason) = RecordingCoordinator.prepareOutputDirectory(directory) else {
+        Issue.record("expected a failure — the configured folder is not writable")
+        return
+    }
+    #expect(reason == .internalError)
+}
+
+/// Fails the test if `resolve()` ever runs — for proving directory
+/// preparation happens BEFORE the picker (or the cached-target resolver),
+/// not after it.
+final class NeverCalledResolver: TargetResolver, @unchecked Sendable {
+    func resolve() async throws -> ResolvedTarget {
+        Issue.record("resolve() must not run when the output directory could not be prepared")
+        throw MarkerError()
+    }
+}
+
+@Test("A recording that cannot possibly be saved never reaches the picker")
+func unpreparableDirectoryIsCheckedBeforeThePicker() async throws {
+    // A doomed recording — one whose configured folder cannot be created or
+    // written to — must fail BEFORE asking a human which window to record,
+    // not after. `NeverCalledResolver` above fails this test outright if
+    // `toggle()` ever reaches target resolution.
+    let filePath = FileManager.default.temporaryDirectory
+        .appendingPathComponent("snitt-output-dir-test-blocker-\(UUID().uuidString)")
+    try Data("blocks a directory from being created here".utf8).write(to: filePath)
+    defer { try? FileManager.default.removeItem(at: filePath) }
+    // `directory` names a path INSIDE a file — `createDirectory` cannot
+    // create it, deterministically, without needing any special permissions.
+    let unpreparable = filePath.appendingPathComponent("Recordings")
+
+    let store = TargetStore(fileURL: FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString))
+    let coordinator = RecordingCoordinator(
+        pickerResolver: NeverCalledResolver(),
+        cachedResolverFactory: { _ in NeverCalledResolver() },
+        store: store,
+        outputDirectorySettings: { OutputDirectorySettings(directory: unpreparable) },
+        ensureAccess: { true }
+    )
+
+    let outcome = await coordinator.toggle()
+    guard case .failed(_, let reason) = outcome else {
+        Issue.record("expected the unpreparable directory to fail the recording, got \(outcome)")
+        return
+    }
+    #expect(reason == .internalError)
+}
+
+@Test("The output directory is read FRESH on every recording, not cached from the coordinator's init")
+func outputDirectoryIsReadFreshEachRecording() async throws {
+    // Mirrors `humanCaptureOptions`'s own precedent for
+    // `EventLoggingSettings`/`MicrophoneSettings`: changing the setting
+    // between two recordings, with no new `RecordingCoordinator` built in
+    // between, must change what the SECOND recording does. A coordinator
+    // that captured `OutputDirectorySettings.load()` once at `init` would
+    // use the FIRST directory both times, and the second `#expect` below
+    // would fail — the blocked path would never be attempted.
+    final class Box: @unchecked Sendable {
+        var directory: URL
+        init(_ directory: URL) { self.directory = directory }
+    }
+
+    let filePath = FileManager.default.temporaryDirectory
+        .appendingPathComponent("snitt-output-dir-test-fresh-\(UUID().uuidString)")
+    try Data("blocks a directory from being created here".utf8).write(to: filePath)
+    defer { try? FileManager.default.removeItem(at: filePath) }
+    let blockedDirectory = filePath.appendingPathComponent("Recordings")
+
+    let box = Box(FileManager.default.temporaryDirectory)
+    let store = TargetStore(fileURL: FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString))
+    let coordinator = RecordingCoordinator(
+        pickerResolver: MarkerResolver(),
+        cachedResolverFactory: { _ in MarkerResolver() },
+        store: store,
+        outputDirectorySettings: { OutputDirectorySettings(directory: box.directory) },
+        ensureAccess: { true }
+    )
+
+    // First press: a good, writable directory. Directory preparation
+    // succeeds, so this reaches `MarkerResolver`'s own thrown error.
+    let first = await coordinator.toggle()
+    guard case .failed(let firstMessage, _) = first else {
+        Issue.record("expected MarkerResolver's own failure, got \(first)")
+        return
+    }
+    #expect(firstMessage.contains("MarkerError"))
+
+    // Change the setting, with no new coordinator — exactly what happens
+    // when someone edits it in the Settings window between two hotkey
+    // presses.
+    box.directory = blockedDirectory
+    let second = await coordinator.toggle()
+    guard case .failed(_, let secondReason) = second else {
+        Issue.record("expected the NEW directory's failure, got \(second)")
+        return
+    }
+    #expect(secondReason == .internalError,
+            "a coordinator that cached the first directory would reach MarkerResolver again here")
 }
 
 // Task 5's editor-on-stop tests live in `EditorWindowControllerTests.swift`,

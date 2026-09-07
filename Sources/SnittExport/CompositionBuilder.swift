@@ -27,13 +27,18 @@ public struct BuiltComposition: @unchecked Sendable {
     public let audioMix: AVAudioMix?
     public let duration: Double
     /// The SOURCE recording's media duration — `mediaDuration(of:)`'s
-    /// result, before any cuts. The timeline view's axis is this clock, not
-    /// `duration` above: `edl.cuts` are expressed in source time, and a view
-    /// fed the trimmed `duration` instead maps every subsequent drag's
-    /// pixels against the wrong clock (M4b whole-branch review, Critical
-    /// finding #1). Carried here so a caller building a second composition
-    /// after a trim (`PreviewController.apply`) can keep the timeline's
-    /// clock in step without loading the asset a second time.
+    /// result, before any cuts. Distinct from `duration` above, which is
+    /// what this composition actually plays: the editor timeline builds its
+    /// `Timebase` from this value plus `edl.cuts` (both source time) and
+    /// draws — and interprets every gesture — on the OUTPUT axis that
+    /// `Timebase` derives. Carried here so a caller building a second
+    /// composition after a trim (`PreviewController.apply`) can keep the
+    /// timeline's clocks in step without loading the asset a second time.
+    ///
+    /// This comment used to claim "the timeline view's axis is this clock",
+    /// citing M4b whole-branch review Critical finding #1. It was true of a
+    /// design the M5f whole-branch review removed, having measured that it
+    /// reproduced that very finding — see `TimelineView.time(for:)`.
     public let sourceDuration: Double
     /// The kept ranges (source-recording time) this composition was built
     /// from — `KeptRanges.compute`'s output already filtered to drop
@@ -185,7 +190,7 @@ public enum CompositionBuilder {
         else { throw CompositionError.noVideoTrack }
         let sourceAudio = try await asset.loadTracks(withMediaType: .audio)
 
-        let kept = KeptRanges.compute(duration: assetDuration, cuts: edl.cuts)
+        let kept = KeptRanges.compute(duration: assetDuration, cuts: edl.cuts.map(\.range))
             .filter { $0.end - $0.start >= minimumKeptDuration }
         guard !kept.isEmpty else { throw CompositionError.everythingCut }
 

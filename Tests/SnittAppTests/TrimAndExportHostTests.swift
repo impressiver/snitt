@@ -36,7 +36,7 @@ func trimWritesTheEDL() async throws {
     }
     #expect(summary.cuts.count == 2)
     let written = try EditDecisionList.read(from: bundle)
-    #expect(written.cuts == summary.cuts)
+    #expect(written.cuts.map(\.range) == summary.cuts)
 }
 
 @Test("Auto-trim on a log with no input events is REFUSED, not applied")
@@ -79,7 +79,8 @@ func autoTrimPreservesManualInteriorCuts() async throws {
     let bundle = try await bundleWithMetadata(duration: 30, events: events)
     // Overwrite the fresh full-range EDL `bundleWithMetadata` wrote with one
     // that already carries a manual interior cut, as if made in the GUI.
-    try EditDecisionList(cuts: [TimeRange(start: 10, end: 12)]).write(to: bundle)
+    let guiMade = Cut(range: TimeRange(start: 10, end: 12))
+    try EditDecisionList(cuts: [guiMade]).write(to: bundle)
     defer { try? FileManager.default.removeItem(at: bundle.url) }
 
     let host = AutomationHost.forTesting()
@@ -92,7 +93,13 @@ func autoTrimPreservesManualInteriorCuts() async throws {
     #expect(summary.cuts.contains(TimeRange(start: 10, end: 12)),
             "the manual interior cut must survive an auto-trim, got \(summary.cuts)")
     let written = try EditDecisionList.read(from: bundle)
-    #expect(written.cuts == summary.cuts, "the written edit.json must match what was reported")
+    #expect(written.cuts.map(\.range) == summary.cuts, "the written edit.json must match what was reported")
+    // §4.8/§6: the CLI and the GUI drive ONE shared model, not two — a cut
+    // the GUI created and the CLI never touched (it never overlapped either
+    // auto-trim bookend) must come back through the CLI's own write with
+    // the SAME id it went in with, not one the CLI minted along the way.
+    #expect(written.cuts.contains { $0.id == guiMade.id },
+            "a CLI trim must preserve the id of a cut it did not itself create, got \(written.cuts)")
 }
 
 @Test("A bad bundle path fails with an actionable error rather than crashing")
@@ -311,4 +318,30 @@ func autoTrimWithCorruptEventsFailsExplicitly() async throws {
                             + "to auto-trim against.",
             "a corrupt log must not be reported as an empty one — those are different failures with different fixes")
     #expect(error.hint != nil)
+}
+
+@Test("snitt inspect on a future-schemaVersion events.json fails explicitly rather than reporting zero markers")
+func inspectWithFutureSchemaEventsFailsExplicitly() async throws {
+    // D60/M5f Task 7, end to end through the same seam `AutomationHost`
+    // exposes to the CLI/MCP frontends (§8): `InspectReport.report(for:)`
+    // used to fold a future-schemaVersion events.json into "zero events"
+    // via `(try? EventLog.read(from: bundle))?.events ?? []` — the same
+    // collapsing class this file already pins for auto-trim, one call site
+    // over. An agent asking `snitt inspect` about a recording a NEWER
+    // Snitt build had already marked up would be told "no markers" instead
+    // of "your build cannot read this recording's markers" — a wrong
+    // answer that looks like a right one. Verified to fail against that
+    // exact collapsing form: it would return `.inspected` with
+    // `markerCount == 0` instead of `.failure`.
+    let bundle = try await bundleWithMetadata(duration: 10, events: [])
+    try Data(#"{"schemaVersion":99,"events":[]}"#.utf8).write(to: bundle.eventsURL)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+    let host = AutomationHost.forTesting()
+    let response = await host.handle(.inspect(bundlePath: bundle.url.path))
+
+    guard case .failure(let error) = response else {
+        Issue.record("inspect on a future-schemaVersion events.json must fail, not report an empty marker list"); return
+    }
+    #expect(error.hint != nil, "an agent needs to know why, not just that it failed")
 }

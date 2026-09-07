@@ -19,8 +19,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let log = SnittLog.logger(.automation, target: "SnittApp")
 
     private let statusItem = StatusItemController()
-    private var hotkey: HotkeyMonitor?
-    private var markerHotkey: HotkeyMonitor?
+    /// Owns both real hotkey registrations (D55) — see `HotkeyRegistrar`'s
+    /// own doc comment for why persistence and re-registration must move
+    /// together. Optional for the same reason `coordinator` below is: real
+    /// construction (closures capturing `self`) happens in
+    /// `applicationDidFinishLaunching`, never at `AppDelegate.init` — a
+    /// test constructing a bare `AppDelegate()` must not touch real Carbon
+    /// hotkey registration as a side effect.
+    private var hotkeyRegistrar: HotkeyRegistrar?
     private var coordinator: RecordingCoordinator?
     private var automationHost: AutomationHost?
     private let updaterController = UpdaterController(settings: UpdateSettings.load())
@@ -46,14 +52,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.statusItem.automaticUpdateChecksEnabled = enabled
         }
 
-        let outputDirectory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Desktop")
-
+        // Where recordings are saved (D56/M5d's deferred output-location
+        // item, pulled forward for M5f). No value is captured here: the
+        // coordinator reads `OutputDirectorySettings.load()` itself, FRESH,
+        // on every recording — see that type's own doc comment for why the
+        // default is `~/Documents/Snitt`, not `~/Desktop`, and
+        // `RecordingCoordinator`'s `outputDirectorySettings` doc comment for
+        // why it is read at record time rather than cached here at launch.
         let coordinator = RecordingCoordinator(
             pickerResolver: PickerTargetResolver(),
             cachedResolverFactory: { CachedTargetResolver(reference: $0) },
-            store: TargetStore(fileURL: TargetStore.defaultURL()),
-            outputDirectory: outputDirectory
+            store: TargetStore(fileURL: TargetStore.defaultURL())
         )
         self.coordinator = coordinator
 
@@ -77,6 +86,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // mirrored property below is what makes the menu's checkmark
             // reflect that, exactly as it did before this was extracted.
             self.statusItem.eventLoggingEnabled = EventLoggingToggle.apply(enabled)
+        }
+
+        statusItem.microphoneEnabled = MicrophoneSettings.load().enabled
+        statusItem.onToggleMicrophone = { [weak self] enabled in
+            guard let self else { return }
+            // Same §4.10 ladder, same reasoning as `onToggleEventLogging`
+            // just above — see `MicrophoneToggle`'s doc comment.
+            self.statusItem.microphoneEnabled = MicrophoneToggle.apply(enabled)
         }
 
         // §12's opt-in crash reporting: no handler, no network — purely
@@ -103,30 +120,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         host.start()
         automationHost = host
 
-        let monitor = HotkeyMonitor(combination: .defaultCombination) { [weak self] in
-            self?.handleHotkey()
+        // D55: combinations are now customizable via the Settings window, so
+        // launch registers whatever `HotkeySettings` has stored — today's
+        // ⌥⌘5 / ⌥⌘M for a user who has never changed either (see
+        // `HotkeySettings.load`'s own doc comment). `HotkeyRegistrar` is the
+        // one place persistence and live registration move together; see
+        // its own doc comment for why that matters (M5b's R22 defect, in a
+        // new place, is exactly what a stored-but-unregistered combination
+        // would be).
+        let registrar = HotkeyRegistrar(
+            onRecord: { [weak self] in self?.handleHotkey() },
+            onMarker: { [weak self] in self?.handleMarkerHotkey() })
+        registrar.start { [weak self] action, combination in
+            self?.reportHotkeyRegistrationFailure(action, combination)
         }
-        do {
-            try monitor.start()
-        } catch {
-            notify("Snitt could not register the ⌥⌘5 shortcut — another app may be "
-                 + "using it. You can still start and stop recording from the menu bar.")
-        }
-        hotkey = monitor
-
-        let markerHotkey = HotkeyMonitor(combination: .markerCombination) { [weak self] in
-            self?.handleMarkerHotkey()
-        }
-        do {
-            try markerHotkey.start()
-        } catch {
-            // Reported for the same reason the record hotkey's failure is: a
-            // silently dead marker hotkey means a person presses it through a
-            // whole demo and finds no markers afterwards.
-            notify("Snitt could not register the ⌥⌘M marker shortcut — another app "
-                 + "may be using it. Recording is unaffected.")
-        }
-        self.markerHotkey = markerHotkey
+        hotkeyRegistrar = registrar
 
         // §5.3's kill switch: clicking the menu-bar item does the same thing as
         // the hotkey, so a recording can always be stopped by mouse alone —
@@ -265,14 +273,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
+    /// A hotkey combination another app already owns must say so (D55) —
+    /// this is the exact alert `main.swift` always raised for this failure,
+    /// extracted so `HotkeyRegistrar.start()` at launch and the Settings
+    /// window's key recorder (via `SettingsWindowController.show`'s
+    /// `hotkeyRegistrar`) report it identically regardless of when the
+    /// conflict is discovered. Recording stays reachable from the menu bar
+    /// either way — §5.3's kill switch never depended on either hotkey.
+    private func reportHotkeyRegistrationFailure(_ action: HotkeyAction, _ combination: HotkeyCombination) {
+        notify("Snitt could not register \(combination.displayString) for the \(action.label) — "
+             + "another app may be using it. You can still start and stop recording, and drop "
+             + "markers, from the menu bar.")
+    }
+
     @objc func showSettings(_ sender: Any?) {
         // Routes the update toggle through `updaterController` rather than
         // writing UserDefaults directly — see SettingsWindowController's
-        // doc comment. `onChange` re-reads all four settings back into the
-        // status item's own cached properties, so a change made in the
-        // window shows up as the correct checkmark the next time the status
-        // menu is opened, rather than only after the next launch.
-        SettingsWindowController.show(updater: updaterController) { [weak self] in
+        // doc comment. `onChange` re-reads all five checkbox settings back
+        // into the status item's own cached properties, so a change made in
+        // the window shows up as the correct checkmark the next time the
+        // status menu is opened, rather than only after the next launch.
+        //
+        // `hotkeyRegistrar` is optional only because a test can construct a
+        // bare `AppDelegate()` without ever running
+        // `applicationDidFinishLaunching` (see that property's own doc
+        // comment) — in the shipping app, launch always runs first, so this
+        // is never nil when a person can actually click Settings.
+        guard let hotkeyRegistrar else {
+            SettingsWindowController.show(updater: updaterController) { [weak self] in
+                self?.refreshStatusItemFromSettings()
+            }
+            return
+        }
+        SettingsWindowController.show(updater: updaterController, hotkeyRegistrar: hotkeyRegistrar) { [weak self] in
             self?.refreshStatusItemFromSettings()
         }
     }
@@ -286,6 +319,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func refreshStatusItemFromSettings() {
         statusItem.agentRecordingEnabled = AgentSettings.load().agentRecordingEnabled
         statusItem.eventLoggingEnabled = EventLoggingSettings.load().enabled
+        statusItem.microphoneEnabled = MicrophoneSettings.load().enabled
         statusItem.automaticUpdateChecksEnabled = UpdateSettings.load().automaticChecksEnabled
         statusItem.crashReportingEnabled = CrashReportSettings.load().enabled
     }
@@ -332,6 +366,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             $0.window == NSApp.keyWindow
         }) else { return }
         editor.presentExportPanel()
+    }
+
+    /// Edit ▸ Cut Selection (Delete/Backspace), Task 5 (D56). Same nil-target
+    /// resolution as `exportDocument` just above, for the same reason: this
+    /// menu item's target is `nil`, `EditorWindowController` is never in the
+    /// responder chain, and the KEY window picks which open editor a bare
+    /// keypress applies to.
+    ///
+    /// Silently does nothing with no editor key, same as `exportDocument` —
+    /// but UNLIKE that one, this action is also gated by
+    /// `validateMenuItem(_:)` below, so in practice the menu item (and the
+    /// bare delete key it's bound to) is disabled whenever this guard would
+    /// fail, rather than relying on a user never triggering a no-op.
+    @objc func cutTimelineSelection(_ sender: Any?) {
+        guard let editor = EditorWindowController.openEditors.first(where: {
+            $0.window == NSApp.keyWindow
+        }) else { return }
+        editor.cutTimelineSelection()
     }
 
     /// Finder double-click, `open(1)`, and drag-onto-Dock all arrive here.
@@ -458,6 +510,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = error.localizedDescription
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+}
+
+/// Task 5 (D56): "a user with nothing selected must not be offered an
+/// action that does nothing." Every other menu item in `AppShell` stays
+/// live unconditionally (see `exportDocument`'s own doc comment on that
+/// convention) — this is the one deliberate exception, and it exists for a
+/// second reason beyond politeness: the Cut Selection item is bound to a
+/// BARE delete/backspace key (`AppShell.editMenuItem`), which AppKit's main
+/// menu intercepts before an ordinary text field ever sees the keystroke.
+/// Left permanently enabled, it would swallow every Backspace typed
+/// anywhere in the app — the Export panel's filename field included —
+/// whenever an editor window happened to be key. Disabling it whenever
+/// there is nothing for it to do is what lets that Backspace fall through
+/// to normal text editing instead.
+extension AppDelegate: NSMenuItemValidation {
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        guard menuItem.action == #selector(cutTimelineSelection(_:)) else { return true }
+        return EditorWindowController.openEditors.first(where: {
+            $0.window == NSApp.keyWindow
+        })?.hasTimelineSelection ?? false
     }
 }
 

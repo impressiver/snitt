@@ -174,10 +174,13 @@ do {
         note("Recording \(target). Stop with: snitt record stop \(id)")
     case .stopped(let path, let health):
         // Rendered from the RESPONSE, never re-read from the bundle: the CLI
-        // is a thin client (§4.9) and cannot read the app's output
-        // directory — by default `~/Desktop`, gated by the Files-and-Folders
+        // is a thin client (§4.9) and cannot assume it can read the app's
+        // output directory — user-configurable, and at the time this was
+        // found defaulting to `~/Desktop`, gated by the Files-and-Folders
         // TCC service, which made the filesystem-read version of this block
-        // silently omit health on every real machine.
+        // silently omit health on every real machine. The default has since
+        // moved to `~/Documents/Snitt`, but the directory can still be
+        // pointed anywhere, so this reasoning still holds.
         var payload: [String: Any] = ["bundlePath": path]
         let block = healthFields(health)
         if !block.isEmpty { payload["health"] = block }

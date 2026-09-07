@@ -53,6 +53,79 @@ func eventLogRoundTrips() throws {
     #expect(read.events[1].label == nil)
 }
 
+/// M5f Task 6 (D50/D56): `LoggedEvent` gained `id` and `transcript`.
+@Test("A marker's id and transcript round-trip through events.json")
+func eventLogRoundTripsIdAndTranscript() throws {
+    let bundle = try makeBundle()
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+    let marker = LoggedEvent(timeSeconds: 4.0, kind: .marker,
+                             label: "the fix", transcript: "here is where we fixed it")
+    try EventLog(events: [marker]).write(to: bundle)
+    let read = try EventLog.read(from: bundle)
+
+    let readBack = try #require(read.events.first)
+    // A mutant that never encodes `transcript` (only decodes it) would pass
+    // an in-memory-only check; round-tripping through the actual file on
+    // disk is what `write`/`read` catch that an in-memory comparison would
+    // not.
+    #expect(readBack.transcript == "here is where we fixed it")
+    #expect(readBack.id == marker.id)
+}
+
+/// D60's own gap, named rather than closed by this task (see `EventLog`'s
+/// doc comment): a pre-M5f-Task-6 `events.json` has no `id`/`transcript` key
+/// at all, and must still open. Hand-written rather than a captured fixture
+/// (unlike `edit-v0.1.0.json`): the field names this depends on
+/// (`schemaVersion`, `events`, `timeSeconds`, `kind`, `label`) are the
+/// CURRENT, unchanged shape — nothing here was ever renamed the way
+/// `trackStates` was, so there is no "remembered literal" risk to guard
+/// against with a captured file.
+@Test("A legacy events.json with no id or transcript key still opens, minting distinct ids")
+func eventLogReadsLegacyEventsWithoutIdOrTranscript() throws {
+    let json = """
+    {"schemaVersion":1,"events":[
+        {"timeSeconds":1.0,"kind":"marker","label":"a"},
+        {"timeSeconds":2.0,"kind":"marker","label":"b"}
+    ]}
+    """
+    let log = try EventLog.decode(from: Data(json.utf8))
+
+    #expect(log.events.count == 2)
+    #expect(log.events.map(\.label) == ["a", "b"])
+    #expect(log.events.allSatisfy { $0.transcript == nil })
+    // Every legacy event got a REAL, DISTINCT id even though the file has
+    // none — a mutant that mints the SAME id for every legacy event (e.g. a
+    // fixed sentinel UUID instead of `UUID()`) still gives every event "an
+    // id" but makes them indistinguishable, exactly the bug identity exists
+    // to prevent (mirrors `EditDecisionListTests.readsLegacyCuts`).
+    #expect(Set(log.events.map(\.id)).count == log.events.count)
+}
+
+/// M5f Task 7 (D60): `EventLog.currentSchemaVersion` was bumped 1 -> 2 by
+/// Task 6 without this guard — the same D60 gate `EditDecisionListTests`
+/// already pins for `edit.json`, applied here to `events.json`. Mirrors
+/// `EditDecisionListTests.refusesFutureSchema` exactly, on the sibling type.
+@Test("A newer events.json schemaVersion is refused, loudly")
+func eventLogRefusesFutureSchema() throws {
+    let future = #"{"schemaVersion":99,"events":[]}"#
+    #expect(throws: EventLogError.unsupportedSchemaVersion(
+        found: 99, maxSupported: EventLog.currentSchemaVersion)) {
+        _ = try EventLog.decode(from: Data(future.utf8))
+    }
+}
+
+/// The companion case to `eventLogRefusesFutureSchema`: a mutant that
+/// rejects every version but 1 (rather than "greater than
+/// currentSchemaVersion") would fail here, since a fresh `EventLog` written
+/// by THIS build encodes schemaVersion 2.
+@Test("The current events.json schemaVersion still opens — the gate is forward-only")
+func eventLogCurrentSchemaVersionIsAccepted() throws {
+    let json = #"{"schemaVersion":\#(EventLog.currentSchemaVersion),"events":[]}"#
+    let log = try EventLog.decode(from: Data(json.utf8))
+    #expect(log.schemaVersion == EventLog.currentSchemaVersion)
+}
+
 @Test("A new EDL defaults to no cuts and unmuted tracks")
 func editListDefaults() throws {
     let bundle = try makeBundle()

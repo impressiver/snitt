@@ -316,27 +316,34 @@ private final class NoopUserDriver: NSObject, SPUUserDriver {
     .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason)
 )
 @MainActor
-func sparkleAcceptsTheBuiltBundleConfiguration() throws {
+func sparkleAcceptsTheBuiltBundleConfiguration() async throws {
     try #require(appIsBuilt, appBundleSkipReason)
-    // This is what R5 asked for instead of one more key-presence assertion:
-    // drive Sparkle's OWN configuration validation
-    // (SPUUpdater.startUpdater(), which calls Sparkle's internal
-    // checkIfConfiguredProperlyAndRequireFeedURL: before doing anything
-    // else) against the real built bundle, rather than asserting that
-    // individual plist keys merely exist.
-    //
-    // Catches the actual defect this task shipped with: the built plist had
-    // three correct SU* keys and no CFBundleVersion. SUHost.validVersion
-    // (Sparkle 2.9.6 source) reads ONLY CFBundleVersion, and
-    // checkIfConfiguredProperlyAndRequireFeedURL: bails with
-    // SUInvalidHostVersionError before it even looks at the SU* keys, so
-    // Task 3's updater would never start. Verified by direct mutation:
-    // removing CFBundleVersion from a copy of the built Info.plist and
-    // re-running this test (against a temp bundle copy) fails with exactly
-    // that error; restoring it passes.
-    let bundle = try #require(Bundle(url: app), "could not open build/Snitt.app as a bundle")
-    let updater = SPUUpdater(hostBundle: bundle, applicationBundle: bundle, userDriver: NoopUserDriver(), delegate: nil)
-    try updater.start()
+    // `SparkleTestGate` (Tests/SnittAppTests/SparkleTestGate.swift): starts
+    // a real `SPUUpdater` against the real built bundle. `AppcastTests.swift`
+    // and `UpdaterControllerTests.swift` each drive a real `SPUUpdater` too,
+    // as unserialized top-level tests, so without this gate `startUpdater()`
+    // here can race their XPC/scheduler activity.
+    try await SparkleTestGate.run {
+        // This is what R5 asked for instead of one more key-presence assertion:
+        // drive Sparkle's OWN configuration validation
+        // (SPUUpdater.startUpdater(), which calls Sparkle's internal
+        // checkIfConfiguredProperlyAndRequireFeedURL: before doing anything
+        // else) against the real built bundle, rather than asserting that
+        // individual plist keys merely exist.
+        //
+        // Catches the actual defect this task shipped with: the built plist had
+        // three correct SU* keys and no CFBundleVersion. SUHost.validVersion
+        // (Sparkle 2.9.6 source) reads ONLY CFBundleVersion, and
+        // checkIfConfiguredProperlyAndRequireFeedURL: bails with
+        // SUInvalidHostVersionError before it even looks at the SU* keys, so
+        // Task 3's updater would never start. Verified by direct mutation:
+        // removing CFBundleVersion from a copy of the built Info.plist and
+        // re-running this test (against a temp bundle copy) fails with exactly
+        // that error; restoring it passes.
+        let bundle = try #require(Bundle(url: app), "could not open build/Snitt.app as a bundle")
+        let updater = SPUUpdater(hostBundle: bundle, applicationBundle: bundle, userDriver: NoopUserDriver(), delegate: nil)
+        try updater.start()
+    }
 }
 
 // MARK: - R9/R10: com.apple.security.cs.disable-library-validation must be conditional

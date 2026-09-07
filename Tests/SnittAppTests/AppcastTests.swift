@@ -862,59 +862,72 @@ func staleAppcastFixtureFileIsSwept() throws {
 @MainActor
 @Test("Sparkle's own SUAppcast parses the generated feed and yields the item")
 func sparkleParsesTheGeneratedFeed() async throws {
-    let zip = try makeFixtureArchive(byteCount: 555)
-    defer { try? FileManager.default.removeItem(at: zip) }
+    // `SparkleTestGate` (Tests/SnittAppTests/SparkleTestGate.swift): this
+    // test drives a REAL `SPUUpdater` against a REAL local HTTP server, and
+    // was observed failing intermittently under the full suite — always
+    // timing out its `waitUntil` below with `delegate.appcast` still nil —
+    // while passing every time in isolation. `UpdaterControllerTests.swift`
+    // and `BundleLayoutTests.swift` each also drive a real `SPUUpdater`, as
+    // unserialized top-level tests, so without this gate this test's wait
+    // can starve behind (or interleave with) another suite's updater's own
+    // XPC/scheduler activity. Confirmed by reproducing the failure on
+    // demand under artificial CPU load, then confirming it disappears with
+    // the gate in place.
+    try await SparkleTestGate.run {
+        let zip = try makeFixtureArchive(byteCount: 555)
+        defer { try? FileManager.default.removeItem(at: zip) }
 
-    let releaseURL = "https://example.test/downloads/Snitt-7.8.9.zip"
-    let scriptResult = runScript(
-        ["7.8.9", zip.path, releaseURL],
-        env: ["SPARKLE_SIGNATURE": "test-signature-not-a-real-key-BpFq2"]
-    )
-    #expect(scriptResult.status == 0)
-    let appcastData = try #require(scriptResult.stdout.data(using: .utf8))
+        let releaseURL = "https://example.test/downloads/Snitt-7.8.9.zip"
+        let scriptResult = runScript(
+            ["7.8.9", zip.path, releaseURL],
+            env: ["SPARKLE_SIGNATURE": "test-signature-not-a-real-key-BpFq2"]
+        )
+        #expect(scriptResult.status == 0)
+        let appcastData = try #require(scriptResult.stdout.data(using: .utf8))
 
-    let server = try LocalFixedResponseServer(body: appcastData)
-    defer { server.stop() }
+        let server = try LocalFixedResponseServer(body: appcastData)
+        defer { server.stop() }
 
-    let (bundle, root, suite) = try makeRoundTripFixture(feedURL: "http://127.0.0.1:\(server.port)/appcast.xml")
-    defer { cleanUpRoundTripFixture(root: root, suite: suite) }
+        let (bundle, root, suite) = try makeRoundTripFixture(feedURL: "http://127.0.0.1:\(server.port)/appcast.xml")
+        defer { cleanUpRoundTripFixture(root: root, suite: suite) }
 
-    let delegate = AppcastCaptureDelegate()
-    let updater = SPUUpdater(
-        hostBundle: bundle,
-        applicationBundle: bundle,
-        userDriver: RoundTripNoopUserDriver(),
-        delegate: delegate
-    )
-    try updater.start()
-    updater.checkForUpdateInformation()
+        let delegate = AppcastCaptureDelegate()
+        let updater = SPUUpdater(
+            hostBundle: bundle,
+            applicationBundle: bundle,
+            userDriver: RoundTripNoopUserDriver(),
+            delegate: delegate
+        )
+        try updater.start()
+        updater.checkForUpdateInformation()
 
-    try await waitUntil { delegate.appcast != nil || delegate.abortError != nil }
+        try await waitUntil { delegate.appcast != nil || delegate.abortError != nil }
 
-    if let abortError = delegate.abortError {
-        Issue.record("Sparkle aborted loading the generated feed: \(abortError)")
-        return
+        if let abortError = delegate.abortError {
+            Issue.record("Sparkle aborted loading the generated feed: \(abortError)")
+            return
+        }
+
+        let appcast = try #require(delegate.appcast, "Sparkle never reported loading the generated feed")
+        let item = try #require(appcast.items.first)
+
+        // Real properties Sparkle's OWN parser populated from OUR script's
+        // output — not a string this test wrote and is now reading back.
+        #expect(item.versionString == "7.8.9")
+        #expect(item.displayVersionString == "7.8.9")
+        #expect(item.fileURL?.absoluteString == releaseURL)
+        #expect(item.contentLength == 555)
+
+        // The enclosure's edSignature isn't exposed as a first-class property
+        // (Sparkle only verifies it internally at download time), but it IS in
+        // `propertiesDictionary` — the raw dictionary Sparkle's own XML parser
+        // built from the enclosure's attributes. Reading it back here proves
+        // Sparkle's parser extracted OUR signature value intact, not that our
+        // own generator emitted a string that merely looks right.
+        let enclosureProperties = item.propertiesDictionary["enclosure"] as? [String: Any]
+        let parsedSignature = enclosureProperties?["sparkle:edSignature"] as? String
+        #expect(parsedSignature == "test-signature-not-a-real-key-BpFq2")
     }
-
-    let appcast = try #require(delegate.appcast, "Sparkle never reported loading the generated feed")
-    let item = try #require(appcast.items.first)
-
-    // Real properties Sparkle's OWN parser populated from OUR script's
-    // output — not a string this test wrote and is now reading back.
-    #expect(item.versionString == "7.8.9")
-    #expect(item.displayVersionString == "7.8.9")
-    #expect(item.fileURL?.absoluteString == releaseURL)
-    #expect(item.contentLength == 555)
-
-    // The enclosure's edSignature isn't exposed as a first-class property
-    // (Sparkle only verifies it internally at download time), but it IS in
-    // `propertiesDictionary` — the raw dictionary Sparkle's own XML parser
-    // built from the enclosure's attributes. Reading it back here proves
-    // Sparkle's parser extracted OUR signature value intact, not that our
-    // own generator emitted a string that merely looks right.
-    let enclosureProperties = item.propertiesDictionary["enclosure"] as? [String: Any]
-    let parsedSignature = enclosureProperties?["sparkle:edSignature"] as? String
-    #expect(parsedSignature == "test-signature-not-a-real-key-BpFq2")
 }
 
 // MARK: - Cryptographic validity

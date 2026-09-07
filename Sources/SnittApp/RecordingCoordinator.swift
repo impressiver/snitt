@@ -44,9 +44,12 @@ public enum CoordinatorOutcome: Equatable, Sendable {
 /// The outcome of an agent's request to stop ITS OWN session.
 public enum AgentStopResult: Equatable, Sendable {
     /// `health` is read from the `Recorder` actor itself, not from the bundle
-    /// it just wrote: the CLI is a thin client (§4.9) and cannot read the
-    /// app's output directory, which is `~/Desktop` by default and gated by
-    /// the Files-and-Folders TCC service.
+    /// it just wrote: the CLI is a thin client (§4.9) and cannot assume it
+    /// can read the app's output directory — user-configurable
+    /// (`OutputDirectorySettings`), defaulting to `~/Documents/Snitt` but
+    /// able to be pointed anywhere, including a location gated by the
+    /// Files-and-Folders TCC service (`~/Desktop`, the old hardcoded
+    /// default, being the obvious example) that the CLI does not hold.
     case stopped(URL, copied: Bool, health: CaptureHealth?)
     /// Nothing is recording, or what IS recording is not that agent's session —
     /// typically because a person already stopped it with the kill switch and
@@ -85,7 +88,12 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     private let pickerResolver: TargetResolver
     private let cachedResolverFactory: @Sendable (TargetReference) -> TargetResolver
     private let store: TargetStore
-    private let outputDirectory: URL
+    /// Read fresh on every `startRecording()`, never cached at `init` —
+    /// mirroring `humanCaptureOptions`'s own reasoning, just below, for
+    /// `EventLoggingSettings`/`MicrophoneSettings`: a directory changed in
+    /// the Settings window mid-run must take effect on the very next
+    /// recording, not the next relaunch.
+    private let outputDirectorySettings: @Sendable () -> OutputDirectorySettings
     private let focuser: WindowFocuser
     /// Raises the Screen Recording grant, non-interactively.
     ///
@@ -133,14 +141,15 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     public init(pickerResolver: TargetResolver,
                 cachedResolverFactory: @escaping @Sendable (TargetReference) -> TargetResolver,
                 store: TargetStore,
-                outputDirectory: URL,
+                outputDirectorySettings: @escaping @Sendable () -> OutputDirectorySettings
+                    = { OutputDirectorySettings.load() },
                 focuser: WindowFocuser = .system,
                 ensureAccess: @escaping @MainActor @Sendable () -> Bool
                     = { ScreenRecordingAccess.ensureGranted() }) {
         self.pickerResolver = pickerResolver
         self.cachedResolverFactory = cachedResolverFactory
         self.store = store
-        self.outputDirectory = outputDirectory
+        self.outputDirectorySettings = outputDirectorySettings
         self.focuser = focuser
         self.ensureAccess = ensureAccess
     }
@@ -280,19 +289,42 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         defer { isTransitioning = false }
 
         if active != nil { return await stopRecording() }
-        // The hotkey keeps today's capture defaults: system audio on,
-        // microphone OFF. §4.10 rung 2 — the microphone prompt is paid only
-        // when someone deliberately turns it on. Git context is nil because
-        // Snitt.app's own working directory is "/"; only a client knows which
-        // repository a recording is about (§7).
-        var options = CaptureOptions()
-        // Read at record time rather than cached at launch, so toggling the
-        // menu item takes effect on the next recording without a relaunch.
-        options.logInputEvents = EventLoggingSettings.load().enabled
+        // The hotkey keeps system audio on unconditionally; input-event
+        // logging and microphone capture are read fresh from their own
+        // settings at record time (see `humanCaptureOptions`'s doc comment).
+        // Git context is nil because Snitt.app's own working directory is
+        // "/"; only a client knows which repository a recording is about
+        // (§7).
         return await startRecording(forcedResolver: nil,
                                     suppressFocus: suppressFocus,
                                     git: nil,
-                                    options: options)
+                                    options: Self.humanCaptureOptions())
+    }
+
+    /// Builds the human/hotkey path's `CaptureOptions` from settings read AT
+    /// RECORD TIME, not cached at launch — matching `logInputEvents`'s
+    /// original precedent (see `toggle()`'s own comment history): toggling
+    /// either setting from the menu bar or the Settings window must take
+    /// effect on the very next recording without a relaunch. System audio
+    /// stays the hotkey's fixed default; only the two settings a person can
+    /// actually flip from the UI are threaded through here.
+    ///
+    /// Extracted, like `initiator(isAgent:)` and `usedCache(choice:)` above,
+    /// so the mapping itself is testable: `toggle()`'s own call into
+    /// `startRecording` needs a real `SCContentFilter` to ever reach
+    /// `Recorder.init`, which no test can construct. Leaving
+    /// `options.captureMicrophone` unset here — the exact bug this fixes,
+    /// where the human path never read `MicrophoneSettings` at all — is what
+    /// a test against this function catches directly; a test that only
+    /// round-trips `MicrophoneSettings` through `UserDefaults` would pass
+    /// against that same bug.
+    static func humanCaptureOptions(eventLogging: EventLoggingSettings = EventLoggingSettings.load(),
+                                    microphone: MicrophoneSettings = MicrophoneSettings.load())
+        -> CaptureOptions {
+        var options = CaptureOptions()
+        options.logInputEvents = eventLogging.enabled
+        options.captureMicrophone = microphone.enabled
+        return options
     }
 
     /// No parameter has a default, deliberately, and for the reason
@@ -328,6 +360,19 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         let granted = await MainActor.run { ensureAccess() }
         guard granted else {
             return .failed(Self.screenRecordingDeniedMessage, reason: .permissionDenied)
+        }
+
+        // Read fresh, not a value `init` captured — see
+        // `outputDirectorySettings`'s own doc comment just above. Checked
+        // and (if missing) created HERE, before the picker even runs: a
+        // recording that cannot possibly be saved should never get as far
+        // as asking a human which window to record, and the alternative —
+        // discovering this only at `stopRecording()`'s finalize step —
+        // would mean losing a capture that already happened, not one that
+        // never started.
+        let directory = outputDirectorySettings().directory
+        if let failure = Self.prepareOutputDirectory(directory) {
+            return failure
         }
 
         // An agent names its target explicitly, so there is no picker to show and
@@ -417,9 +462,8 @@ public actor RecordingCoordinator: AgentRecordingControlling {
             _ = focuser.focus(descriptor: target.descriptor)
         }
 
-        let url = outputDirectory.appendingPathComponent(
-            BundleNaming.filename(git: git, timestamp: Int(Date().timeIntervalSince1970))
-        )
+        let url = Self.bundleURL(directory: directory, git: git,
+                                 timestamp: Int(Date().timeIntervalSince1970))
         do {
             // Provenance is the one metadata field whose entire purpose is
             // telling agent recordings from human ones, and every recording was
@@ -487,6 +531,20 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     /// same stamp `Recorder` writes via `initiator(isAgent:)` — rather than
     /// from `agentSessionID`, which `stopRecording()` has already cleared by
     /// the time this runs.
+    ///
+    /// THE `try?` BELOW IS A SWALLOW WITH A DEADLINE (M5f whole-branch
+    /// review, F10). It is harmless only because
+    /// `RecordingMetadata.schemaVersion` is declared and compared NOWHERE —
+    /// the one remaining unguarded version field, and the ledger already
+    /// schedules its gate. The moment that gate lands, this line turns a
+    /// loud "this bundle was written by a newer Snitt" refusal into "not a
+    /// human recording, don't open the editor": a recording that finished
+    /// successfully, silently never opens, and nothing says why. That is
+    /// the fifth instance of the swallow class this project has now found
+    /// four times (`DocumentOpener` twice, `AutomationHost` twice,
+    /// `InspectReport`), each time because a gate was added in front of an
+    /// existing `try?`. Whoever adds the `RecordingMetadata` gate must fix
+    /// this line in the same change, or ship the gate decorative.
     private func openEditorIfHuman(for bundle: SnittBundle) async {
         guard let metadata = try? RecordingMetadata.read(from: bundle),
               metadata.initiator == .human else { return }
@@ -568,6 +626,65 @@ public actor RecordingCoordinator: AgentRecordingControlling {
             return .permissionDenied
         }
         return .internalError
+    }
+
+    /// Where a new recording's bundle is written: the CONFIGURED directory,
+    /// never a hardcoded one. Extracted for the same reason
+    /// `initiator(isAgent:)`/`usedCache(choice:)` below are: the call site
+    /// inside `startRecording()` cannot be tested without a real
+    /// `SCContentFilter`, so this pure mapping is what a test exercises
+    /// directly to prove a recording lands in `OutputDirectorySettings`'
+    /// directory rather than in `~/Desktop` or any other hardcoded path.
+    static func bundleURL(directory: URL, git: GitContext?, timestamp: Int) -> URL {
+        directory.appendingPathComponent(BundleNaming.filename(git: git, timestamp: timestamp))
+    }
+
+    /// Ensures `directory` (the FRESHLY-READ `OutputDirectorySettings`, not
+    /// a cached one — see `outputDirectorySettings`'s doc comment) exists
+    /// and is writable, creating it if this is the first recording since it
+    /// was configured — including the very first recording ever, against
+    /// the default `~/Documents/Snitt`, which will not exist on a fresh
+    /// machine (`OutputDirectorySettings.defaultDirectory` explains why that
+    /// folder, not `~/Desktop`, is the default). Creating it lazily HERE,
+    /// at record time, rather than at launch: launch has no reason to touch
+    /// the filesystem for a directory that might never end up being used if
+    /// the setting is changed before the first recording ever runs.
+    ///
+    /// Refuses — returns a `.failed` outcome — rather than silently
+    /// substituting the default when `directory` cannot be prepared. A
+    /// person who deliberately pointed recordings at, say, an unmounted
+    /// external volume would be badly surprised — possibly days later — to
+    /// learn recordings had quietly been landing on the internal disk
+    /// instead. A clear, visible failure they can act on (reconnect the
+    /// volume, fix its permissions, or pick a different folder in Settings)
+    /// beats a silent redirect every time. Extracted to a static function,
+    /// like `explain(_:)`/`reason(for:)` below, so it is directly testable
+    /// against a real temp-directory fixture without needing a real
+    /// `SCContentFilter`.
+    static func prepareOutputDirectory(_ directory: URL,
+                                       fileManager: FileManager = .default) -> CoordinatorOutcome? {
+        var isDirectory: ObjCBool = false
+        let exists = fileManager.fileExists(atPath: directory.path, isDirectory: &isDirectory)
+        if !exists {
+            do {
+                try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+            } catch {
+                return .failed(
+                    "Snitt could not create \(directory.path) to save recordings: "
+                        + "\(error.localizedDescription). Choose a different folder for "
+                        + "recordings in Snitt's Settings.",
+                    reason: .internalError)
+            }
+            return nil
+        }
+        guard isDirectory.boolValue, fileManager.isWritableFile(atPath: directory.path) else {
+            return .failed(
+                "Snitt cannot save recordings to \(directory.path) — it is either not a "
+                    + "folder or not writable. Choose a different folder for recordings "
+                    + "in Snitt's Settings.",
+                reason: .internalError)
+        }
+        return nil
     }
 
     static func explain(_ error: Error) -> String {

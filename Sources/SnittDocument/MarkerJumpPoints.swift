@@ -2,13 +2,24 @@ import Foundation
 
 /// A marker's position in the PREVIEW's timeline, which is the trimmed
 /// timeline — not its position in the original recording.
+///
+/// `id`/`transcript` (M5f Task 6): carried through from the source
+/// `LoggedEvent` so a consumer that needs to address a SPECIFIC marker —
+/// the timeline's marker track, dragging or editing one — has something to
+/// name it by. Before this task nothing needed to: the sidebar jump list
+/// only ever seeked to a point, never referred back to the marker that
+/// produced it.
 public struct JumpPoint: Equatable, Sendable {
+    public let id: UUID
     public let timeSeconds: Double
     public let label: String
+    public let transcript: String?
 
-    public init(timeSeconds: Double, label: String) {
+    public init(id: UUID = UUID(), timeSeconds: Double, label: String, transcript: String? = nil) {
+        self.id = id
         self.timeSeconds = timeSeconds
         self.label = label
+        self.transcript = transcript
     }
 }
 
@@ -32,7 +43,8 @@ public enum MarkerJumpPoints {
                 continue
             }
             let label = (event.label?.isEmpty == false) ? event.label! : "Marker"
-            points.append(JumpPoint(timeSeconds: timeSeconds, label: label))
+            points.append(JumpPoint(id: event.id, timeSeconds: timeSeconds,
+                                    label: label, transcript: event.transcript))
         }
         return points.sorted { $0.timeSeconds < $1.timeSeconds }
     }
