@@ -136,6 +136,17 @@ func diagnosticsSummary(_ report: DiagnosticsReport, outputPath: String) -> Stri
          + (permissions.isEmpty ? "" : " — \(permissions)")
 }
 
+/// The `initialize` result. Extracted so a test can assert on it — the
+/// `instructions` field is prose about a tool surface, and prose drifting from
+/// the tools it names is the failure S5 names with no version handshake to
+/// catch it (§10 covers the wire protocol, not the documentation).
+func initializeResult() -> [String: Any] {
+    ["protocolVersion": "2024-11-05",
+     "capabilities": ["tools": [String: Any]()],
+     "serverInfo": ["name": "snitt", "version": "0.1.0"],
+     "instructions": MCPBridge.serverInstructions]
+}
+
 while let line = readLine(strippingNewline: true) {
     guard let data = line.data(using: .utf8),
           let message = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
@@ -144,11 +155,7 @@ while let line = readLine(strippingNewline: true) {
     let id = message["id"]
     switch message["method"] as? String {
     case "initialize":
-        result(id: id, [
-            "protocolVersion": "2024-11-05",
-            "capabilities": ["tools": [String: Any]()],
-            "serverInfo": ["name": "snitt", "version": "0.1.0"],
-        ])
+        result(id: id, initializeResult())
 
     case "tools/list":
         let tools: [[String: Any]] = MCPBridge.toolDefinitions().map { tool in

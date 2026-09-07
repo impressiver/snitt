@@ -105,6 +105,43 @@ public struct MCPBridgeError: Error, Equatable {
 /// be incapable of diverging, so both construct `AutomationRequest.Body` values
 /// and both travel through `AutomationClient`.
 public enum MCPBridge {
+    /// Server-level guidance, returned in the `initialize` result.
+    ///
+    /// A tool description is read at *call* time and answers "how do I invoke
+    /// this". Nothing in the tool list answers "why would I record a screen",
+    /// which is read at *decide* time — an agent that never considers making a
+    /// demo never reads the schemas. That gap is what this field is for
+    /// (S5, D63); hosts may place it in the system prompt.
+    ///
+    /// Says what the tool list structurally cannot: that these tools wrap a
+    /// recording around work done with OTHER tools (D49), that the result is
+    /// unwatchable so `snitt_inspect` is the only way to know what was made,
+    /// and that Snitt.app must already be running because these tools ask it to
+    /// record rather than recording themselves (§4.9).
+    public static let serverInstructions = """
+        Snitt records a macOS window to a .snitt bundle, so you can show work \
+        instead of describing it: a demo attached to a pull request, a bug \
+        reproduced on video, a before-and-after.
+
+        Snitt films; it does not click or type. Drive the UI with your own \
+        tools and use these to wrap a recording around that work.
+
+        The loop is snitt_start_recording, then the work — calling \
+        snitt_add_marker at each step a reviewer should be able to jump to — \
+        then snitt_stop_recording, snitt_inspect, snitt_export. You cannot \
+        watch what you recorded, so snitt_inspect is how you find out what you \
+        made, and its output is what to quote when describing the demo. Pass \
+        maxSize to snitt_export when the file is going somewhere with an \
+        attachment limit.
+
+        Snitt.app must already be running: these tools ask it to record, they \
+        do not record themselves, and if it is not running there is nobody to \
+        start it. Recording is scoped to one application's window by default \
+        — prefer bundleIdentifier over displayID, which additionally requires \
+        a person to have turned on full-display agent recording. A person at \
+        the machine can see and stop any recording at any time.
+        """
+
     public static func toolDefinitions() -> [ToolDefinition] {
         [
             ToolDefinition(
