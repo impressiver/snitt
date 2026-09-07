@@ -20,9 +20,18 @@ import SnittDocument
 ///
 /// `TimelineGeometry` (SnittDocument) answers pixel-to-time for DRAWING —
 /// the OUTPUT axis, per D56 (M5f Task 3) — but gesture math
-/// (`sourceTime(atX:)`) deliberately does NOT go through it: see `duration`'s
-/// doc comment below for why interaction stays on its own, fixed SOURCE
-/// scale instead.
+/// (`sourceTime(atX:)`) deliberately does NOT go through `geometry` itself:
+/// see `duration`'s doc comment below for why interaction stays on its own,
+/// fixed SOURCE scale (`gestureGeometry`) instead.
+///
+/// M5f Task 8: the first draft of this milestone shipped nothing that
+/// changed pixels-per-second — `TrimGesture.ended`'s own doc comment names
+/// the resulting bottleneck ("a ten-minute recording at 800px is
+/// ~0.75s/pixel"). `zoomFactor`/`zoomAnchorOutput` (applied to BOTH
+/// `geometry` and `gestureGeometry` identically, so drawing and gesture math
+/// stay in visual agreement at the zoom level actually in effect) and
+/// `snappedSourceTime(atX:)`'s pixel-tolerance snap are the fix — see each
+/// property's own doc comment.
 ///
 /// D56 (M5f Task 5): a cut draws as a FOLD — its own two edges collapsed to
 /// the single OUTPUT position they meet at (`TimelineGeometry.x(atFold:)`),
@@ -98,9 +107,57 @@ public final class TimelineView: NSView {
 
     /// D56 (M5f Task 3): draws on the OUTPUT (export) axis, built fresh from
     /// `duration`/`cuts` on every `update`/`layout` — see `rebuildGeometry`.
+    /// M5f Task 8: also carries the current zoom/scroll (`zoomFactor`,
+    /// `zoomAnchorOutput`), reapplied on top of a fresh, unzoomed
+    /// `TimelineGeometry` every time this is rebuilt, rather than trying to
+    /// carry a raw pixel offset forward across a resize or a landed cut —
+    /// either changes `width`/`duration`, after which an old offset means a
+    /// different visible span than the one the person was actually looking
+    /// at.
     private var geometry = TimelineGeometry(
         width: 0, timebase: Timebase(sourceDuration: 0, edl: EditDecisionList()))
+    /// The `Timebase` `geometry` was last built from — kept alongside it so
+    /// `snappedSourceTime(atX:)` can convert a marker's or the playhead's OUTPUT time
+    /// back to SOURCE time without rebuilding a third `Timebase` on every
+    /// mouse-moved event.
+    private var timebase = Timebase(sourceDuration: 0, edl: EditDecisionList())
     private var gesture = TrimGesture()
+
+    /// Current zoom, relative to "the whole (uncut) recording fits exactly
+    /// in `bounds.width`" — 1 is that default, unzoomed level; `zoomIn()`/
+    /// `zoomOut()`/`scrollWheel(with:)`/`magnify(with:)` are the only things
+    /// that change it. Clamped to `Self.minZoomFactor...Self.maxZoomFactor`
+    /// everywhere it is set, never read raw off an event.
+    private var zoomFactor: Double = 1
+    /// The OUTPUT-time instant the current zoom is centred on — Step 3's
+    /// "anchored on the playhead when there is no cursor": `zoomIn()`/
+    /// `zoomOut()` (no cursor position available to a caller with no mouse
+    /// event) always pass the current `playhead`; `scrollWheel`/`magnify`
+    /// pass wherever the cursor actually is. Reapplied on every
+    /// `rebuildGeometry()` so a resize or a new cut re-derives the SAME
+    /// visual centre instead of a stale pixel offset (see `geometry`'s own
+    /// doc comment).
+    private var zoomAnchorOutput: Double = 0
+
+    private static let minZoomFactor: Double = 1
+    private static let maxZoomFactor: Double = 200
+    /// The FIXED-SOURCE-scale counterpart of `geometry` — same width, same
+    /// zoom, but built over the recording's own uncut length (an EMPTY
+    /// `EditDecisionList`) rather than `Timebase.outputDuration`. This is
+    /// the axis `sourceTime(atX:)`/`minimumDragSeconds`/`snappedSourceTime(atX:)` have
+    /// always used and must keep using (`duration`'s own doc comment, M4b
+    /// Critical #1: a scale that shrinks as cuts land makes a later drag's
+    /// pixel range mean a different source span each time). Zooming this
+    /// view still has to shrink `TrimGesture`'s own stated per-pixel-second
+    /// problem, so the SAME `zoomFactor`/`zoomAnchorOutput` applies here as
+    /// it does to `geometry` — an empty EDL means `Timebase.outputDuration`
+    /// can never shrink from a real cut, only from a deliberate zoom.
+    private var gestureGeometry: TimelineGeometry {
+        let base = TimelineGeometry(
+            width: bounds.width, timebase: Timebase(sourceDuration: duration, edl: EditDecisionList()))
+        guard zoomFactor > Self.minZoomFactor else { return base }
+        return base.zoomed(by: zoomFactor, anchoredAt: OutputTime(zoomAnchorOutput))
+    }
 
     /// SOURCE duration — deliberately NOT re-derived from `geometry.duration`
     /// (the OUTPUT duration). `time(for:)`/`minimumDragSeconds` fix their
@@ -189,6 +246,15 @@ public final class TimelineView: NSView {
 
     public override var isFlipped: Bool { true }
 
+    /// `NSView`'s default is `false` — without overriding it, a click here
+    /// would never make this view first responder, and `keyDown`'s `+`/`-`
+    /// zoom shortcuts (Step 3) would never actually reach it despite
+    /// compiling and passing every test that calls `keyDown(with:)`
+    /// directly. AppKit's own click-to-focus (`NSWindow` making the
+    /// hit-tested view first responder before delivering its `mouseDown`)
+    /// only fires for a view that opts in here.
+    public override var acceptsFirstResponder: Bool { true }
+
     /// Replaces everything the view draws and recomputes `geometry` for the
     /// bounds it has right now. Called by the owner whenever the underlying
     /// EDL, markers or playback position change.
@@ -230,23 +296,33 @@ public final class TimelineView: NSView {
     /// use.
     private func rebuildGeometry() {
         let edl = EditDecisionList(cuts: cuts)
-        geometry = TimelineGeometry(width: bounds.width, timebase: Timebase(sourceDuration: duration, edl: edl))
+        timebase = Timebase(sourceDuration: duration, edl: edl)
+        let base = TimelineGeometry(width: bounds.width, timebase: timebase)
+        // M5f Task 8: reapply whatever zoom is currently in effect on top of
+        // the fresh, unzoomed geometry — see `geometry`'s own doc comment
+        // for why this recomputes from the anchor every time rather than
+        // trying to carry a raw offset across a resize or a landed cut.
+        geometry = zoomFactor > Self.minZoomFactor
+            ? base.zoomed(by: zoomFactor, anchoredAt: OutputTime(zoomAnchorOutput)) : base
     }
 
     /// The pixel width an EXPANDED fold draws at: `cut`'s own SOURCE length,
     /// converted at the OUTPUT timeline's own pixels-per-second
-    /// (`geometry.width / geometry.duration`) — the same scale every kept
-    /// second on this view already draws at — so the revealed footage reads
-    /// at a size consistent with everything around it, not an arbitrary
-    /// fixed box. Also doubles as the expanded fold's HIT-TEST width (see
+    /// (`geometry.pixelsPerSecond`, M5f Task 8 — was `width / duration`
+    /// before zoom existed, which is exactly what `pixelsPerSecond` equals
+    /// at the default zoom level, so this is a strict generalisation, not a
+    /// behaviour change at 1x) — the same scale every kept second on this
+    /// view already draws at, so the revealed footage reads at a size
+    /// consistent with everything around it, not an arbitrary fixed box.
+    /// Also doubles as the expanded fold's HIT-TEST width (see
     /// `foldHit(atX:)`): the whole widened rect is the target once expanded,
-    /// not just its edge. `geometry.duration` is the OUTPUT duration
-    /// (Task 3); zero (nothing kept, or zero view width) has no scale to
-    /// borrow, so this returns 0 rather than dividing by it.
+    /// not just its edge. Zero pixels-per-second (nothing kept, or zero
+    /// view width) has no scale to borrow, so this returns 0 rather than
+    /// dividing by it.
     private func expandedWidthPixels(for cut: Cut) -> Double {
-        guard geometry.duration > 0, bounds.width > 0 else { return 0 }
+        guard geometry.pixelsPerSecond > 0 else { return 0 }
         let cutLength = cut.range.end - cut.range.start
-        return cutLength / geometry.duration * bounds.width
+        return cutLength * geometry.pixelsPerSecond
     }
 
     /// The pixel height of the thin marker lane at the very top of the view
@@ -314,23 +390,159 @@ public final class TimelineView: NSView {
     /// own (uncut) length — deliberately never routed through `geometry`,
     /// which shrinks the same width to a smaller apparent duration as cuts
     /// land. See `duration`'s doc comment for why interaction must stay off
-    /// that shrinking axis.
+    /// that shrinking axis. M5f Task 8: routed through `gestureGeometry`
+    /// rather than a bare `x / bounds.width * duration` so THIS scale zooms
+    /// too — without it, zooming would move everything `geometry` draws
+    /// while leaving clicks interpreted at the old, unzoomed scale, which
+    /// would defeat the entire point of zooming in to place a cut more
+    /// precisely (`TrimGesture.ended`'s own stated problem).
     private func sourceTime(atX x: Double) -> Double {
-        guard bounds.width > 0, duration > 0 else { return 0 }
-        return min(max(x / bounds.width * duration, 0), duration)
+        gestureGeometry.outputTime(atX: x).seconds
     }
 
-    /// The pixel budget above, converted at the FIXED source scale.
-    /// `sourceTime(atX:)` is clamped and NaN-free even at zero width (it
-    /// returns 0 there), so this is always a finite, non-negative number of
-    /// seconds.
+    /// The pixel budget above, converted at the FIXED source scale, AT THE
+    /// CURRENT ZOOM. `TimelineGeometry.duration(ofPixels:)` divides by
+    /// `pixelsPerSecond` directly rather than differencing two
+    /// `sourceTime(atX:)` calls (mathematically the same result, since the
+    /// `visibleOffset` term cancels either way) — this is simply the more
+    /// direct route to it, and the one Task 8 added `duration(ofPixels:)`
+    /// for. Zero pixels-per-second (zero width) makes this 0, exactly as
+    /// the old subtraction did.
     private var minimumDragSeconds: Double {
-        sourceTime(atX: Self.minimumDragPixels) - sourceTime(atX: 0)
+        gestureGeometry.duration(ofPixels: Self.minimumDragPixels)
     }
+
+    /// Pixels of slop a drag's endpoint gets before it snaps onto a nearby
+    /// marker, existing cut edge, or the playhead (Step 4, M5f Task 8) — a
+    /// PIXEL tolerance, not a seconds one: `TrimGesture.ended`'s whole point
+    /// is that a fixed number of SECONDS reads as generous at one zoom level
+    /// and imperceptible at another, and a snap tolerance that becomes
+    /// unusable exactly when someone has zoomed in to place a cut precisely
+    /// would defeat the reason zoom exists at all.
+    private static let snapMarginPixels: Double = 6.0
 
     private func time(for event: NSEvent) -> Double {
         let point = convert(event.locationInWindow, from: nil)
-        return sourceTime(atX: point.x)
+        return snappedSourceTime(atX: point.x)
+    }
+
+    /// `sourceTime(atX:)`, pulled onto the nearest marker/cut-edge/playhead
+    /// when one sits within `snapMarginPixels` of `x` at the CURRENT zoom
+    /// (`gestureGeometry`, the same fixed-source axis `sourceTime(atX:)`
+    /// itself already uses — see that method's own doc comment). Markers
+    /// and the playhead arrive in OUTPUT time (Task 3) and are converted
+    /// back to SOURCE time via `timebase` before comparing — an unconverted
+    /// comparison would silently misplace every snap the instant anything
+    /// has been cut, the same clock confusion this milestone exists to
+    /// prevent everywhere else. Cut edges (`cut.range.start`/`.end`) need no
+    /// conversion — `Cut.range` is already SOURCE time.
+    ///
+    /// The closest candidate within tolerance wins, not the first one found
+    /// — two candidates both inside the margin (a marker sitting right next
+    /// to a cut edge) should snap to whichever is actually nearer, not
+    /// whichever happens to be earlier in `cuts`/`jumpPoints`.
+    private func snappedSourceTime(atX x: Double) -> Double {
+        let raw = sourceTime(atX: x)
+        guard bounds.width > 0, duration > 0 else { return raw }
+        var candidates: [Double] = []
+        for cut in cuts {
+            candidates.append(cut.range.start)
+            candidates.append(cut.range.end)
+        }
+        for marker in jumpPoints {
+            if let source = timebase.sourceTime(forOutput: OutputTime(marker.timeSeconds))?.seconds {
+                candidates.append(source)
+            }
+        }
+        if let playheadSource = timebase.sourceTime(forOutput: OutputTime(playhead))?.seconds {
+            candidates.append(playheadSource)
+        }
+        var best: (source: Double, distance: Double)?
+        for candidate in candidates {
+            let candidateX = gestureGeometry.x(atOutput: OutputTime(candidate))
+            let distance = abs(candidateX - x)
+            guard distance <= Self.snapMarginPixels else { continue }
+            if best == nil || distance < best!.distance {
+                best = (candidate, distance)
+            }
+        }
+        return best?.source ?? raw
+    }
+
+    // MARK: - Zoom (Step 3, M5f Task 8)
+
+    /// Applies `factor` to the current zoom, anchored at `anchor` (an OUTPUT
+    /// instant), clamped to `Self.minZoomFactor...Self.maxZoomFactor`, and
+    /// rebuilds `geometry`/`gestureGeometry` against it. The one place
+    /// `zoomFactor`/`zoomAnchorOutput` change — `zoomIn()`, `zoomOut()`,
+    /// `scrollWheel(with:)` and `magnify(with:)` all funnel through this
+    /// rather than mutating either property directly, so the clamp can
+    /// never be skipped by a new caller.
+    private func setZoom(_ factor: Double, anchoredAtOutput anchor: Double) {
+        zoomFactor = min(max(factor, Self.minZoomFactor), Self.maxZoomFactor)
+        zoomAnchorOutput = anchor
+        rebuildGeometry()
+        needsDisplay = true
+    }
+
+    /// Step 3's "a control": callable with no mouse event at all (a
+    /// keyboard shortcut, see `keyDown`, or code driving this view directly
+    /// in a test) — anchored on the PLAYHEAD, per the brief's own wording,
+    /// since there is no cursor position to anchor on instead.
+    public func zoomIn() { setZoom(zoomFactor * 2, anchoredAtOutput: playhead) }
+
+    /// The inverse of `zoomIn()`, same anchor rule.
+    public func zoomOut() { setZoom(zoomFactor / 2, anchoredAtOutput: playhead) }
+
+    /// Scroll-to-zoom (Step 3): vertical scroll deltas zoom in/out rather
+    /// than scrolling this view's content — `TimelineView` has no other use
+    /// for the scroll wheel (there is no independent vertical scroll to
+    /// preserve), so claiming it entirely for zoom needs no modifier key.
+    /// Anchored at the CURSOR (`point.x`, converted through the CURRENT,
+    /// pre-zoom `geometry`) — the brief's playhead fallback is for a
+    /// caller with no cursor position at all, which a scroll event always
+    /// has.
+    public override func scrollWheel(with event: NSEvent) {
+        guard event.scrollingDeltaY != 0 else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let anchor = geometry.outputTime(atX: point.x).seconds
+        // Scrolling UP (a positive deltaY, the "natural" convention's own
+        // sign) zooms IN — the same direction scrolling up already means in
+        // every app that treats the wheel as a zoom control.
+        let step = 1 + min(abs(event.scrollingDeltaY) / 50.0, 1.0)
+        setZoom(zoomFactor * (event.scrollingDeltaY > 0 ? step : 1 / step), anchoredAtOutput: anchor)
+    }
+
+    /// Trackpad pinch-to-zoom. `event.magnification` is already a signed
+    /// fraction (0.1 means "10% bigger"), so `1 + magnification` converts it
+    /// straight into `zoomed(by:)`'s own multiplicative factor — no
+    /// per-event step size to tune, unlike the scroll wheel's discrete
+    /// deltas above.
+    public override func magnify(with event: NSEvent) {
+        guard event.magnification != 0 else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let anchor = geometry.outputTime(atX: point.x).seconds
+        setZoom(zoomFactor * (1 + event.magnification), anchoredAtOutput: anchor)
+    }
+
+    /// The keyboard half of Step 3's "a control": `+`/`=` zoom in, `-` zooms
+    /// out, both anchored on the PLAYHEAD (`zoomIn()`/`zoomOut()`'s own
+    /// rule) since a keypress carries no cursor position. `=` is included
+    /// alongside `+` because it is the SAME physical key on every standard
+    /// keyboard layout — most "zoom in" shortcuts elsewhere (browsers,
+    /// Xcode) accept both for exactly that reason, and requiring Shift for
+    /// `+` specifically would be an arbitrary extra step here. Anything
+    /// else falls through to `super`, so this never swallows a keystroke
+    /// meant for something else in the window.
+    public override func keyDown(with event: NSEvent) {
+        switch event.charactersIgnoringModifiers {
+        case "+", "=":
+            zoomIn()
+        case "-":
+            zoomOut()
+        default:
+            super.keyDown(with: event)
+        }
     }
 
     // MARK: - Mouse handling

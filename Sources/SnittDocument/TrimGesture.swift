@@ -55,6 +55,17 @@ public struct TrimGesture: Equatable, Sendable {
     /// the view — this type stays free of pixels and AppKit, and the caller
     /// (the view) computes the right threshold for its own current geometry
     /// and hands it in.
+    ///
+    /// M5f Task 8 is the other half of this comment's own complaint: the
+    /// 0.75s/pixel figure above was cited as a bottleneck the first draft of
+    /// this milestone never addressed — nothing changed pixels-per-second at
+    /// all. `TimelineGeometry.zoomed(by:anchoredAt:)` now lets a person
+    /// zoom in until that same pixel is worth a fraction of a second instead
+    /// of most of one, and `TimelineView.minimumDragSeconds` recomputes
+    /// against the CURRENT zoom (`TimelineGeometry.duration(ofPixels:)`) on
+    /// every call — so the threshold this parameter receives shrinks right
+    /// along with the view, and a "deliberate short cut" stops being
+    /// unplaceable instead of merely being explained.
     public mutating func ended(atTime time: Double, minimumSeconds: Double) -> TimeRange? {
         guard case .dragging(let from) = phase else { return nil }
         phase = .idle
