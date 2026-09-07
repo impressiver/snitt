@@ -70,6 +70,22 @@ func emptyLabelIsNamed() {
     #expect(points[0].label == "Marker")
 }
 
+/// M5f Task 6: `JumpPoint` carries the SOURCE marker's own id and
+/// transcript, not a freshly minted id or a dropped transcript — a
+/// consumer (the timeline's marker track) that needs to drag or edit a
+/// SPECIFIC marker has to be able to name it, and a fresh id per call would
+/// silently hand back an id that `events.json` cannot look up.
+@Test("A JumpPoint carries its source marker's id and transcript")
+func jumpPointCarriesSourceIdAndTranscript() {
+    let marker = LoggedEvent(timeSeconds: 1.0, kind: .marker, label: "here",
+                             transcript: "the narration")
+    let points = MarkerJumpPoints.compute(
+        events: [marker], keptRanges: [TimeRange(start: 0, end: 10)])
+    let point = points.first
+    #expect(point?.id == marker.id)
+    #expect(point?.transcript == "the narration")
+}
+
 @Test("Jump points come back in ascending time order")
     func jumpPointsAreSorted() {
         let events = [

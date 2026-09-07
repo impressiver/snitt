@@ -53,6 +53,17 @@ public final class TimelineView: NSView {
     /// IS an edit — the owner turns it into an undoable, persisted removal
     /// from `edl.cuts` (`EditorTimelineState.removeCut(id:)`).
     public var onRemoveCut: (UUID) -> Void = { _ in }
+    /// A marker drag resolved to a real move (past `minimumDragPixels`,
+    /// reused as the click-vs-drag threshold — see `mouseUp`). `Double`
+    /// arrives in OUTPUT time — this view's own drawing axis — and the
+    /// owner (`EditorTimelineState.moveMarker`) converts it back to SOURCE
+    /// time before storing it; this view never does that conversion itself,
+    /// matching `onScrub`'s existing division of labour.
+    public var onMoveMarker: (UUID, Double) -> Void = { _, _ in }
+    /// A marker was clicked without being dragged (D50/D56, M5f Task 6) —
+    /// the owner presents whatever editing UI it chooses (a sheet, in
+    /// production; see `EditorContentView`).
+    public var onEditMarker: (UUID) -> Void = { _ in }
 
     /// Pixels of mouse wobble a click may exhibit before it counts as a
     /// deliberate selection rather than jitter. This is a PIXEL constant
@@ -77,6 +88,13 @@ public final class TimelineView: NSView {
     /// scrub, exactly the ambiguity Task 4 already fixed one interaction
     /// earlier for drag-vs-cut.
     private static let foldHitMarginPixels: Double = 6.0
+
+    /// Pixels of slop a click gets around a marker's own glyph before it
+    /// counts as "aimed at this marker" — the marker-track sibling of
+    /// `foldHitMarginPixels`, same reasoning: a marker draws as a handful of
+    /// pixels wide (see `draw`), so a click needs a target wider than its
+    /// own drawn width to be reliably hittable.
+    private static let markerHitMarginPixels: Double = 6.0
 
     /// D56 (M5f Task 3): draws on the OUTPUT (export) axis, built fresh from
     /// `duration`/`cuts` on every `update`/`layout` — see `rebuildGeometry`.
@@ -134,6 +152,31 @@ public final class TimelineView: NSView {
     /// to sit. A fold click must not ALSO silently discard whatever was
     /// selected or move the playhead.
     private var activeFoldClick: UUID?
+
+    /// Set by `mouseDown` when the press landed on a marker (`markerHit(at:)`,
+    /// D50/D56, M5f Task 6) — the marker-track sibling of `activeFoldClick`,
+    /// same reason: without it `mouseDragged`/`mouseUp` would run the
+    /// scrub/selection machinery for the rest of this press, exactly the
+    /// ambiguity `activeFoldClick` already exists to prevent one interaction
+    /// earlier.
+    ///
+    /// Unlike a fold (which always toggles on `mouseDown` and never drags),
+    /// a marker press does NOT resolve immediately: whether it becomes a
+    /// move or an edit depends on how far the mouse travels before
+    /// `mouseUp`, so this stays set across `mouseDragged` calls rather than
+    /// being cleared the instant the press lands.
+    private var activeMarkerDrag: UUID?
+    /// Where `activeMarkerDrag`'s press began, in VIEW-LOCAL pixels — the
+    /// anchor `mouseUp` measures total travel from to decide click (edit)
+    /// vs. drag (move), the same pixel-threshold idea `minimumDragPixels`
+    /// already uses for drag-vs-cut.
+    private var markerDragOrigin: NSPoint?
+    /// The dragged marker's LIVE position while `activeMarkerDrag` is set,
+    /// in OUTPUT seconds, for `draw()` to render it at instead of its stale
+    /// `jumpPoints` position — without this the marker being dragged would
+    /// stay drawn at its old spot until `mouseUp` finally reports the move.
+    /// `nil` whenever no marker drag is in progress.
+    private var markerDragPreviewOutputTime: Double?
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -206,6 +249,36 @@ public final class TimelineView: NSView {
         return cutLength / geometry.duration * bounds.width
     }
 
+    /// The pixel height of the thin marker lane at the very top of the view
+    /// (D56, M5f Task 6: "markers get their own thinner track above" video
+    /// and audio). A FIXED pixel height, not a fraction of `bounds.height`:
+    /// a fraction would make the lane — and the margin `markerHit` accepts
+    /// around a marker in it — shrink along with the view, and a target
+    /// that keeps getting thinner is eventually unclickable. Clamped to at
+    /// most 40% of the view's own height so a very short view (a test
+    /// double a handful of pixels tall) never gives the marker lane MORE
+    /// room than the video/audio tracks it sits above.
+    private var markerTrackHeight: Double { min(14.0, bounds.height * 0.4) }
+
+    /// The marker whose glyph `point` lands on/near, or `nil`. Gated to the
+    /// MARKER LANE's own y-range (`markerTrackHeight` down from the top,
+    /// this view is flipped) — unlike `foldHit(atX:)`, which spans the
+    /// whole view height because a fold's line is drawn full-height on
+    /// purpose (one collapse across the whole synchronised stack). A click
+    /// on the video/audio tracks below must keep meaning scrub/select
+    /// exactly as before, even at an x that happens to coincide with a
+    /// marker sitting above it — this y-gate is what keeps the two tracks'
+    /// gestures from colliding.
+    private func markerHit(at point: NSPoint) -> JumpPoint? {
+        guard point.y <= markerTrackHeight else { return nil }
+        guard bounds.width > 0, geometry.duration > 0 else { return nil }
+        for marker in jumpPoints {
+            let x = geometry.x(atOutput: OutputTime(marker.timeSeconds))
+            if abs(point.x - x) <= Self.markerHitMarginPixels { return marker }
+        }
+        return nil
+    }
+
     /// The `Cut` whose fold `x` lands in/near, or `nil` if `x` is plain
     /// scrub/drag territory. A COLLAPSED fold is a `foldHitMarginPixels`
     /// window either side of its single line; an EXPANDED one is its whole
@@ -264,6 +337,21 @@ public final class TimelineView: NSView {
 
     public override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        // D50/D56 (M5f Task 6): checked BEFORE the fold hit-test and any
+        // scrub/drag logic, for the same reason Task 5's fold check runs
+        // before scrub/drag — a marker's glyph is a small target, and the
+        // marker lane's y-gate (`markerHit`) is what keeps this from ever
+        // firing for a click on the video/audio tracks below. Unlike a
+        // fold, this does NOT resolve on `mouseDown`: whether it becomes a
+        // move or an edit is decided in `mouseUp`, once total travel is
+        // known (see `activeMarkerDrag`'s doc comment).
+        if let marker = markerHit(at: point) {
+            activeMarkerDrag = marker.id
+            markerDragOrigin = point
+            markerDragPreviewOutputTime = marker.timeSeconds
+            needsDisplay = true
+            return
+        }
         // D56 (M5f Task 5), Trap 2: checked BEFORE any scrub/drag logic
         // runs. A fold click never begins a gesture and never scrubs — see
         // `activeFoldClick`'s doc comment for why `mouseDragged`/`mouseUp`
@@ -282,12 +370,38 @@ public final class TimelineView: NSView {
     }
 
     public override func mouseDragged(with event: NSEvent) {
+        if activeMarkerDrag != nil {
+            let point = convert(event.locationInWindow, from: nil)
+            markerDragPreviewOutputTime = geometry.outputTime(atX: point.x).seconds
+            needsDisplay = true
+            return
+        }
         guard activeFoldClick == nil else { return }
         gesture.moved(toTime: time(for: event))
         needsDisplay = true
     }
 
     public override func mouseUp(with event: NSEvent) {
+        if let markerID = activeMarkerDrag {
+            let point = convert(event.locationInWindow, from: nil)
+            let origin = markerDragOrigin ?? point
+            activeMarkerDrag = nil
+            markerDragOrigin = nil
+            markerDragPreviewOutputTime = nil
+            needsDisplay = true
+            // Same pixel threshold `minimumDragPixels` uses to separate a
+            // deliberate drag from click jitter, reused rather than
+            // duplicated (D50/D56, M5f Task 6): total on-screen travel is
+            // what a hand's wobble is measured in, and this is already the
+            // constant this view uses for exactly that judgement one
+            // interaction over.
+            if abs(point.x - origin.x) < Self.minimumDragPixels {
+                onEditMarker(markerID)
+            } else {
+                onMoveMarker(markerID, geometry.outputTime(atX: point.x).seconds)
+            }
+            return
+        }
         if activeFoldClick != nil {
             // The press already resolved in `mouseDown` (a fold toggled) —
             // no gesture was begun, so falling through to the normal
@@ -347,10 +461,25 @@ public final class TimelineView: NSView {
         NSColor.controlBackgroundColor.setFill()
         NSBezierPath(rect: bounds).fill()
 
-        let trackRect = NSRect(x: 0, y: bounds.height * 0.35,
-                               width: bounds.width, height: bounds.height * 0.3)
+        // D56 (M5f Task 6): three stacked tracks — a thin marker lane above
+        // video, which sits above audio — replacing the single
+        // undifferentiated band Task 5 left behind. Cuts remain
+        // SYNCHRONISED across video and audio by default (D59 cut per-track
+        // cuts from this milestone): there is exactly one `cuts`/fold
+        // drawing pass below, spanning the full view height including the
+        // marker lane, because a cut is one decision affecting the whole
+        // stack, not a per-track one.
+        let markerRect = NSRect(x: 0, y: 0, width: bounds.width, height: markerTrackHeight)
+        let remaining = max(0, bounds.height - markerTrackHeight)
+        let videoRect = NSRect(x: 0, y: markerTrackHeight, width: bounds.width, height: remaining * 0.6)
+        let audioRect = NSRect(x: 0, y: markerTrackHeight + remaining * 0.6,
+                               width: bounds.width, height: remaining * 0.4)
+        NSColor.quaternaryLabelColor.setFill()
+        NSBezierPath(rect: markerRect).fill()
         NSColor.tertiaryLabelColor.setFill()
-        NSBezierPath(rect: trackRect).fill()
+        NSBezierPath(rect: videoRect).fill()
+        NSColor.tertiaryLabelColor.withAlphaComponent(0.6).setFill()
+        NSBezierPath(rect: audioRect).fill()
 
         // D56 (M5f Task 5): a cut is a FOLD — its own two edges, collapsed
         // to the single OUTPUT position they meet at (`geometry.x(atFold:)`),
@@ -410,10 +539,21 @@ public final class TimelineView: NSView {
                                       height: bounds.height)).fill()
         }
 
+        // D50/D56 (M5f Task 6): markers draw as small glyphs confined to
+        // their own lane at the top, replacing the old full-height yellow
+        // line — a marker is a point in the marker track now, not a streak
+        // through video and audio. The marker currently being dragged
+        // (`activeMarkerDrag`) draws at its LIVE preview position instead of
+        // its stale `jumpPoints` one, so it visibly follows the cursor
+        // rather than jumping only once the drag ends.
         NSColor.systemYellow.setFill()
         for point in jumpPoints {
-            let x = geometry.x(atOutput: OutputTime(point.timeSeconds))
-            NSBezierPath(rect: NSRect(x: x - 1, y: 0, width: 2, height: bounds.height)).fill()
+            let seconds = (point.id == activeMarkerDrag)
+                ? (markerDragPreviewOutputTime ?? point.timeSeconds)
+                : point.timeSeconds
+            let x = geometry.x(atOutput: OutputTime(seconds))
+            NSBezierPath(rect: NSRect(x: x - 3, y: 1, width: 6,
+                                      height: max(0, markerTrackHeight - 2))).fill()
         }
 
         NSColor.labelColor.setFill()

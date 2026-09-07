@@ -112,6 +112,28 @@ public class PreviewController {
         try edl.write(to: bundle)
     }
 
+    /// Writes `events` to the bundle this controller was built with (Task
+    /// 6) — the marker-edit sibling of `persist(_:)` for `edl`. Markers live
+    /// in `events.json`, not `edit.json`: a marker's own time/label/
+    /// transcript are stored data distinct from what a cut removes, and
+    /// `events.json` is the only file that has ever held them
+    /// (`DocumentOpener.build`, `SnittBundle.eventsURL`).
+    public func persistEvents(_ events: [LoggedEvent]) throws {
+        try EventLog(events: events).write(to: bundle)
+    }
+
+    /// Recomputes `jumpPoints` from `events` against the CURRENT
+    /// `keptRanges`, without rebuilding the composition (Task 6).
+    ///
+    /// A marker's own position/label/transcript changing affects nothing
+    /// `CompositionBuilder` builds — only `edl.cuts` does — so routing a
+    /// marker-only edit through `apply(edl:events:)` would pay for a real
+    /// AVFoundation rebuild (a new `AVPlayerItem`, a fresh composition) to
+    /// accomplish nothing beyond what this one line already does directly.
+    public func refreshJumpPoints(events: [LoggedEvent]) {
+        self.jumpPoints = MarkerJumpPoints.compute(events: events, keptRanges: keptRanges)
+    }
+
     /// Rebuilds the composition through `CompositionBuilder.build` — never
     /// by mutating the existing `AVMutableComposition` in place — and
     /// re-attaches it, keeping `jumpPoints` in step with the new
