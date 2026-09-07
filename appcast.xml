@@ -1,0 +1,23 @@
+<?xml version="1.0" standalone="yes"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <channel>
+    <title>Snitt</title>
+    <link>https://github.com/impressiver/snitt/releases/download/v0.1.0/Snitt-0.1.0.zip</link>
+    <description>Snitt release updates</description>
+    <language>en</language>
+    <item>
+      <title>Version 0.1.0</title>
+      <pubDate>Mon, 07 Sep 2026 00:27:41 +0000</pubDate>
+      <sparkle:version>0.1.0</sparkle:version>
+      <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+      <enclosure
+        url="https://github.com/impressiver/snitt/releases/download/v0.1.0/Snitt-0.1.0.zip"
+        sparkle:version="0.1.0"
+        sparkle:shortVersionString="0.1.0"
+        length="3268499"
+        type="application/octet-stream"
+        sparkle:edSignature="gWdjBSSdYTOdoV3EucXtWey1kqKEPmRHSLwPqqmdy9fW8L6nBV+8JlzcmAxu1jHsckEfBWYg8uScmnjlvgFmBA=="
+      />
+    </item>
+  </channel>
+</rss>
