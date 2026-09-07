@@ -86,3 +86,26 @@ func missingSidecarsStillReport() throws {
     #expect(report.markerCount == 0)
     #expect(report.inputEventCount == 0)
 }
+
+/// D60/M5f Task 7: `report(for:)` used to read events.json with `(try?
+/// EventLog.read(from: bundle))?.events ?? []` — the exact collapsing
+/// pattern already fixed at `MovieExporter`'s and `AutomationHost`'s
+/// `events.json` call sites (and at `DocumentOpener`'s `edit.json` one),
+/// left standing here. A `schemaVersion` newer than this build understands
+/// is a real events.json that EXISTS and fails to decode — collapsing that
+/// into "zero events" would tell an agent a recording has no markers when
+/// really its own build is too old to read them. Verified to fail against
+/// that exact collapsing form: `(try? EventLog.read(from: bundle))?.events
+/// ?? []` swallows this and `missingSidecarsStillReport`'s empty-report
+/// shape (`markerCount == 0`) would pass instead of this throw.
+@Test("A future-schemaVersion events.json throws rather than silently reporting no markers")
+func futureSchemaVersionEventsThrowsRatherThanEmptyReport() throws {
+    let bundle = try makeBundle()
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+    try RecordingMetadata(createdAt: Date(), initiator: .human).write(to: bundle)
+    try Data(#"{"schemaVersion":99,"events":[]}"#.utf8).write(to: bundle.eventsURL)
+
+    #expect(throws: EventLogError.unsupportedSchemaVersion(found: 99, maxSupported: EventLog.currentSchemaVersion)) {
+        _ = try InspectReport.report(for: bundle)
+    }
+}

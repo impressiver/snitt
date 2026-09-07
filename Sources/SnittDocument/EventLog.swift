@@ -77,29 +77,72 @@ extension LoggedEvent: Codable {
     }
 }
 
+/// Thrown by `EventLog` decoding — the `events.json` twin of
+/// `EditDecisionListError` (D60).
+///
+/// Task 6 bumped `EventLog.currentSchemaVersion` 1 -> 2 (`LoggedEvent` gained
+/// `id` and `transcript`) without adding this guard — the same D60 scenario
+/// `EditDecisionList` was already enforcing for `edit.json`, left open in a
+/// second file. Updates are hand-delivered (D54), so an old and a new Snitt
+/// build coexisting on one machine is not hypothetical: without this check,
+/// an old build's `Codable` conformance would decode ONLY the fields it
+/// recognizes from a newer `events.json` and silently drop the rest —
+/// `transcript` included, the only place a marker's narration lives — and
+/// the very next write would make that loss permanent. A loud refusal here
+/// is the alternative to that silent, unrecoverable loss.
+public enum EventLogError: Error, Equatable, CustomStringConvertible {
+    case unsupportedSchemaVersion(found: Int, maxSupported: Int)
+
+    public var description: String {
+        switch self {
+        case let .unsupportedSchemaVersion(found, maxSupported):
+            return "This events.json declares schemaVersion \(found), but this build of "
+                 + "Snitt only understands up to \(maxSupported). Refusing to open it: "
+                 + "a partial read would silently drop marker narration this build can't "
+                 + "represent, and the next write would make that loss permanent. Update "
+                 + "Snitt to open this recording."
+        }
+    }
+}
+
 /// The sidecar `events.json` this project's spec (§7) treats as a distinct
 /// document from `edit.json` — a different file, with its own
-/// `schemaVersion`. Unlike `EditDecisionList`'s (D60), this one is NOT
-/// enforced: `read(from:)` never compares it, so a newer build's added
-/// fields (like `LoggedEvent.id`/`transcript`, M5f Task 6) simply decode as
-/// `nil`/minted for an older build that doesn't know them, rather than
-/// refusing the file outright. `edit.json` got exactly that enforcement from
-/// D60, for the same hand-delivered-updates reason (D54) that applies here
-/// too — deliberately left open by this task rather than solved incidentally
-/// alongside markers: it deserves its own decision, not a side effect of an
-/// unrelated field addition.
+/// `schemaVersion`, now enforced exactly the way `EditDecisionList` enforces
+/// its own (D60): `init(from:)` checks `schemaVersion` before decoding
+/// `events` at all, and refuses outright rather than partially decoding a
+/// version above what this build understands.
 public struct EventLog: Codable, Sendable {
     /// Bumped 1 -> 2 by M5f Task 6: `LoggedEvent` gained `id` and
-    /// `transcript`. Informational only (see this type's own doc comment) —
-    /// nothing refuses a mismatched value on read.
+    /// `transcript`. A version ABOVE this one is refused by `init(from:)`
+    /// rather than partially decoded (`EventLogError`).
     public static let currentSchemaVersion = 2
 
     public var schemaVersion: Int
     public var events: [LoggedEvent]
 
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, events
+    }
+
     public init(schemaVersion: Int = EventLog.currentSchemaVersion, events: [LoggedEvent] = []) {
         self.schemaVersion = schemaVersion
         self.events = events
+    }
+
+    /// Custom rather than synthesized so `schemaVersion` can be checked
+    /// BEFORE `events` is decoded at all — the same gate
+    /// `EditDecisionList.init(from:)` applies for `edit.json` (D60).
+    /// `encode(to:)` is left to synthesis: nothing about writing needs the
+    /// same gate.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
+        guard schemaVersion <= Self.currentSchemaVersion else {
+            throw EventLogError.unsupportedSchemaVersion(
+                found: schemaVersion, maxSupported: Self.currentSchemaVersion)
+        }
+        self.schemaVersion = schemaVersion
+        self.events = try container.decode([LoggedEvent].self, forKey: .events)
     }
 
     public func write(to bundle: SnittBundle) throws {

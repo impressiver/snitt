@@ -137,6 +137,34 @@ struct DocumentOpenerTests {
         }
     }
 
+    @Test("Opening a bundle whose events.json declares a future schemaVersion throws rather than silently opening with an empty marker list")
+    func rejectsFutureEventsSchemaVersionRatherThanSilentlyDroppingMarkers() async throws {
+        // D60/M5f Task 7: the events.json sibling of
+        // `rejectsFutureSchemaVersionRatherThanSilentlyDefaulting` above.
+        // `EventLog.schemaVersion` was bumped 1 -> 2 by Task 6 with no such
+        // guard — `build(bundle:)` calls `EventLog.read(from: bundle)`
+        // directly (no `try?`), so this was never a SILENT collapse the way
+        // `edit.json`'s was, but until `EventLog.init(from:)` gained this
+        // gate, a newer build's `events.json` decoded ONLY the fields an
+        // older build recognizes and silently dropped `transcript` — the
+        // only place a marker's narration lives — with the very next
+        // autosave making that loss permanent. This pins the refusal at the
+        // GUI's open path specifically, not just at the bare decoder.
+        let url = try await makeFixtureBundle()
+        defer { try? FileManager.default.removeItem(at: url) }
+        let bundle = try SnittBundle(opening: url)
+        try Data(#"{"schemaVersion":99,"events":[]}"#.utf8).write(to: bundle.eventsURL)
+
+        try await EditorWindowTestGate.run {
+            let before = EditorWindowController.openWindowCount
+            await #expect(throws: EventLogError.self) {
+                _ = try await DocumentOpener.open(bundleURL: url)
+            }
+            #expect(EditorWindowController.openWindowCount == before,
+                    "a future-schemaVersion events.json must not open a window at all, let alone an empty one")
+        }
+    }
+
     @Test("Opening a bundle records it in the recent documents list")
     func openingNotesARecentDocument() async throws {
         let url = try await makeFixtureBundle()

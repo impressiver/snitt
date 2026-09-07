@@ -576,15 +576,31 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// was handed the path to discloses nothing it did not already have, and
     /// gating it would make an agent unable to describe its own recording.
     private func inspect(bundlePath: String) -> AutomationResponse {
+        let bundle: SnittBundle
         do {
-            let bundle = try SnittBundle(opening: URL(fileURLWithPath: bundlePath))
-            return .inspected(try InspectReport.report(for: bundle))
+            bundle = try SnittBundle(opening: URL(fileURLWithPath: bundlePath))
         } catch {
             return .failure(AutomationError(
                 code: .targetNotFound,
                 message: "Could not read a recording at that path.",
                 hint: "Check the path from `snitt record stop`. It must be a "
                     + ".snitt bundle written by this app."))
+        }
+        // A separate `do` from the bundle-open above (D60, M5f): a bundle
+        // that opened fine can still fail HERE — a `schemaVersion` in
+        // `events.json` newer than this build understands throws from
+        // `EventLog.init(from:)` (`InspectReport.readEvents`). Folding both
+        // failures into one generic "check the path" message would tell an
+        // agent to look at the wrong thing; this bundle's PATH was fine; its
+        // DATA wasn't.
+        do {
+            return .inspected(try InspectReport.report(for: bundle))
+        } catch {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "Could not build a report for this recording.",
+                hint: "One of its sidecar files exists but could not be read — reporting "
+                    + "it as empty would hide a real problem: \(String(describing: error))"))
         }
     }
 

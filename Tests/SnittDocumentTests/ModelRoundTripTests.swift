@@ -102,6 +102,30 @@ func eventLogReadsLegacyEventsWithoutIdOrTranscript() throws {
     #expect(Set(log.events.map(\.id)).count == log.events.count)
 }
 
+/// M5f Task 7 (D60): `EventLog.currentSchemaVersion` was bumped 1 -> 2 by
+/// Task 6 without this guard — the same D60 gate `EditDecisionListTests`
+/// already pins for `edit.json`, applied here to `events.json`. Mirrors
+/// `EditDecisionListTests.refusesFutureSchema` exactly, on the sibling type.
+@Test("A newer events.json schemaVersion is refused, loudly")
+func eventLogRefusesFutureSchema() throws {
+    let future = #"{"schemaVersion":99,"events":[]}"#
+    #expect(throws: EventLogError.unsupportedSchemaVersion(
+        found: 99, maxSupported: EventLog.currentSchemaVersion)) {
+        _ = try EventLog.decode(from: Data(future.utf8))
+    }
+}
+
+/// The companion case to `eventLogRefusesFutureSchema`: a mutant that
+/// rejects every version but 1 (rather than "greater than
+/// currentSchemaVersion") would fail here, since a fresh `EventLog` written
+/// by THIS build encodes schemaVersion 2.
+@Test("The current events.json schemaVersion still opens — the gate is forward-only")
+func eventLogCurrentSchemaVersionIsAccepted() throws {
+    let json = #"{"schemaVersion":\#(EventLog.currentSchemaVersion),"events":[]}"#
+    let log = try EventLog.decode(from: Data(json.utf8))
+    #expect(log.schemaVersion == EventLog.currentSchemaVersion)
+}
+
 @Test("A new EDL defaults to no cuts and unmuted tracks")
 func editListDefaults() throws {
     let bundle = try makeBundle()

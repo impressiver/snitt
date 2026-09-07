@@ -319,3 +319,29 @@ func autoTrimWithCorruptEventsFailsExplicitly() async throws {
             "a corrupt log must not be reported as an empty one — those are different failures with different fixes")
     #expect(error.hint != nil)
 }
+
+@Test("snitt inspect on a future-schemaVersion events.json fails explicitly rather than reporting zero markers")
+func inspectWithFutureSchemaEventsFailsExplicitly() async throws {
+    // D60/M5f Task 7, end to end through the same seam `AutomationHost`
+    // exposes to the CLI/MCP frontends (§8): `InspectReport.report(for:)`
+    // used to fold a future-schemaVersion events.json into "zero events"
+    // via `(try? EventLog.read(from: bundle))?.events ?? []` — the same
+    // collapsing class this file already pins for auto-trim, one call site
+    // over. An agent asking `snitt inspect` about a recording a NEWER
+    // Snitt build had already marked up would be told "no markers" instead
+    // of "your build cannot read this recording's markers" — a wrong
+    // answer that looks like a right one. Verified to fail against that
+    // exact collapsing form: it would return `.inspected` with
+    // `markerCount == 0` instead of `.failure`.
+    let bundle = try await bundleWithMetadata(duration: 10, events: [])
+    try Data(#"{"schemaVersion":99,"events":[]}"#.utf8).write(to: bundle.eventsURL)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+    let host = AutomationHost.forTesting()
+    let response = await host.handle(.inspect(bundlePath: bundle.url.path))
+
+    guard case .failure(let error) = response else {
+        Issue.record("inspect on a future-schemaVersion events.json must fail, not report an empty marker list"); return
+    }
+    #expect(error.hint != nil, "an agent needs to know why, not just that it failed")
+}
