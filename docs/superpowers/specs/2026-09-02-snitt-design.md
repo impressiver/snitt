@@ -850,20 +850,20 @@ before it is allowed to gate anything. Sampling happens during the existing
   reopen its own documents — see D45. **Gates v0**: §13's first validation
   question is about the record → trim → share loop, and an editor reachable only
   at the end of a recording is not that loop
-- **M5d** Durability (§11): finalize on disk-full rather than discarding, offer
-  recovery for an unfinalized bundle at launch, and a retention/output-location
-  policy for bundles accumulating in `~/Desktop`. All three are §11 promises the
-  code never implemented — found by review, not by use, and unlisted anywhere
-  before D47
-- **M5e** Agent demo production (§4.8, D49, D50): pause/resume, screenshot,
-  marker transcripts exported as WebVTT with **burn-in as an export option**,
-  a **Share** menu item and an **Export As…** dialog (format, size, subtitles,
-  markers), and microphone capture surfaced as a setting rather than only a CLI
-  flag. **Gates v0**: §13's second validation
-  question asks whether an agent actually records with Snitt and attaches the
-  result to a PR, and an agent that cannot pause, see, or narrate produces a
-  recording nobody wants to attach
-- **▶ v0 SHIP — validation gate**
+- **▶ v0 SHIP — validation gate** *(moved ahead of M5d and M5e by D52)*
+- **M5d** Durability (§11), rescoped by D52 to what protects an **unattended
+  agent** run: finalize when the stream dies, and a disk-full guard at the write
+  site. Launch recovery and retention are deferred — for a human session
+  `Recorder.stop()` already finalizes unconditionally, so those failures still
+  end in a saved take. **Replan required**: the original plan had six verified
+  defects, including an `SCStreamError` classification that does not exist and a
+  recovery signal that strands bundles
+- **M5e** Agent demo production (§4.8), **split by D52**. First: pause/resume,
+  screenshot, marker transcripts as WebVTT, microphone as a setting, plus D53's
+  correlation primitive and `paused` state. Deferred: **Share**, **Export As…**
+  and subtitle burn-in (D50, D51) — human-facing polish §13's second question
+  does not need, and which may never gate v0 if a plain `.mov` attaches to a PR
+  fine
 - **M6** Overlay desirability probe
 - **M7** Custom compositor + overlay rendering *(conditional on M6)*
 - **M8** Licensing; Mac App Store variant
@@ -1194,6 +1194,9 @@ since it looks like an answer.
 | D50 | **A marker carries a transcript, exported as WebVTT** — subtitles first, synthesized speech later | §4.12 already generates WebVTT chapters from markers, so the sidecar and its plumbing exist; a transcript field rides the same path. Burning captions was initially deferred here on the belief that it needed M7's compositor — **superseded by D51**, which establishes it does not. WebVTT remains the storage and interchange form; burn-in is an export option over it | §4.12, §7, §13 (M7 deferral) | Decided | smallest-change-that-makes-it-real |
 
 | D51 | **Burned-in subtitles are an export option**, superseding D50's deferral. Export gains two menu items: **Share** (`NSSharingServicePicker`, as QuickTime does) and **Export As…** with format, size, include-subtitles and include-markers | D50 deferred burned-in captions on the belief they needed M7's compositor. They do not: `AVVideoCompositionCoreAnimationTool` composes text at export and works with `AVAssetExportSession`. That removes the reason for the deferral, and burned-in is the only form that survives the paste — Slack and Discord render neither a sidecar `.vtt` nor a soft `tx3g` track, so a narrated demo without burn-in is narrated for nobody who matters. **§9 does not apply here, and an earlier draft of this entry wrongly said it did.** §9's shared-builder rule governs the *composition* derived from the EDL — which frames survive, in what order, from which tracks — so that a cut lands in the same place in the file as in the editor. Subtitle rendering sits on top of that as presentation. The editor is a **representation** of the edit; the export is its **realization**, and they need not match pixel for pixel any more than a text editor's cursor appears in the saved file. So the animation tool being export-only (V5) is not a divergence to accept, it is simply how the two surfaces draw the same data. **What must match is the data, not the drawing:** a transcript attached to a marker at 12.4s burns at 12.4s with the same text. That is a correctness property and gets a test; the rendering mechanism does not | §4.12, §9, §7, D50, V5 | Decided | deferral-removed-by-a-capability-check |
+
+| D52 | **Ship v0 before M5d and M5e.** The release runbook runs first; M5d is rescoped to what protects an unattended agent run and replanned; M5e splits, agent primitives before export UI | A refinement pass found three milestones inserted before a gate whose stated purpose is to stop exactly that, each with a good local argument, while the gate itself never moved closer. The deciding fact was a mechanism rather than an argument: `Recorder.stop()` finalizes unconditionally even when `finish()` throws, so in a **human** session every M5d failure still ends in a saved take — the window closes, the status item lies, the user presses stop, the data survives. Confusing and disclosable, not validation-corrupting the way D45's unopenable bundle was. The exception is an **unattended agent** run, where nobody presses stop and `maxDuration` is the only backstop — which is exactly §13's second gate question, and why M5d survives at reduced scope rather than being cut. **The release itself was unstarted, uncosted work already on the critical path**: seven runbook items are marked unverifiable in-repo, including a Gatekeeper-clean launch on a second machine and a full 0.1.0 → 0.1.1 update cycle | §13, §11, D45, D47, D49; `Recorder.stop()`; `docs/superpowers/notes/release-runbook.md` | Decided | gate-receding-one-good-argument-at-a-time |
+| D53 | **The agent surface gains a correlation primitive and a `paused` state** whenever M5e is built | `mark` stamps at IPC-processing time (`Recorder.swift:249`) — after the agent's own tool reports done, after a subprocess spawn or MCP round trip — so the click-to-marker drift D49 named as its own revisit trigger is **already structural**, before the feature that would supposedly cause it. Pause/resume inherit the same call-and-stamp shape. Having `screenshot` implicitly drop a marker at the frame it captured gives "what I saw" and "what I said about it" one shared offset rather than two independent call times. Separately `StatusInfo` is exactly `{recording, sessionID, elapsedSeconds}` with no session-listing verb, so an agent that pauses, crashes and is restarted cannot discover its own live session; `paused` must also settle whether paused time counts against `maxDuration`, and §5.3's visible indicator must show it distinctly — a human at the machine is the only fallback when an agent forgets to resume | `Protocol.swift:84,132-141`; `Recorder.swift:249`; §5.3, §12, D49 | Decided | trigger-already-firing-before-the-feature-ships |
 
 `conformance: 2026-09-06` (post-M5c refinement)
 
