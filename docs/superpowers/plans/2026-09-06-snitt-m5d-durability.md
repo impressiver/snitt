@@ -1,5 +1,34 @@
 # M5d: Durability — Implementation Plan
 
+> ## ⚠️ DO NOT EXECUTE — replan required (D52)
+>
+> A refinement pass found **six verified defects** in this plan, from three
+> reviewers who could not see each other's work:
+>
+> 1. **Task 1's premise is false.** `SCStreamError.Code` has no `windowClosed`
+>    or `displayDisconnected` — only an undifferentiated `systemStoppedStream`.
+>    Verified against Apple's live SDK docs.
+> 2. **`didStopWithError` also fires on our own `stopCapture()`**, which this
+>    plan forbids handling while also forbidding a second finalize.
+> 3. **The delegate callback arrives off-actor** and would become a second
+>    unguarded mutator of `stream` — the exact hazard
+>    `CaptureSession.swift:39-47`'s comment exists to prevent.
+> 4. **Task 2 targets the wrong line.** `AssetWriterSink` discards the `Bool`
+>    from `input.append(buffer)`; that is where a disk-full failure first
+>    surfaces, not `finishWriting`.
+> 5. **Task 3's recovery signal strands bundles.** `writeSidecars` writes three
+>    files non-atomically, so a crash after `meta.json` leaves a bundle that is
+>    neither detected as unfinalized nor openable. Fix: write `meta.json` **last**
+>    and treat any missing sidecar as recoverable.
+> 6. **No task reconnects the UI.** After an interruption finalizes, the status
+>    item still says Recording, `RecordingCoordinator.active` is never cleared,
+>    and the next hotkey press hits stale state.
+>
+> D52 also **rescoped** this milestone to what protects an *unattended agent*
+> run — stream-death finalize and the disk-full guard — and deferred launch
+> recovery and retention. Kept unexecuted as the record of what was found.
+
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make §11's failure-mode promises real, and add the guard that stops a spec promise going unimplemented again.
