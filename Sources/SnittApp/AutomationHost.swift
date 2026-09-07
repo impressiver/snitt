@@ -391,14 +391,24 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         do {
             let existing = try Self.readEDL(for: bundle)
 
-            let cuts: [TimeRange]
+            // Both branches end in `existing.trimmed(keeping:duration:)`
+            // deliberately (D60): auto-trim only ever computes a new
+            // head/tail keep range from event timestamps, exactly like a
+            // manual trim computes one from typed `--start`/`--end`
+            // numbers, so it is NOT a "replace every cut" operation. Writing
+            // `EditDecisionList.autoTrimCuts(...)`'s cuts directly here, as
+            // this branch did before the fix, silently discarded any
+            // interior cut already made in the GUI or an earlier manual
+            // trim the moment someone auto-trimmed — the identical D60
+            // data-loss bug the manual branch had, one `if` away.
+            let keep: TimeRange
             if auto {
                 let events = try Self.readEventsForAutoTrim(for: bundle)
-                cuts = try EditDecisionList.autoTrimCuts(events: events, duration: duration)
+                keep = try EditDecisionList.autoTrimRange(events: events, duration: duration)
             } else {
-                let keep = TimeRange(start: start ?? 0, end: end ?? duration)
-                cuts = existing.trimmed(keeping: keep, duration: duration).cuts
+                keep = TimeRange(start: start ?? 0, end: end ?? duration)
             }
+            let cuts = existing.trimmed(keeping: keep, duration: duration).cuts
 
             var updated = existing
             updated.cuts = cuts
