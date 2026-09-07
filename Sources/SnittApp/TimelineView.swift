@@ -4,12 +4,19 @@ import SnittDocument
 /// The scrubbable, trimmable timeline beneath the editor's video surface.
 ///
 /// Holds no rules of its own. `TrimGesture` (SnittDocument) answers every
-/// "is this a click or a cut" question; this view's only job is to convert
-/// an `NSEvent`'s location to a time, feed it to `gesture`, and call out
-/// through `onScrub`/`onTrim`. §4.7 puts gesture handling in AppKit — not
-/// because AppKit is where the rules belong, but because keeping the
-/// untestable part (drawing, event plumbing) as small as possible is the
-/// only defence available for code no test can see.
+/// "is this a click or a deliberate drag" question; this view's only job is
+/// to convert an `NSEvent`'s location to a time, feed it to `gesture`, and
+/// call out through `onScrub`/`onSelect`. §4.7 puts gesture handling in
+/// AppKit — not because AppKit is where the rules belong, but because
+/// keeping the untestable part (drawing, event plumbing) as small as
+/// possible is the only defence available for code no test can see.
+///
+/// D56 (M5f Task 4): a drag SELECTS; it never touches the EDL. `onSelect`
+/// reports the drag's result (a `Selection`, or `nil` for a plain click) to
+/// the owner, which decides separately, and later, whether to cut it —
+/// see `EditorTimelineState.cutSelection()`. Before this task `onTrim`
+/// applied a cut the instant a drag ended, which is the defect D56 exists
+/// to fix.
 ///
 /// `TimelineGeometry` (SnittDocument) answers pixel-to-time for DRAWING —
 /// the OUTPUT axis, per D56 (M5f Task 3) — but gesture math
@@ -19,10 +26,14 @@ import SnittDocument
 @MainActor
 public final class TimelineView: NSView {
     public var onScrub: (Double) -> Void = { _ in }
-    public var onTrim: (TimeRange) -> Void = { _ in }
+    /// Called every time a drag resolves: `Selection(range:)` for a drag
+    /// that cleared the pixel threshold, `nil` for a plain click (or a drag
+    /// too short to count) — either way, always a REPLACEMENT of whatever
+    /// was selected before, never an edit. See this type's doc comment.
+    public var onSelect: (Selection?) -> Void = { _ in }
 
     /// Pixels of mouse wobble a click may exhibit before it counts as a
-    /// deliberate trim rather than jitter. This is a PIXEL constant
+    /// deliberate selection rather than jitter. This is a PIXEL constant
     /// deliberately: a hand wobbles by roughly the same number of pixels on
     /// any click regardless of what the timeline shows. Converting it to a
     /// number of seconds requires knowing how much SOURCE media time is
@@ -58,6 +69,15 @@ public final class TimelineView: NSView {
     /// composition `CompositionBuilder` built from kept ranges only, so its
     /// `currentTime()` already IS output time before it ever reaches here.
     private var playhead: Double = 0
+    /// SOURCE time (M5f Task 4) — the last COMMITTED selection, i.e. what a
+    /// completed drag reported through `onSelect`. Set locally the instant
+    /// a drag ends (for an immediate redraw, with no round trip through the
+    /// owner needed for the rectangle to appear) and also mirrored back down
+    /// through `update(selection:)`, so the owner clearing it externally
+    /// (`EditorTimelineState.cutSelection()`, once a cut is made) redraws
+    /// this view without this type needing its own "clear" entry point.
+    /// `nil` means no selection — nothing drawn beyond `gesture.previewRange`.
+    private var selection: Selection?
 
     public override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -74,16 +94,18 @@ public final class TimelineView: NSView {
     /// bounds it has right now. Called by the owner whenever the underlying
     /// EDL, markers or playback position change.
     ///
-    /// `duration`/`cuts` are SOURCE time; `jumpPoints`/`playhead` are OUTPUT
-    /// time. See this type's stored properties of the same names for why the
-    /// two halves of this parameter list are deliberately on different
-    /// clocks.
+    /// `duration`/`cuts`/`selection` are SOURCE time; `jumpPoints`/`playhead`
+    /// are OUTPUT time. See this type's stored properties of the same names
+    /// for why the two halves of this parameter list are deliberately on
+    /// different clocks. `selection` defaults to `nil` for callers (existing
+    /// tests among them) that don't drive selection at all.
     public func update(duration: Double, cuts: [TimeRange], jumpPoints: [JumpPoint],
-                       playhead: Double) {
+                       playhead: Double, selection: Selection? = nil) {
         self.duration = duration
         self.cuts = cuts
         self.jumpPoints = jumpPoints
         self.playhead = playhead
+        self.selection = selection
         rebuildGeometry()
         needsDisplay = true
     }
@@ -144,9 +166,16 @@ public final class TimelineView: NSView {
 
     public override func mouseUp(with event: NSEvent) {
         let time = time(for: event)
-        if let range = gesture.ended(atTime: time, minimumSeconds: minimumDragSeconds) {
-            onTrim(range)
-        } else {
+        let range = gesture.ended(atTime: time, minimumSeconds: minimumDragSeconds)
+        // D56 (M5f Task 4): a resolved drag REPLACES the selection — it
+        // never appends a `Cut`. A plain click (nil `range`) clears any
+        // prior selection and scrubs, matching the pre-D56 behaviour for
+        // clicks exactly; a deliberate drag reports the new selection and,
+        // as before this task, does NOT also scrub — its own `mouseDown`
+        // already moved the playhead to the drag's start.
+        selection = range.map { Selection(range: $0) }
+        onSelect(selection)
+        if range == nil {
             onScrub(time)
         }
         needsDisplay = true
@@ -168,14 +197,30 @@ public final class TimelineView: NSView {
         // of the export, so there is nothing here to fill a rect over.
         // Marking cut BOUNDARIES on the kept content is Task 6's to add.
 
-        if let preview = gesture.previewRange,
-           let startX = geometry.x(atSource: SourceTime(preview.start)),
-           let endX = geometry.x(atSource: SourceTime(preview.end)) {
-            // Both ends of an in-progress drag can still fail to map (e.g.
-            // dragging back over ground an earlier cut already removed) —
-            // skipped rather than clamped, so a half-inside-a-cut drag isn't
-            // drawn as spanning territory it does not actually cover.
-            NSColor.systemOrange.withAlphaComponent(0.35).setFill()
+        // D56 (M5f Task 4): selecting is not cutting, and is drawn as such —
+        // transparent BLUE, not the old orange "about to cut" preview it
+        // replaces. The live in-progress drag (`gesture.previewRange`) takes
+        // priority over the last COMMITTED selection (`self.selection`), so
+        // starting a fresh drag shows only the new range, not both at once;
+        // once the drag ends, `previewRange` goes nil and `selection` (set
+        // in `mouseUp`) takes over, so the rectangle persists on screen
+        // until a new drag replaces it or a cut clears it.
+        if let range = gesture.previewRange ?? selection?.range,
+           let startX = geometry.x(atSource: SourceTime(range.start)),
+           let endX = geometry.x(atSource: SourceTime(range.end)) {
+            // Both ends can still fail to map (e.g. a selection sitting over
+            // ground an earlier cut already removed) — skipped rather than
+            // clamped, so a half-inside-a-cut selection isn't drawn as
+            // spanning territory it does not actually cover.
+            //
+            // Alpha 0.35 is the same value the old orange cut-preview used —
+            // already tuned, in this same method, to read clearly over both
+            // `controlBackgroundColor` (the view's own fill) and the
+            // semi-transparent `tertiaryLabelColor` track without hiding
+            // either. Only the hue changes here, from orange to blue; that
+            // is what carries the new meaning ("selected, not yet decided")
+            // instead of the old one ("about to remove this").
+            NSColor.systemBlue.withAlphaComponent(0.35).setFill()
             NSBezierPath(rect: NSRect(x: startX, y: 0, width: endX - startX,
                                       height: bounds.height)).fill()
         }

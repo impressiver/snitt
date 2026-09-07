@@ -16,15 +16,23 @@ import UniformTypeIdentifiers
 /// exists so that every trim keeps passing the recording's real events
 /// instead of silently losing every marker.
 ///
-/// Not `private`: `@testable import SnittApp` needs to drive `onTrim` and
-/// read `displayState(playhead:)` directly to verify the M4b Critical
-/// finding — that a SECOND trim in one session removes a distinct region —
-/// without a live `NSWindow` or SwiftUI's runtime.
+/// Not `private`: `@testable import SnittApp` needs to drive `onSelect` /
+/// `cutSelection` and read `displayState(playhead:)` directly to verify the
+/// M4b Critical finding — that a SECOND trim in one session removes a
+/// distinct region — without a live `NSWindow` or SwiftUI's runtime.
 @MainActor
 final class EditorTimelineState: ObservableObject {
     let controller: PreviewController
     let events: [LoggedEvent]
     @Published var edl: EditDecisionList
+
+    /// The current selection (SOURCE time), or `nil`. D56 (M5f Task 4): UI
+    /// state only — never written into `edl`, never persisted, and this is
+    /// the ONLY place it lives; `EditDecisionList` has no field for it.
+    /// `@Published` so `EditorContentView`'s Cut button can enable/disable
+    /// on it and `TimelineViewRepresentable` can feed it back down to the
+    /// view for drawing.
+    @Published var selection: Selection?
 
     /// The window's `UndoManager` (Task 7), set once the window exists —
     /// this type is constructed before the `NSWindow` that owns it. Task
@@ -69,14 +77,14 @@ final class EditorTimelineState: ObservableObject {
         self.events = events
     }
 
-    /// Everything `TimelineView` needs. `duration`/`cuts` stay on the SOURCE
-    /// clock: `edl.cuts` are already source-time ranges, and the view's own
-    /// interaction (dragging out a new cut) must keep computing against the
-    /// recording's FULL, unchanging length regardless of what has already
-    /// been cut (M4b whole-branch review, Critical finding #1 — feeding the
-    /// view a duration that shrinks as cuts land makes a later drag's pixel
-    /// range mean a different span each time, walking straight back into
-    /// the region a prior cut already removed).
+    /// Everything `TimelineView` needs. `duration`/`cuts`/`selection` stay on
+    /// the SOURCE clock: `edl.cuts` are already source-time ranges, and the
+    /// view's own interaction (dragging out a selection) must keep computing
+    /// against the recording's FULL, unchanging length regardless of what
+    /// has already been cut (M4b whole-branch review, Critical finding #1 —
+    /// feeding the view a duration that shrinks as cuts land makes a later
+    /// drag's pixel range mean a different span each time, walking straight
+    /// back into the region a prior cut already removed).
     ///
     /// `jumpPoints`/`playhead`, by contrast, are OUTPUT time, UNCONVERTED
     /// (M5f Task 3): `TimelineGeometry` now draws on the export's own axis
@@ -96,13 +104,15 @@ final class EditorTimelineState: ObservableObject {
         let cuts: [TimeRange]
         let jumpPoints: [JumpPoint]
         let playhead: Double
+        let selection: Selection?
     }
 
     func displayState(playhead outputPlayhead: Double) -> DisplayState {
         DisplayState(duration: controller.sourceDurationSeconds,
                     cuts: edl.cuts.map(\.range),
                     jumpPoints: controller.jumpPoints,
-                    playhead: outputPlayhead)
+                    playhead: outputPlayhead,
+                    selection: selection)
     }
 
     /// `time` arrives in SOURCE time — the view's own axis — and must be
@@ -119,13 +129,33 @@ final class EditorTimelineState: ObservableObject {
         Task { await controller.seek(toSeconds: trimmedTime) }
     }
 
-    /// `range` arrives in SOURCE time directly from the view — no mapping
-    /// needed on the way in, since `edl.cuts` wants exactly that (M4b
-    /// Critical finding #1: before this fix, the view's axis was trimmed
-    /// time, and a second drag on the same view produced a range that had
-    /// already been computed against the wrong clock).
-    func onTrim(_ range: TimeRange) {
-        applyCut(range)
+    /// `selection` arrives from the view already resolved (SOURCE time): a
+    /// real drag becomes `Selection(range:)`, a plain click — or a drag too
+    /// short to count — becomes `nil`. D56 (M5f Task 4): this only ever
+    /// REPLACES `self.selection`. It never touches `edl` — a drag selects,
+    /// it does not cut. `cutSelection()`, below, is the one path from a
+    /// selection to an actual `Cut`.
+    ///
+    /// Before this task, this method was `onTrim(_ range: TimeRange)` and
+    /// called `applyCut(range)` directly — a completed drag became a cut
+    /// the instant the mouse came up, with no decision in between. That is
+    /// the defect D56 names.
+    func onSelect(_ selection: Selection?) {
+        self.selection = selection
+    }
+
+    /// Cuts the current selection, if any — the one place a `Selection`
+    /// (UI state, never persisted) turns into a `Cut` (persisted to
+    /// `edit.json`), via the same append-and-save `applyCut` a drag used to
+    /// call directly before D56 separated the two. Clears the selection
+    /// afterwards: once it has become an edit, there is nothing left
+    /// selected. A no-op with no selection, rather than force-unwrapping —
+    /// pressing Cut with nothing selected is a plausible, harmless mistake,
+    /// not a programmer error.
+    func cutSelection() {
+        guard let selection else { return }
+        applyCut(selection.range)
+        self.selection = nil
     }
 
     /// Appends `range` and registers its inverse as a whole-EDL snapshot,
@@ -137,7 +167,7 @@ final class EditorTimelineState: ObservableObject {
         undoManager?.registerUndo(withTarget: self) { target in
             target.restore(previous)
         }
-        // A drag on the timeline is always a brand-new cut — it has no
+        // Cutting a selection is always a brand-new cut — it has no
         // established identity to preserve, so it mints its own id here.
         edl.cuts.append(Cut(range: range))
         applyAndSave()
@@ -229,7 +259,7 @@ private struct TimelineViewRepresentable: NSViewRepresentable {
     func makeNSView(context: Context) -> TimelineView {
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 480, height: 40))
         view.onScrub = { [weak state] in state?.onScrub($0) }
-        view.onTrim = { [weak state] in state?.onTrim($0) }
+        view.onSelect = { [weak state] in state?.onSelect($0) }
         return view
     }
 
@@ -242,7 +272,8 @@ private struct TimelineViewRepresentable: NSViewRepresentable {
         nsView.update(duration: display.duration,
                      cuts: display.cuts,
                      jumpPoints: display.jumpPoints,
-                     playhead: display.playhead)
+                     playhead: display.playhead,
+                     selection: display.selection)
     }
 }
 
@@ -265,6 +296,12 @@ private struct EditorContentView: View {
             HStack(spacing: 12) {
                 Button("Play") { controller.play() }
                 Button("Pause") { controller.pause() }
+                // D56 (M5f Task 4): the only place a selection becomes a
+                // cut. Disabled with nothing selected — dragging alone no
+                // longer cuts anything; this button is the deliberate
+                // decision that does.
+                Button("Cut") { state.cutSelection() }
+                    .disabled(state.selection == nil)
             }
             .padding(8)
             if !controller.jumpPoints.isEmpty {
@@ -610,10 +647,16 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    /// Drives a trim exactly as the timeline view's gesture would, without
-    /// a live `NSView` or SwiftUI runtime (Task 7).
+    /// Drives a complete select-then-cut exactly as a real drag ending
+    /// followed by pressing Cut would (Task 7; D56/M5f Task 4 inserted the
+    /// selection step), without a live `NSView` or SwiftUI runtime. Kept
+    /// under its original `...TrimForTesting` name for the existing callers
+    /// (`EditorExportTests`, `EditorPersistenceTests`) that only care about
+    /// the resulting `Cut` landing in `state.edl`, not the selection D56
+    /// interposed before it.
     func applyTrimForTesting(_ range: TimeRange) {
-        state.onTrim(range)
+        state.onSelect(Selection(range: range))
+        state.cutSelection()
     }
 
     /// The in-memory EDL. Deliberately the ADJACENT property to the one

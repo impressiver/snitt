@@ -28,41 +28,43 @@ extension NSEvent {
 
 @MainActor
 struct TimelineViewTests {
-    @Test("A click scrubs and does not trim")
-    func clickScrubsWithoutTrimming() {
+    @Test("A click scrubs and does not select")
+    func clickScrubsWithoutSelecting() {
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
         view.update(duration: 20, cuts: [], jumpPoints: [], playhead: 0)
         var scrubbed: Double?
-        var trimmed: TimeRange?
+        var selected: Selection?
         view.onScrub = { scrubbed = $0 }
-        view.onTrim = { trimmed = $0 }
+        view.onSelect = { selected = $0 }
 
         view.mouseDown(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
         view.mouseUp(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
 
         #expect(abs((scrubbed ?? -1) - 10.0) < 0.01)
-        // Every click becoming a zero-length cut would fill the EDL with garbage.
-        #expect(trimmed == nil)
+        // Every click becoming a zero-length selection would be as wrong as
+        // the zero-length CUT this test used to guard against (D56 renamed
+        // the outcome; the hazard is the same).
+        #expect(selected == nil)
     }
 
-    @Test("A drag trims the range it covered, in either direction")
-    func dragTrimsNormalisedRange() throws {
+    @Test("A drag selects the range it covered, in either direction")
+    func dragSelectsNormalisedRange() throws {
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
         view.update(duration: 20, cuts: [], jumpPoints: [], playhead: 0)
-        var trimmed: TimeRange?
-        view.onTrim = { trimmed = $0 }
+        var selected: Selection?
+        view.onSelect = { selected = $0 }
 
         // Right to left, the direction a naive implementation inverts.
         view.mouseDown(with: .synthetic(at: NSPoint(x: 600, y: 20), in: view))
         view.mouseDragged(with: .synthetic(at: NSPoint(x: 200, y: 20), in: view))
         view.mouseUp(with: .synthetic(at: NSPoint(x: 200, y: 20), in: view))
 
-        let range = try #require(trimmed)
-        #expect(abs(range.start - 5.0) < 0.01)
-        #expect(abs(range.end - 15.0) < 0.01)
+        let selection = try #require(selected)
+        #expect(abs(selection.range.start - 5.0) < 0.01)
+        #expect(abs(selection.range.end - 15.0) < 0.01)
     }
 
-    @Test("A zero-width view does not produce NaN, and a click there never trims")
+    @Test("A zero-width view does not produce NaN, and a click there never selects")
     func zeroWidthViewIsFinite() {
         // Views are laid out at zero width before their first real layout pass,
         // so this happens on every launch.
@@ -70,40 +72,40 @@ struct TimelineViewTests {
         view.update(duration: 20, cuts: [TimeRange(start: 1, end: 2)],
                     jumpPoints: [], playhead: 5)
         var scrubbed: Double?
-        var trimmed: TimeRange?
+        var selected: Selection?
         view.onScrub = { scrubbed = $0 }
-        view.onTrim = { trimmed = $0 }
+        view.onSelect = { selected = $0 }
         view.mouseDown(with: .synthetic(at: NSPoint(x: 0, y: 20), in: view))
         view.mouseUp(with: .synthetic(at: NSPoint(x: 0, y: 20), in: view))
         #expect((scrubbed ?? .nan).isFinite)
         // M4b whole-branch review, Minor finding #4: at zero width,
         // `minimumDragSeconds` clamps to exactly 0, and `TrimGesture.ended`
         // used to gate only on `length >= minimumSeconds` — so `0 >= 0` fired
-        // a zero-length `onTrim(TimeRange(0,0))` for this same click. This is
-        // the same shape of gap the rest of this file's tests target: a
-        // hazard the previous test named (NaN) but did not check the
-        // adjacent, equally-broken outcome (a spurious trim).
-        #expect(trimmed == nil)
+        // a zero-length `onSelect(Selection(TimeRange(0,0)))` for this same
+        // click. This is the same shape of gap the rest of this file's tests
+        // target: a hazard the previous test named (NaN) but did not check
+        // the adjacent, equally-broken outcome (a spurious selection).
+        #expect(selected == nil)
     }
 
-    @Test("A drag shorter than the pixel threshold scrubs instead of trimming")
-    func subThresholdDragScrubsNotTrims() {
+    @Test("A drag shorter than the pixel threshold scrubs instead of selecting")
+    func subThresholdDragScrubsNotSelects() {
         // Discriminates the pixel-based threshold from a naive
         // any-drag-that-moved-at-all implementation: 1px of motion on an
         // 800px/20s timeline is well under the 3px minimum, so this must
-        // read as a click, not a cut.
+        // read as a click, not a selection.
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
         view.update(duration: 20, cuts: [], jumpPoints: [], playhead: 0)
         var scrubbed: Double?
-        var trimmed: TimeRange?
+        var selected: Selection?
         view.onScrub = { scrubbed = $0 }
-        view.onTrim = { trimmed = $0 }
+        view.onSelect = { selected = $0 }
 
         view.mouseDown(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
         view.mouseDragged(with: .synthetic(at: NSPoint(x: 401, y: 20), in: view))
         view.mouseUp(with: .synthetic(at: NSPoint(x: 401, y: 20), in: view))
 
-        #expect(trimmed == nil)
+        #expect(selected == nil)
         #expect(scrubbed != nil)
     }
 
@@ -121,63 +123,64 @@ struct TimelineViewTests {
     // 0.05s stops agreeing with 3px, so a reversion to the literal fails
     // them.
 
-    @Test("On a long recording, a sub-pixel wobble does not trim")
-    func longRecordingSubPixelWobbleDoesNotTrim() {
+    @Test("On a long recording, a sub-pixel wobble does not select")
+    func longRecordingSubPixelWobbleDoesNotSelect() {
         // 800px / 600s is ~0.75s/pixel, so a fixed 0.05s constant sits far
         // under a single pixel — any 2px wobble would read as a deliberate
-        // cut against that constant. The real pixel-derived threshold (3px,
-        // ~2.25s here) must still absorb it.
+        // selection against that constant. The real pixel-derived threshold
+        // (3px, ~2.25s here) must still absorb it.
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
         view.update(duration: 600, cuts: [], jumpPoints: [], playhead: 0)
-        var trimmed: TimeRange?
-        view.onTrim = { trimmed = $0 }
+        var selected: Selection?
+        view.onSelect = { selected = $0 }
 
         view.mouseDown(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
         view.mouseDragged(with: .synthetic(at: NSPoint(x: 402, y: 20), in: view))
         view.mouseUp(with: .synthetic(at: NSPoint(x: 402, y: 20), in: view))
 
-        #expect(trimmed == nil)
+        #expect(selected == nil)
     }
 
-    @Test("A deliberate drag past the pixel threshold trims on a short recording")
-    func deliberateDragTrimsOnShortRecording() throws {
+    @Test("A deliberate drag past the pixel threshold selects on a short recording")
+    func deliberateDragSelectsOnShortRecording() throws {
         // On an 800px/5s timeline the fixed 0.05s constant is ~8px. A 7px
         // drag (~0.044s) sits UNDER that constant — a reverted
         // implementation swallows it as jitter — but comfortably clears the
         // real pixel threshold (3px, ~0.019s here), which must let it
-        // through as a deliberate cut.
+        // through as a deliberate selection.
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
         view.update(duration: 5, cuts: [], jumpPoints: [], playhead: 0)
-        var trimmed: TimeRange?
-        view.onTrim = { trimmed = $0 }
+        var selected: Selection?
+        view.onSelect = { selected = $0 }
 
         view.mouseDown(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
         view.mouseDragged(with: .synthetic(at: NSPoint(x: 407, y: 20), in: view))
         view.mouseUp(with: .synthetic(at: NSPoint(x: 407, y: 20), in: view))
 
-        let range = try #require(trimmed)
-        #expect(range.end > range.start)
+        let selection = try #require(selected)
+        #expect(selection.range.end > selection.range.start)
     }
 
-    @Test("A deliberate drag past the pixel threshold trims on a long recording")
-    func deliberateDragTrimsOnLongRecording() throws {
+    @Test("A deliberate drag past the pixel threshold selects on a long recording")
+    func deliberateDragSelectsOnLongRecording() throws {
         // The complementary case at 600s: a fixed 0.05s constant is
         // sub-pixel there, so it would (wrongly) treat this same 10px drag
         // as generously above threshold too — this case alone doesn't
         // discriminate the reverted constant from the real one. It matters
-        // paired with `longRecordingSubPixelWobbleDoesNotTrim` above: together
-        // they pin BOTH directions (jitter does not cut, a deliberate drag
-        // does) at the same duration the reverted constant gets wrong.
+        // paired with `longRecordingSubPixelWobbleDoesNotSelect` above:
+        // together they pin BOTH directions (jitter does not select, a
+        // deliberate drag does) at the same duration the reverted constant
+        // gets wrong.
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
         view.update(duration: 600, cuts: [], jumpPoints: [], playhead: 0)
-        var trimmed: TimeRange?
-        view.onTrim = { trimmed = $0 }
+        var selected: Selection?
+        view.onSelect = { selected = $0 }
 
         view.mouseDown(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
         view.mouseDragged(with: .synthetic(at: NSPoint(x: 410, y: 20), in: view))
         view.mouseUp(with: .synthetic(at: NSPoint(x: 410, y: 20), in: view))
 
-        let range = try #require(trimmed)
-        #expect(range.end > range.start)
+        let selection = try #require(selected)
+        #expect(selection.range.end > selection.range.start)
     }
 }

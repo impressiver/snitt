@@ -23,10 +23,11 @@ private func makeTimelineStateTestBundle(seconds: Double) async throws -> SnittB
 }
 
 /// Polls `controller.durationSeconds` (the TRIMMED/output duration) until it
-/// lands near `target` or `timeout` elapses — `EditorTimelineState.onTrim`
-/// applies the new EDL on a detached `Task`, so a caller that just trimmed
-/// needs to wait for that rebuild before the next assertion (or the next
-/// drag, in `secondTrimRemovesADistinctRegion` below) sees its effect.
+/// lands near `target` or `timeout` elapses — `EditorTimelineState.cutSelection`
+/// (`onTrim`, pre-M5f-Task-4) applies the new EDL on a detached `Task`, so a
+/// caller that just cut a selection needs to wait for that rebuild before the
+/// next assertion (or the next drag, in `secondTrimRemovesADistinctRegion`
+/// below) sees its effect.
 @MainActor
 private func waitForDuration(_ controller: PreviewController, toApproach target: Double,
                               timeout: Double = 5.0) async {
@@ -46,10 +47,17 @@ private func waitForDuration(_ controller: PreviewController, toApproach target:
 /// 800px view landed inside the already-removed region and did nothing.
 ///
 /// These tests drive the real `TimelineView` (mouse events, real pixel
-/// geometry) through the real `EditorTimelineState.onTrim`/`displayState`,
+/// geometry) through the real `EditorTimelineState.onSelect`/`displayState`,
 /// exactly as `TimelineViewRepresentable` wires them in production — not a
 /// reimplementation of the arithmetic — so a regression to feeding the view
 /// the trimmed duration fails here.
+///
+/// D56 (M5f Task 4) split what used to be a single `onTrim` into
+/// `onSelect` (a drag only replaces `state.selection`) plus
+/// `cutSelection()` (turns it into a `Cut`). Every drag below is followed
+/// by an explicit `cutSelection()` call — the equivalent, post-split,
+/// two-step way of driving the exact same "drag a cut into existence"
+/// scenario these tests were written to pin.
 @MainActor
 struct EditorTimelineStateTests {
     @Test("A second trim in the same session removes a distinct region, and duration falls twice")
@@ -64,7 +72,7 @@ struct EditorTimelineStateTests {
 
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
         view.onScrub = { [weak state] in state?.onScrub($0) }
-        view.onTrim = { [weak state] in state?.onTrim($0) }
+        view.onSelect = { [weak state] in state?.onSelect($0) }
 
         // Mirrors `TimelineViewRepresentable.updateNSView`: feed the view
         // whatever `displayState` currently says. Before any trim, that is
@@ -72,14 +80,19 @@ struct EditorTimelineStateTests {
         func refreshView() {
             let display = state.displayState(playhead: 0)
             view.update(duration: display.duration, cuts: display.cuts,
-                        jumpPoints: display.jumpPoints, playhead: display.playhead)
+                        jumpPoints: display.jumpPoints, playhead: display.playhead,
+                        selection: display.selection)
         }
         refreshView()
 
         // First drag: the left quarter of an 800px/8s view — source 0..2s.
+        // The drag only selects (D56) — cutting it is a deliberate second
+        // step, exactly as a person pressing Cut after dragging would do.
         view.mouseDown(with: .synthetic(at: NSPoint(x: 0, y: 20), in: view))
         view.mouseDragged(with: .synthetic(at: NSPoint(x: 200, y: 20), in: view))
         view.mouseUp(with: .synthetic(at: NSPoint(x: 200, y: 20), in: view))
+        #expect(state.edl.cuts.isEmpty)   // the drag alone must not cut
+        state.cutSelection()
 
         let firstCut = try #require(state.edl.cuts.first)
         #expect(abs(firstCut.range.start - 0.0) < 0.05)
@@ -100,6 +113,8 @@ struct EditorTimelineStateTests {
         view.mouseDown(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
         view.mouseDragged(with: .synthetic(at: NSPoint(x: 600, y: 20), in: view))
         view.mouseUp(with: .synthetic(at: NSPoint(x: 600, y: 20), in: view))
+        #expect(state.edl.cuts.count == 1)   // still just the first — selecting, not cutting
+        state.cutSelection()
 
         #expect(state.edl.cuts.count == 2)
         let secondCut = try #require(state.edl.cuts.last)
@@ -143,13 +158,16 @@ struct EditorTimelineStateTests {
 
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
         view.onScrub = { [weak state] in state?.onScrub($0) }
-        view.onTrim = { [weak state] in state?.onTrim($0) }
+        view.onSelect = { [weak state] in state?.onSelect($0) }
         view.update(duration: sourceSeconds, cuts: [], jumpPoints: [], playhead: 0)
 
         // Cut source 2-4s: x200 -> x400 on an 800px view of an 8s source.
+        // The drag only selects (D56) — `cutSelection()` is the deliberate
+        // second step that actually removes the span.
         view.mouseDown(with: .synthetic(at: NSPoint(x: 200, y: 20), in: view))
         view.mouseDragged(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
         view.mouseUp(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
+        state.cutSelection()
         await waitForDuration(controller, toApproach: sourceSeconds - 2.0)
 
         view.update(duration: sourceSeconds, cuts: state.edl.cuts.map(\.range), jumpPoints: [], playhead: 0)
@@ -190,7 +208,10 @@ struct EditorTimelineStateTests {
                                            bundle: bundle, scale: 1.0)
         let state = EditorTimelineState(controller: controller, edl: EditDecisionList(), events: [])
 
-        state.onTrim(TimeRange(start: 0, end: 2))
+        // D56 (M5f Task 4): `onTrim` split into `onSelect` + `cutSelection`;
+        // this is the two-step equivalent of the old direct call.
+        state.onSelect(Selection(range: TimeRange(start: 0, end: 2)))
+        state.cutSelection()
         await waitForDuration(controller, toApproach: sourceSeconds - 2.0)
 
         let display = state.displayState(playhead: 3.0)
@@ -214,7 +235,10 @@ struct EditorTimelineStateTests {
         let state = EditorTimelineState(controller: controller, edl: EditDecisionList(), events: [marker])
 
         // Cut source 0-2s: the marker at source 5.0 lands at OUTPUT 3.0.
-        state.onTrim(TimeRange(start: 0, end: 2))
+        // D56 (M5f Task 4): `onTrim` split into `onSelect` + `cutSelection`;
+        // this is the two-step equivalent of the old direct call.
+        state.onSelect(Selection(range: TimeRange(start: 0, end: 2)))
+        state.cutSelection()
         await waitForDuration(controller, toApproach: sourceSeconds - 2.0)
 
         let display = state.displayState(playhead: 0)

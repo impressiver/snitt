@@ -99,9 +99,11 @@ public class PreviewController {
 
     /// Writes `edl` to the bundle this controller was built with (Task 7,
     /// D46). This is the only writer for a GUI trim — before this method
-    /// existed, `EditorWindowController.onTrim` rebuilt the preview through
-    /// `apply(edl:events:)` and never wrote anything, so a trim shown on
-    /// screen was silently discarded when the window closed.
+    /// existed, `EditorTimelineState`'s trim handler (then still named
+    /// `onTrim`; M5f Task 4 split it into `onSelect`/`cutSelection`)
+    /// rebuilt the preview through `apply(edl:events:)` and never wrote
+    /// anything, so a trim shown on screen was silently discarded when the
+    /// window closed.
     ///
     /// Lives here, not on `EditDecisionList` or `EditorTimelineState`,
     /// because `bundle` is `private` to this type (R1: the write belongs
