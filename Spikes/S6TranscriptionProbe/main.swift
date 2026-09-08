@@ -42,6 +42,36 @@ func generateSpeech() throws -> [URL] {
     return urls
 }
 
+/// Extracts one audio track from a recording into a standalone file.
+///
+/// Necessary, not convenience: `capture.mov` carries TWO audio tracks, and
+/// `AssetWriterSink` writes them in the order [systemAudio, microphone]. A
+/// recogniser handed the movie takes the first track it finds — which for a
+/// screen recording with no system audio is pure silence, and would report a
+/// confident empty transcript. Getting that answer would be worse than getting
+/// none, because it looks like a verdict on the API.
+func extractAudioTrack(from movie: URL, trackIndex: Int) async throws -> URL? {
+    let asset = AVURLAsset(url: movie)
+    let tracks = try await asset.loadTracks(withMediaType: .audio)
+    guard trackIndex < tracks.count else { return nil }
+    let composition = AVMutableComposition()
+    guard let destination = composition.addMutableTrack(
+        withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { return nil }
+    let duration = try await asset.load(.duration)
+    try destination.insertTimeRange(CMTimeRange(start: .zero, duration: duration),
+                                    of: tracks[trackIndex], at: .zero)
+
+    let out = FileManager.default.temporaryDirectory
+        .appending(path: "s6-track\(trackIndex).m4a")
+    try? FileManager.default.removeItem(at: out)
+    guard let session = AVAssetExportSession(
+        asset: composition, presetName: AVAssetExportPresetAppleM4A) else { return nil }
+    session.outputURL = out
+    session.outputFileType = .m4a
+    try await session.export(to: out, as: .m4a)
+    return out
+}
+
 func authorize() async -> SFSpeechRecognizerAuthorizationStatus {
     await withCheckedContinuation { continuation in
         SFSpeechRecognizer.requestAuthorization { continuation.resume(returning: $0) }
@@ -127,9 +157,24 @@ guard status == .authorized else {
     exit(2)
 }
 
-let inputs: [URL]
+var inputs: [URL] = []
 if CommandLine.arguments.count > 1 {
-    inputs = CommandLine.arguments.dropFirst().map { URL(fileURLWithPath: $0) }
+    for argument in CommandLine.arguments.dropFirst() {
+        var url = URL(fileURLWithPath: argument)
+        // A .snitt bundle: reach inside for the movie.
+        if url.pathExtension == "snitt" { url = url.appending(path: "capture.mov") }
+        if url.pathExtension == "mov" {
+            print("  extracting the microphone track from \(url.lastPathComponent)")
+            // Index 1 = microphone, per AudioTrackOrder.canonical.
+            guard let mic = try await extractAudioTrack(from: url, trackIndex: 1) else {
+                print("  ! no microphone track in \(url.lastPathComponent) — was the mic on?")
+                continue
+            }
+            inputs.append(mic)
+        } else {
+            inputs.append(url)
+        }
+    }
 } else {
     print("\n  (no audio given — generating speech with `say`)")
     inputs = (try? generateSpeech()) ?? []
