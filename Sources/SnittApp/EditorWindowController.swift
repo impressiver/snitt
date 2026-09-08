@@ -436,6 +436,43 @@ final class EditorTimelineState: ObservableObject {
         applyAndSave()
     }
 
+    /// Sets one audio track's gain (M5f follow-on; `TrackState.gain` has
+    /// existed and been applied by the export mix since M3 with no way to set
+    /// it).
+    ///
+    /// Clamped at 0 and at 4x. Zero is mute-by-slider, which is legitimate;
+    /// negative gain inverts phase, which is never what a slider drag meant.
+    /// The ceiling is where a quiet recording can be rescued without the
+    /// waveform becoming a solid block of clipping.
+    func setGain(track: String, gain: Double) {
+        let clamped = min(max(gain, 0), 4)
+        guard let index = edl.trackStates.firstIndex(where: { $0.track == track }),
+              edl.trackStates[index].gain != clamped else { return }
+        let current = edl
+        undoManager?.registerUndo(withTarget: self) { $0.restore(current) }
+        edl.trackStates[index].gain = clamped
+        applyAndSave()
+    }
+
+    /// Mutes or unmutes one audio track.
+    func setMuted(track: String, muted: Bool) {
+        guard let index = edl.trackStates.firstIndex(where: { $0.track == track }),
+              edl.trackStates[index].muted != muted else { return }
+        let current = edl
+        undoManager?.registerUndo(withTarget: self) { $0.restore(current) }
+        edl.trackStates[index].muted = muted
+        applyAndSave()
+    }
+
+    /// The audio tracks this recording actually has, in draw order — the same
+    /// derivation the timeline uses, so the controls and the bands cannot
+    /// disagree about which sources exist.
+    var audioTracks: [TrackState] {
+        TimelineTrackLayout.audioTracks(in: edl.trackStates).compactMap { name in
+            edl.trackStates.first { $0.track == name }
+        }
+    }
+
     /// Removes the crop entirely. Distinct from cropping to the full frame only
     /// in what reaches disk — `nil` writes no `crop` key at all.
     func resetCrop() {
@@ -634,6 +671,23 @@ struct EditorContentView: View {
                 // was ~8px — enough to show a band exists, not enough to read
                 // where the sound is.
                 .frame(height: 120)
+            // One row per audio source, matching the bands the timeline draws
+            // above. Placed here rather than inside `TimelineView` because
+            // that is a raw NSView with no room to grow controls without
+            // competing with the waveform for the same few pixels — the same
+            // reasoning that put the marker editor in a sheet.
+            if !state.audioTracks.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(state.audioTracks, id: \.track) { track in
+                        AudioTrackControls(
+                            state: track,
+                            onGain: { state.setGain(track: track.track, gain: $0) },
+                            onMute: { state.setMuted(track: track.track, muted: $0) })
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
+            }
             HStack(spacing: 12) {
                 Button("Play") { controller.play() }
                 Button("Pause") { controller.pause() }
@@ -689,6 +743,49 @@ struct EditorContentView: View {
             } onCancel: {
                 editingMarkerID = nil
             }
+        }
+    }
+}
+
+/// Mute and gain for one audio source.
+///
+/// `TrackState.gain` has existed and been applied by the export mix since M3
+/// with no way to set it — the same shape crop had, a model feature with no
+/// surface. The waveform above redraws as the slider moves, because
+/// `WaveformScale` applies gain before scaling, so "how loud will this be"
+/// is answered by looking rather than by exporting.
+private struct AudioTrackControls: View {
+    let state: TrackState
+    let onGain: (Double) -> Void
+    let onMute: (Bool) -> Void
+
+    /// "microphone" is what the model calls it; "Mic" is what fits.
+    private var displayName: String {
+        switch state.track {
+        case "microphone": return "Mic"
+        case "systemAudio": return "System"
+        default: return state.track
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Toggle(isOn: Binding(get: { !state.muted }, set: { onMute(!$0) })) {
+                Text(displayName)
+                    .frame(width: 52, alignment: .leading)
+            }
+            .toggleStyle(.checkbox)
+
+            Slider(value: Binding(get: { state.gain }, set: onGain), in: 0...4)
+                .frame(maxWidth: 220)
+                .disabled(state.muted)
+
+            // The number matters: "somewhere past halfway" is not a setting
+            // anyone can return to deliberately.
+            Text(String(format: "%.1f×", state.gain))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+                .frame(width: 36, alignment: .trailing)
         }
     }
 }

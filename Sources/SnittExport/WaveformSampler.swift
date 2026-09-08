@@ -14,7 +14,13 @@ public struct WaveformSamples: Sendable, Equatable {
     /// `"microphone"` or `"systemAudio"` — the same names `TrackState` uses.
     public let track: String
     public let samplesPerSecond: Double
-    /// Peak magnitude per bucket, normalised to 0...1.
+    /// Peak magnitude per bucket, RAW — not clamped to 1.
+    ///
+    /// Clamping here would erase clipping before anything could draw it: a
+    /// bucket that reached digital full scale and one that sailed past it are
+    /// different facts, and the second is what a clipping indicator exists to
+    /// report. `WaveformScale` clamps at draw time, where the information has
+    /// already been used.
     public let peaks: [Float]
 
     public init(track: String, samplesPerSecond: Double, peaks: [Float]) {
@@ -91,14 +97,14 @@ public enum WaveformSampler {
                     bucketPeak = max(bucketPeak, abs(samples[i]))
                     framesInBucket += 1
                     if framesInBucket >= framesPerBucket * Int(max(1, basic.mChannelsPerFrame)) {
-                        peaks.append(min(bucketPeak, 1))
+                        peaks.append(bucketPeak)
                         bucketPeak = 0
                         framesInBucket = 0
                     }
                 }
             }
         }
-        if framesInBucket > 0 { peaks.append(min(bucketPeak, 1)) }
+        if framesInBucket > 0 { peaks.append(bucketPeak) }
 
         // A reader that failed partway has given us a truncated waveform, which
         // would silently draw as "the recording goes quiet here". Report

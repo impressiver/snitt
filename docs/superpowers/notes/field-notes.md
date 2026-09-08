@@ -181,3 +181,17 @@ Ordered by how much is riding on the answer.
      has only ever been verified through the agent path.
    - Press the record hotkey and confirm **no window opens on start** (§4.11).
      The editor-on-stop half (D48) is tested; this half is not.
+
+### 2026-09-08
+
+**Observation (product owner):** recorded a real voiceover; the mic waveform
+existed but nothing indicated a transcription surface (there is none — D62 is
+unbuilt, gated on S6).
+
+**Priority note:** direction from the same session — log-scale the waveform,
+mark clipping, add per-track gain/volume. Built same day. Measured against the
+actual recording: the loudest bar moves from 23% of the band (linear) to 79%
+(log, -60 dB floor), the mean from 2% to 35%. The recording is clean — zero
+clipped buckets even at 4x gain — so the clipping marks will appear only when
+earned. `TrackState.gain` had been applied by the export mix since M3 with no
+way to set it; the same model-without-a-surface shape crop had.

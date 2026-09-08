@@ -801,12 +801,18 @@ public final class TimelineView: NSView {
     /// ever being re-read: the samples are the recording's, the axis is the
     /// edit's. A column with no source behind it (past the trimmed end) draws
     /// nothing rather than repeating the last value.
-    private func drawWaveform(_ samples: WaveformSamples, in rect: NSRect, muted: Bool) {
+    private func drawWaveform(_ samples: WaveformSamples, in rect: NSRect,
+                              muted: Bool, gain: Double) {
         guard !samples.peaks.isEmpty, rect.height > 2 else { return }
         let kept = KeptRanges.compute(duration: duration, cuts: cuts.map(\.range))
         let midY = rect.midY
         let halfHeight = (rect.height - 2) / 2
-        NSColor.labelColor.withAlphaComponent(muted ? 0.2 : 0.55).setFill()
+        let normal = NSColor.labelColor.withAlphaComponent(muted ? 0.2 : 0.55)
+        // Clipping stays visible on a muted track: muting is an edit decision,
+        // clipping is damage, and hiding the damage because the track is
+        // currently silent is how it survives to the export.
+        let clipping = NSColor.systemRed.withAlphaComponent(muted ? 0.5 : 0.9)
+
         var x = 0.0
         while x < bounds.width {
             defer { x += 1 }
@@ -816,10 +822,21 @@ public final class TimelineView: NSView {
                 samplesPerSecond: samples.samplesPerSecond,
                 sampleCount: samples.peaks.count) else { continue }
             let peak = Double(samples.peaks[index])
-            // A floor of half a pixel so a quiet passage still reads as
-            // "there is audio here" rather than as a gap in the track.
-            let height = max(0.5, peak * halfHeight)
+            let clipped = WaveformScale.isClipped(peak: peak, gain: gain)
+            (clipped ? clipping : normal).setFill()
+            // Logarithmic, and gain-aware: the bar shows what will be
+            // exported, not what was captured (`WaveformScale`).
+            //
+            // A floor of half a pixel so a quiet passage still reads as "there
+            // is audio here" rather than as a gap in the track.
+            let height = max(0.5, WaveformScale.height(forPeak: peak, gain: gain) * halfHeight)
             NSBezierPath(rect: NSRect(x: x, y: midY - height, width: 1, height: height * 2)).fill()
+            // A clipped column is marked at the band's edges too, so it is
+            // findable when the whole passage is loud and every bar is tall.
+            if clipped {
+                NSBezierPath(rect: NSRect(x: x, y: rect.minY, width: 1, height: 2)).fill()
+                NSBezierPath(rect: NSRect(x: x, y: rect.maxY - 2, width: 1, height: 2)).fill()
+            }
         }
     }
 
@@ -858,7 +875,8 @@ public final class TimelineView: NSView {
             NSColor.tertiaryLabelColor.withAlphaComponent(muted ? 0.15 : 0.6).setFill()
             NSBezierPath(rect: rect).fill()
             if let samples = waveforms.first(where: { $0.track == track }) {
-                drawWaveform(samples, in: rect, muted: muted)
+                let gain = trackStates.first { $0.track == track }?.gain ?? 1.0
+                drawWaveform(samples, in: rect, muted: muted, gain: gain)
             }
             NSColor.separatorColor.setFill()
             NSBezierPath(rect: NSRect(x: 0, y: rect.minY, width: bounds.width, height: 1)).fill()
