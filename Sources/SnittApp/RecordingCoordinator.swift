@@ -152,6 +152,17 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     /// `RecorderTests.finalizationFailureSurfaces`.
     private var corruptCaptureAfterStopForTesting = false
 
+    /// The in-flight icon stamp, kept only so tests can await it.
+    ///
+    /// Without this a test can only sleep and hope: the stamp is deliberately
+    /// off the stop path, so `.stopped` returns before the icon exists.
+    private var iconStampTask: Task<Bool, Never>?
+
+    /// Wait for the icon stamp kicked off by the last `stop`.
+    func awaitIconStampForTesting() async -> Bool {
+        await iconStampTask?.value ?? false
+    }
+
     // `.compositor`, not `.capture`: the only site using this logs a failure
     // to BUILD THE PREVIEW after a recording finished successfully. Nothing
     // was being captured when it happened, and telling a support engineer
@@ -602,6 +613,13 @@ public actor RecordingCoordinator: AgentRecordingControlling {
                 corruptCaptureAfterStopForTesting = false
                 try? Data("not a movie".utf8).write(to: bundle.captureURL)
             }
+            // Give the bundle its Finder icon — a frame from the recording,
+            // under the record dot. Deliberately NOT awaited: it costs about
+            // half a second on a 5K capture, and the note below is explicit
+            // that the stop path must not grow work that gates its return.
+            // Every frontend reaches this line, so a CLI or agent recording
+            // gets an icon on the same terms a hotkey one does.
+            iconStampTask = RecordingIcon.stampInBackground(bundle: bundle)
             // Finding #5 of the M4a review: this `await` sits in front of
             // `.stopped` being returned, so a human hotkey stop now reports
             // completion only after the WHOLE composition build finishes —

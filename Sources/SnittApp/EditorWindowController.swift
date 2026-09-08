@@ -93,6 +93,14 @@ final class EditorTimelineState: ObservableObject {
     /// the state the preview is actually showing. A rejected edit reverts
     /// to this rather than leaving the screen claiming a change that never
     /// reached the file.
+    /// Whether any edit has been applied and saved since this window opened.
+    ///
+    /// Drives the Finder icon's refresh on close. `EditDecisionList` is not
+    /// `Equatable`, and making it so would mean conforming `TrackState` too —
+    /// a shared type changed for a decoration. A flag set where edits are
+    /// already being saved answers the same question without that.
+    var editsChangedTheRecording = false
+
     private var lastSavedEDL: EditDecisionList
 
     /// The events-side twin of `lastSavedEDL` (Task 6): the last `events`
@@ -695,7 +703,22 @@ final class EditorTimelineState: ObservableObject {
     /// Each save is chained onto the previous one (F2) rather than racing
     /// it, so the last write is the latest state and never the slowest
     /// task's stale one.
+    /// Waits for any in-flight save.
+    ///
+    /// The icon refresh on close reads `edit.json` back from disk, so it has
+    /// to run after the save that produced it — otherwise it composes a poster
+    /// from the EDL as it was BEFORE the user's last edit.
+    func awaitPendingSave() async { await pendingSaveTask?.value }
+
     private func applyAndSave() {
+        // Marked here, synchronously, NOT inside the save task below. The EDL
+        // has already changed by the time this is called, and a user who cuts
+        // and immediately closes the window would otherwise race the save: the
+        // close reads this flag, finds it still false, and the icon keeps
+        // showing material the recording no longer has. Cutting the dead end
+        // off a take and closing straight away is a completely ordinary thing
+        // to do.
+        editsChangedTheRecording = true
         let edl = self.edl
         let events = self.events
         let controller = self.controller
@@ -1270,6 +1293,20 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         controller.pause()
         Self.count -= 1
         Self.open.removeAll { $0 === self }
+        // The poster is drawn from the material the EDL keeps, so trimming a
+        // dead lead-in — the single most common edit this app exists to make —
+        // leaves the icon showing seconds the recording no longer contains.
+        // Once per editing session, not once per edit: stamping is a
+        // half-second job.
+        if state.editsChangedTheRecording {
+            state.editsChangedTheRecording = false
+            let bundle = controller.snittBundle
+            let state = self.state
+            Task { @MainActor in
+                await state.awaitPendingSave()
+                _ = await RecordingIcon.stampInBackground(bundle: bundle).value
+            }
+        }
     }
 
     // MARK: - Edit menu: Cut Selection (Task 5)
