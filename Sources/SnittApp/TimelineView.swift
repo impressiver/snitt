@@ -345,6 +345,12 @@ public final class TimelineView: NSView {
     /// not just its edge. Zero pixels-per-second (nothing kept, or zero
     /// view width) has no scale to borrow, so this returns 0 rather than
     /// dividing by it.
+    /// The band's drawn span for an expanded cut, from the geometry that
+    /// reserved the space.
+    private func expansionSpan(for cut: Cut) -> (x: Double, width: Double)? {
+        geometry.expansionSpan(atOutput: timebase.foldPosition(for: cut))
+    }
+
     private func expandedWidthPixels(for cut: Cut) -> Double {
         guard geometry.pixelsPerSecond > 0 else { return 0 }
         // Exactly the space the geometry inserted for it — no clamp.
@@ -410,9 +416,11 @@ public final class TimelineView: NSView {
         guard bounds.width > 0, geometry.duration > 0 else { return nil }
         for cut in cuts {
             let foldX = geometry.x(atFold: cut)
-            if expandedCutIDs.contains(cut.id) {
-                let width = expandedWidthPixels(for: cut)
-                if x >= foldX, x <= foldX + width { return cut }
+            if expandedCutIDs.contains(cut.id), let span = expansionSpan(for: cut) {
+                // The band as DRAWN, so clicking the red rectangle is what
+                // hits it — hit-testing at `x(atFold:)` tested a rectangle one
+                // width right of the visible one.
+                if x >= span.x, x <= span.x + span.width { return cut }
             } else if abs(x - foldX) <= Self.foldHitMarginPixels {
                 return cut
             }
@@ -926,10 +934,14 @@ public final class TimelineView: NSView {
         // everything after it.
         for cut in cuts {
             let foldX = geometry.x(atFold: cut)
-            if expandedCutIDs.contains(cut.id) {
-                let width = expandedWidthPixels(for: cut)
+            if expandedCutIDs.contains(cut.id), let span = expansionSpan(for: cut) {
+                // Drawn in the space the AXIS reserved, not at `x(atFold:)`.
+                // That is the instant the cut collapsed to — after insertion,
+                // the band's trailing edge — so drawing from there put the band
+                // a full width too far right, over the content that follows,
+                // and left the reserved space blank.
                 NSColor.systemRed.withAlphaComponent(0.35).setFill()
-                NSBezierPath(rect: NSRect(x: foldX, y: 0, width: width,
+                NSBezierPath(rect: NSRect(x: span.x, y: 0, width: span.width,
                                           height: bounds.height)).fill()
             } else {
                 NSColor.systemRed.setFill()

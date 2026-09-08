@@ -163,6 +163,30 @@ public struct TimelineGeometry: Equatable, Sendable {
         return expanded - inserted
     }
 
+    /// The pixel span an expanded fold's band occupies — the space this
+    /// geometry INSERTED for it, which is where the removed footage belongs.
+    ///
+    /// Deliberately NOT `x(atFold:)`. That answers "where is the instant the
+    /// cut collapsed to", which after insertion is the band's TRAILING edge —
+    /// the first frame that survives. Drawing the band from there puts it one
+    /// full width too far right, over the content that follows, and leaves the
+    /// reserved space blank. Those are two different questions and they need
+    /// two different answers.
+    public func expansionSpan(atOutput output: OutputTime) -> (x: Double, width: Double)? {
+        guard !isDegenerate, pixelsPerSecond > 0 else { return nil }
+        var inserted = 0.0
+        for expansion in expansions {
+            if expansion.output == output {
+                // `inserted` deliberately excludes this expansion's own
+                // seconds: its band BEGINS where the axis was before it opened.
+                let x = (output.seconds + inserted - visibleOffset) * pixelsPerSecond
+                return (min(max(x, 0), width), expansion.seconds * pixelsPerSecond)
+            }
+            inserted += expansion.seconds
+        }
+        return nil
+    }
+
     /// Total inserted seconds — how much longer the drawn axis is than the
     /// output timeline.
     public var expandedSeconds: Double { expansions.reduce(0) { $0 + $1.seconds } }

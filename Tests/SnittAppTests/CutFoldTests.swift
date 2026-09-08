@@ -350,14 +350,22 @@ struct CutFoldTimelineViewTests {
         let width = 800.0
         let duration = 20.0
         let cut = Cut(range: TimeRange(start: 10, end: 12))
+        // Built WITH the expansion, like the view's own geometry — an expanded
+        // fold inserts its source length into the axis, so both the scale and
+        // the band's position differ from the collapsed case.
+        //
+        // This test used to compute the click point as `x(atFold:) + width/2`.
+        // That was correct only while expansion did not reflow: `x(atFold:)`
+        // is the instant the cut collapsed TO, which after insertion is the
+        // band's trailing edge, so the old formula pointed a full half-width
+        // past the visible rectangle.
+        let timebase = Timebase(sourceDuration: duration, edl: EditDecisionList(cuts: [cut]))
         let geometry = TimelineGeometry(
-            width: width, timebase: Timebase(sourceDuration: duration, edl: EditDecisionList(cuts: [cut])))
-        let foldX = geometry.x(atFold: cut)
-        // Same pixels-per-second the view itself computes an expanded
-        // fold's width at (see `TimelineView.expandedWidthPixels`): the
-        // cut's own source length, at this geometry's OUTPUT scale.
-        let expandedWidth = (cut.range.end - cut.range.start) / geometry.duration * width
-        let midpoint = CGFloat(foldX + expandedWidth / 2)
+            width: width, timebase: timebase,
+            expansions: [.init(output: timebase.foldPosition(for: cut),
+                               seconds: cut.range.end - cut.range.start)])
+        let span = geometry.expansionSpan(atOutput: timebase.foldPosition(for: cut))!
+        let midpoint = CGFloat(span.x + span.width / 2)
 
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: 40))
         view.update(duration: duration, cuts: [cut], markerPoints: [], playhead: 0,

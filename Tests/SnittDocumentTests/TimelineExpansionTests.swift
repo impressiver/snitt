@@ -102,3 +102,85 @@ struct TimelineExpansionTests {
         #expect(abs(g.outputTime(atX: 112).seconds - 10) < 0.001)
     }
 }
+
+/// Where an expanded fold's band is DRAWN, as opposed to where its fold sits.
+///
+/// These are two different questions and conflating them produced a real
+/// defect: `x(atFold:)` answers "the instant the cut collapsed to", which after
+/// insertion is the band's TRAILING edge — the first surviving frame. Drawing
+/// the band from there put it one full width too far right, over the content
+/// that follows, and left the reserved space blank.
+@Suite
+struct ExpansionSpanTests {
+    private func fixture() -> (TimelineGeometry, Cut, Timebase) {
+        // 20s source, 4s cut at 5...9 → 16s output, fold at output 5.
+        let cut = Cut(range: TimeRange(start: 5, end: 9))
+        let timebase = Timebase(sourceDuration: 20, edl: EditDecisionList(cuts: [cut]))
+        // 200pt, 16s output + 4s inserted = 20s → 10 px/s.
+        let g = TimelineGeometry(width: 200, timebase: timebase, expansions: [
+            .init(output: timebase.foldPosition(for: cut), seconds: 4)
+        ])
+        return (g, cut, timebase)
+    }
+
+    @Test("The band occupies exactly the space the axis inserted")
+    func bandFillsTheInsertedSpace() throws {
+        let (g, cut, timebase) = fixture()
+        let span = try #require(g.expansionSpan(atOutput: timebase.foldPosition(for: cut)))
+        // Content before the fold ends at 50; content after it resumes at 90.
+        // The band is exactly that gap.
+        #expect(span.x == 50, "band starts at \(span.x), gap starts at 50")
+        #expect(span.width == 40)
+        #expect(span.x + span.width == g.x(atOutput: OutputTime(5)),
+                "the band does not meet the first surviving instant")
+    }
+
+    @Test("The band is NOT at x(atFold:) — that is its far edge")
+    func bandIsNotAtTheFoldPosition() throws {
+        // The defect, pinned. x(atFold:) is 90; drawing there put the band at
+        // 90...130, over the content drawn for output 5...9.
+        let (g, cut, timebase) = fixture()
+        let span = try #require(g.expansionSpan(atOutput: timebase.foldPosition(for: cut)))
+        #expect(g.x(atFold: cut) == span.x + span.width)
+        #expect(span.x != g.x(atFold: cut))
+    }
+
+    @Test("Nothing is drawn in the band's span by the output mapping")
+    func nothingElseOccupiesTheBand() {
+        // Proof the gap is genuinely reserved: sweep every output instant and
+        // confirm none is drawn strictly inside the band.
+        let (g, _, _) = fixture()
+        for step in stride(from: 0.0, through: 16.0, by: 0.05) {
+            let x = g.x(atOutput: OutputTime(step))
+            #expect(!(x > 50.001 && x < 89.999),
+                    "output \(step) draws at \(x), inside the band")
+        }
+    }
+
+    @Test("A collapsed fold has no span")
+    func collapsedFoldHasNoSpan() {
+        let cut = Cut(range: TimeRange(start: 5, end: 9))
+        let timebase = Timebase(sourceDuration: 20, edl: EditDecisionList(cuts: [cut]))
+        let g = TimelineGeometry(width: 200, timebase: timebase)
+        #expect(g.expansionSpan(atOutput: timebase.foldPosition(for: cut)) == nil)
+    }
+
+    @Test("With two expanded folds, the second's band sits past the first's")
+    func secondBandAccountsForTheFirst() throws {
+        let first = Cut(range: TimeRange(start: 5, end: 9))
+        let second = Cut(range: TimeRange(start: 12, end: 14))
+        let timebase = Timebase(sourceDuration: 20,
+                                edl: EditDecisionList(cuts: [first, second]))
+        // Output 14s + 6s inserted = 20s in 200pt → 10 px/s.
+        let g = TimelineGeometry(width: 200, timebase: timebase, expansions: [
+            .init(output: timebase.foldPosition(for: first), seconds: 4),
+            .init(output: timebase.foldPosition(for: second), seconds: 2),
+        ])
+        let a = try #require(g.expansionSpan(atOutput: timebase.foldPosition(for: first)))
+        let b = try #require(g.expansionSpan(atOutput: timebase.foldPosition(for: second)))
+        #expect(a.x == 50)
+        // Second fold is at output 8; 4s already inserted before it → x 120.
+        #expect(b.x == 120, "second band at \(b.x) — it ignored the first's insertion")
+        #expect(b.x >= a.x + a.width)
+    }
+}

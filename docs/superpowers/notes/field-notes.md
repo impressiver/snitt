@@ -276,3 +276,23 @@ inserted space, so expanding a fold shrinks everything slightly to make room
 rather than pushing later content off the right edge (where nothing scrolls at
 1x, so it would be unreachable). Whether that rescale reads as helpful or as
 the timeline jumping about is something only using it will tell.
+
+### 2026-09-08 (expanded band drawn in the wrong place)
+
+**Observation (product owner):** clicking just before an expanded cut did not
+land where it was drawn.
+
+**Root cause:** I drew the band at `x(atFold:)`, which after the reflow change
+is the instant the cut collapsed TO — the band's *trailing* edge, the first
+surviving frame. So the band sat one full width to the right of the space the
+axis had reserved: blank gap where the removed footage should be, red rectangle
+painted over the content that follows, and every click near it incoherent.
+
+Measured, not reasoned about: printing the gap (x 50–90) against `x(atFold:)`
+(90) showed it in one line, after a couple of minutes spent theorising about
+which direction the playhead would move.
+
+**Shape worth remembering:** "where is the fold" and "where is its band" are
+different questions, and reflow made them different ANSWERS. My own axis test
+passed throughout, because it only checked `x(atOutput:)` against clicks — it
+never asked where the rectangle was drawn.
