@@ -367,6 +367,116 @@ final class EditorTimelineState: ObservableObject {
         applyAndSaveEvents()
     }
 
+    // MARK: - Chapter index (the marker pane)
+
+    /// The markers as a chapter list, in the order they occur.
+    ///
+    /// Derived rather than stored: `events` is the single source of truth for
+    /// markers, and a parallel list would be one more thing to keep in step
+    /// with cuts, undo, and the timeline lane — which all already read
+    /// `events`.
+    ///
+    /// Built on `MarkerTrackPoints` — the SAME projection the timeline lane
+    /// draws — rather than re-deriving the source-to-output arithmetic here.
+    /// `MarkerJumpPoints.swift` warns in its own comment that "a chapter list
+    /// and a scrub bar that disagree about the same recording are worse than
+    /// either alone"; two implementations of one projection is how they come
+    /// to disagree. This one shares the lane's, so the panel and the lane
+    /// cannot drift.
+    ///
+    /// `MarkerTrackPoints` rather than `MarkerJumpPoints` because the latter
+    /// DROPS markers inside cuts. That is right for a bare seek list and wrong
+    /// here: a marker vanishing from the index because a nearby cut swallowed
+    /// it looks like data loss, when the marker is still in `events.json` and
+    /// moving the cut brings it back. Kept, folded to the cut's edge, and
+    /// labelled as such.
+    var chapters: [MarkerChapter] {
+        // Whether a label is the user's or the fallback — `JumpPoint.label`
+        // has already applied "Marker" by the time it arrives, so the
+        // distinction has to come from the event itself.
+        var custom: [UUID: String] = [:]
+        for event in events where event.kind == .marker {
+            if let label = event.label, !label.isEmpty { custom[event.id] = label }
+        }
+        return MarkerTrackPoints.compute(events: events, keptRanges: controller.keptRanges)
+            .enumerated()
+            .map { index, point in
+                MarkerChapter(
+                    id: point.id,
+                    outputTime: point.timeSeconds,
+                    isInsideCut: point.isInsideCut,
+                    label: custom[point.id] ?? "Marker \(index + 1)",
+                    hasCustomLabel: custom[point.id] != nil,
+                    transcript: point.transcript)
+            }
+    }
+
+    /// Which chapter the playhead is inside.
+    ///
+    /// A chapter runs until the NEXT one starts — that is what makes this an
+    /// index rather than a list of instants. Highlighting only while the
+    /// playhead sits exactly on a marker would mean nothing is ever
+    /// highlighted, since a marker has no duration.
+    func currentChapterID(atOutputSeconds outputSeconds: Double) -> UUID? {
+        var current: UUID?
+        for chapter in chapters {
+            // A small tolerance so seeking TO a chapter highlights it rather
+            // than landing a hair before its own start.
+            if chapter.outputTime <= outputSeconds + 0.01 { current = chapter.id } else { break }
+        }
+        return current
+    }
+
+    /// Drops a marker at the playhead.
+    ///
+    /// Until now markers could only be created while recording, which means a
+    /// recording made by an agent — or by anyone who did not think to press
+    /// the key at the right moment — could never be chaptered at all.
+    func addMarker(atOutput outputTime: Double) {
+        let timebase = Timebase(sourceDuration: controller.sourceDurationSeconds, edl: edl)
+        guard let sourceTime = timebase.sourceTime(forOutput: OutputTime(outputTime))?.seconds
+        else { return }
+        let previous = events
+        undoManager?.registerUndo(withTarget: self) { target in
+            target.restoreEvents(previous)
+        }
+        events.append(LoggedEvent(timeSeconds: sourceTime, kind: .marker))
+        // Kept in time order for the same reason `Recorder` sorts before
+        // writing: every consumer reads this array as a timeline.
+        events.sort { $0.timeSeconds < $1.timeSeconds }
+        applyAndSaveEvents()
+    }
+
+    /// Removes a marker. Undoable on the same stack as every other edit.
+    func deleteMarker(id: UUID) {
+        guard let index = events.firstIndex(where: { $0.id == id }),
+              events[index].kind == .marker else { return }
+        let previous = events
+        undoManager?.registerUndo(withTarget: self) { target in
+            target.restoreEvents(previous)
+        }
+        events.remove(at: index)
+        applyAndSaveEvents()
+    }
+
+    /// Renames a marker, keeping its transcript.
+    ///
+    /// Goes through `updateMarker` rather than writing `label` directly,
+    /// because that method's whole contract is that both fields are written
+    /// together — a rename that passed `transcript: nil` would silently
+    /// destroy narration text the sheet had set.
+    func renameMarker(id: UUID, to label: String) {
+        guard let event = events.first(where: { $0.id == id }) else { return }
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        updateMarker(id: id, label: trimmed.isEmpty ? nil : trimmed,
+                     transcript: event.transcript)
+    }
+
+    /// Seeks the preview to a chapter. Through `onScrub` for the same reason
+    /// `seek(toWord:)` is: it is the one path that keeps the timeline playhead
+    /// and the panes agreeing about where playback is.
+    func seek(toOutput seconds: Double) { onScrub(seconds) }
+
     /// The events-side twin of `restore(_:)`: pushes the CURRENT `events`
     /// back onto the undo stack as the redo before installing `snapshot`, so
     /// marker undo/redo is multi-level exactly like cut undo/redo.
@@ -856,6 +966,18 @@ struct EditorContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 0) {
+            // The chapter index, always present rather than conditional on
+            // there being markers: it is now the only way to CREATE one
+            // outside of recording, so hiding it when the list is empty would
+            // hide the affordance exactly when it is needed.
+            MarkerPane(state: state, playhead: playhead,
+                       onEditMarker: { editingMarkerID = $0 })
+                // 260, not 220: this replaced the full-width jump list at the
+                // bottom of the window, and real marker labels are whole
+                // descriptive sentences rather than the short names the
+                // narrow column assumed.
+                .frame(width: 260)
+            Divider()
             PlayerLayerView(player: controller.player)
                 .frame(minWidth: 480, minHeight: 270)
                 .overlay {
@@ -929,19 +1051,6 @@ struct EditorContentView: View {
                     .help("Zoom the timeline in")
             }
             .padding(8)
-            if !controller.jumpPoints.isEmpty {
-                // `id: \.id` (Task 6), not `\.timeSeconds`: `JumpPoint` now
-                // carries the source marker's own stable identity, which two
-                // distinct markers can never collide on the way two markers
-                // landing on the same trimmed second (unlikely, but possible)
-                // could collide on the old key.
-                List(controller.jumpPoints, id: \.id) { point in
-                    Button(point.label) {
-                        Task { await controller.jump(to: point) }
-                    }
-                }
-                .frame(maxHeight: 140)
-            }
         }
         .onReceive(Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()) { _ in
             // 20Hz, raised from 10 when the playhead stopped being decoration.
