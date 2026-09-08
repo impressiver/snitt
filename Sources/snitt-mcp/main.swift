@@ -198,7 +198,14 @@ while let line = readLine(strippingNewline: true) {
             var diagnosticsOutputPath: String?
             if case .diagnostics(let path) = body { diagnosticsOutputPath = path }
             do {
-                let response = try await AutomationClient().send(body)
+                // The launch is announced on stderr, which an MCP host logs:
+                // starting an application on someone's machine is not something
+                // a tool should do silently.
+                let client = AutomationClient(onLaunch: {
+                    FileHandle.standardError.write(
+                        Data("snitt: started \($0.lastPathComponent)\n".utf8))
+                })
+                let response = try await client.send(body)
                 if case .diagnosticsWritten(let report) = response, let diagnosticsOutputPath {
                     result(id: id, textContent(diagnosticsSummary(report, outputPath: diagnosticsOutputPath)))
                 } else {

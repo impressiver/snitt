@@ -255,7 +255,8 @@ do {
     // Encoding takes seconds to tens of seconds and the default client
     // timeout is 120s. A job-id-and-poll protocol is complexity v0 does not
     // need; if exports ever exceed ten minutes, that is the moment to add one.
-    let client = AutomationClient(timeout: isExport ? 600 : 120)
+    let client = AutomationClient(timeout: isExport ? 600 : 120,
+                                  onLaunch: { note("Snitt was not running — started \($0.lastPathComponent).") })
     let response = try await client.send(body)
     switch response {
     case .failure(let error):
