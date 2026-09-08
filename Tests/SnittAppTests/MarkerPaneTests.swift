@@ -29,6 +29,13 @@ struct MarkerPaneTests {
             bundle: bundle, edl: EditDecisionList(), scale: 1.0)
         let controller = PreviewController(built: built, jumpPoints: [],
                                            bundle: bundle, scale: 1.0)
+        // What the real edit path does after every change: the controller owns
+        // the kept ranges and the marker points BOTH the panel and the timeline
+        // lane read, and it learns about an EDL only through `apply`. A test
+        // that skips this hands the state a cut the controller has never heard
+        // of, and then asserts against a projection built from no cuts at all.
+        try await controller.apply(edl: edl, events: events)
+        controller.refreshJumpPoints(events: events)
         return EditorTimelineState(controller: controller, edl: edl, events: events)
     }
 
@@ -72,7 +79,35 @@ struct MarkerPaneTests {
         let chapter = try #require(state.chapters.first)
         #expect(state.chapters.count == 1)
         #expect(chapter.isInsideCut)
-        #expect(chapter.outputTime == nil)
+        // Folded to the cut's edge — a real instant the playhead can reach, so
+        // clicking the row seeks somewhere instead of doing nothing. The cut
+        // removes 1s..3s, so the fold sits at 1s in the edit.
+        #expect(abs(chapter.outputTime - 1.0) < 0.05, "fold at \(chapter.outputTime)")
+    }
+
+    @Test("The panel and the timeline lane place every marker identically")
+    func panelAgreesWithTheLane() async throws {
+        // Both must come from ONE projection. `MarkerJumpPoints.swift` warns
+        // that a chapter list and a scrub bar disagreeing about the same
+        // recording is worse than either alone, and the way they come to
+        // disagree is two implementations of the same arithmetic. This fails
+        // the moment the panel re-derives its own.
+        let state = try await makeState(
+            edl: EditDecisionList(cuts: [Cut(range: TimeRange(start: 1, end: 3))]),
+            events: [
+                LoggedEvent(timeSeconds: 0.5, kind: .marker, label: "Before"),
+                LoggedEvent(timeSeconds: 2.0, kind: .marker, label: "Buried"),
+                LoggedEvent(timeSeconds: 3.5, kind: .marker, label: "After"),
+            ])
+        let lane = state.displayState(playhead: 0).markerPoints
+        let panel = state.chapters
+        #expect(panel.count == lane.count)
+        for (chapter, point) in zip(panel, lane) {
+            #expect(chapter.id == point.id)
+            #expect(abs(chapter.outputTime - point.timeSeconds) < 0.001,
+                    "panel \(chapter.outputTime) vs lane \(point.timeSeconds)")
+            #expect(chapter.isInsideCut == point.isInsideCut)
+        }
     }
 
     // MARK: - Highlighting

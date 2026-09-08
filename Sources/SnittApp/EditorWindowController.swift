@@ -376,23 +376,38 @@ final class EditorTimelineState: ObservableObject {
     /// with cuts, undo, and the timeline lane — which all already read
     /// `events`.
     ///
-    /// `outputTime` is nil for a marker sitting inside a cut. Those are still
-    /// listed, dimmed: a marker silently vanishing from the index because a
-    /// nearby cut swallowed it looks like data loss, and the marker really is
-    /// still in the file — `moveMarker` can bring it back out.
+    /// Built on `MarkerTrackPoints` — the SAME projection the timeline lane
+    /// draws — rather than re-deriving the source-to-output arithmetic here.
+    /// `MarkerJumpPoints.swift` warns in its own comment that "a chapter list
+    /// and a scrub bar that disagree about the same recording are worse than
+    /// either alone"; two implementations of one projection is how they come
+    /// to disagree. This one shares the lane's, so the panel and the lane
+    /// cannot drift.
+    ///
+    /// `MarkerTrackPoints` rather than `MarkerJumpPoints` because the latter
+    /// DROPS markers inside cuts. That is right for a bare seek list and wrong
+    /// here: a marker vanishing from the index because a nearby cut swallowed
+    /// it looks like data loss, when the marker is still in `events.json` and
+    /// moving the cut brings it back. Kept, folded to the cut's edge, and
+    /// labelled as such.
     var chapters: [MarkerChapter] {
-        let timebase = Timebase(sourceDuration: controller.sourceDurationSeconds, edl: edl)
-        return events
-            .filter { $0.kind == .marker }
-            .sorted { $0.timeSeconds < $1.timeSeconds }
+        // Whether a label is the user's or the fallback — `JumpPoint.label`
+        // has already applied "Marker" by the time it arrives, so the
+        // distinction has to come from the event itself.
+        var custom: [UUID: String] = [:]
+        for event in events where event.kind == .marker {
+            if let label = event.label, !label.isEmpty { custom[event.id] = label }
+        }
+        return MarkerTrackPoints.compute(events: events, keptRanges: controller.keptRanges)
             .enumerated()
-            .map { index, event in
+            .map { index, point in
                 MarkerChapter(
-                    id: event.id,
-                    outputTime: timebase.outputTime(forSource: SourceTime(event.timeSeconds))?.seconds,
-                    label: event.label?.isEmpty == false ? event.label! : "Marker \(index + 1)",
-                    hasCustomLabel: event.label?.isEmpty == false,
-                    transcript: event.transcript)
+                    id: point.id,
+                    outputTime: point.timeSeconds,
+                    isInsideCut: point.isInsideCut,
+                    label: custom[point.id] ?? "Marker \(index + 1)",
+                    hasCustomLabel: custom[point.id] != nil,
+                    transcript: point.transcript)
             }
     }
 
@@ -405,10 +420,9 @@ final class EditorTimelineState: ObservableObject {
     func currentChapterID(atOutputSeconds outputSeconds: Double) -> UUID? {
         var current: UUID?
         for chapter in chapters {
-            guard let start = chapter.outputTime else { continue }
             // A small tolerance so seeking TO a chapter highlights it rather
             // than landing a hair before its own start.
-            if start <= outputSeconds + 0.01 { current = chapter.id } else { break }
+            if chapter.outputTime <= outputSeconds + 0.01 { current = chapter.id } else { break }
         }
         return current
     }
@@ -958,7 +972,11 @@ struct EditorContentView: View {
             // hide the affordance exactly when it is needed.
             MarkerPane(state: state, playhead: playhead,
                        onEditMarker: { editingMarkerID = $0 })
-                .frame(width: 220)
+                // 260, not 220: this replaced the full-width jump list at the
+                // bottom of the window, and real marker labels are whole
+                // descriptive sentences rather than the short names the
+                // narrow column assumed.
+                .frame(width: 260)
             Divider()
             PlayerLayerView(player: controller.player)
                 .frame(minWidth: 480, minHeight: 270)
@@ -1033,19 +1051,6 @@ struct EditorContentView: View {
                     .help("Zoom the timeline in")
             }
             .padding(8)
-            if !controller.jumpPoints.isEmpty {
-                // `id: \.id` (Task 6), not `\.timeSeconds`: `JumpPoint` now
-                // carries the source marker's own stable identity, which two
-                // distinct markers can never collide on the way two markers
-                // landing on the same trimmed second (unlikely, but possible)
-                // could collide on the old key.
-                List(controller.jumpPoints, id: \.id) { point in
-                    Button(point.label) {
-                        Task { await controller.jump(to: point) }
-                    }
-                }
-                .frame(maxHeight: 140)
-            }
         }
         .onReceive(Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()) { _ in
             // 20Hz, raised from 10 when the playhead stopped being decoration.

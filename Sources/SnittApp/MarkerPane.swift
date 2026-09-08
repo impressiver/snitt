@@ -9,9 +9,12 @@ import SnittDocument
 /// marker has none. Neither belongs on the stored event.
 struct MarkerChapter: Identifiable, Equatable {
     let id: UUID
-    /// Position in the edited recording. `nil` when the marker sits inside a
-    /// cut, so it has no place in the output at all.
-    let outputTime: Double?
+    /// Position in the edited recording. For a marker inside a cut this is the
+    /// FOLD the cut collapsed to — a real place the playhead can reach, which
+    /// is why seeking to one works rather than being inert.
+    let outputTime: Double
+    /// Whether that position is a fold rather than a moment the viewer sees.
+    let isInsideCut: Bool
     /// What to show. Falls back to "Marker N" so an unnamed marker is still
     /// addressable.
     let label: String
@@ -20,8 +23,6 @@ struct MarkerChapter: Identifiable, Equatable {
     /// turns into editing the placeholder.
     let hasCustomLabel: Bool
     let transcript: String?
-
-    var isInsideCut: Bool { outputTime == nil }
 }
 
 /// The chapter index: every marker in the recording, in order, as a
@@ -113,7 +114,7 @@ struct MarkerPane: View {
     private func row(_ chapter: MarkerChapter, isCurrent: Bool) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                Text(chapter.isInsideCut ? "--:--" : Self.timestamp(chapter.outputTime ?? 0))
+                Text(Self.timestamp(chapter.outputTime))
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(chapter.isInsideCut ? AnyShapeStyle(.tertiary)
                                                          : AnyShapeStyle(.secondary))
@@ -129,12 +130,17 @@ struct MarkerPane: View {
                             if !focused, editingID == chapter.id { commitRename(chapter) }
                         }
                 } else {
+                    // Wraps rather than truncating: real marker labels are
+                    // whole descriptive sentences, and a one-line clamp turns
+                    // every one of them into the same opening few words.
                     Text(chapter.label)
                         .font(.callout)
                         .fontWeight(isCurrent ? .semibold : .regular)
                         .foregroundStyle(chapter.hasCustomLabel ? AnyShapeStyle(.primary)
                                                                 : AnyShapeStyle(.secondary))
-                        .lineLimit(1)
+                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
                     Spacer(minLength: 0)
                 }
             }
@@ -145,7 +151,7 @@ struct MarkerPane: View {
                     .lineLimit(2)
             }
             if chapter.isInsideCut {
-                Text("Inside a cut")
+                Text("Inside a cut — shown at the fold")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }
@@ -156,7 +162,7 @@ struct MarkerPane: View {
         .background(isCurrent ? Color.yellow.opacity(0.25) : Color.clear)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { beginRename(chapter) }
-        .onTapGesture { if let t = chapter.outputTime { state.seek(toOutput: t) } }
+        .onTapGesture { state.seek(toOutput: chapter.outputTime) }
         .contextMenu {
             Button("Rename") { beginRename(chapter) }
             Button("Edit Details…") { onEditMarker(chapter.id) }
