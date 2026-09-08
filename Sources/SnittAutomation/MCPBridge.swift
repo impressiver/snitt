@@ -162,6 +162,15 @@ public enum MCPBridge {
                                 + "Preferred over displayID — window recording needs no "
                                 + "extra opt-in.",
                         ],
+                        "windowID": [
+                            "type": "number",
+                            "description": "Which window, from snitt_list_targets. "
+                                + "REQUIRED when the application has more than one "
+                                + "window open — without it Snitt refuses rather than "
+                                + "guessing, because guessing records whichever window "
+                                + "is largest and you will not find out until you watch "
+                                + "the result.",
+                        ],
                         "displayID": [
                             "type": "number",
                             "description": "Numeric id of a whole display to record instead "
@@ -407,6 +416,16 @@ public enum MCPBridge {
                 options.displayID = displayID
             } else if let bundleID = arguments["bundleIdentifier"] as? String {
                 options.bundleIdentifier = bundleID
+                // Optional, and only meaningful with a bundle identifier — a
+                // window id alone would name a window whose app Snitt has not
+                // been asked to record.
+                if let rawWindow = arguments["windowID"] {
+                    guard let windowID = displayID(from: rawWindow) else {
+                        return .failure(MCPBridgeError(
+                            "windowID must be a whole number between 0 and \(UInt32.max)"))
+                    }
+                    options.windowID = windowID
+                }
             } else {
                 return .failure(MCPBridgeError(
                     "snitt_start_recording requires either bundleIdentifier or displayID"))

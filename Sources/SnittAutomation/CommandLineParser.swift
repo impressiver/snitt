@@ -185,6 +185,16 @@ public enum CommandLineParser {
                 index += 1
                 guard index < args.count else { return .failure(ParseFailure("--app needs a bundle id")) }
                 options.bundleIdentifier = args[index]
+            case "--window-id":
+                // §8 has documented this flag since the automation API was
+                // specified; nothing implemented it, so `--app` alone was the
+                // only way to name a window and an app with several got
+                // whichever was largest.
+                index += 1
+                guard index < args.count, let id = UInt32(args[index]) else {
+                    return .failure(ParseFailure("--window-id needs a window id from `snitt targets list`"))
+                }
+                options.windowID = id
             case "--display":
                 index += 1
                 guard index < args.count, let id = UInt32(args[index]) else {
