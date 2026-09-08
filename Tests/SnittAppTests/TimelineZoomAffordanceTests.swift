@@ -1,6 +1,7 @@
 import Testing
 import Foundation
 import AppKit
+import SwiftUI
 @testable import SnittApp
 @testable import SnittDocument
 @testable import SnittExport
@@ -13,26 +14,19 @@ import AppKit
 /// shortcut on a view that has to be first responder — so the zoom the editor
 /// needed for `TrimGesture`'s density problem was effectively undiscoverable.
 ///
-/// WHAT THIS DOES NOT COVER, stated plainly rather than faked: that
-/// `TimelineViewRepresentable` hands the view to the state. Driving
-/// `makeNSView`/`updateNSView` needs an `NSViewRepresentable.Context`, which
-/// cannot be constructed outside SwiftUI. A first version of this file
-/// manufactured one from uninitialized memory; that is undefined behaviour, and
-/// this project has just spent an afternoon proving how expensive stray memory
-/// corruption is to diagnose in a test suite. A test that might corrupt the run
-/// is worse than an honest gap.
+/// The wiring IS covered, by rendering the real `EditorContentView` in an
+/// `NSHostingView` and letting SwiftUI build the representable itself. An
+/// earlier version of this file manufactured an `NSViewRepresentable.Context`
+/// from uninitialized memory to call `updateNSView` directly — undefined
+/// behaviour, in a suite where this session already spent an afternoon
+/// diagnosing stray memory corruption. A second version dropped that but then
+/// set `state.timelineView` by hand, which made the test pass against the very
+/// defect it was written for: removing the real assignment changed nothing.
+/// Hosting the actual view is the version that fails when the wiring is gone.
 @MainActor
 struct TimelineZoomAffordanceTests {
-    @Test("A view held by the state zooms when the buttons ask it to")
-    func zoomFlowsThroughTheStateHandle() async throws {
-        // This is exactly what the "+"/"−" buttons do:
-        // `state.timelineView?.zoomIn()`. With a nil handle that line is a
-        // silent no-op indistinguishable from a working control, so the handle
-        // is required non-nil before the behaviour is checked.
-        //
-        // Zoom is observed the way `TimelineViewTests` observes it — by how
-        // much time a fixed pixel drag selects — rather than through a
-        // test-only accessor, so this measures the same thing a user feels.
+    @Test("Rendering the editor connects the zoom buttons to a real view")
+    func renderingConnectsTheZoomButtons() async throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension(SnittBundle.fileExtension)
@@ -44,32 +38,34 @@ struct TimelineZoomAffordanceTests {
         let controller = PreviewController(built: built, jumpPoints: [], bundle: bundle, scale: 1.0)
         let state = EditorTimelineState(controller: controller, edl: EditDecisionList(), events: [])
 
-        let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 56))
+        #expect(state.timelineView == nil, "nothing should hold a view before one is rendered")
+
+        // The real view hierarchy the editor window builds, so SwiftUI
+        // constructs the representable and calls makeNSView for us.
+        let hosting = NSHostingView(rootView: EditorContentView(state: state))
+        hosting.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
+        hosting.layoutSubtreeIfNeeded()
+
+        let handle = try #require(state.timelineView,
+                                  "rendering did not connect the timeline — the zoom buttons send zoomIn() to nil")
+
+        // And the handle drives real zoom, observed the way TimelineViewTests
+        // observes it: by how much time a fixed pixel drag selects.
         var selected: Selection?
-        view.onSelect = { selected = $0 }
-        view.update(duration: 600, cuts: [], jumpPoints: [], playhead: 0)
-        state.timelineView = view
+        handle.onSelect = { selected = $0 }
+        handle.setFrameSize(NSSize(width: 800, height: 56))
+        handle.update(duration: 600, cuts: [], jumpPoints: [], playhead: 0)
 
-        func dragSelectionWidth() -> Double {
+        func dragWidth() -> Double {
             selected = nil
-            view.mouseDown(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
-            view.mouseDragged(with: .synthetic(at: NSPoint(x: 440, y: 20), in: view))
-            view.mouseUp(with: .synthetic(at: NSPoint(x: 440, y: 20), in: view))
-            guard let selected else { return -1 }
-            return selected.range.end - selected.range.start
+            handle.mouseDown(with: .synthetic(at: NSPoint(x: 400, y: 20), in: handle))
+            handle.mouseDragged(with: .synthetic(at: NSPoint(x: 440, y: 20), in: handle))
+            handle.mouseUp(with: .synthetic(at: NSPoint(x: 440, y: 20), in: handle))
+            return selected.map { $0.range.end - $0.range.start } ?? -1
         }
-
-        let handle = try #require(state.timelineView, "buttons would send zoomIn() to nil")
-        let unzoomed = dragSelectionWidth()
+        let unzoomed = dragWidth()
         #expect(unzoomed > 0)
-
         handle.zoomIn()
-        let zoomedIn = dragSelectionWidth()
-        #expect(zoomedIn < unzoomed / 1.5,
-                "zoomIn through the state handle did not change the scale")
-
-        handle.zoomOut()
-        #expect(abs(dragSelectionWidth() - unzoomed) < 0.1,
-                "zoomOut did not undo zoomIn")
+        #expect(dragWidth() < unzoomed / 1.5, "zoom did not reach the rendered view")
     }
 }

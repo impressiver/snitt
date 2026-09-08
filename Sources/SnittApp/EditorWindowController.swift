@@ -535,8 +535,10 @@ struct TimelineViewRepresentable: NSViewRepresentable {
 /// timeline, and a jump-point list. §4.7 puts the video surface — and, per
 /// Task 6, the timeline's gesture handling — in AppKit while everything
 /// around them stays SwiftUI.
-private struct EditorContentView: View {
-    @ObservedObject fileprivate var state: EditorTimelineState
+struct EditorContentView: View {
+    @ObservedObject var state: EditorTimelineState
+
+    init(state: EditorTimelineState) { self.state = state }
     @State private var playhead: Double = 0
     /// Which marker the edit sheet is open for, if any (Task 6). UI-only,
     /// like `expandedCutIDs`'s spirit but one level further out: nothing
