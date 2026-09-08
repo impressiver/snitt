@@ -65,6 +65,13 @@ final class EditorTimelineState: ObservableObject {
     /// one, is what makes those menu items resolve to something instead of
     /// nothing.
     weak var undoManager: UndoManager?
+    /// The timeline view, so the on-screen zoom controls can reach it.
+    ///
+    /// Zoom has existed since M5f Task 8 — `zoomIn()`, `zoomOut()`, scroll and
+    /// pinch — but nothing on screen called any of it, so the only ways in were
+    /// a trackpad gesture and a keyboard shortcut on a view that has to be
+    /// first responder. A feature reachable only by guessing is not reachable.
+    weak var timelineView: TimelineView?
 
     /// The TAIL of the autosave chain: every save awaits the one before it,
     /// so awaiting this one awaits all of them (whole-branch review F2).
@@ -479,7 +486,7 @@ final class EditorTimelineState: ObservableObject {
 
 /// Embeds `TimelineView` (AppKit) in the SwiftUI shell, driving it from
 /// `state` and forwarding its callbacks back into `state`.
-private struct TimelineViewRepresentable: NSViewRepresentable {
+struct TimelineViewRepresentable: NSViewRepresentable {
     @ObservedObject var state: EditorTimelineState
     let playhead: Double
     /// Surfaces a marker click up to `EditorContentView`'s own `@State`
@@ -491,6 +498,9 @@ private struct TimelineViewRepresentable: NSViewRepresentable {
 
     func makeNSView(context: Context) -> TimelineView {
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 480, height: 56))
+        // Set here as well as in `updateNSView` so the zoom buttons work from
+        // the first render rather than only after the first update pass.
+        state.timelineView = view
         view.onScrub = { [weak state] in state?.onScrub($0) }
         view.onSelect = { [weak state] in state?.onSelect($0) }
         view.onToggleExpansion = { [weak state] in state?.toggleExpansion(of: $0) }
@@ -509,6 +519,7 @@ private struct TimelineViewRepresentable: NSViewRepresentable {
     /// testable without AppKit or SwiftUI's runtime; this stays the thin,
     /// untestable seam.
     func updateNSView(_ nsView: TimelineView, context: Context) {
+        state.timelineView = nsView   // also set in makeNSView; see there
         let display = state.displayState(playhead: playhead)
         nsView.update(duration: display.duration,
                      cuts: display.cuts,
@@ -588,6 +599,15 @@ private struct EditorContentView: View {
                 Button(croppingActive ? "Cancel Crop" : "Crop") { croppingActive.toggle() }
                 Button("Reset Crop") { state.resetCrop() }
                     .disabled(state.edl.crop == nil)
+                Spacer()
+                // The affordance the zoom feature never had. `TrimGesture`'s
+                // own comment names the density problem these solve: at
+                // ~0.75s/pixel on a ten-minute recording a deliberate short cut
+                // is silently swallowed.
+                Button("−") { state.timelineView?.zoomOut() }
+                    .help("Zoom the timeline out")
+                Button("+") { state.timelineView?.zoomIn() }
+                    .help("Zoom the timeline in")
             }
             .padding(8)
             if !controller.jumpPoints.isEmpty {

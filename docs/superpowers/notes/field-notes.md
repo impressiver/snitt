@@ -34,8 +34,10 @@ in the surface used daily.
 - **A marker inside a cut is missing from the marker track.** It survives in the
   data (markers are dropped, not clamped, at export) but the track does not draw
   it, so there is no way to see or move it.
-- **No on-screen zoom affordance.** Timeline zoom exists and is keyboard-only;
-  nothing indicates it is available or what the current level is.
+- ~~**No on-screen zoom affordance.**~~ FIXED 2026-09-07: "+"/"−" buttons in the
+  editor's control row, wired to the `zoomIn()`/`zoomOut()` that have existed
+  since M5f Task 8 and were reachable only by trackpad pinch or a shortcut on a
+  first-responder view.
 - ~~**Mic and system audio draw as one band.**~~ FIXED 2026-09-07: one band per
   source, derived from `trackStates` so a mic-less recording gets no empty lane,
   and a muted source draws markedly fainter — `TrackState.muted` had been
