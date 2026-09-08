@@ -110,6 +110,16 @@ actor FakeCoordinator: AgentRecordingControlling {
 
     func setScreenshotResult(_ result: AgentScreenshotResult) { screenshotResult = result }
 
+    private(set) var reportedInput: [(kind: EventKind, x: Double, y: Double)] = []
+
+    func reportInputForAgent(sessionID: String, kind: EventKind, x: Double, y: Double,
+                             label: String?) async -> AgentMarkResult {
+        guard activeSession != nil else { return .notRecording }
+        guard activeSession == sessionID else { return .notCurrentSession }
+        reportedInput.append((kind, x, y))
+        return .marked(7.5)
+    }
+
     func screenshotForAgent(sessionID: String, label: String?) async -> AgentScreenshotResult {
         screenshotCalls.append((sessionID, label))
         guard activeSession != nil else { return .notRecording }
@@ -1243,5 +1253,61 @@ struct ScreenshotAutomationTests {
         #expect(error.code != .noSuchSession,
                 "a healthy recording was reported as a missing session")
         #expect(error.hint?.contains("try again") == true)
+    }
+}
+
+// MARK: - Reported input (M5e follow-on)
+
+/// The agent surface for input the OS never saw.
+@MainActor
+struct ReportedInputAutomationTests {
+    private func startedHost() async -> (FakeCoordinator, AutomationHost, String) {
+        let coordinator = FakeCoordinator()
+        let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
+        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")))
+        let session = await coordinator.startCalls.first ?? ""
+        return (coordinator, host, session)
+    }
+
+    @Test("A reported click reaches the coordinator with its position")
+    func clickReachesTheCoordinator() async throws {
+        let (coordinator, host, session) = await startedHost()
+        _ = await host.handle(.reportInput(sessionID: session, kind: "click",
+                                           x: 0.25, y: 0.75, label: nil))
+        let reported = try #require(await coordinator.reportedInput.first)
+        #expect(reported.kind == .click)
+        #expect(reported.x == 0.25 && reported.y == 0.75)
+    }
+
+    @Test("A reported KEYSTROKE is refused")
+    func keystrokesCannotBeReported() async throws {
+        // Reporting a click is a claim about what the caller itself did.
+        // Reporting a keystroke would be a claim about what a PERSON typed,
+        // written into a recording that never observed it — and §5.6 governs
+        // rendering keystrokes precisely because they are the dangerous ones.
+        let (coordinator, host, session) = await startedHost()
+        guard case .failure = await host.handle(
+            .reportInput(sessionID: session, kind: "keystroke", x: 0.5, y: 0.5, label: nil))
+        else { Issue.record("a keystroke was accepted"); return }
+        #expect(await coordinator.reportedInput.isEmpty)
+    }
+
+    @Test("Input cannot be reported into another session's recording")
+    func foreignSessionIsRefused() async throws {
+        // Otherwise an agent could write input into a person's recording.
+        let (coordinator, host, _) = await startedHost()
+        guard case .failure(let error) = await host.handle(
+            .reportInput(sessionID: "THEIRS", kind: "click", x: 0.5, y: 0.5, label: nil))
+        else { Issue.record("reporting into another session was allowed"); return }
+        #expect(error.code == .noSuchSession)
+        #expect(await coordinator.reportedInput.isEmpty)
+    }
+
+    @Test("An unknown kind is refused rather than silently dropped")
+    func unknownKindIsRefused() async throws {
+        let (_, host, session) = await startedHost()
+        guard case .failure = await host.handle(
+            .reportInput(sessionID: session, kind: "wiggle", x: 0.5, y: 0.5, label: nil))
+        else { Issue.record("an unknown kind was accepted"); return }
     }
 }

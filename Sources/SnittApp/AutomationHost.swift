@@ -307,6 +307,9 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         case .screenshot(let sessionID, let label):
             return await screenshot(sessionID: sessionID, label: label)
 
+        case .reportInput(let sessionID, let kind, let x, let y, let label):
+            return await reportInput(sessionID: sessionID, kind: kind, x: x, y: y, label: label)
+
         case .inspect(let path):
             return inspect(bundlePath: path)
 
@@ -848,6 +851,35 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         }
     }
 
+    private func reportInput(sessionID: String, kind: String,
+                             x: Double, y: Double, label: String?) async -> AutomationResponse {
+        if let refusal = policy().evaluate(StartOptions(bundleIdentifier: "probe")) {
+            return .failure(refusal)
+        }
+        // Only pointer kinds. A reported KEYSTROKE would let a caller write
+        // typed input into a recording it did not observe, which is a claim
+        // about a person rather than about itself — and §5.6 governs rendering
+        // keystrokes precisely because they are the dangerous ones.
+        guard let eventKind = EventKind(rawValue: kind), eventKind == .click || eventKind == .cursor
+        else {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "kind must be \"click\" or \"cursor\".",
+                hint: "Only pointer events can be reported. Narration belongs on a "
+                    + "marker, and keystrokes cannot be reported at all."))
+        }
+        switch await coordinator.reportInputForAgent(sessionID: sessionID, kind: eventKind,
+                                                     x: x, y: y, label: label) {
+        case .marked(let offset):
+            return .marked(timeSeconds: offset)
+        case .notCurrentSession, .notRecording:
+            return .failure(AutomationError(
+                code: .noSuchSession,
+                message: "No agent recording with that session id.",
+                hint: "Input can only be reported into the recording you started."))
+        }
+    }
+
     /// Maps a coordinator outcome to the agent-facing contract (§10).
     ///
     /// Every non-started outcome used to become `target_not_found`/14 with the
@@ -1050,9 +1082,15 @@ private actor NullCoordinator: AgentRecordingControlling {
 
     func pauseStateForAgent() async -> (paused: Bool, pausedSeconds: Double)? { nil }
 
+    func reportInputForAgent(sessionID: String, kind: EventKind, x: Double, y: Double,
+                             label: String?) async -> AgentMarkResult {
+        .notRecording
+    }
+
     func screenshotForAgent(sessionID: String, label: String?) async -> AgentScreenshotResult {
         .notRecording
     }
+
 }
 
 /// Per-session data the audit trail needs at stop time that `SessionRegistry`

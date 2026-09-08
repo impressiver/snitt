@@ -113,6 +113,10 @@ public struct AutomationRequest: Codable, Sendable {
         case pauseRecording(sessionID: String)
         case resumeRecording(sessionID: String)
         case screenshot(sessionID: String, label: String?)
+        /// An input event the OS never saw, reported by whoever caused it
+        /// (M5e follow-on). `x`/`y` are fractions of the recorded window.
+        case reportInput(sessionID: String, kind: String,
+                         x: Double, y: Double, label: String?)
         case export(bundlePath: String, format: String, outputPath: String,
                     scale: Double, chapters: Bool, subtitles: Bool, maxSizeBytes: Int?)
         /// `outputPath` arrives already resolved against the CALLER's working

@@ -323,6 +323,25 @@ public actor Recorder {
         return offset
     }
 
+    /// Records an input event a client reported, at the current offset.
+    ///
+    /// Stamped here rather than carrying a caller-supplied time: the offset is
+    /// on the recording's clock, which only this side knows, and the round trip
+    /// is milliseconds. Marked `.reported` so nothing downstream mistakes it
+    /// for something the OS observed.
+    ///
+    /// Coordinates are clamped rather than rejected. A click one pixel outside
+    /// the window is a rounding difference between the caller's idea of the
+    /// window and Snitt's, not a lie worth refusing; a click at 5.0 would be.
+    public func reportInput(kind: EventKind, x: Double, y: Double,
+                            label: String?) async -> Double {
+        let offset = await currentOffset()
+        await eventLog.add(at: offset, kind: kind, label: label,
+                           x: min(max(x, 0), 1), y: min(max(y, 0), 1),
+                           source: .reported)
+        return offset
+    }
+
     /// Records that input happened, at the offset captured when it happened.
     ///
     /// The offset is a parameter, not something this method computes: by the

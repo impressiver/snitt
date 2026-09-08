@@ -78,6 +78,8 @@ snitt — record a window and hand back a .snitt bundle
         [--mic] [--no-system-audio]        parsed, not yet applied (M3)
   snitt record stop <session-id>         stop; prints the bundle path
   snitt record mark <session-id> [--label <text>]   drop a marker
+  snitt record click|cursor <session> <x> <y>
+                                          report input the OS never saw
   snitt record screenshot <session> [--label "..."]
                                           save the current frame, marked
   snitt record pause <session>            stop filming without ending
@@ -217,6 +219,8 @@ func requestBody(for command: ParsedCommand,
     case .recordResume(let session): return .resumeRecording(sessionID: session)
     case .recordScreenshot(let session, let label):
         return .screenshot(sessionID: session, label: label)
+    case .recordInput(let session, let kind, let x, let y):
+        return .reportInput(sessionID: session, kind: kind, x: x, y: y, label: nil)
     case .status: return .status
     case .inspect(let path):
         return .inspect(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory))

@@ -4,6 +4,31 @@ public enum EventKind: String, Codable, Sendable {
     case click
     case keystroke
     case marker
+    /// Where the pointer was, with no click. Reported, never observed: the
+    /// `CGEventTap` mask deliberately excludes `mouseMoved` because it fires
+    /// continuously, so this kind exists for automation that knows where it
+    /// "moved" without anything having moved.
+    case cursor
+}
+
+/// Whether Snitt saw an event happen or was told it happened.
+///
+/// Browser automation dispatches events into the page — `element.click()`,
+/// CDP's `Input.dispatchMouseEvent` — and the OS cursor never moves. Nothing
+/// reaches the event tap, so a recording of automated work shows things
+/// changing with no visible cause, which is exactly what makes an agent demo
+/// unwatchable. An agent can instead REPORT what it did.
+///
+/// Reported events are marked, and that is not bookkeeping. `autoTrimRange`
+/// treats every non-marker event as evidence of activity and
+/// `InspectReport.inputEventCount` publishes a count; without provenance,
+/// "a person clicked here" and "an automation asserts it clicked here" become
+/// the same claim, and a recording could vouch for input that never happened.
+public enum EventSource: String, Codable, Sendable {
+    /// Seen by the `CGEventTap` — a real event the OS delivered.
+    case observed
+    /// Supplied by a client over the automation API.
+    case reported
 }
 
 /// One timestamped entry in the sidecar log. Times are seconds from the start
@@ -32,14 +57,33 @@ public struct LoggedEvent: Sendable {
     /// read/write it — the WebVTT export path is out of scope here (see
     /// `WebVTTChapters`, untouched).
     public var transcript: String?
+    /// Where in the recorded window this happened, as fractions of the
+    /// window's own bounds (0...1, origin top-left).
+    ///
+    /// Normalized rather than screen coordinates because those would need the
+    /// window's frame AT THAT INSTANT to be meaningful, and Snitt keeps no
+    /// window-position track (D64 names one as a prerequisite for visible
+    /// clicks and it does not exist). A fraction of the window is exact
+    /// forever, survives the window being moved or resized afterwards, and
+    /// multiplies straight into video coordinates at any export scale.
+    public var x: Double?
+    public var y: Double?
+    /// Whether Snitt saw this or was told about it. Defaults to `observed`, so
+    /// every event written before this field existed reads correctly.
+    public var source: EventSource
 
     public init(id: UUID = UUID(), timeSeconds: Double, kind: EventKind,
-                label: String? = nil, transcript: String? = nil) {
+                label: String? = nil, transcript: String? = nil,
+                x: Double? = nil, y: Double? = nil,
+                source: EventSource = .observed) {
         self.id = id
         self.timeSeconds = timeSeconds
         self.kind = kind
         self.label = label
         self.transcript = transcript
+        self.x = x
+        self.y = y
+        self.source = source
     }
 }
 
@@ -51,7 +95,7 @@ extension LoggedEvent: Identifiable {}
 
 extension LoggedEvent: Codable {
     private enum CodingKeys: String, CodingKey {
-        case id, timeSeconds, kind, label, transcript
+        case id, timeSeconds, kind, label, transcript, x, y, source
     }
 
     public init(from decoder: Decoder) throws {
@@ -64,7 +108,14 @@ extension LoggedEvent: Codable {
         let kind = try container.decode(EventKind.self, forKey: .kind)
         let label = try container.decodeIfPresent(String.self, forKey: .label)
         let transcript = try container.decodeIfPresent(String.self, forKey: .transcript)
-        self.init(id: id, timeSeconds: timeSeconds, kind: kind, label: label, transcript: transcript)
+        let x = try container.decodeIfPresent(Double.self, forKey: .x)
+        let y = try container.decodeIfPresent(Double.self, forKey: .y)
+        // Absent means OBSERVED: every event written before provenance existed
+        // came from the tap, so the default is the historically true answer
+        // rather than a neutral one.
+        let source = try container.decodeIfPresent(EventSource.self, forKey: .source) ?? .observed
+        self.init(id: id, timeSeconds: timeSeconds, kind: kind, label: label,
+                  transcript: transcript, x: x, y: y, source: source)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -74,6 +125,11 @@ extension LoggedEvent: Codable {
         try container.encode(kind, forKey: .kind)
         try container.encodeIfPresent(label, forKey: .label)
         try container.encodeIfPresent(transcript, forKey: .transcript)
+        try container.encodeIfPresent(x, forKey: .x)
+        try container.encodeIfPresent(y, forKey: .y)
+        // Written only when it is NOT the default, so an ordinary human
+        // recording's events.json is unchanged by this field existing.
+        if source != .observed { try container.encode(source, forKey: .source) }
     }
 }
 
@@ -115,7 +171,11 @@ public struct EventLog: Codable, Sendable {
     /// Bumped 1 -> 2 by M5f Task 6: `LoggedEvent` gained `id` and
     /// `transcript`. A version ABOVE this one is refused by `init(from:)`
     /// rather than partially decoded (`EventLogError`).
-    public static let currentSchemaVersion = 2
+    /// Bumped 2 -> 3 for reported input (position + provenance). Non-additive
+    /// in the way D60 cares about: an older build decodes an event, drops `x`,
+    /// `y` and `source` it has no fields for, and the next write loses them —
+    /// so a reported click silently becomes an observed one with no position.
+    public static let currentSchemaVersion = 3
 
     public var schemaVersion: Int
     public var events: [LoggedEvent]

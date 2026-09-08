@@ -31,6 +31,8 @@ public enum ParsedCommand: Equatable {
     case recordPause(sessionID: String)
     case recordResume(sessionID: String)
     case recordScreenshot(sessionID: String, label: String?)
+    /// Report an input event the OS never saw. `x`/`y` are window fractions.
+    case recordInput(sessionID: String, kind: String, x: Double, y: Double)
     case export(bundlePath: String, format: String, outputPath: String,
                 scale: Double, chapters: Bool, subtitles: Bool, maxSizeBytes: Int?)
     /// `outputPath` here is still the RAW string typed on the command line —
@@ -75,6 +77,14 @@ public enum CommandLineParser {
                                   + "Run `snitt status` to find it."))
                 }
                 return .success(.recordStop(session))
+            case "click", "cursor":
+                guard args.count >= 3, let x = Double(args[1]), let y = Double(args[2]) else {
+                    return .failure(ParseFailure(
+                        "`record \(sub)` needs a session id and x y as fractions of the "
+                      + "window, e.g. `snitt record click S1 0.5 0.32`"))
+                }
+                return .success(.recordInput(sessionID: args[0], kind: sub, x: x, y: y))
+
             case "screenshot":
                 guard let session = args.first else {
                     return .failure(ParseFailure(

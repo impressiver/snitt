@@ -25,6 +25,12 @@ public struct InspectReport: Codable, Sendable, Equatable {
     public var markers: [Marker]
     public var markerCount: Int
     public var inputEventCount: Int
+    /// How many of `inputEventCount` were REPORTED by a client rather than
+    /// observed by the event tap. Published rather than folded in, so a
+    /// consumer can tell "a person clicked here" from "an automation asserts
+    /// it clicked here" — they are different claims and a recording must not
+    /// vouch for the second as though it were the first.
+    public var reportedEventCount: Int
 
     public static func report(for bundle: SnittBundle) throws -> InspectReport {
         let meta = try RecordingMetadata.read(from: bundle)
@@ -40,7 +46,8 @@ public struct InspectReport: Codable, Sendable, Equatable {
             health: meta.health,
             markers: markers.map { Marker(timeSeconds: $0.timeSeconds, label: $0.label) },
             markerCount: markers.count,
-            inputEventCount: events.count - markers.count
+            inputEventCount: events.count - markers.count,
+            reportedEventCount: events.filter { $0.kind != .marker && $0.source == .reported }.count
         )
     }
 

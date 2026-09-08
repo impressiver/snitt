@@ -220,6 +220,29 @@ public enum MCPBridge {
                     "required": ["sessionId"],
                 ]),
             ToolDefinition(
+                name: "snitt_report_input",
+                description: "Tell Snitt where you clicked or moved the pointer. "
+                           + "Browser automation dispatches events into the page, so "
+                           + "the real cursor never moves and the recording shows "
+                           + "buttons changing with nothing visibly causing it — "
+                           + "unwatchable as a demo. Reporting each click puts it on "
+                           + "the recording's clock so it can be drawn. Coordinates are "
+                           + "FRACTIONS of the recorded window (0-1, origin top-left), "
+                           + "not page or screen pixels: compute them from the element's "
+                           + "position plus the browser's own chrome offset. Snitt does "
+                           + "not click anything — it records what you say you did.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "sessionId": ["type": "string"],
+                        "kind": ["type": "string",
+                                 "description": "\"click\" or \"cursor\" (a move with no click)."],
+                        "x": ["type": "number", "description": "0-1 across the window"],
+                        "y": ["type": "number", "description": "0-1 down the window"],
+                    ],
+                    "required": ["sessionId", "kind", "x", "y"],
+                ]),
+            ToolDefinition(
                 name: "snitt_screenshot",
                 description: "Save the frame the recording is currently on, and "
                            + "mark that instant. Use it to SEE the window you are "
@@ -461,6 +484,29 @@ public enum MCPBridge {
                 return .failure(MCPBridgeError("snitt_inspect requires bundlePath"))
             }
             return .success(.inspect(bundlePath: path))
+
+        case "snitt_report_input":
+            guard let session = arguments["sessionId"] as? String else {
+                return .failure(MCPBridgeError("snitt_report_input requires sessionId"))
+            }
+            guard let kind = arguments["kind"] as? String else {
+                return .failure(MCPBridgeError("snitt_report_input requires kind"))
+            }
+            var point: [String: Double] = [:]
+            for key in ["x", "y"] {
+                switch numericValue(arguments[key], parameter: key) {
+                case .success(let value):
+                    guard let value else {
+                        return .failure(MCPBridgeError(
+                            "snitt_report_input requires x and y as fractions of the window"))
+                    }
+                    point[key] = value
+                case .failure(let error): return .failure(error)
+                }
+            }
+            return .success(.reportInput(sessionID: session, kind: kind,
+                                         x: point["x"]!, y: point["y"]!,
+                                         label: arguments["label"] as? String))
 
         case "snitt_screenshot":
             guard let session = arguments["sessionId"] as? String else {
