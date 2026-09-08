@@ -89,3 +89,30 @@ struct CropCommandTests {
         #expect(path == "/tmp/work/demo.snitt", "path was not resolved: \(path)")
     }
 }
+
+/// `snitt record pause|resume` parsing (M5e, D53).
+@Suite
+struct RecordPauseCommandTests {
+    @Test("pause and resume parse with a session id")
+    func parses() {
+        guard case .success(.recordPause(let session)) =
+                CommandLineParser.parse(["record", "pause", "S1"]) else {
+            Issue.record("`record pause` did not parse"); return
+        }
+        #expect(session == "S1")
+        guard case .success(.recordResume("S1")) =
+                CommandLineParser.parse(["record", "resume", "S1"]) else {
+            Issue.record("`record resume` did not parse"); return
+        }
+    }
+
+    @Test("A missing session id is refused, not defaulted to the current one")
+    func missingSessionIsRefused() {
+        // Defaulting would let an agent pause a recording it does not own by
+        // omitting an argument — the ownership check exists precisely to stop
+        // that, and it cannot run without an id to check.
+        guard case .failure = CommandLineParser.parse(["record", "pause"]) else {
+            Issue.record("a missing session id was accepted"); return
+        }
+    }
+}

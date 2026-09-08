@@ -188,6 +188,29 @@ public enum MCPBridge {
                     "required": ["sessionId"],
                 ]),
             ToolDefinition(
+                name: "snitt_pause_recording",
+                description: "Stop filming without ending the recording. Use it "
+                           + "while you think, read, or do work that is not worth "
+                           + "showing — the finished video jumps straight from "
+                           + "pause to resume with no dead air. Drops a marker so "
+                           + "the gap is visible in the timeline.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": ["sessionId": ["type": "string"]],
+                    "required": ["sessionId"],
+                ]),
+            ToolDefinition(
+                name: "snitt_resume_recording",
+                description: "Start filming again after snitt_pause_recording. "
+                           + "Time spent paused still counts toward "
+                           + "maxDurationSeconds, so a session left paused "
+                           + "eventually stops on its own.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": ["sessionId": ["type": "string"]],
+                    "required": ["sessionId"],
+                ]),
+            ToolDefinition(
                 name: "snitt_status",
                 description: "Report whether a recording is currently running.",
                 inputSchema: ["type": "object", "properties": [String: Any]()]),
@@ -399,6 +422,14 @@ public enum MCPBridge {
                 return .failure(MCPBridgeError("snitt_inspect requires bundlePath"))
             }
             return .success(.inspect(bundlePath: path))
+
+        case "snitt_pause_recording", "snitt_resume_recording":
+            guard let session = arguments["sessionId"] as? String else {
+                return .failure(MCPBridgeError("\(name) requires sessionId"))
+            }
+            return .success(name == "snitt_pause_recording"
+                            ? .pauseRecording(sessionID: session)
+                            : .resumeRecording(sessionID: session))
 
         case "snitt_crop":
             guard let path = arguments["bundlePath"] as? String else {

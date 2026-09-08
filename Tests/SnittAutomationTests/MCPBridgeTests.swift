@@ -30,7 +30,8 @@ func everyToolMaps() {
         switch tool.name {
         case "snitt_start_recording":
             json = #"{"bundleIdentifier": "com.apple.Safari"}"#
-        case "snitt_stop_recording", "snitt_add_marker":
+        case "snitt_stop_recording", "snitt_add_marker",
+             "snitt_pause_recording", "snitt_resume_recording":
             json = #"{"sessionId": "abc"}"#
         case "snitt_inspect":
             json = #"{"bundlePath": "/tmp/x.snitt"}"#
@@ -58,6 +59,7 @@ func toolNamesAreStable() {
     #expect(names == ["snitt_list_targets", "snitt_start_recording",
                       "snitt_stop_recording", "snitt_status", "snitt_add_marker",
                       "snitt_inspect", "snitt_trim", "snitt_crop", "snitt_export",
+                      "snitt_pause_recording", "snitt_resume_recording",
                       "snitt_diagnostics_export"])
 }
 

@@ -74,6 +74,32 @@ actor FakeCoordinator: AgentRecordingControlling {
         guard activeSession == sessionID else { return .notCurrentSession }
         return .marked(12.5)
     }
+
+    /// Pause/resume calls, so a test can assert the host reached the
+    /// coordinator with the right session and direction (M5e, D53).
+    private(set) var pauseCalls: [(session: String, paused: Bool)] = []
+    private var isPaused = false
+    private var pausedSeconds = 0.0
+
+    /// Models a session already paused when the test begins — the crash-recovery
+    /// case D53 names, where an agent restarts and asks status.
+    func setPausedForTesting(_ paused: Bool, seconds: Double = 0) {
+        isPaused = paused
+        pausedSeconds = seconds
+    }
+
+    func setPausedForAgent(sessionID: String, paused: Bool) async -> AgentMarkResult {
+        pauseCalls.append((sessionID, paused))
+        guard activeSession != nil else { return .notRecording }
+        guard activeSession == sessionID else { return .notCurrentSession }
+        isPaused = paused
+        return .marked(12.5)
+    }
+
+    func pauseStateForAgent() async -> (paused: Bool, pausedSeconds: Double)? {
+        guard activeSession != nil else { return nil }
+        return (isPaused, pausedSeconds)
+    }
 }
 
 /// Records what the menu bar was told, in order.
@@ -1074,4 +1100,72 @@ func diagnosticsExportFailureIsReported() async {
         return
     }
     #expect(error.code == .internalError)
+}
+
+// MARK: - Pause / resume (M5e, D53)
+
+/// The capture-side behaviour is `PauseResumeTests`. These cover the contract
+/// an agent meets: only the session that started a recording may pause it, and
+/// `status` reports the paused state at all — D53's point being that an agent
+/// which pauses, crashes and restarts has no other way to discover it left a
+/// session frozen.
+@MainActor
+struct PauseAutomationTests {
+    @Test("Pause and resume reach the coordinator with the session and direction")
+    func pauseReachesTheCoordinator() async throws {
+        let coordinator = FakeCoordinator()
+        let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
+        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")))
+        let session = try #require(await coordinator.startCalls.first)
+
+        _ = await host.handle(.pauseRecording(sessionID: session))
+        _ = await host.handle(.resumeRecording(sessionID: session))
+
+        #expect(await coordinator.pauseCalls.map(\.paused) == [true, false])
+        #expect(await coordinator.pauseCalls.allSatisfy { $0.session == session })
+    }
+
+    @Test("A session that is not yours cannot be paused")
+    func foreignSessionIsRefused() async throws {
+        // §5.3's posture: a person at the machine stays in control of their own
+        // recording. Freezing it from outside is the opposite, and an agent
+        // guessing a session id must not be able to.
+        let coordinator = FakeCoordinator()
+        let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
+        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")))
+
+        guard case .failure(let error) = await host.handle(.pauseRecording(sessionID: "THEIRS")) else {
+            Issue.record("pausing another session was allowed"); return
+        }
+        #expect(error.code == .noSuchSession)
+    }
+
+    @Test("Status reports the paused state, not merely that a recording exists")
+    func statusReportsPaused() async throws {
+        // `recording: true` for a paused session is true and useless — exactly
+        // what an agent recovering from a crash would misread.
+        let coordinator = FakeCoordinator()
+        let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
+        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")))
+        await coordinator.setPausedForTesting(true, seconds: 12)
+
+        guard case .status(let info) = await host.handle(.status) else {
+            Issue.record("status did not return status"); return
+        }
+        #expect(info.paused, "a paused session reported itself as merely recording")
+        #expect(info.pausedSeconds == 12)
+    }
+
+    @Test("Pausing returns the new state, so no second round trip is needed")
+    func pauseReturnsTheNewStatus() async throws {
+        let coordinator = FakeCoordinator()
+        let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
+        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")))
+        let session = try #require(await coordinator.startCalls.first)
+
+        guard case .status(let info) = await host.handle(.pauseRecording(sessionID: session)) else {
+            Issue.record("pause did not return a status"); return
+        }
+        #expect(info.paused)
+    }
 }

@@ -26,6 +26,10 @@ public enum ParsedCommand: Equatable {
     /// Register the bundled MCP server with the agent hosts on this machine.
     /// Prints by default; `apply` actually runs the registration commands.
     case setup(apply: Bool)
+    /// M5e/D53: pause an agent's own session. A human recording is not
+    /// pausable over IPC — see `RecordingCoordinator.setPausedForAgent`.
+    case recordPause(sessionID: String)
+    case recordResume(sessionID: String)
     case export(bundlePath: String, format: String, outputPath: String,
                 scale: Double, chapters: Bool, maxSizeBytes: Int?)
     /// `outputPath` here is still the RAW string typed on the command line —
@@ -70,6 +74,15 @@ public enum CommandLineParser {
                                   + "Run `snitt status` to find it."))
                 }
                 return .success(.recordStop(session))
+            case "pause", "resume":
+                guard let session = args.first else {
+                    return .failure(ParseFailure(
+                        "`record \(sub)` needs a session id. Run `snitt status` to find it."))
+                }
+                return .success(sub == "pause"
+                                ? .recordPause(sessionID: session)
+                                : .recordResume(sessionID: session))
+
             case "mark":
                 guard let session = args.first else {
                     return .failure(ParseFailure(

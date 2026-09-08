@@ -99,6 +99,12 @@ public struct AutomationRequest: Codable, Sendable {
         /// A `nil` rect REMOVES the crop, which is distinct from cropping to
         /// the full frame only in what reaches disk.
         case crop(bundlePath: String, rect: CropRect?)
+        /// M5e/D53. Amends v3 rather than bumping it again: v3 has not
+        /// shipped, so there is no released client for these to break — the
+        /// same reasoning v2 used for every addition before v0.1.0 existed,
+        /// and it expires the moment v3 ships.
+        case pauseRecording(sessionID: String)
+        case resumeRecording(sessionID: String)
         case export(bundlePath: String, format: String, outputPath: String,
                     scale: Double, chapters: Bool, maxSizeBytes: Int?)
         /// `outputPath` arrives already resolved against the CALLER's working
@@ -147,11 +153,25 @@ public struct HandshakeInfo: Codable, Sendable, Equatable {
 public struct StatusInfo: Codable, Sendable, Equatable {
     public var recording: Bool
     public var sessionID: String?
+    /// WALL time since the session started, including any time paused — the
+    /// same clock `maxDuration` is measured on, so an agent can tell how close
+    /// it is to the cap.
     public var elapsedSeconds: Double?
-    public init(recording: Bool, sessionID: String?, elapsedSeconds: Double?) {
+    /// D53: an agent that pauses, crashes and is restarted has no other way to
+    /// discover it left a session paused. `recording` alone reads as "yes" for
+    /// a paused session, which is true and useless.
+    public var paused: Bool
+    /// How much of `elapsedSeconds` was spent paused. `elapsed - paused` is the
+    /// footage.
+    public var pausedSeconds: Double?
+
+    public init(recording: Bool, sessionID: String?, elapsedSeconds: Double?,
+                paused: Bool = false, pausedSeconds: Double? = nil) {
         self.recording = recording
         self.sessionID = sessionID
         self.elapsedSeconds = elapsedSeconds
+        self.paused = paused
+        self.pausedSeconds = pausedSeconds
     }
 }
 

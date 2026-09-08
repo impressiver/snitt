@@ -77,6 +77,8 @@ snitt — record a window and hand back a .snitt bundle
         [--mic] [--no-system-audio]        parsed, not yet applied (M3)
   snitt record stop <session-id>         stop; prints the bundle path
   snitt record mark <session-id> [--label <text>]   drop a marker
+  snitt record pause <session>            stop filming without ending
+  snitt record resume <session>           start filming again
   snitt setup [--apply]                   register the MCP server with agents
   snitt crop <bundle> --x F --y F --width F --height F
         [--reset]                        crop, in fractions of the frame
@@ -208,6 +210,8 @@ func requestBody(for command: ParsedCommand,
         return .startRecording(options)
     case .recordStop(let session): return .stopRecording(sessionID: session)
     case .recordMark(let session, let label): return .mark(sessionID: session, label: label)
+    case .recordPause(let session): return .pauseRecording(sessionID: session)
+    case .recordResume(let session): return .resumeRecording(sessionID: session)
     case .status: return .status
     case .inspect(let path):
         return .inspect(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory))
@@ -271,7 +275,18 @@ do {
         if !block.isEmpty { payload["health"] = block }
         emitObject(payload)
         note("Saved \(path)")
-    case .status(let info):            emit(info)
+    case .status(let info):
+        emit(info)
+        // Prose for the state change, because `snitt record pause` returns a
+        // status and "{}" on stdout is not an answer to "did it pause".
+        if info.recording {
+            let footage = (info.elapsedSeconds ?? 0) - (info.pausedSeconds ?? 0)
+            note(info.paused
+                 ? "Paused. \(Int(footage))s of footage, \(Int(info.pausedSeconds ?? 0))s paused."
+                 : "Recording. \(Int(footage))s of footage.")
+        } else {
+            note("Not recording.")
+        }
     case .handshake(let info):         emit(info)
     case .marked(let timeSeconds):
         emit(["markedAt": timeSeconds])

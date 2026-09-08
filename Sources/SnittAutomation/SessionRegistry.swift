@@ -61,13 +61,19 @@ public actor SessionRegistry {
         return id
     }
 
-    public func current(now: Date) -> StatusInfo {
+    public func current(now: Date, paused: Bool = false,
+                        pausedSeconds: Double? = nil) -> StatusInfo {
         guard let session else {
             return StatusInfo(recording: false, sessionID: nil, elapsedSeconds: nil)
         }
+        // `elapsedSeconds` stays WALL time, including paused time, because it
+        // is what `expiredSession` compares against `maxDuration` — reporting
+        // footage here would tell an agent it has room it does not have.
         return StatusInfo(recording: true,
                           sessionID: session.id,
-                          elapsedSeconds: now.timeIntervalSince(session.startedAt))
+                          elapsedSeconds: now.timeIntervalSince(session.startedAt),
+                          paused: paused,
+                          pausedSeconds: pausedSeconds)
     }
 
     /// The id of a session that has outlived its cap, if any.

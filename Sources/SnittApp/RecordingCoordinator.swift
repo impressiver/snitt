@@ -81,6 +81,8 @@ public protocol AgentRecordingControlling: Sendable {
                        git: GitContext?, options: CaptureOptions) async -> CoordinatorOutcome
     func stopForAgent(sessionID: String) async -> AgentStopResult
     func markForAgent(sessionID: String, label: String?) async -> AgentMarkResult
+    func setPausedForAgent(sessionID: String, paused: Bool) async -> AgentMarkResult
+    func pauseStateForAgent() async -> (paused: Bool, pausedSeconds: Double)?
 }
 
 /// Drives one recording from hotkey press to clipboard.
@@ -264,6 +266,29 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         guard let recorder = active, agentSessionID != nil else { return .notRecording }
         guard agentSessionID == sessionID else { return .notCurrentSession }
         return .marked(await recorder.mark(label: label))
+    }
+
+    /// Pauses or resumes an agent's own session (M5e, D53).
+    ///
+    /// Ownership is checked exactly as `markForAgent` checks it: an agent may
+    /// only pause the session it started. A human recording must not be
+    /// pausable over IPC — §5.3's posture is that a person at the machine stays
+    /// in control of their own recording, and silently freezing it from outside
+    /// is the opposite of that.
+    ///
+    /// Returns `.marked` with the offset, since pause and resume each drop a
+    /// marker; the caller reports where it landed.
+    public func setPausedForAgent(sessionID: String, paused: Bool) async -> AgentMarkResult {
+        guard let recorder = active, agentSessionID != nil else { return .notRecording }
+        guard agentSessionID == sessionID else { return .notCurrentSession }
+        if paused { await recorder.pause() } else { await recorder.resume() }
+        return .marked(await recorder.mark(label: nil))
+    }
+
+    /// The live pause state, for `status`. Nil when nothing is recording.
+    public func pauseStateForAgent() async -> (paused: Bool, pausedSeconds: Double)? {
+        guard let recorder = active else { return nil }
+        return (await recorder.isPaused, await recorder.pausedSeconds)
     }
 
     /// Marks whatever is recording, regardless of who started it (§4.12).

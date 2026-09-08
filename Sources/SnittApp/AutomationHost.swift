@@ -281,7 +281,10 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                                             appVersion: AppVersion.current))
 
         case .status:
-            return .status(await registry.current(now: now()))
+            let pause = await coordinator.pauseStateForAgent()
+            return .status(await registry.current(now: now(),
+                                                  paused: pause?.paused ?? false,
+                                                  pausedSeconds: pause?.pausedSeconds))
 
         case .listTargets:
             return await listTargets()
@@ -294,6 +297,12 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
 
         case .mark(let sessionID, let label):
             return await mark(sessionID: sessionID, label: label)
+
+        case .pauseRecording(let sessionID):
+            return await setPaused(sessionID: sessionID, paused: true)
+
+        case .resumeRecording(let sessionID):
+            return await setPaused(sessionID: sessionID, paused: false)
 
         case .inspect(let path):
             return inspect(bundlePath: path)
@@ -782,6 +791,27 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         }
     }
 
+    /// Pause or resume, returning the session's new status so the caller sees
+    /// the state it just asked for rather than having to ask again.
+    private func setPaused(sessionID: String, paused: Bool) async -> AutomationResponse {
+        if let refusal = policy().evaluate(StartOptions(bundleIdentifier: "probe")) {
+            return .failure(refusal)
+        }
+        switch await coordinator.setPausedForAgent(sessionID: sessionID, paused: paused) {
+        case .marked:
+            let state = await coordinator.pauseStateForAgent()
+            return .status(await registry.current(now: now(),
+                                                  paused: state?.paused ?? paused,
+                                                  pausedSeconds: state?.pausedSeconds))
+        case .notCurrentSession, .notRecording:
+            return .failure(AutomationError(
+                code: .noSuchSession,
+                message: "No agent recording with that session id.",
+                hint: "Only the session you started can be paused. A recording a "
+                    + "person started is theirs to control — check `snitt status`."))
+        }
+    }
+
     /// Maps a coordinator outcome to the agent-facing contract (§10).
     ///
     /// Every non-started outcome used to become `target_not_found`/14 with the
@@ -965,6 +995,12 @@ private actor NullCoordinator: AgentRecordingControlling {
     func markForAgent(sessionID: String, label: String?) async -> AgentMarkResult {
         .notRecording
     }
+
+    func setPausedForAgent(sessionID: String, paused: Bool) async -> AgentMarkResult {
+        .notRecording
+    }
+
+    func pauseStateForAgent() async -> (paused: Bool, pausedSeconds: Double)? { nil }
 }
 
 /// Per-session data the audit trail needs at stop time that `SessionRegistry`
