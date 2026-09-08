@@ -29,8 +29,15 @@ Carried over from the M5f review. None of these are recorded anywhere else, and
 §13 ranks fixing them second, above every new feature, because they are defects
 in the surface used daily.
 
-- **An expanded cut fold does not reflow later content.** Expanding a fold in
-  place overlaps whatever follows instead of pushing it right.
+- ~~**An expanded cut fold does not reflow later content.**~~ ADDRESSED
+  2026-09-07, but read the ruling: true reflow was NOT implemented. Moving later
+  content would mean an expansion changing `geometry`, the single axis every
+  gesture and drawn pixel share — that divergence is M4b's Critical #1 and
+  `GestureAxisTests` exists to prevent it. What was actually wrong is narrower:
+  the expansion had no right-hand bound, so a long cut's expansion drew over the
+  next fold and off the view. `TimelineFoldExtent` clamps it. If reflow is still
+  wanted after using it, that is a deliberate change to the axis and needs its
+  own decision.
 - ~~**A marker inside a cut is missing from the marker track.**~~ FIXED
   2026-09-07: the track now has its own list (`MarkerTrackPoints`) that keeps
   cut-interior markers at the fold and draws them hollow. The jump list still

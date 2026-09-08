@@ -326,7 +326,12 @@ public final class TimelineView: NSView {
     private func expandedWidthPixels(for cut: Cut) -> Double {
         guard geometry.pixelsPerSecond > 0 else { return 0 }
         let cutLength = cut.range.end - cut.range.start
-        return cutLength * geometry.pixelsPerSecond
+        let natural = cutLength * geometry.pixelsPerSecond
+        return TimelineFoldExtent.clampedWidth(
+            naturalWidth: natural,
+            foldX: geometry.x(atFold: cut),
+            otherFoldXs: cuts.filter { $0.id != cut.id }.map { geometry.x(atFold: $0) },
+            viewWidth: bounds.width)
     }
 
     /// The pixel height of the thin marker lane at the very top of the view
@@ -796,10 +801,15 @@ public final class TimelineView: NSView {
         // segment" — at the same pixels-per-second the rest of this
         // (output) timeline already draws at. Content drawn after a fold is
         // deliberately NOT pushed right to make room for it: this is
-        // appearance only (see this method's own doc comment), and the
-        // property this task actually guarantees is that NOTHING here can
-        // move `geometry` itself, not that every later pixel re-flows
-        // around a widened fold — see `EditorTimelineState.expandedCutIDs`.
+        // appearance only, and the property that matters is that NOTHING here
+        // can move `geometry` itself — the single axis every gesture and every
+        // drawn pixel share, whose divergence is M4b's Critical #1.
+        //
+        // Corrected 2026-09-07: the expansion IS now bounded, by
+        // `TimelineFoldExtent`, so it stops at the next fold and at the view's
+        // edge. Not reflowing remains a decision; drawing over the next fold
+        // was simply a missing bound, and a long cut's expansion smeared across
+        // everything after it.
         for cut in cuts {
             let foldX = geometry.x(atFold: cut)
             if expandedCutIDs.contains(cut.id) {
