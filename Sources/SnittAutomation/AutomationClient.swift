@@ -30,6 +30,15 @@ public enum ClientError: Error, Equatable {
 /// cooperative pool, so a blocking `read`/`write` cannot starve other tasks.
 public struct AutomationClient: Sendable {
     private let socketURL: URL
+    /// Whether to start `Snitt.app` when nothing is listening. On by default
+    /// for both frontends; a caller that must not cause a launch (a health
+    /// check, a test) turns it off.
+    private let launchIfNeeded: Bool
+    /// Called after a launch, so the frontend can SAY it happened. A tool that
+    /// starts an application on the user's machine without mentioning it is
+    /// the kind of silent side effect §5's posture is against.
+    private let onLaunch: (@Sendable (URL) -> Void)?
+
     /// Bound on the whole round trip once connected, so a server that accepted
     /// the connection but never answers cannot hang the caller forever (§11).
     ///
@@ -39,9 +48,38 @@ public struct AutomationClient: Sendable {
     /// operation. Tests pass something short instead of shrinking the default.
     private let timeout: TimeInterval
 
-    public init(socketURL: URL = SocketPath.url(), timeout: TimeInterval = 120) {
+    public init(socketURL: URL = SocketPath.url(), timeout: TimeInterval = 120,
+                launchIfNeeded: Bool = true,
+                onLaunch: (@Sendable (URL) -> Void)? = nil) {
         self.socketURL = socketURL
         self.timeout = timeout
+        self.launchIfNeeded = launchIfNeeded
+        self.onLaunch = onLaunch
+    }
+
+    /// Whether anything is listening on `path` right now.
+    ///
+    /// Connect-and-close, deliberately: it is the only check that distinguishes
+    /// a live server from the socket file a quit left behind.
+    static func canConnect(to path: String) -> Bool {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        guard fd >= 0 else { return false }
+        defer { close(fd) }
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let maxLength = MemoryLayout.size(ofValue: addr.sun_path)
+        guard path.utf8.count < maxLength else { return false }
+        _ = withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
+            ptr.withMemoryRebound(to: CChar.self, capacity: maxLength) { cptr in
+                path.withCString { strcpy(cptr, $0) }
+            }
+        }
+        let size = socklen_t(MemoryLayout<sockaddr_un>.size)
+        let result = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, size) }
+        }
+        return result == 0
     }
 
     public func send(_ body: AutomationRequest.Body) async throws -> AutomationResponse {
@@ -49,10 +87,25 @@ public struct AutomationClient: Sendable {
     }
 
     public func sendRaw(_ request: AutomationRequest) async throws -> AutomationResponse {
-        // Fail fast rather than block on something we cannot see (§11): if the
-        // socket file is not there, nothing is listening.
-        guard FileManager.default.fileExists(atPath: socketURL.path) else {
-            throw ClientError.notRunning
+        // Reachable means a CONNECT succeeds, not that the socket file exists.
+        // The file outlives the process that made it — quitting Snitt leaves it
+        // behind — so a presence check reports "running" for every launch after
+        // the first, which is exactly when this needs to fire.
+        //
+        // An agent calling into a Snitt that is not running used to get "ask
+        // the person at the machine to open it": correct, and useless to
+        // something with no person to ask. Launching is safe on its own — the
+        // app holds the grant but records nothing until a request passes §5.3's
+        // consent policy, so starting it confers no capability.
+        if !Self.canConnect(to: socketURL.path) {
+            guard launchIfNeeded,
+                  let bundle = AppLauncher.containingAppBundle(
+                    ofExecutable: CommandLine.arguments.first ?? ""),
+                  AppLauncher.launchAndWait(
+                    bundleURL: bundle,
+                    isReady: { Self.canConnect(to: socketURL.path) })
+            else { throw ClientError.notRunning }
+            onLaunch?(bundle)
         }
 
         let payload = try JSONEncoder().encode(request)
