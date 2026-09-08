@@ -130,7 +130,21 @@ private final class SchedulingSpy: NSObject, SPUUpdaterDelegate {
 /// condition is met and only gives up after a generous timeout, so it
 /// stays fast when uncontended and tolerant when not.
 @MainActor
-private func waitUntil(timeout: TimeInterval = 60, _ condition: () -> Bool) async throws {
+/// Polls `condition` until it holds or `timeout` elapses.
+///
+/// 180s, raised from 60 on 2026-09-07. The waits guarded by this are real
+/// `SPUUpdater` scheduler and XPC round-trips, whose latency scales with machine
+/// load rather than with anything the assertion is about. The 60s ceiling was
+/// calibrated before the suite gained waveform and filmstrip sampling — tests
+/// that read every audio sample and decode video frames — and after that both
+/// this file's updater tests and `AppcastTests` began timing out at ~64s in
+/// full-suite runs while passing in isolation in under a second.
+///
+/// `SparkleTestGate` already serialises updater tests against EACH OTHER; it
+/// cannot serialise them against the rest of the suite. Raising the ceiling
+/// changes only how long we wait for a real answer, never what counts as one —
+/// a feed that genuinely fails to parse still fails, just later.
+private func waitUntil(timeout: TimeInterval = 180, _ condition: () -> Bool) async throws {
     let deadline = Date().addingTimeInterval(timeout)
     while !condition() && Date() < deadline {
         try await Task.sleep(nanoseconds: 50_000_000)
