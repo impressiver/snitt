@@ -127,9 +127,10 @@ thing in the plan.
 
 ### 4.3 Distribution: direct download first, Mac App Store later
 
-Direct distribution (Developer ID, notarization, Sparkle updates, third-party
-licensing) ships first and avoids fighting the sandbox over global input
-monitoring.
+Direct distribution (Developer ID, notarization, Sparkle updates) ships first and
+avoids fighting the sandbox over global input monitoring. *Third-party licensing
+was part of this plan and was removed by D66 — the project is open source, free,
+and has nothing to license.*
 
 A Mac App Store build follows, with input monitoring disabled. **This is handled
 by ordinary conditionals at the two or three call sites that need them, not by a
@@ -963,8 +964,10 @@ must not produce an unbuildable order.
    it cannot express order at all (D59).
 8. **Zoom + follow-mouse** — *needs 6 (coordinates) and 7 (per-segment
    attachment)*. Cheap in mechanism, gated on both prerequisites.
-9. **Visible keyboard input** — **BLOCKED on §5.6**, which does not exist yet. A
-   policy gap, not a priority one (D67).
+9. **Visible keyboard input** — **gated by §5.6** (D67): off by default, chords
+   only when on, literal character stream a separate per-recording opt-in. The
+   policy is settled; what remains is key identity through the tap callback,
+   `LoggedEvent` and `events.json` behind D60's version gate.
 10. **M5d durability**, rescoped to what protects an unattended agent run.
     Replan required: the original plan had six verified defects.
 
@@ -988,12 +991,15 @@ which in turn unparks update hosting.
   `AVVideoCompositing`: position-critical overlays whose placement depends on the
   crop/zoom transform stack, where an export-only burn and a preview overlay would
   each reimplement the same math and drift apart.
-- **M8 (licensing; Mac App Store)** — **contradicted, not deprioritized** (D66).
-  There is no licence to enforce and no subscription to gate. A Mac App Store
-  variant remains conceivable but has nothing to do with licensing, and sandbox
-  rules would fight §4.9's helper-process design.
+- **M8 (licensing; Mac App Store)** — the licensing half is **contradicted, not
+  deprioritized** (D66): there is no licence to enforce and no subscription to
+  gate. The App Store half survives on §4.3's own terms — an App Store build
+  ships with **input monitoring disabled**, which is a real constraint the spec
+  already established rather than a new one. **That constraint now costs more
+  than §4.3 knew**: visible clicks and visible keystrokes (D64, D67) both read
+  the `CGEventTap`, so an App Store variant would ship without them. Zoom,
+  follow-mouse and crop are unaffected — they need no input data at all.
 
-**Enhancement, unscheduled:** none. `auto-deep-trim` is item 4 above.
 
 ### Why signing moved into M2
 
@@ -1097,6 +1103,33 @@ does not set it.
 at all, or whether a registered server with a good `instructions` string is
 enough; and whether the app bundle should embed both binaries behind a `setup`
 command or ship them separately.
+
+**S6 — Is on-device transcription good enough, and does it expose word-level
+timings?** D62 makes transcription and text-based editing a pillar (D66) and
+binds it to **on-device only** — shipping screen-and-microphone audio to a hosted
+service would reverse §3 and §5 in the most sensitive way available. So the
+feature stands or falls on what the local APIs can do, and three questions decide
+its shape rather than merely its schedule:
+
+1. **Which API, at the macOS 15 floor (§4.6)?** `SFSpeechRecognizer` with
+   `requiresOnDeviceRecognition = true` is the candidate that certainly exists at
+   that floor; newer frameworks may be better but would raise the floor, which is
+   a §4.6 decision and not a free one.
+2. **Are word-level timings exposed?** This is the load-bearing one. Captions
+   need only segment timings, but **text-based editing needs word timings** —
+   deleting a phrase becomes a `Cut` over its span, and without per-word times
+   there is no span to cut. If word timings are unavailable, D62 collapses to
+   captions and the editing half dies with it.
+3. **Cost, and when to pay it.** During capture competes with the encoder for
+   exactly the resources §12.1's health sampling exists to protect; after capture
+   costs the user a wait before the editor is useful. Measure both on a laptop,
+   on real screen-recording audio — which is the hard case: compressed system
+   audio, a microphone at desk distance, and long silences.
+
+**Accuracy is judged on this project's own recordings, not a benchmark.** The
+audio is narration over a demo, not read prose, and a word error rate that is
+fine for search may be useless for editing, where a wrong word boundary cuts the
+wrong frame.
 
 *(S2 — A/V drift — was deleted. Raising the floor to macOS 15 (§4.6) removes the
 hand-synchronized mic path the spike existed to de-risk. This is the clearest

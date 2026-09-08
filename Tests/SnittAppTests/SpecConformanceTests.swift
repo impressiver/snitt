@@ -85,6 +85,27 @@ struct SpecConformanceTests {
         #expect(unacknowledged.isEmpty, "a later decision overturned these and their own rows still assert the old claim:\n\(unacknowledged.joined(separator: "\n"))")
     }
 
+    @Test("Every spike the spec cites is defined in §14")
+    func spikeReferencesResolve() {
+        // Added in the pass AFTER the one that needed it: pass 1 wrote "spike
+        // the on-device API first (S6)" into §13 and never defined S6 in §14.
+        // The guard existed by then and did not catch it, because it checked §
+        // and D references and not S ones — a guard against a class that only
+        // covered two of its three carriers.
+        //
+        // A spike counts as defined either by its §14 entry ("**S3 — ...") or by
+        // a deletion note ("*(S2 — ... was deleted"), because recording WHY a
+        // spike no longer exists is what stops it being re-proposed — the same
+        // reason superseded decisions keep a stub rather than vanishing.
+        var defined = Set(matches(#"^\*\*(S\d+) —"#).map { $0[1] })
+        defined.formUnion(matches(#"\*\((S\d+) —"#).map { $0[1] })
+        #expect(defined.count > 3, "spike-definition scan found almost nothing")
+
+        let referenced = Set(matches(#"\b(S\d+)\b"#).map { $0[1] })
+        let dangling = referenced.subtracting(defined).sorted()
+        #expect(dangling.isEmpty, "spikes cited but never defined in §14: \(dangling)")
+    }
+
     @Test("Every milestone the spec names appears in §13")
     func milestonesAppearInTheRoadmap() throws {
         // M4b, M5b and M5f were each decided, planned, built and shipped while
