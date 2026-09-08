@@ -193,8 +193,9 @@ nonetheless the *only* mechanism that satisfies §9: a custom compositor class i
 invoked by AVFoundation both during `AVPlayerItem` playback and during offline
 export **(V6)**, so preview and export run one implementation rather than two
 that can drift. Because of that cost and its unproven value, the compositor is
-**deferred behind a validation gate** (§13) — the mechanism is settled; the
-timing is evidence-driven.
+**parked** (§13) — the mechanism is settled; the timing is not. D64 later
+removed most of its workload: crop and zoom are layer-instruction transforms, so
+a custom compositor is now needed only for position-critical *drawn* overlays.
 
 ### 4.6 Minimum OS: macOS 15 (Sequoia)
 
@@ -599,6 +600,39 @@ What Snitt does instead:
   a UX problem to narrate. That distinction is why Developer ID signing moved
   earlier (§13).
 
+### 5.6 Rendering captured input is opt-in, and defaults to shortcuts only
+
+Every rule above governs what Snitt **captures**. This one governs what Snitt
+**draws**, which is a different exposure with a different blast radius: a capture
+stays in a `.snitt` bundle on one machine, while a render is burned into an export
+and travels wherever that file goes.
+
+The precedent is not hypothetical. D29 records a Mail password notification
+captured in the first real M1 recording, during ordinary human full-display
+capture — and the fix that produced (window-scoped capture by default, §5.1) does
+nothing here, because this exposure is drawn *by Snitt* rather than caught
+incidentally. §4.5's reversibility promise does not cover it either: toggling
+keystrokes off restores the source, not a viewer who already has the export.
+
+macOS suppresses event taps while a secure input field has focus, which covers
+password fields and nothing else. A token pasted into a terminal, an API key
+echoed by a shell, a recovery phrase typed into a text editor — none are secure
+fields, and all are exactly what gets typed while demoing developer work.
+
+Therefore:
+
+- **Rendering captured input is off by default.**
+- **When on, the default renders key *chords* only** — ⌘S, ⌃C, ⇧⌘P — because the
+  demo value is "which shortcut did they press", and a chord is the part that
+  carries it.
+- **Rendering the literal character stream is a separate, per-recording opt-in.**
+  Not a preference that persists silently across sessions: the decision is about
+  what is on screen *this time*, so it is made when that is known.
+- **Whatever is rendered is derived from the event log at render time**, never
+  baked at capture — so the decision is revisable right up to the export, and the
+  bundle is no more sensitive than it already was.
+
+
 ## 6. Architecture
 
 Swift package targets, each testable without launching the app:
@@ -758,12 +792,28 @@ Two constraints follow, and both are binding:
    `AVVideoComposition(customVideoCompositorClass:)` and assigning it to the same
    `AVPlayerItem` and export call sites. This is what makes the deferral in §13
    cleanly additive rather than a rewrite.
-2. **`AVVideoCompositionCoreAnimationTool` (`animationTool:`) is not an option
-   and was never in scope.** It cannot be used with `AVPlayerItem` — it is
-   offline/export only, with `AVSynchronizedLayer` as its playback counterpart
-   **(V5)** — so adopting it would mean two overlay implementations that can
-   diverge, defeating the guarantee this section exists to make. Recorded here
-   because it is the obvious-looking shortcut and will otherwise be re-proposed.
+2. **The rule about `AVVideoCompositionCoreAnimationTool`, narrowed.** V5 is
+   still true: `animationTool:` cannot be used with `AVPlayerItem` — offline and
+   export only, with `AVSynchronizedLayer` as its playback counterpart. An earlier
+   version of this clause turned that into a blanket ban ("not an option and was
+   never in scope") and predicted it would be re-proposed anyway. It was, twice
+   (D51, D64), and the ban was the part that was wrong — because it conflated two
+   different kinds of change:
+   - **Geometric transforms** — crop, scale, pan, zoom — are
+     `AVMutableVideoCompositionLayerInstruction` transforms over a plain
+     `AVMutableVideoComposition`. They need no animation tool and no custom
+     compositor, and they apply identically in `AVPlayerItem` playback and
+     `AVAssetExportSession` export. **This section's one-builder guarantee holds
+     for them natively**, and the code already relies on it: `--scale` is such a
+     transform today.
+   - **Drawn content** — subtitles, click rings, keystroke chips — genuinely
+     faces V5's tradeoff. Either accept an export-only burn plus a separate
+     preview drawing (D51's ruling, which the product owner endorsed: the editor
+     is a representation, the export is its realization), or build the custom
+     `AVVideoCompositing` for one implementation. **Position-critical overlays
+     are the honest case for the custom compositor**, because a click ring's
+     correct position depends on the crop/zoom transform stack, so a preview
+     overlay and an export burn would each reimplement that math and drift.
 
 ## 10. IPC protocol and version skew
 
@@ -845,71 +895,101 @@ trip low frame variance, so the threshold must be tuned against real recordings
 before it is allowed to gate anything. Sampling happens during the existing
 `AVAssetWriter` pass; there is no second decode.
 
-## 13. Milestones
+## 13. Milestones and priority
+
+D65 retired the validation gate; D66 supplies what sequences work instead. The
+list below is therefore in two parts: what shipped (history, kept because the
+reasoning in it is still load-bearing) and what is next, **in priority order**.
+
+### Shipped
 
 - **M0** Spikes S1, S3 (§14)
 - **M1** Capture to disk — one `SCStream`, video + system audio + mic
-- **M2a — SHIPPED.** Stable code-signing identity; `SCContentSharingPicker`
-  adoption; window-scoped capture as the universal default (§5.1); menu-bar status
-  item + kill switch (§5.3); global hotkey presenting the picker on every press
+- **M2a** Stable code-signing identity; `SCContentSharingPicker` adoption;
+  window-scoped capture as the universal default (§5.1); menu-bar status item +
+  kill switch (§5.3); global hotkey presenting the picker on every press
   (§4.11, D42); stop-and-copy (§4.1)
 - **M2b** The automation surface: `SnittAutomation`, IPC + version handshake
-  (§10), the `snitt` CLI, the MCP server (§4.8), and consent enforcement for
-  agent-initiated recording (§5.3). **First step is verifying S3's untested half**
-  — that capture works in the real topology, a CLI whose parent is an arbitrary
-  agent host talking over IPC to Snitt.app holding its own TCC grant (§4.9). S3
-  confirmed background capture works but exercised only the terminal's grant
-- **M3** Event logging (data only, no rendering), markers + WebVTT chapters
-  (§4.12), `--auto-trim` (head/tail), auto-focus the target on record (§4.13),
-  progressive permission onboarding (§4.10) — including
-  the pre-explain sheet and the already-denied deep link — plus the four items
-  moved out of M2 because they bear on neither v0 validation question: export
-  with `--max-size`, `snitt inspect` + export manifest, capture health (§12.1),
-  and git context (§7)
+  (§10), the `snitt` CLI, the MCP server (§4.8), consent enforcement for
+  agent-initiated recording (§5.3)
+- **M3** Event logging (data only), markers + WebVTT chapters (§4.12),
+  `--auto-trim`, auto-focus on record (§4.13), progressive permission onboarding
+  (§4.10), export `--max-size`, `snitt inspect` + manifest, capture health
+  (§12.1), git context (§7)
 - **M4** EDL model, timeline UI with marker jump-points, preview (explicit
   passthrough composition slot, §9)
-- **M5** Packaging: notarization, Sparkle, diagnostics (§12). *(Developer ID
-  signing moved earlier — see the M2 note below.)*
+- **M5** Packaging: notarization, Sparkle, diagnostics (§12)
 - **M5c** The app shell (§4.14): permanent `.regular` activation, main menu,
   Settings window, `.snitt` document type + open/Open Recent, multiple editor
-  windows. Added after M5 when real use showed the app had no shell and could not
-  reopen its own documents — see D45. **Gates v0**: §13's first validation
-  question is about the record → trim → share loop, and an editor reachable only
-  at the end of a recording is not that loop
-- **▶ v0 SHIP** — shipped as v0.1.0. **No longer a gate** (D65): the maintainer is
-  the primary customer, so the sequencing question is which feature most improves
-  the tool for its author, not what five strangers report back
-- **M5d** Durability (§11), rescoped by D52 to what protects an **unattended
-  agent** run: finalize when the stream dies, and a disk-full guard at the write
-  site. Launch recovery and retention are deferred — for a human session
-  `Recorder.stop()` already finalizes unconditionally, so those failures still
-  end in a saved take. **Replan required**: the original plan had six verified
-  defects, including an `SCStreamError` classification that does not exist and a
-  recovery signal that strands bundles
-- **M5e** Agent demo production (§4.8), **split by D52**. First: pause/resume,
-  screenshot, marker transcripts as WebVTT, microphone as a setting, plus D53's
-  correlation primitive and `paused` state. Deferred: **Share**, **Export As…**
-  and subtitle burn-in (D50, D51) — human-facing polish §13's second question
-  does not need, and which may never gate v0 if a plain `.mov` attaches to a PR
-  fine. **S5 (§14) gates the shape of this milestone**: the CLI
-  and MCP server exist but ship in no bundle and register with no host, so how
-  an agent is told about Snitt is decided before more verbs are added to it
-- **M6** Overlay desirability probe — **re-scope against D64 before running it.** D51
-  showed overlays need no custom compositor, and the four features D64 records are
-  overlays the product owner has now asked for directly, so what is unproven is no
-  longer desirability but whether the *capture-side data* they need is worth
-  recording
-- **M7** Custom compositor + overlay rendering *(conditional on M6)*. **D64 moves most
-  of this milestone's content out of it**: crop, visible clicks, visible keystrokes and
-  per-segment zoom compose at export via `AVVideoCompositionCoreAnimationTool`, and
-  their real prerequisites are click positions, key identity, a mouse-position track
-  (none of which are captured) and D56 Tier 2's segments (which do not exist)
-- **M8** Licensing; Mac App Store variant
+  windows (D45)
+- **M5f** The editor (D58, D59): output-duration timeline, selection independent
+  of cutting, cuts as reversible identified folds, separate audio/video tracks,
+  an editable marker track, zoom and snapping. *Recorded here retroactively — it
+  was decided and built while this list still ran M5c → M5d, which is the drift
+  D47's conformance guard exists to catch.*
+- **v0.1.0** — built, signed, notarized, stapled, published. Not a gate (D65).
 
-**Enhancement, unscheduled:** `auto-deep-trim` (§8, D57 — supersedes D44's `--auto-trim-gaps`) — removing dead air *between*
-events. Deliberately not placed in a milestone: it needs the EDL and timeline (M4) to
-be reviewable, and it needs audio-aware cut points, so it should follow the v0 gate
-where real recordings can show how long the gaps actually are.
+### Next, in order
+
+Ranked by D66's five pillars, with **hard dependencies named** — ranking by value
+must not produce an unbuildable order.
+
+1. **Crop.** The cheapest item in the queue: `renderSize` plus a layer-instruction
+   transform, extending the call `CompositionBuilder` already makes for `--scale`.
+   No schema change, no permission, no dependency, and previewable live (D64).
+2. **The editor's known defects.** Whatever `docs/superpowers/notes/field-notes.md`
+   is carrying. "Focused in-app editing" is a D66 pillar and the editor is the
+   surface used daily; a defect in built work outranks a new feature.
+3. **Transcription (D62)** — spike the on-device API first (S6), then transcript
+   editing. Two D66 pillars at once (transcription, on-device) and, with the agent
+   surface, one of the two things no competitor combines.
+4. **`auto-deep-trim` (D57)** — *needs 3*. Honestly priced now that D59 refuted the
+   `HealthSampler` path: it needs its own per-span signal, and D62's transcript is
+   a better one than an RMS threshold.
+5. **Agent discovery (S5/D63), then M5e's agent primitives** — *S5 gates M5e*.
+   Pause/resume, screenshot, marker transcripts as WebVTT, D53's correlation
+   primitive and `paused` state. D66's first pillar, and the differentiator with
+   the widest moat: no competitor has an agent surface at all.
+6. **The shared window-frame track**, then **visible clicks** — *5 is independent
+   of this; do whichever is wanted*. Record the window's frame (position + size)
+   over time as ONE capture-side track, then click positions on top of it. Serves
+   every window-relative overlay, so it is built once rather than per feature.
+7. **D56 Tier 2 — segments** (slice, reorder, per-track cuts). A schema *and*
+   algorithm replacement: `KeptRanges` sorts cuts and walks a forward cursor, so
+   it cannot express order at all (D59).
+8. **Zoom + follow-mouse** — *needs 6 (coordinates) and 7 (per-segment
+   attachment)*. Cheap in mechanism, gated on both prerequisites.
+9. **Visible keyboard input** — **BLOCKED on §5.6**, which does not exist yet. A
+   policy gap, not a priority one (D67).
+10. **M5d durability**, rescoped to what protects an unattended agent run.
+    Replan required: the original plan had six verified defects.
+
+**Pick a licence.** Not a milestone and not expensive, but "open source, free, no
+subscription" is one of D66's five reasons this exists, and the repo is private
+today *because* the licence is unsettled. Choosing one unblocks going public,
+which in turn unparks update hosting.
+
+### Parked, with the condition that would unpark each
+
+- **Update hosting (D54)** — parked until the repo is public. `SUFeedURL` points
+  at `releases/latest/download/appcast.xml`, which 404s to anyone unauthenticated
+  while the repo is private. Public repo → the existing appcast works as designed.
+  *Not cut* — the mechanism is built and correct.
+- **M6 (overlay desirability probe)** — mostly answered. D64's features were
+  requested directly, and D65 makes the maintainer's judgement the signal, so
+  there is no desirability left to probe. What survives is narrower: whether the
+  capture-side data clicks and keystrokes need is worth recording.
+- **M7 (custom compositor)** — mostly emptied. Crop and zoom leave via layer
+  instructions (D64, as corrected). What remains is the honest case for a custom
+  `AVVideoCompositing`: position-critical overlays whose placement depends on the
+  crop/zoom transform stack, where an export-only burn and a preview overlay would
+  each reimplement the same math and drift apart.
+- **M8 (licensing; Mac App Store)** — **contradicted, not deprioritized** (D66).
+  There is no licence to enforce and no subscription to gate. A Mac App Store
+  variant remains conceivable but has nothing to do with licensing, and sandbox
+  rules would fight §4.9's helper-process design.
+
+**Enhancement, unscheduled:** none. `auto-deep-trim` is item 4 above.
 
 ### Why signing moved into M2
 
@@ -925,23 +1005,26 @@ changes on every build, because no one could tell the two apart. A stable signin
 identity therefore has to precede the features whose behaviour depends on grants
 persisting — which is M2, not M5.
 
-### The v0 gate
+### What differentiation means here
 
-v0 is **record + trim + export + agent automation, with no overlay rendering**.
-It ships to 5-10 target users before the most expensive component is built.
+*This section was "The v0 gate". D65 retired the gate and D66 replaced its
+premise; the questions below survive as questions worth answering, not as
+conditions anything waits on.*
 
-**Validation must target the right question.** Without overlays, v0's
-differentiation from free built-in `Cmd+Shift+5` recording is precisely two
-things: the non-destructive trim/export loop, and the agent surface. So the
-questions are:
+v0 shipped as **record + trim + export + agent automation, with no overlay
+rendering**. The two questions it was built to answer:
 
 1. Does anyone choose Snitt over `Cmd+Shift+5` for the record → trim → share
    loop?
 2. Does an agent actually record with Snitt and attach the result to a PR?
 
-Not "does anyone use this." If v0 fails those two questions, a compositor will
-not save it, and building it first would have been the most expensive possible
-way to learn that.
+Not "does anyone use this." Both still matter — but D66 reframes what they are
+evidence *for*. Measured feature by feature against the paid field rather than
+against `Cmd+Shift+5`, the trim/export loop is table stakes: CleanShot X and
+Screen Studio both have editors, cursor-follow zoom, click highlighting and
+keystroke display. **The differentiation is the combination, not any member of
+it** — and the two members no competitor pairs with the rest are the agent
+surface and on-device transcription (D66).
 
 **M6 is a probe, not a build.** Overlay desirability is tested with a throwaway
 mockup or a faked demo video shown to those same users — cheap, non-shipping,
@@ -1039,8 +1122,8 @@ managing it.)*
 
 | Risk | Mitigation |
 |---|---|
-| Custom compositor is the hardest component and could slip | Deferred behind the v0 gate (§13); mid-export fallback (§11); cross-architecture golden frames (§15) |
-| v0 is not differentiated enough vs free built-in recording | That is exactly what the v0 gate tests, before the expensive build |
+| Custom compositor is the hardest component and could slip | Parked (§13), and D64 shrank it — crop and zoom exit via layer instructions, leaving only position-critical drawn overlays; mid-export fallback (§11); cross-architecture golden frames (§15) |
+| Differentiation is thin feature-by-feature against the paid field, not just against free built-in recording | Answered by D66: the differentiator is the *combination* — agentic support, transcription, focused editing, on-device, open source — not any single feature. The risk therefore moves: it is now that the combination is never completed, not that one feature is missing |
 | Input Monitoring blocks the App Store plan | Spike S1; overlays degrade cleanly by design (§11) |
 | Agent recording leaks sensitive on-screen content | §5 consent rules, enforced in `SnittAutomation` and unit-tested; audit log (§12) |
 | TCC grant attribution breaks agent workflows | §4.9 thin-client architecture; spike S3 verifies it |
@@ -1291,11 +1374,31 @@ since it looks like an answer.
 
 | D63 | **Agent-facing discovery gets a spike (S5) before M5e is planned.** The question is not whether to build an MCP server — one exists — but **registration** (the binary is on the machine and the host can launch it) and **disclosure** (an agent thinks to reach for it). Separately, and not an open question: the shipped bundle carrying neither client binary is a **defect**, not one of the options | Product-owner direction: agents need to be told Snitt exists. Verified while framing it: `Scripts/make-app.sh` copies `SnittApp`, `Sparkle.framework` and `AppIcon.icns` into `Snitt.app` and nothing else, so `snitt` and `snitt-mcp` live only in `.build/` on the machine that compiled them — the entire agent surface §13's second validation question depends on is absent from the artifact that was notarized, signed and released. No script installs them anywhere either. That is D61's shape one layer down: the pipeline was proved, the capability was not delivered. **Why a spike rather than a task:** the two problems have different answers and the cheap-looking one is the wrong one. A tool list is read at *call* time and answers "how do I invoke this"; nothing in it answers "why would I record my screen," which is read at *decide* time — so registering the server may satisfy registration and leave disclosure untouched. The reverse also holds: a skill can describe a workflow perfectly and still name a binary that is not there. Weighing them needs the options laid against both axes, which is what S5 does. **One item needs no spike and no waiting:** MCP's `initialize` result has an `instructions` field for server-level purpose and `snitt-mcp` does not set it | §4.8, §6, §8, §10, §13, §14, D52, D53, D54, D61; `Scripts/make-app.sh:150-170`, `build/Snitt.app/Contents/MacOS/`, `Sources/snitt-mcp/main.swift:146-150`, `MCPBridge.swift:110-250` | Decided (spike queued) | capability-built-shipped-nowhere |
 
-| D64 | **Crop, per-segment zoom + follow-mouse, visible clicks and visible keystrokes** — queued, and they **re-scope M6/M7 rather than joining them**. Crop is unblocked today. The other three are blocked on **capture-side data that is not recorded**, not on a renderer | Product-owner direction. The framing to correct first: these read as overlay features, so they look like M7 ("custom compositor + overlay rendering", conditional on M6's desirability probe). **Two things falsify that.** D51 already established `AVVideoCompositionCoreAnimationTool` composes timed layers at export with `AVAssetExportSession` and no custom compositor — that is what moved subtitle burn-in out of M7, and click rings and keystroke chips are the same mechanism over different data. And M6 asks whether anyone wants overlays; the person who would decide has now asked for them twice. So M7's expensive half was never the drawing. **The real blocker, verified:** `InputEventMonitor`'s callback is `(EventKind) -> Void` — it passes the *kind* and nothing else. The `CGEventTap` mask is `keyDown | leftMouseDown | rightMouseDown`, and `LoggedEvent` is `{id, timeSeconds, kind, label, transcript}`. So a click is recorded as "a click happened at 12.4s" with **no x/y anywhere in the pipeline**, a keystroke carries **no key identity**, and mouse *movement* is not captured at all — not sparsely, not at any rate. Visible clicks and visible keystrokes each need a field added through three layers (tap callback, `LoggedEvent`, `events.json` schema, with D60's version gate); follow-mouse needs a position track that does not exist. **An earlier draft of this entry priced that wrongly**, assuming it meant widening the tap mask to `mouseMoved` — the one input class that fires continuously — and inheriting the tap's Input Monitoring grant. It does not. Cursor position is `NSEvent.mouseLocation`, which needs no TCC grant and no tap, and `CaptureSession.handle(_:of:)` already runs per sample buffer with its `presentationTimeStamp` in hand (the per-frame call is `sink.append` at `CaptureSession.swift:219` — an earlier draft of this entry cited :215, which is inside `if !didBegin` and fires once at session start), so position can be sampled **on the frame clock** — exactly the shape D57 wanted from `HealthSampler` and did not get, since these samples would carry timestamps by construction. Follow-mouse is therefore the CHEAPEST of the three, not the most expensive, and is the one that needs no permission the app does not already have. **A second, separate problem for clicks:** the tap reports **screen** coordinates while §5.1 makes capture **window**-scoped by default, and a window can move mid-recording — so a click ring needs a screen→window→video mapping over time, not a coordinate. **Zoom + follow-mouse is per *segment*, and segments do not exist**: slice is D56 **Tier 2**, and D59 verified `KeptRanges` sorts cuts and walks a forward cursor, so kept spans are derived positionally with no identity to hang a property on. This is now the second feature demanding segment identity, which is evidence *for* Tier 2 rather than a reason to defer it again. **Crop is the exception and can go first**: a composition-time transform needing no event data, stored in the EDL per §4.5 so `capture.mov` stays pristine, and interacting only with `--max-size` (§8), whose byte search walks scale and quality over dimensions crop changes. **Privacy, which is not a detail here:** rendering keystrokes makes anything typed during a recording legible to everyone who watches it. macOS suppresses event taps for secure input fields, which covers password fields and nothing else — a token pasted into a terminal is not a secure field. §5 is the strictest part of this spec and this is the first feature that would put captured input on screen, so it needs a §5 rule of its own before it needs a renderer | §4.2, §4.5, §5.1, §8, §9, §13 (M6, M7), D51, D56, D57, D59, D60; `InputEventMonitor.swift:32-52`, `EventLog.swift:22-40`, `KeptRanges.swift:13-42` | Decided (queued, tiered) | overlay-features-blocked-on-capture-not-rendering |
+| D64 | **Crop, per-segment zoom + follow-mouse, visible clicks and visible keystrokes** — queued, and they **re-scope M6/M7 rather than joining them**. Crop is unblocked today. The other three are blocked on **capture-side data that is not recorded**, not on a renderer | Product-owner direction. The framing to correct first: these read as overlay features, so they look like M7 ("custom compositor + overlay rendering", conditional on M6's desirability probe). **Amended (refinement, 2026-09-07): the mechanism below is wrong for two of the
+four.** Crop and zoom+follow-mouse are **not** animation-tool work at all — they
+are `AVMutableVideoCompositionLayerInstruction` transforms (`setTransform`,
+`setTransformRamp`) plus `renderSize`, over a plain `AVMutableVideoComposition`.
+That needs no custom compositor AND no animation tool, and unlike the animation
+tool it applies in `AVPlayerItem` playback as well as export — so those two are
+previewable live and satisfy §9's one-builder rule natively. The code already
+does exactly this for `--scale` (`CompositionBuilder.swift:245-251`), and
+`PreviewController.swift:90-91` hands the same composition to the player. Only
+visible clicks and keystrokes add new pixels, and only they face V5's tradeoff.
+**Two things falsify that.** D51 already established `AVVideoCompositionCoreAnimationTool` composes timed layers at export with `AVAssetExportSession` and no custom compositor — that is what moved subtitle burn-in out of M7, and click rings and keystroke chips are the same mechanism over different data. And M6 asks whether anyone wants overlays; the person who would decide has now asked for them twice. So M7's expensive half was never the drawing. **The real blocker, verified:** `InputEventMonitor`'s callback is `(EventKind) -> Void` — it passes the *kind* and nothing else. The `CGEventTap` mask is `keyDown | leftMouseDown | rightMouseDown`, and `LoggedEvent` is `{id, timeSeconds, kind, label, transcript}`. So a click is recorded as "a click happened at 12.4s" with **no x/y anywhere in the pipeline**, a keystroke carries **no key identity**, and mouse *movement* is not captured at all — not sparsely, not at any rate. Visible clicks and visible keystrokes each need a field added through three layers (tap callback, `LoggedEvent`, `events.json` schema, with D60's version gate); follow-mouse needs a position track that does not exist. **An earlier draft of this entry priced that wrongly**, assuming it meant widening the tap mask to `mouseMoved` — the one input class that fires continuously — and inheriting the tap's Input Monitoring grant. It does not. Cursor position is `NSEvent.mouseLocation`, which needs no TCC grant and no tap, and `CaptureSession.handle(_:of:)` already runs per sample buffer with its `presentationTimeStamp` in hand (the per-frame call is `sink.append` at `CaptureSession.swift:219` — an earlier draft of this entry cited :215, which is inside `if !didBegin` and fires once at session start), so position can be sampled **on the frame clock** — exactly the shape D57 wanted from `HealthSampler` and did not get, since these samples would carry timestamps by construction. Follow-mouse is therefore the CHEAPEST of the three, not the most expensive, and is the one that needs no permission the app does not already have. **A second, separate problem for clicks:** the tap reports **screen** coordinates while §5.1 makes capture **window**-scoped by default, and a window can move mid-recording — so a click ring needs a screen→window→video mapping over time, not a coordinate.
+**Amended (refinement, 2026-09-07): that cost belongs to follow-mouse too, and an
+earlier draft charged it only to clicks.** `NSEvent.mouseLocation` returns global
+screen coordinates — the same coordinate class — and a mapping error there is
+*worse*, because it mis-frames the whole exported shot rather than misplacing one
+ring. **Both features are therefore served by one shared capture-side track: the
+window's frame (position + size) over time**, recorded once and reused by every
+window-relative overlay. **Zoom + follow-mouse is per *segment*, and segments do not exist**: slice is D56 **Tier 2**, and D59 verified `KeptRanges` sorts cuts and walks a forward cursor, so kept spans are derived positionally with no identity to hang a property on. This is now the second feature demanding segment identity, which is evidence *for* Tier 2 rather than a reason to defer it again. **Crop is the exception and can go first**: a composition-time transform needing no event data, stored in the EDL per §4.5 so `capture.mov` stays pristine, and interacting only with `--max-size` (§8), whose byte search walks scale and quality over dimensions crop changes. **Privacy, which is not a detail here:** rendering keystrokes makes anything typed during a recording legible to everyone who watches it. macOS suppresses event taps for secure input fields, which covers password fields and nothing else — a token pasted into a terminal is not a secure field. §5 is the strictest part of this spec and this is the first feature that would put captured input on screen, so it needs a §5 rule of its own before it needs a renderer | §4.2, §4.5, §5.1, §8, §9, §13 (M6, M7), D51, D56, D57, D59, D60; `InputEventMonitor.swift:32-52`, `EventLog.swift:22-40`, `KeptRanges.swift:13-42` | Decided (queued, tiered) | overlay-features-blocked-on-capture-not-rendering |
 
 | D65 | **The maintainer is the primary customer, and "queued pending evidence" is retired as a category.** Work is now sequenced by *differentiation* — how much a feature makes this better than the alternatives its author rejected — not by waiting on external validation. §13's two questions survive as questions, but they no longer gate | Product-owner correction: *"I am the primary customer... I am building this for me — because I don't like the other available options... we don't need to wait for people to use it if even I don't like it yet."* This resolves, rather than contradicts, what D61 had already found: queued items were accumulating against a signal **nobody was collecting**, which made "evidence-gated" indistinguishable from "deferred indefinitely". The signal exists and always did — it is the author's own use, available at zero latency, and it is a *better* instrument than five strangers for the question actually being asked, which is whether this is worth using instead of the tools they already rejected. **What this repeals:** the deferral half of D52, D55, D56 (Tier 2), D57, D61, D62 and D64 — every "queued pending evidence" status becomes queued pending *priority*. **What it does not repeal:** D52's mechanism, which was never really about users — it was that a milestone gets inserted ahead of others on a good local argument, and the fix is an explicit priority order rather than a gate. Nor does it touch the evidence standard for *facts*: claims about the code are still verified against the code, and this project's recurring defect has been plans resting on capabilities that turned out not to exist (D59's `KeptRanges`, D59's `HealthSampler`, D64's own follow-mouse mispricing three paragraphs up). Whose judgment orders the work has changed; what counts as a checked fact has not. **The reprioritization this forces:** the differentiators are the editor (D56), automatic zoom/follow-mouse and visible clicks (D64), transcription with text-based editing (D62), and `auto-deep-trim` (D57) — the features that make this unlike `Cmd+Shift+5`. Against them, several built or scheduled items serve a distribution that does not exist and should not consume another hour until it does: **update hosting** (D54 — a private repo, one machine, and `git pull && ./Scripts/make-app.sh` is already a faster update path than Sparkle), **M8 licensing and the Mac App Store variant**, and the parts of §12 and crash reporting that exist to hand a stranger something to attach to a support thread. Notarization, signing and the diagnostics that are already built stay — they are sunk, they cost nothing to keep, and TCC grant stability depends on the signing half | §1, §2, §13, §12; D45, D52, D54, D55, D56, D57, D58, D61, D62, D64; direct product-owner correction 2026-09-07 | Decided | gate-built-for-an-audience-of-one |
 
-`conformance: 2026-09-06` (post-M5c refinement)
+| D66 | **The differentiator is the COMBINATION, not any feature in it: agentic support, transcription, focused in-app editing, on-device, and open source (free, no subscription).** Supersedes D65's list of "differentiators", which named features that are individually table stakes | The refinement pass asked what the maintainer's own rejection of existing tools was actually about, because the feature-by-feature answer came back negative: CleanShot X already ships click highlighting, keystroke display and cursor-following zoom; Screen Studio's entire positioning is automatic cursor-follow zoom; Descript popularized transcript-based editing. Against `Cmd+Shift+5` those are differentiators, and §13's original framing measured against `Cmd+Shift+5` — but the field a tool is judged against is the one its user actually chose between, and that field is paid, closed, and mostly subscription. **Answered directly by the product owner:** *"The reasons no existing software is good enough are the combination of: agentic support, transcription, focused in-app editing (trim, cut, etc), on-device, and open source (free, no subscription)."* That is a coherent and checkable thesis rather than a preference — no competitor pairs an agent surface with local transcription, and none is free and open source. **What it changes.** (1) The two members with a real moat are the **agent surface** (§4.8 — no competitor has one at all) and **on-device transcription** (D62 — Descript is cloud, which also violates the on-device pillar), so those rank above the visual-polish features. (2) The polish features are still worth building: matching table stakes is what makes a tool usable by its author, and D58's rule stands — nobody likes it if the UI is bad. They are just not the reason it exists. (3) **M8 is contradicted, not deprioritized**: there is no licence to enforce and no subscription to gate. (4) **Update hosting (D54) is unparked by the same pillar it was parked under** — the appcast 404s only because the repo is private, and "open source" resolves that; the mechanism is already built and correct. (5) Choosing a licence becomes a small unblocking task rather than a milestone, because the repo is private today *precisely* because the licence is unsettled | §1, §2, §4.8, §13, §16; D54, D57, D58, D62, D64, D65; product-owner statement 2026-09-07; competitive check labelled PLAUSIBLE (web-sourced) | Decided | measured-against-the-wrong-field |
+| D67 | **Visible keyboard input is BLOCKED on §5.6, not merely deprioritized** — and §5.6 now exists: rendering captured input is off by default, renders key *chords* only when on, and needs a separate per-recording opt-in for the literal character stream | Found by two personas independently, from different mandates. D64 said keystroke rendering "needs a §5 rule of its own before it needs a renderer" — a **policy** gap. D65 then repealed "the deferral half of D64" in bulk, which does not distinguish a policy gap from an evidence gap, so on the spec's own text the feature silently became ready-to-build; D65's own differentiator list dropped it with no stated reason, leaving it genuinely ambiguous whether that was deliberate. **Verified:** §5's five subsections all governed *capture* consent and contained no rule about *display*. The harm is asymmetric with everything else in §5 — a capture stays in a bundle on one machine, a render travels with the export — and this project has already had the incidental-exposure incident (D29, a Mail password notification in the first real M1 recording), whose fix (window-scoped capture) does nothing against an exposure Snitt draws itself. §4.5's reversibility promise likewise protects the source, not a viewer who already received the file. macOS's secure-input suppression covers password fields and nothing else, which excludes every way a secret actually reaches a developer's screen: pasted into a terminal, echoed by a shell, typed into an editor | §4.5, §5.6, §13, D29, D64, D65; Red-team + Product/UX personas, convergent | Decided | policy-gap-repealed-as-if-it-were-an-evidence-gap |
+
+`conformance: 2026-09-07` (post-D66 refinement pass)
 
 ### Termination
 
