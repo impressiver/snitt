@@ -77,6 +77,7 @@ snitt — record a window and hand back a .snitt bundle
         [--mic] [--no-system-audio]        parsed, not yet applied (M3)
   snitt record stop <session-id>         stop; prints the bundle path
   snitt record mark <session-id> [--label <text>]   drop a marker
+  snitt setup [--apply]                   register the MCP server with agents
   snitt crop <bundle> --x F --y F --width F --height F
         [--reset]                        crop, in fractions of the frame
   snitt inspect <bundle>                 metadata as JSON, no GUI
@@ -114,6 +115,79 @@ if case .help = command {
     exit(0)
 }
 
+// `setup` never talks to Snitt.app — it registers the MCP server with the
+// agent hosts on this machine — so it short-circuits before the client below
+// tries to connect. Running it while Snitt is closed has to work; that is
+// precisely when someone is setting things up.
+if case .setup(let apply) = command {
+    let mcpPath = SetupPlan.siblingMCPPath(ofExecutable: CommandLine.arguments[0])
+    guard FileManager.default.isExecutableFile(atPath: mcpPath) else {
+        note("""
+        Could not find snitt-mcp beside this binary (looked at \(mcpPath)).
+
+        Both ship inside Snitt.app/Contents/Helpers. If you are running a copy
+        from .build, run the one in the app bundle instead — registering a
+        stale server is the version mismatch the protocol handshake refuses.
+        """)
+        exit(1)
+    }
+
+    let steps = SetupPlan.steps(mcpPath: mcpPath,
+                                installedExecutables: installedExecutables())
+    emit(SetupReport(mcpPath: mcpPath, applied: apply, steps: steps))
+
+    var ranAny = false
+    for step in steps {
+        if !step.isInstalled {
+            note("\(step.host): not installed (\(step.executable) is not on PATH). To register later:\n  \(step.shellLine)")
+            continue
+        }
+        guard apply else {
+            note("\(step.host): would run\n  \(step.shellLine)")
+            continue
+        }
+        note("\(step.host): registering…")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = step.command
+        do {
+            try process.run()
+            process.waitUntilExit()
+            ranAny = true
+            note(process.terminationStatus == 0
+                 ? "\(step.host): registered as `\(SetupPlan.serverName)`."
+                 : "\(step.host): its own command exited \(process.terminationStatus). Run it by hand:\n  \(step.shellLine)")
+        } catch {
+            note("\(step.host): could not launch \(step.executable): \(error.localizedDescription)")
+        }
+    }
+    if !apply {
+        note("\nNothing was changed. Re-run with --apply to register.")
+    } else if ranAny {
+        note("\nRestart the agent host so it picks up the new server.")
+    }
+    exit(0)
+}
+
+/// Which host CLIs exist on this machine.
+///
+/// `env` rather than parsing PATH by hand, so shims and shell functions resolve
+/// the same way they will when the command is actually run.
+func installedExecutables() -> Set<String> {
+    var found: Set<String> = []
+    for name in ["claude", "cursor"] {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["which", name]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { continue }
+        process.waitUntilExit()
+        if process.terminationStatus == 0 { found.insert(name) }
+    }
+    return found
+}
+
 /// Maps a parsed command to the wire request, resolving any client-supplied
 /// path against `currentDirectory` — the CALLER's working directory, never
 /// the app's, which is `/` for `Snitt.app` and cannot know what a relative
@@ -143,6 +217,12 @@ func requestBody(for command: ParsedCommand,
     case .crop(let path, let rect):
         return .crop(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
                      rect: rect)
+    case .setup:
+        // Unreachable: `setup` exits above, before any request is built. It
+        // never talks to the app, so there is no body for it — and a fatalError
+        // here is louder than a `.status` fallback that would silently make
+        // `snitt setup` report whether a recording is running.
+        fatalError("setup is handled before the client connects")
     case .export(let path, let format, let out, let scale, let chapters, let maxSizeBytes):
         return .export(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
                        format: format,

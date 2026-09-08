@@ -23,6 +23,9 @@ public enum ParsedCommand: Equatable {
     case trim(bundlePath: String, start: Double?, end: Double?, auto: Bool)
     /// `rect` nil means `--reset`: remove the crop entirely.
     case crop(bundlePath: String, rect: CropRect?)
+    /// Register the bundled MCP server with the agent hosts on this machine.
+    /// Prints by default; `apply` actually runs the registration commands.
+    case setup(apply: Bool)
     case export(bundlePath: String, format: String, outputPath: String,
                 scale: Double, chapters: Bool, maxSizeBytes: Int?)
     /// `outputPath` here is still the RAW string typed on the command line —
@@ -100,6 +103,18 @@ public enum CommandLineParser {
                   + "Use the path `snitt record stop` printed."))
             }
             return parseTrim(path: path, args: Array(args.dropFirst()))
+
+        case "setup":
+            var apply = false
+            for flag in args {
+                guard flag == "--apply" else {
+                    return .failure(ParseFailure(
+                        "Unknown setup option: \(flag). `snitt setup` prints what it "
+                      + "would do; add --apply to run it."))
+                }
+                apply = true
+            }
+            return .success(.setup(apply: apply))
 
         case "crop":
             guard let path = args.first else {
