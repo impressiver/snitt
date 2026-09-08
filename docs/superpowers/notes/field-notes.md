@@ -139,6 +139,18 @@ thumbnails is too few on a long recording.
 these two features are the first work in a while whose quality genuinely cannot
 be judged from tests.
 
+## Open — one unattributed intermittent test failure
+
+2026-09-07: a full-suite run failed with a single issue, and the three runs after
+it were green. I did not capture WHICH test, so it is unattributed. The suite has
+two known load-sensitive families — the real-`SPUUpdater` tests, whose ceilings
+were raised 60s to 180s the same day — and this may be a third instance of that
+or something else entirely.
+
+**If it recurs, capture the test name before re-running.** A green re-run erases
+the evidence, which is what happened here. Worth adding `--verbose` or teeing the
+output when a failure appears.
+
 ## Manual checklist — for the next session at the machine
 
 Ordered by how much is riding on the answer.
