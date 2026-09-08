@@ -177,6 +177,9 @@ public final class TimelineView: NSView {
     /// view never decides expansion on its own, only reports a click via
     /// `onToggleExpansion` and draws whatever the owner hands back.
     private var expandedCutIDs: Set<UUID> = []
+    /// Which audio sources this recording has, and whether each is muted —
+    /// one band each in `draw`.
+    private var trackStates: [TrackState] = []
     /// OUTPUT time (M5f Task 3) — see `EditorTimelineState.displayState`'s
     /// doc comment for why these arrive unconverted.
     private var jumpPoints: [JumpPoint] = []
@@ -262,13 +265,15 @@ public final class TimelineView: NSView {
     /// them at all.
     public func update(duration: Double, cuts: [Cut], jumpPoints: [JumpPoint],
                        playhead: Double, selection: Selection? = nil,
-                       expandedCutIDs: Set<UUID> = []) {
+                       expandedCutIDs: Set<UUID> = [],
+                       trackStates: [TrackState] = []) {
         self.duration = duration
         self.cuts = cuts
         self.jumpPoints = jumpPoints
         self.playhead = playhead
         self.selection = selection
         self.expandedCutIDs = expandedCutIDs
+        self.trackStates = trackStates
         rebuildGeometry()
         needsDisplay = true
     }
@@ -750,17 +755,30 @@ public final class TimelineView: NSView {
         // drawing pass below, spanning the full view height including the
         // marker lane, because a cut is one decision affecting the whole
         // stack, not a per-track one.
-        let markerRect = NSRect(x: 0, y: 0, width: bounds.width, height: markerTrackHeight)
-        let remaining = max(0, bounds.height - markerTrackHeight)
-        let videoRect = NSRect(x: 0, y: markerTrackHeight, width: bounds.width, height: remaining * 0.6)
-        let audioRect = NSRect(x: 0, y: markerTrackHeight + remaining * 0.6,
-                               width: bounds.width, height: remaining * 0.4)
+        // The audio band is now ONE BAND PER SOURCE (microphone, system audio)
+        // rather than a single undifferentiated strip: D56 Tier 1 asked for
+        // separate tracks, and drawing both sources as one meant a muted
+        // source looked exactly like an unmuted one while exporting
+        // differently. Sources are derived from `trackStates`, so a recording
+        // made without the microphone gets no empty mic lane implying a source
+        // that was never captured.
+        let tracks = TimelineTrackLayout.audioTracks(in: trackStates)
+        let bands = TimelineTrackLayout.bands(in: bounds,
+                                              markerHeight: markerTrackHeight,
+                                              audioTracks: tracks)
         NSColor.quaternaryLabelColor.setFill()
-        NSBezierPath(rect: markerRect).fill()
+        NSBezierPath(rect: bands.marker).fill()
         NSColor.tertiaryLabelColor.setFill()
-        NSBezierPath(rect: videoRect).fill()
-        NSColor.tertiaryLabelColor.withAlphaComponent(0.6).setFill()
-        NSBezierPath(rect: audioRect).fill()
+        NSBezierPath(rect: bands.video).fill()
+        for (track, rect) in bands.audio {
+            let muted = trackStates.first { $0.track == track }?.muted ?? false
+            // A muted source draws markedly fainter — the one visible
+            // difference between "this audio is in the export" and "it is not".
+            NSColor.tertiaryLabelColor.withAlphaComponent(muted ? 0.15 : 0.6).setFill()
+            NSBezierPath(rect: rect).fill()
+            NSColor.separatorColor.setFill()
+            NSBezierPath(rect: NSRect(x: 0, y: rect.minY, width: bounds.width, height: 1)).fill()
+        }
 
         // D56 (M5f Task 5): a cut is a FOLD — its own two edges, collapsed
         // to the single OUTPUT position they meet at (`geometry.x(atFold:)`),

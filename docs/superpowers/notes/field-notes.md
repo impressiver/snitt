@@ -36,9 +36,10 @@ in the surface used daily.
   it, so there is no way to see or move it.
 - **No on-screen zoom affordance.** Timeline zoom exists and is keyboard-only;
   nothing indicates it is available or what the current level is.
-- **Mic and system audio draw as one band.** D56 Tier 1 called for separate
-  audio and video tracks; the two audio sources are still merged visually, so
-  per-source gain and mute are not addressable from the timeline.
+- ~~**Mic and system audio draw as one band.**~~ FIXED 2026-09-07: one band per
+  source, derived from `trackStates` so a mic-less recording gets no empty lane,
+  and a muted source draws markedly fainter — `TrackState.muted` had been
+  changing the export and nothing on screen since M3.
 
 ## Needs a human once
 

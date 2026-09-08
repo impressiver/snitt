@@ -149,6 +149,10 @@ final class EditorTimelineState: ObservableObject {
         let selection: Selection?
         /// See `expandedCutIDs`'s own doc comment.
         let expandedCutIDs: Set<UUID>
+        /// Which audio sources exist and whether each is muted. The timeline
+        /// draws one band per source, so muting has a visible effect — until
+        /// now `TrackState.muted` changed the export and nothing on screen.
+        let trackStates: [TrackState]
     }
 
     func displayState(playhead outputPlayhead: Double) -> DisplayState {
@@ -157,7 +161,8 @@ final class EditorTimelineState: ObservableObject {
                     jumpPoints: controller.jumpPoints,
                     playhead: outputPlayhead,
                     selection: selection,
-                    expandedCutIDs: expandedCutIDs)
+                    expandedCutIDs: expandedCutIDs,
+                    trackStates: edl.trackStates)
     }
 
     /// `time` arrives in SOURCE time — the view's own axis — and must be
@@ -510,7 +515,8 @@ private struct TimelineViewRepresentable: NSViewRepresentable {
                      jumpPoints: display.jumpPoints,
                      playhead: display.playhead,
                      selection: display.selection,
-                     expandedCutIDs: display.expandedCutIDs)
+                     expandedCutIDs: display.expandedCutIDs,
+                     trackStates: display.trackStates)
     }
 }
 
