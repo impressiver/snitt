@@ -77,6 +77,8 @@ snitt — record a window and hand back a .snitt bundle
         [--mic] [--no-system-audio]        parsed, not yet applied (M3)
   snitt record stop <session-id>         stop; prints the bundle path
   snitt record mark <session-id> [--label <text>]   drop a marker
+  snitt crop <bundle> --x F --y F --width F --height F
+        [--reset]                        crop, in fractions of the frame
   snitt inspect <bundle>                 metadata as JSON, no GUI
   snitt trim <bundle> --start <s> --end <s>   cut a range (edit.json only)
   snitt trim <bundle> --auto-trim        trim bookends from a human recording's
@@ -138,6 +140,9 @@ func requestBody(for command: ParsedCommand,
     case .trim(let path, let start, let end, let auto):
         return .trim(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
                      start: start, end: end, auto: auto)
+    case .crop(let path, let rect):
+        return .crop(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
+                     rect: rect)
     case .export(let path, let format, let out, let scale, let chapters, let maxSizeBytes):
         return .export(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
                        format: format,
@@ -198,6 +203,13 @@ do {
     case .trimmed(let summary):
         emit(summary)
         note("Kept \(Int(summary.keptSeconds))s, cut \(Int(summary.cutSeconds))s")
+    case .cropped(let summary):
+        emit(summary)
+        // Pixels, not fractions: an agent cannot look at the video, and the
+        // dimensions are what it needs to reason about --max-size.
+        note(summary.crop == nil
+             ? "Crop removed. Exports at \(summary.pixelWidth)x\(summary.pixelHeight)."
+             : "Cropped. Exports at \(summary.pixelWidth)x\(summary.pixelHeight).")
     case .exported(let manifest):
         emit(manifest)
         note(exportNote(manifest))

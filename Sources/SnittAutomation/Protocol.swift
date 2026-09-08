@@ -44,7 +44,17 @@ public enum AutomationProtocol {
     /// response would fail `keyNotFound` — acceptable only because there is
     /// no old client to break; a real v2 release would need this amendment
     /// to be additive-and-optional instead, or a bump.
-    public static let version = 2
+    /// 3 — added `.crop`/`.cropped`. A bump rather than another additive
+    /// amendment: unlike every earlier change to v2, **v0.1.0 has shipped**, so
+    /// there IS a released client whose compatibility a silent case addition
+    /// would break — an old app receiving `.crop` cannot decode it and reports
+    /// `internal_error` where §10 wants a refusal that says what to do.
+    ///
+    /// The blast radius is small because D63 now embeds `snitt` and `snitt-mcp`
+    /// inside `Snitt.app`, so client and app ship and update together; a
+    /// mismatched pair means someone is running a loose binary from an old
+    /// build, which is exactly the case the handshake should refuse loudly.
+    public static let version = 3
 }
 
 public struct StartOptions: Codable, Sendable, Equatable {
@@ -86,6 +96,9 @@ public struct AutomationRequest: Codable, Sendable {
         case mark(sessionID: String, label: String?)
         case inspect(bundlePath: String)
         case trim(bundlePath: String, start: Double?, end: Double?, auto: Bool)
+        /// A `nil` rect REMOVES the crop, which is distinct from cropping to
+        /// the full frame only in what reaches disk.
+        case crop(bundlePath: String, rect: CropRect?)
         case export(bundlePath: String, format: String, outputPath: String,
                     scale: Double, chapters: Bool, maxSizeBytes: Int?)
         /// `outputPath` arrives already resolved against the CALLER's working
@@ -233,12 +246,30 @@ public enum AutomationResponse: Codable, Sendable, Equatable {
     case marked(timeSeconds: Double)
     case inspected(InspectReport)
     case trimmed(TrimSummary)
+    case cropped(CropSummary)
     case exported(ExportManifest)
     case diagnosticsWritten(DiagnosticsReport)
 }
 
 /// What a trim produced, for a caller that cannot inspect `edit.json` itself
 /// (the same reason `ExportManifest` exists — see its doc comment).
+/// What a crop did, in PIXELS as well as fractions.
+///
+/// An agent cannot look at the video (§8's reason `snitt inspect` exists), so
+/// "0.5 x 0.5" is not an answer it can act on — it needs the dimensions its
+/// export will actually have, which is also what `--max-size` reasons about.
+public struct CropSummary: Codable, Sendable, Equatable {
+    public var crop: CropRect?
+    public var pixelWidth: Int
+    public var pixelHeight: Int
+
+    public init(crop: CropRect?, pixelWidth: Int, pixelHeight: Int) {
+        self.crop = crop
+        self.pixelWidth = pixelWidth
+        self.pixelHeight = pixelHeight
+    }
+}
+
 public struct TrimSummary: Codable, Sendable, Equatable {
     public var keptSeconds: Double
     public var cutSeconds: Double

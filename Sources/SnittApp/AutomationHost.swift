@@ -301,6 +301,9 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         case .trim(let bundlePath, let start, let end, let auto):
             return await trim(bundlePath: bundlePath, start: start, end: end, auto: auto)
 
+        case .crop(let bundlePath, let rect):
+            return await crop(bundlePath: bundlePath, rect: rect)
+
         case .export(let bundlePath, let format, let outputPath, let scale, let chapters, let maxSizeBytes):
             return await export(bundlePath: bundlePath, format: format, outputPath: outputPath,
                                 scale: scale, chapters: chapters, maxSizeBytes: maxSizeBytes)
@@ -364,6 +367,44 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// to answer that question, the trim is refused rather than falling
     /// back to the wall clock: a refusal an agent can act on beats a number
     /// that quietly does not describe the file it will get.
+    /// Sets or removes the crop, and reports the resulting PIXEL dimensions.
+    ///
+    /// Reads the natural size from `capture.mov` so the answer is what the
+    /// export will actually be, not a fraction the caller has to convert. An
+    /// agent cannot look at the video (§8), and `--max-size` reasons about
+    /// dimensions, so returning "0.5 x 0.5" would be an answer it cannot act on.
+    ///
+    /// Merges into the existing EDL rather than rebuilding it — D60's finding
+    /// was that this exact family of CLI writes silently discarded whatever the
+    /// GUI had done.
+    private func crop(bundlePath: String, rect: CropRect?) async -> AutomationResponse {
+        let bundle: SnittBundle
+        do {
+            bundle = try SnittBundle(opening: URL(fileURLWithPath: bundlePath))
+        } catch {
+            return .failure(AutomationError(
+                code: .targetNotFound,
+                message: "Could not read a recording at that path.",
+                hint: "Use the path `snitt record stop` printed."))
+        }
+
+        do {
+            var edl = try Self.readEDL(for: bundle)
+            edl.crop = rect
+            try edl.write(to: bundle)
+
+            let natural = try await CompositionBuilder.naturalVideoSize(of: bundle)
+            let width = Int((natural.width * (rect?.width ?? 1)).rounded())
+            let height = Int((natural.height * (rect?.height ?? 1)).rounded())
+            return .cropped(CropSummary(crop: rect, pixelWidth: width, pixelHeight: height))
+        } catch {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "Could not write the crop to this recording.",
+                hint: String(describing: error)))
+        }
+    }
+
     private func trim(bundlePath: String, start: Double?, end: Double?,
                       auto: Bool) async -> AutomationResponse {
         let bundle: SnittBundle

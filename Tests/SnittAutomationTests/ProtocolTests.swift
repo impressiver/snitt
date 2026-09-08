@@ -113,12 +113,18 @@ func socketPathIsNotWorldWritable() {
     #expect(!path.hasPrefix("/tmp"), "/tmp is world-writable; another user could squat the socket")
 }
 
-@Test("The protocol version is 2 — .mark is not backward compatible")
-func protocolVersionIsTwo() {
-    // An old app receiving `.mark` fails to decode and reports internal_error.
+@Test("The protocol version is 3 — a new request case is not backward compatible")
+func protocolVersionIsThree() {
+    // An old app receiving a case it has no decoder for reports internal_error.
     // §10 requires a mismatch to be refused outright with a usable message, so
     // the version moves and the handshake produces upgrade_required instead.
-    #expect(AutomationProtocol.version == 2)
+    //
+    // 2 -> 3 for `.crop`. Every earlier addition to v2 amended it without a
+    // bump on the stated grounds that no v2 client had shipped; v0.1.0 has
+    // shipped now, so that reasoning has expired and the next case earns a
+    // bump. This test exists so the version cannot drift silently away from
+    // the wire format.
+    #expect(AutomationProtocol.version == 3)
 }
 
 @Test("StartOptions carries the client's working directory")

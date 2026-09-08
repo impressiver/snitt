@@ -94,6 +94,17 @@ func describe(_ response: AutomationResponse) -> String {
         return "\(Int(report.durationSeconds ?? 0))s recording, "
              + "\(report.markerCount) markers, \(report.inputEventCount) input events"
              + (chapters.isEmpty ? "" : " — \(chapters)")
+    case .cropped(let summary):
+        // Dimensions, not fractions: an agent cannot look at the video, and
+        // pixels are what it needs to reason about a --max-size budget.
+        if let crop = summary.crop {
+            return String(format: "Cropped to %.0f%%x%.0f%% of the frame. "
+                        + "Exports at %dx%d.",
+                          crop.width * 100, crop.height * 100,
+                          summary.pixelWidth, summary.pixelHeight)
+        }
+        return "Crop removed. Exports at \(summary.pixelWidth)x\(summary.pixelHeight)."
+
     case .trimmed(let summary):
         // An MCP client reads text, not JSON structure — prose is the
         // deliverable, same as every other case here.

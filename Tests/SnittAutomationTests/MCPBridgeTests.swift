@@ -34,6 +34,8 @@ func everyToolMaps() {
             json = #"{"sessionId": "abc"}"#
         case "snitt_inspect":
             json = #"{"bundlePath": "/tmp/x.snitt"}"#
+        case "snitt_crop":
+            json = #"{"bundlePath": "/tmp/x.snitt", "reset": true}"#
         case "snitt_trim":
             json = #"{"bundlePath": "/tmp/x.snitt", "autoTrim": true}"#
         case "snitt_export":
@@ -55,7 +57,7 @@ func toolNamesAreStable() {
     let names = Set(MCPBridge.toolDefinitions().map(\.name))
     #expect(names == ["snitt_list_targets", "snitt_start_recording",
                       "snitt_stop_recording", "snitt_status", "snitt_add_marker",
-                      "snitt_inspect", "snitt_trim", "snitt_export",
+                      "snitt_inspect", "snitt_trim", "snitt_crop", "snitt_export",
                       "snitt_diagnostics_export"])
 }
 

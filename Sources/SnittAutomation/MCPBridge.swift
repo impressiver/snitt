@@ -1,4 +1,5 @@
 import Foundation
+import SnittDocument
 import CoreFoundation
 
 public struct ToolDefinition: Encodable, Sendable {
@@ -245,6 +246,32 @@ public enum MCPBridge {
                     "required": ["bundlePath"],
                 ]),
             ToolDefinition(
+                name: "snitt_crop",
+                description: "Crop the recording to a region, non-destructively — "
+                           + "capture.mov is never modified and the crop can be "
+                           + "removed again. Use it to cut away a cluttered "
+                           + "desktop, a second monitor, or window chrome so the "
+                           + "demo shows only what matters. Returns the pixel "
+                           + "dimensions the export will have.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "bundlePath": [
+                            "type": "string",
+                            "description": "Path printed by snitt_stop_recording",
+                        ],
+                        "x": ["type": "number", "description": "Left edge, as a fraction of the frame (0-1)"],
+                        "y": ["type": "number", "description": "Top edge, as a fraction of the frame (0-1)"],
+                        "width": ["type": "number", "description": "Width, as a fraction of the frame (0-1)"],
+                        "height": ["type": "number", "description": "Height, as a fraction of the frame (0-1)"],
+                        "reset": [
+                            "type": "boolean",
+                            "description": "Remove an existing crop instead of setting one.",
+                        ],
+                    ],
+                    "required": ["bundlePath"],
+                ]),
+            ToolDefinition(
                 name: "snitt_export",
                 description: "Render the trimmed recording to a movie file and return a "
                            + "manifest — duration, dimensions, byte size, chapters — that "
@@ -372,6 +399,38 @@ public enum MCPBridge {
                 return .failure(MCPBridgeError("snitt_inspect requires bundlePath"))
             }
             return .success(.inspect(bundlePath: path))
+
+        case "snitt_crop":
+            guard let path = arguments["bundlePath"] as? String else {
+                return .failure(MCPBridgeError("snitt_crop requires bundlePath"))
+            }
+            if arguments["reset"] as? Bool == true {
+                return .success(.crop(bundlePath: path, rect: nil))
+            }
+            var rect: [String: Double] = [:]
+            for key in ["x", "y", "width", "height"] {
+                switch numericValue(arguments[key], parameter: key) {
+                case .success(let value):
+                    guard let value else {
+                        // All four or none. A partial rect has no sensible
+                        // default: zeros crop to nothing, full-frame silently
+                        // ignores what was asked for.
+                        return .failure(MCPBridgeError(
+                            "snitt_crop needs x, y, width and height together "
+                          + "(fractions of the frame, 0-1), or reset: true."))
+                    }
+                    rect[key] = value
+                case .failure(let error): return .failure(error)
+                }
+            }
+            guard rect["width"]! > 0, rect["height"]! > 0 else {
+                return .failure(MCPBridgeError(
+                    "snitt_crop needs width and height greater than 0. "
+                  + "Use reset: true to remove a crop."))
+            }
+            return .success(.crop(bundlePath: path,
+                                  rect: CropRect(x: rect["x"]!, y: rect["y"]!,
+                                                 width: rect["width"]!, height: rect["height"]!)))
 
         case "snitt_trim":
             guard let path = arguments["bundlePath"] as? String else {

@@ -102,6 +102,20 @@ public enum CompositionBuilder {
     /// and an agent trimming `--start 1` on a 4.25s-wall/4.0s-media
     /// recording was told `keptSeconds` on a clock the exported file does
     /// not have.
+    /// The recording's own pixel dimensions, before any crop or scale.
+    ///
+    /// Beside `mediaDuration` for the same reason: a caller reasoning about
+    /// what an export will look like needs the source's shape, and reading it
+    /// here keeps that read in the one place that already knows how this
+    /// bundle's video track is found.
+    public static func naturalVideoSize(of bundle: SnittBundle) async throws -> CGSize {
+        let asset = AVURLAsset(url: bundle.captureURL)
+        guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+            return .zero
+        }
+        return try await track.load(.naturalSize)
+    }
+
     public static func mediaDuration(of bundle: SnittBundle) async throws -> Double {
         let asset = AVURLAsset(url: bundle.captureURL)
         return CMTimeGetSeconds(try await asset.load(.duration))

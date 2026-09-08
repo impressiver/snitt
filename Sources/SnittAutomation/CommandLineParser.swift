@@ -1,4 +1,5 @@
 import Foundation
+import SnittDocument
 
 /// Why a command line could not be parsed.
 ///
@@ -20,6 +21,8 @@ public enum ParsedCommand: Equatable {
     case help
     case inspect(bundlePath: String)
     case trim(bundlePath: String, start: Double?, end: Double?, auto: Bool)
+    /// `rect` nil means `--reset`: remove the crop entirely.
+    case crop(bundlePath: String, rect: CropRect?)
     case export(bundlePath: String, format: String, outputPath: String,
                 scale: Double, chapters: Bool, maxSizeBytes: Int?)
     /// `outputPath` here is still the RAW string typed on the command line —
@@ -97,6 +100,14 @@ public enum CommandLineParser {
                   + "Use the path `snitt record stop` printed."))
             }
             return parseTrim(path: path, args: Array(args.dropFirst()))
+
+        case "crop":
+            guard let path = args.first else {
+                return .failure(ParseFailure(
+                    "`crop` needs a path to a .snitt bundle. "
+                  + "Use the path `snitt record stop` printed."))
+            }
+            return parseCrop(path: path, args: Array(args.dropFirst()))
 
         case "export":
             guard let path = args.first else {
@@ -199,6 +210,55 @@ public enum CommandLineParser {
                 "--end (\(end)) must be after --start (\(start))"))
         }
         return .success(.trim(bundlePath: path, start: start, end: end, auto: auto))
+    }
+
+    /// `snitt crop <bundle> --x F --y F --width F --height F` | `--reset`
+    ///
+    /// Fractions of the frame (0-1), not pixels, because that is what
+    /// `CropRect` stores and what survives a change of source resolution.
+    /// Accepting pixels would mean this command has to read `capture.mov` to
+    /// convert — a read §4.9 says the CLI cannot assume it is allowed to make.
+    private static func parseCrop(path: String, args: [String]) -> Result<ParsedCommand, ParseFailure> {
+        var values: [String: Double] = [:]
+        var reset = false
+        var remaining = args
+        while let flag = remaining.first {
+            remaining.removeFirst()
+            if flag == "--reset" { reset = true; continue }
+            let names = ["--x": "x", "--y": "y", "--width": "width", "--height": "height"]
+            guard let key = names[flag] else {
+                return .failure(ParseFailure("Unknown crop option: \(flag)"))
+            }
+            guard let raw = remaining.first, let value = Double(raw) else {
+                return .failure(ParseFailure("\(flag) needs a number between 0 and 1."))
+            }
+            remaining.removeFirst()
+            values[key] = value
+        }
+
+        if reset {
+            guard values.isEmpty else {
+                return .failure(ParseFailure(
+                    "`--reset` removes the crop, so it cannot be combined with "
+                  + "--x/--y/--width/--height."))
+            }
+            return .success(.crop(bundlePath: path, rect: nil))
+        }
+        // All four required: a partial rect has no sensible default. Defaulting
+        // the missing ones to 0 would silently crop to nothing, and defaulting
+        // to full-frame would silently ignore what was typed.
+        guard let x = values["x"], let y = values["y"],
+              let width = values["width"], let height = values["height"] else {
+            return .failure(ParseFailure(
+                "`crop` needs --x, --y, --width and --height (fractions of the "
+              + "frame, 0-1), or --reset to remove an existing crop."))
+        }
+        guard width > 0, height > 0 else {
+            return .failure(ParseFailure(
+                "--width and --height must be greater than 0. Use --reset to remove a crop."))
+        }
+        return .success(.crop(bundlePath: path,
+                              rect: CropRect(x: x, y: y, width: width, height: height)))
     }
 
     private static func parseExport(path: String, args: [String]) -> Result<ParsedCommand, ParseFailure> {

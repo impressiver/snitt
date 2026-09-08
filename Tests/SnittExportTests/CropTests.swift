@@ -109,3 +109,37 @@ struct CropTests {
         }
     }
 }
+
+// Crop set anywhere must reach the export, since export reads edit.json through
+// the same CompositionBuilder the editor previews with (§9). If this ever
+// fails, the GUI and the CLI have two different models — D60's finding.
+@Suite
+struct CropExportTests {
+    @Test("Exporting a bundle whose edit.json carries a crop produces cropped video")
+    func exportHonoursCropOnDisk() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "crop-export-\(UUID().uuidString).snitt")
+        let bundle = try SnittBundle(creatingAt: root)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await writeSyntheticMovie(to: bundle.captureURL, seconds: 1.0,
+                                      size: CGSize(width: 320, height: 240))
+        // Written to DISK, then read back — not passed in memory. The failure
+        // this guards is a crop that persists but never reaches a render.
+        try EditDecisionList(crop: CropRect(x: 0, y: 0, width: 0.5, height: 0.5))
+            .write(to: bundle)
+
+        let edl = try EditDecisionList.read(from: bundle)
+        let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+        #expect(built.videoComposition.renderSize == CGSize(width: 160, height: 120))
+
+        let out = FileManager.default.temporaryDirectory
+            .appending(path: "crop-export-\(UUID().uuidString).mp4")
+        defer { try? FileManager.default.removeItem(at: out) }
+        try await MovieExporter.exportMovie(built, to: out)
+
+        let track = try #require(try await AVURLAsset(url: out).loadTracks(withMediaType: .video).first)
+        let size = try await track.load(.naturalSize)
+        #expect(size == CGSize(width: 160, height: 120),
+                "the exported file is not cropped: \(size)")
+    }
+}
