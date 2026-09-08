@@ -520,6 +520,23 @@ final class EditorTimelineState: ObservableObject {
         }
     }
 
+    /// The word being spoken at `outputSeconds`, for playback highlighting.
+    ///
+    /// Derived on demand rather than stored: the playhead moves ten times a
+    /// second and the answer is a pure function of it, so caching would add a
+    /// second source of truth for something already cheap to compute.
+    func currentWordID(atOutputSeconds outputSeconds: Double) -> UUID? {
+        guard let transcript else { return nil }
+        return TranscriptPlayhead.currentWordID(outputSeconds: outputSeconds,
+                                                words: transcript.words,
+                                                keptRanges: controller.keptRanges)
+    }
+
+    /// Whether the preview is actually playing, so the transcript follows only
+    /// then — auto-scrolling while someone is reading and selecting would drag
+    /// the text out from under them.
+    var isPlaying: Bool { controller.player.rate != 0 }
+
     /// Corrects one recognized word's text (D62 second slice).
     ///
     /// Text only — the timing is untouched, because the word WAS said at that
@@ -831,7 +848,7 @@ struct EditorContentView: View {
                 }
             if state.transcriptionStatus != .none {
                 Divider()
-                TranscriptPane(state: state)
+                TranscriptPane(state: state, playhead: playhead)
                     .frame(width: 250)
             }
             }
@@ -903,11 +920,22 @@ struct EditorContentView: View {
                 .frame(maxHeight: 140)
             }
         }
-        .onReceive(Timer.publish(every: 0.1, on: .main, in: .common).autoconnect()) { _ in
-            // Playhead position is appearance only — not asserted by any
-            // test (Task 6 dispatch) — so simple polling is enough; a
-            // player-driven time observer would add AVFoundation closure
-            // plumbing for a value nothing verifies.
+        .onReceive(Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()) { _ in
+            // 20Hz, raised from 10 when the playhead stopped being decoration.
+            // It now selects which transcript word is highlighted, and the
+            // recognizer emits words as short as 0.06s ("the", in this
+            // project's first real recording) — at 10Hz those were skipped
+            // entirely and the highlight jumped over them.
+            //
+            // The comment here used to say this value was "appearance only,
+            // not asserted by any test", which stopped being true the moment
+            // `TranscriptPlayhead` started consuming it.
+            //
+            // Still polling rather than `addPeriodicTimeObserver`: the observer
+            // is the better mechanism, but it would not change what is on
+            // screen, and the open question is the opposite one — whether
+            // re-rendering a long transcript at this rate is affordable. That
+            // needs a ten-minute recording to answer, and is in field-notes.
             let seconds = controller.player.currentTime().seconds
             playhead = seconds.isFinite ? seconds : 0
         }

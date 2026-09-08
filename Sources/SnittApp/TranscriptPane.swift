@@ -10,6 +10,9 @@ import SnittDocument
 /// exists to make true.
 struct TranscriptPane: View {
     @ObservedObject var state: EditorTimelineState
+    /// OUTPUT time, polled by the editor shell — the same value the timeline's
+    /// playhead draws at, so the two cannot disagree about where playback is.
+    let playhead: Double
     @State private var selection: Set<UUID> = []
     /// Anchor for shift-click range extension.
     @State private var anchorID: UUID?
@@ -60,14 +63,28 @@ struct TranscriptPane: View {
     @ViewBuilder
     private func transcriptBody(_ transcript: Transcript) -> some View {
         let cutIDs = state.cutWordIDs
-        ScrollView {
-            WrappingLayout(spacing: 3) {
-                ForEach(transcript.words) { word in
-                    wordView(word, isCut: cutIDs.contains(word.id))
+        let currentID = state.currentWordID(atOutputSeconds: playhead)
+        ScrollViewReader { proxy in
+            ScrollView {
+                WrappingLayout(spacing: 3) {
+                    ForEach(transcript.words) { word in
+                        wordView(word, isCut: cutIDs.contains(word.id),
+                                 isCurrent: word.id == currentID)
+                            .id(word.id)
+                    }
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            // Follows only while PLAYING. Scrolling the text while someone is
+            // reading and selecting would drag it out from under them, and
+            // scrubbing already moves the playhead deliberately.
+            .onChange(of: currentID) { _, id in
+                guard let id, state.isPlaying else { return }
+                withAnimation(.easeOut(duration: 0.2)) {
+                    proxy.scrollTo(id, anchor: .center)
                 }
             }
-            .padding(8)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         HStack {
             Button("Delete Words") {
@@ -85,7 +102,7 @@ struct TranscriptPane: View {
     }
 
     @ViewBuilder
-    private func wordView(_ word: TranscriptWord, isCut: Bool) -> some View {
+    private func wordView(_ word: TranscriptWord, isCut: Bool, isCurrent: Bool) -> some View {
         if editingWordID == word.id {
             // Inline, not a sheet: correction is frequent (every proper noun
             // the recognizer fumbles) and the field replaces the word exactly
@@ -109,10 +126,14 @@ struct TranscriptPane: View {
             // for what was probably "Loom is". A transcript that hides how
             // sure it is invites trusting the wrong words.
             .opacity(word.confidence < 0.5 ? 0.55 : (isCut ? 0.6 : 1.0))
+            // Bold marks the spoken word whether or not it is also selected,
+            // so playback position stays readable while a phrase is picked out
+            // for deletion — the two states must not compete for one signal.
+            .fontWeight(isCurrent ? .bold : .regular)
             .padding(.horizontal, 3)
             .padding(.vertical, 1)
-            .background(selection.contains(word.id)
-                        ? Color.accentColor.opacity(0.3) : Color.clear,
+            .background(background(isSelected: selection.contains(word.id),
+                                   isCurrent: isCurrent),
                         in: RoundedRectangle(cornerRadius: 3))
             // count: 2 registered FIRST — SwiftUI resolves simultaneous tap
             // gestures in declaration order, and the reverse order makes the
@@ -123,6 +144,16 @@ struct TranscriptPane: View {
                 Button("Edit Word…") { beginEdit(word) }
             }
         }
+    }
+
+    /// Selection is the accent fill; the playhead is a distinct tint. When a
+    /// word is both, selection wins the fill and bold carries the playhead —
+    /// otherwise "what am I about to delete" and "where is playback" would be
+    /// the same colour.
+    private func background(isSelected: Bool, isCurrent: Bool) -> Color {
+        if isSelected { return Color.accentColor.opacity(0.3) }
+        if isCurrent { return Color.yellow.opacity(0.35) }
+        return .clear
     }
 
     private func beginEdit(_ word: TranscriptWord) {

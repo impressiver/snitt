@@ -266,3 +266,43 @@ struct WordCorrectionTests {
         #expect(state.transcript?.words.first?.text == "loom is")
     }
 }
+
+/// Playback highlighting reaches the state layer with the right clock (D62).
+@MainActor
+struct TranscriptPlayheadStateTests {
+    @Test("The current word is found through the EDL's cuts, not by raw time")
+    func currentWordMapsThroughCuts() async throws {
+        // The state's own join: it must hand the pure mapper the controller's
+        // kept ranges, or a recording with any cut highlights the wrong word.
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(SnittBundle.fileExtension)
+        let bundle = try SnittBundle(creatingAt: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await writeSyntheticMovie(to: bundle.captureURL, seconds: 20.0)
+        try EditDecisionList.fullRange().write(to: bundle)
+        let words = [
+            TranscriptWord(text: "before", start: 1.0, duration: 0.5, confidence: 0.9),
+            TranscriptWord(text: "after", start: 8.0, duration: 0.5, confidence: 0.9),
+        ]
+        try Transcript(words: words, locale: "en-US").write(to: bundle)
+
+        let built = try await CompositionBuilder.build(bundle: bundle, edl: .fullRange(), scale: 1.0)
+        let controller = PreviewController(built: built, jumpPoints: [], bundle: bundle, scale: 1.0)
+        let state = EditorTimelineState(controller: controller, edl: .fullRange(), events: [])
+        state.loadTranscript()
+
+        // Uncut: output and source agree.
+        #expect(state.currentWordID(atOutputSeconds: 8.2) == words[1].id)
+
+        // Now cut 2-5s. "after" at source 8.0 moves to output 5.0, and the old
+        // output time 8.2 now points at source 11.2 — no word at all.
+        state.onSelect(Selection(range: TimeRange(start: 2, end: 5)))
+        state.cutSelection()
+        await state.waitForPendingSave()
+
+        #expect(state.currentWordID(atOutputSeconds: 5.2) == words[1].id,
+                "the state did not remap the playhead through the cut")
+        #expect(state.currentWordID(atOutputSeconds: 8.2) == nil)
+    }
+}

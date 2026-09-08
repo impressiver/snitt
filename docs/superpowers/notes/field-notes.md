@@ -232,3 +232,22 @@ them is not an option when word timings are the point.
 input. Both times I have trusted a "the data just isn't there" reading this
 session (the `~/Desktop` permission error, now this) it was wrong — and both
 times one measurement of the *input* settled it in under a minute.
+
+### 2026-09-08 (playback highlighting)
+
+**Built.** The transcript word being spoken highlights as playback reaches it,
+and the pane scrolls to follow — but only while actually playing, so reading and
+selecting is never dragged out from under you.
+
+**Open question that needs a long recording to answer.** The playhead poll went
+from 10Hz to 20Hz, because the recognizer emits words as short as 0.06s ("the",
+in the first real recording) and at 10Hz those were skipped entirely. Each tick
+re-renders the transcript pane. At 33 words that is free; at ~1500 words (a
+ten-minute narrated demo) it may stutter, and the fix would be to stop
+re-rendering every word on every tick rather than to slow the clock back down.
+**Worth watching the first time a long recording is open and playing.**
+
+**Also worth an eye:** selection is the accent fill and the playhead is a yellow
+tint, with bold carrying the playhead when a word is both. Whether that reads
+clearly, or whether the two states still compete, is a judgement the tests
+cannot make.
