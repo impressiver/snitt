@@ -77,6 +77,8 @@ snitt — record a window and hand back a .snitt bundle
         [--mic] [--no-system-audio]        parsed, not yet applied (M3)
   snitt record stop <session-id>         stop; prints the bundle path
   snitt record mark <session-id> [--label <text>]   drop a marker
+  snitt record screenshot <session> [--label "..."]
+                                          save the current frame, marked
   snitt record pause <session>            stop filming without ending
   snitt record resume <session>           start filming again
   snitt setup [--apply]                   register the MCP server with agents
@@ -212,6 +214,8 @@ func requestBody(for command: ParsedCommand,
     case .recordMark(let session, let label): return .mark(sessionID: session, label: label)
     case .recordPause(let session): return .pauseRecording(sessionID: session)
     case .recordResume(let session): return .resumeRecording(sessionID: session)
+    case .recordScreenshot(let session, let label):
+        return .screenshot(sessionID: session, label: label)
     case .status: return .status
     case .inspect(let path):
         return .inspect(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory))
@@ -298,6 +302,9 @@ do {
     case .trimmed(let summary):
         emit(summary)
         note("Kept \(Int(summary.keptSeconds))s, cut \(Int(summary.cutSeconds))s")
+    case .screenshotTaken(let path, let timeSeconds):
+        emitObject(["path": path, "timeSeconds": timeSeconds])
+        note("Screenshot at \(String(format: "%.2f", timeSeconds))s → \(path)")
     case .cropped(let summary):
         emit(summary)
         // Pixels, not fractions: an agent cannot look at the video, and the

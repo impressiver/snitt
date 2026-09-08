@@ -248,6 +248,36 @@ public actor Recorder {
     ///
     /// Returns the offset so the caller can report it — an agent that just
     /// marked "ran the tests" wants to know where that fell.
+    /// Writes the current frame to a PNG inside the bundle and marks it.
+    ///
+    /// D53's correlation primitive. An agent cannot see the window it is
+    /// recording, so it needs a look — but the reason this drops a marker
+    /// rather than only returning an image is subtler: `mark` stamps at
+    /// IPC-processing time, so "what I saw" and "what I said about it" would
+    /// otherwise be two independent call times, drifting by however long the
+    /// round trip took. Taking both from the SAME frame gives them one offset
+    /// by construction.
+    ///
+    /// Works while paused, which is when an agent most wants one — it paused in
+    /// order to look at something.
+    ///
+    /// Returns the file and the offset. The filename IS the offset, so an agent
+    /// that later describes the demo can say when the screenshot was taken
+    /// without holding onto anything.
+    public func screenshot(label: String? = nil) async throws -> (url: URL, offsetSeconds: Double) {
+        guard let frame = session.latestFrameForScreenshot() else {
+            throw ScreenshotError.noFrameYet
+        }
+        let offset = max(0, frame.outputTime.seconds)
+        let url = bundle.screenshotURL(atOffset: offset)
+        try ScreenshotWriter.writePNG(frame.image, to: url)
+        // The marker carries the offset the FRAME sits at, not "now" — that is
+        // the whole correlation guarantee.
+        await eventLog.add(at: offset, kind: .marker,
+                           label: label ?? "Screenshot")
+        return (url, offset)
+    }
+
     /// Stops recording without ending the session (M5e, D53).
     ///
     /// The agent case this exists for: deliberation is not worth filming, and

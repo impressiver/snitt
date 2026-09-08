@@ -55,6 +55,15 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
     /// the wrong place.
     private var pauseRequested = false
     private var pauses = PauseLedger()
+    /// The most recent video frame seen, for `screenshot` (M5e, D53).
+    ///
+    /// Exactly one is retained and replaced on every frame — the standard
+    /// latest-frame pattern. Holding more would starve ScreenCaptureKit's
+    /// buffer pool; holding none would mean a screenshot has to open a second
+    /// capture, which is a different image at a different instant and defeats
+    /// the point: D53 wants "what I saw" and "what I said about it" on ONE
+    /// offset, which only holds if the screenshot IS a recorded frame.
+    private var latestFrame: CMSampleBuffer?
 
     /// The presentation timestamp of the first delivered buffer — the video
     /// track's t=0, on SCStream's host/mach clock. Guarded by `lock` alongside
@@ -195,6 +204,21 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
         handle(sampleBuffer, of: type)
     }
 
+    /// The latest video frame and the OUTPUT time it sits at.
+    ///
+    /// The time is `adjusted`, not raw: it is the instant this frame occupies
+    /// in the written file, which is the clock markers and cuts use. Returning
+    /// the raw source time would put a screenshot's marker at a different
+    /// place than the frame it came from as soon as anything had been paused.
+    func latestFrameForScreenshot() -> (image: CVImageBuffer, outputTime: CMTime)? {
+        lock.lock(); defer { lock.unlock() }
+        guard let latestFrame,
+              let image = CMSampleBufferGetImageBuffer(latestFrame) else { return nil }
+        let start = firstPresentationTime ?? .zero
+        let raw = CMSampleBufferGetPresentationTimeStamp(latestFrame)
+        return (image, CMTimeSubtract(pauses.adjusted(raw), start))
+    }
+
     /// Stops writing buffers until `resume()`. Idempotent.
     func pause() { lock.lock(); pauseRequested = true; lock.unlock() }
 
@@ -263,6 +287,11 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
         // holding the lock here costs no real concurrency.
         lock.lock()
         defer { lock.unlock() }
+
+        // Retained BEFORE the pause check below, deliberately: a screenshot
+        // must work while paused. That is when an agent most wants one — it
+        // paused to look at something.
+        if type == .screen { latestFrame = buffer }
 
         // Pause transitions are settled HERE, against a real media timestamp,
         // rather than when pause()/resume() were called. A pause therefore

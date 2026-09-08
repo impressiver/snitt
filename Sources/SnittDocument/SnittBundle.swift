@@ -24,6 +24,24 @@ public struct SnittBundle: Sendable {
     public var metaURL: URL { url.appendingPathComponent("meta.json") }
     public var posterURL: URL { url.appendingPathComponent("poster.png") }
 
+    /// Where agent screenshots land (M5e, D53).
+    ///
+    /// Inside the bundle rather than in a temp directory, because a screenshot
+    /// is evidence about THIS recording: it is taken from a frame the recording
+    /// contains, and its filename is the offset that frame sits at. Keeping the
+    /// two together means moving the bundle moves the evidence, and §7's
+    /// "everything about one recording lives in one package" holds.
+    public var screenshotsURL: URL { url.appendingPathComponent("screenshots", isDirectory: true) }
+
+    /// The file a screenshot at `offsetSeconds` is written to.
+    ///
+    /// Named by offset, to two decimals, so the filename itself answers "when
+    /// in the recording was this" — the correlation D53 asks for, readable
+    /// without opening anything.
+    public func screenshotURL(atOffset offsetSeconds: Double) -> URL {
+        screenshotsURL.appendingPathComponent(String(format: "%08.2f.png", offsetSeconds))
+    }
+
     /// Creates a new bundle directory. Throws if anything already exists there.
     public init(creatingAt url: URL) throws {
         guard !FileManager.default.fileExists(atPath: url.path) else {

@@ -105,6 +105,7 @@ public struct AutomationRequest: Codable, Sendable {
         /// and it expires the moment v3 ships.
         case pauseRecording(sessionID: String)
         case resumeRecording(sessionID: String)
+        case screenshot(sessionID: String, label: String?)
         case export(bundlePath: String, format: String, outputPath: String,
                     scale: Double, chapters: Bool, maxSizeBytes: Int?)
         /// `outputPath` arrives already resolved against the CALLER's working
@@ -267,6 +268,7 @@ public enum AutomationResponse: Codable, Sendable, Equatable {
     case inspected(InspectReport)
     case trimmed(TrimSummary)
     case cropped(CropSummary)
+    case screenshotTaken(path: String, timeSeconds: Double)
     case exported(ExportManifest)
     case diagnosticsWritten(DiagnosticsReport)
 }

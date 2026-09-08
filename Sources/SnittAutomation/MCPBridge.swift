@@ -211,6 +211,24 @@ public enum MCPBridge {
                     "required": ["sessionId"],
                 ]),
             ToolDefinition(
+                name: "snitt_screenshot",
+                description: "Save the frame the recording is currently on, and "
+                           + "mark that instant. Use it to SEE the window you are "
+                           + "recording — you cannot watch the video, and this is "
+                           + "the only way to check the demo looks right while it "
+                           + "is still fixable. The image and its marker come from "
+                           + "the same frame, so 'what I saw' and 'what I said "
+                           + "about it' share one timestamp. Works while paused.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "sessionId": ["type": "string"],
+                        "label": ["type": "string",
+                                  "description": "What this moment shows. Defaults to \"Screenshot\"."],
+                    ],
+                    "required": ["sessionId"],
+                ]),
+            ToolDefinition(
                 name: "snitt_status",
                 description: "Report whether a recording is currently running.",
                 inputSchema: ["type": "object", "properties": [String: Any]()]),
@@ -422,6 +440,13 @@ public enum MCPBridge {
                 return .failure(MCPBridgeError("snitt_inspect requires bundlePath"))
             }
             return .success(.inspect(bundlePath: path))
+
+        case "snitt_screenshot":
+            guard let session = arguments["sessionId"] as? String else {
+                return .failure(MCPBridgeError("snitt_screenshot requires sessionId"))
+            }
+            return .success(.screenshot(sessionID: session,
+                                        label: arguments["label"] as? String))
 
         case "snitt_pause_recording", "snitt_resume_recording":
             guard let session = arguments["sessionId"] as? String else {

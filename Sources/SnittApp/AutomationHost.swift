@@ -304,6 +304,9 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         case .resumeRecording(let sessionID):
             return await setPaused(sessionID: sessionID, paused: false)
 
+        case .screenshot(let sessionID, let label):
+            return await screenshot(sessionID: sessionID, label: label)
+
         case .inspect(let path):
             return inspect(bundlePath: path)
 
@@ -812,6 +815,28 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         }
     }
 
+    private func screenshot(sessionID: String, label: String?) async -> AutomationResponse {
+        if let refusal = policy().evaluate(StartOptions(bundleIdentifier: "probe")) {
+            return .failure(refusal)
+        }
+        switch await coordinator.screenshotForAgent(sessionID: sessionID, label: label) {
+        case .taken(let path, let timeSeconds):
+            return .screenshotTaken(path: path, timeSeconds: timeSeconds)
+        case .noFrameYet:
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "The recording has not delivered a frame yet.",
+                hint: "Wait a moment and try again — this is normal in the first "
+                    + "fraction of a second, and the recording itself is fine."))
+        case .notCurrentSession, .notRecording:
+            return .failure(AutomationError(
+                code: .noSuchSession,
+                message: "No agent recording with that session id.",
+                hint: "Only the session you started can be photographed. A "
+                    + "recording a person started is theirs."))
+        }
+    }
+
     /// Maps a coordinator outcome to the agent-facing contract (§10).
     ///
     /// Every non-started outcome used to become `target_not_found`/14 with the
@@ -1001,6 +1026,10 @@ private actor NullCoordinator: AgentRecordingControlling {
     }
 
     func pauseStateForAgent() async -> (paused: Bool, pausedSeconds: Double)? { nil }
+
+    func screenshotForAgent(sessionID: String, label: String?) async -> AgentScreenshotResult {
+        .notRecording
+    }
 }
 
 /// Per-session data the audit trail needs at stop time that `SessionRegistry`

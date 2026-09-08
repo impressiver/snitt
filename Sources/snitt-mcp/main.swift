@@ -94,6 +94,12 @@ func describe(_ response: AutomationResponse) -> String {
         return "\(Int(report.durationSeconds ?? 0))s recording, "
              + "\(report.markerCount) markers, \(report.inputEventCount) input events"
              + (chapters.isEmpty ? "" : " — \(chapters)")
+    case .screenshotTaken(let path, let timeSeconds):
+        // The offset is in the text, not only the filename: an agent quoting
+        // the demo needs to say WHEN, and reading it back out of a path is
+        // work it should not have to do.
+        return String(format: "Screenshot of the recording at %.2fs, saved to %@. "
+                    + "A marker was placed at the same instant.", timeSeconds, path as NSString)
     case .cropped(let summary):
         // Dimensions, not fractions: an agent cannot look at the video, and
         // pixels are what it needs to reason about a --max-size budget.

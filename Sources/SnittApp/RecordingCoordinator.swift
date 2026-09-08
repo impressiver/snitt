@@ -83,6 +83,18 @@ public protocol AgentRecordingControlling: Sendable {
     func markForAgent(sessionID: String, label: String?) async -> AgentMarkResult
     func setPausedForAgent(sessionID: String, paused: Bool) async -> AgentMarkResult
     func pauseStateForAgent() async -> (paused: Bool, pausedSeconds: Double)?
+    func screenshotForAgent(sessionID: String, label: String?) async -> AgentScreenshotResult
+}
+
+/// The outcome of an agent's screenshot request.
+public enum AgentScreenshotResult: Equatable, Sendable {
+    case taken(path: String, timeSeconds: Double)
+    case notRecording
+    case notCurrentSession
+    /// No frame has arrived yet, so there is nothing to photograph. Distinct
+    /// from a failure: the recording is fine, it just has not started
+    /// delivering — an agent should retry rather than give up.
+    case noFrameYet
 }
 
 /// Drives one recording from hotkey press to clipboard.
@@ -283,6 +295,26 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         guard agentSessionID == sessionID else { return .notCurrentSession }
         if paused { await recorder.pause() } else { await recorder.resume() }
         return .marked(await recorder.mark(label: nil))
+    }
+
+    /// Takes a screenshot of the agent's own session (M5e, D53).
+    ///
+    /// Ownership is checked exactly as pause and mark check it: an agent may
+    /// only photograph the session it started. A human recording is not
+    /// readable over IPC — a screenshot of someone else's screen is the most
+    /// obviously sensitive thing this surface could hand out, and §5's posture
+    /// makes that Snitt's problem rather than the caller's.
+    public func screenshotForAgent(sessionID: String, label: String?) async -> AgentScreenshotResult {
+        guard let recorder = active, agentSessionID != nil else { return .notRecording }
+        guard agentSessionID == sessionID else { return .notCurrentSession }
+        do {
+            let shot = try await recorder.screenshot(label: label)
+            return .taken(path: shot.url.path, timeSeconds: shot.offsetSeconds)
+        } catch ScreenshotError.noFrameYet {
+            return .noFrameYet
+        } catch {
+            return .notRecording
+        }
     }
 
     /// The live pause state, for `status`. Nil when nothing is recording.

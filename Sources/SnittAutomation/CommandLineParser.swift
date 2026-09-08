@@ -30,6 +30,7 @@ public enum ParsedCommand: Equatable {
     /// pausable over IPC — see `RecordingCoordinator.setPausedForAgent`.
     case recordPause(sessionID: String)
     case recordResume(sessionID: String)
+    case recordScreenshot(sessionID: String, label: String?)
     case export(bundlePath: String, format: String, outputPath: String,
                 scale: Double, chapters: Bool, maxSizeBytes: Int?)
     /// `outputPath` here is still the RAW string typed on the command line —
@@ -74,6 +75,21 @@ public enum CommandLineParser {
                                   + "Run `snitt status` to find it."))
                 }
                 return .success(.recordStop(session))
+            case "screenshot":
+                guard let session = args.first else {
+                    return .failure(ParseFailure(
+                        "`record screenshot` needs a session id. Run `snitt status` to find it."))
+                }
+                var label: String?
+                if args.count > 1 {
+                    guard args[1] == "--label", args.count > 2 else {
+                        return .failure(ParseFailure(
+                            "`record screenshot` accepts only --label <text> after the session id."))
+                    }
+                    label = args[2]
+                }
+                return .success(.recordScreenshot(sessionID: session, label: label))
+
             case "pause", "resume":
                 guard let session = args.first else {
                     return .failure(ParseFailure(

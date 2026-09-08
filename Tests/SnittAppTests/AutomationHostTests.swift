@@ -100,6 +100,22 @@ actor FakeCoordinator: AgentRecordingControlling {
         guard activeSession != nil else { return nil }
         return (isPaused, pausedSeconds)
     }
+
+    private(set) var screenshotCalls: [(session: String, label: String?)] = []
+    /// What the fake pretends a screenshot produced. Settable so a test can
+    /// assert the host passes the offset through unchanged rather than
+    /// recomputing it — D53's correlation guarantee is that the offset comes
+    /// from the FRAME, and a host that stamped its own would break it.
+    private var screenshotResult: AgentScreenshotResult = .taken(path: "/tmp/shot.png", timeSeconds: 4.25)
+
+    func setScreenshotResult(_ result: AgentScreenshotResult) { screenshotResult = result }
+
+    func screenshotForAgent(sessionID: String, label: String?) async -> AgentScreenshotResult {
+        screenshotCalls.append((sessionID, label))
+        guard activeSession != nil else { return .notRecording }
+        guard activeSession == sessionID else { return .notCurrentSession }
+        return screenshotResult
+    }
 }
 
 /// Records what the menu bar was told, in order.
@@ -1167,5 +1183,65 @@ struct PauseAutomationTests {
             Issue.record("pause did not return a status"); return
         }
         #expect(info.paused)
+    }
+}
+
+// MARK: - Screenshot (M5e, D53's correlation primitive)
+
+@MainActor
+struct ScreenshotAutomationTests {
+    @Test("The frame's offset is passed through, not restamped by the host")
+    func offsetIsPassedThrough() async throws {
+        // D53's guarantee lives in the Recorder — the image and its marker come
+        // from one frame. A host that computed its own "now" here would put the
+        // reported time somewhere else than the marker, reintroducing exactly
+        // the drift the primitive exists to remove.
+        let coordinator = FakeCoordinator()
+        let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
+        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")))
+        let session = try #require(await coordinator.startCalls.first)
+
+        guard case .screenshotTaken(let path, let time) =
+                await host.handle(.screenshot(sessionID: session, label: "after save")) else {
+            Issue.record("screenshot did not return a screenshot"); return
+        }
+        #expect(time == 4.25, "the host restamped the offset")
+        #expect(path == "/tmp/shot.png")
+        #expect(await coordinator.screenshotCalls.first?.label == "after save")
+    }
+
+    @Test("Another session's screen cannot be photographed")
+    func foreignSessionIsRefused() async throws {
+        // The most obviously sensitive thing this surface could hand out is a
+        // picture of someone else's screen. §5's posture makes that Snitt's
+        // problem, not the caller's.
+        let coordinator = FakeCoordinator()
+        let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
+        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")))
+
+        guard case .failure(let error) =
+                await host.handle(.screenshot(sessionID: "THEIRS", label: nil)) else {
+            Issue.record("photographing another session was allowed"); return
+        }
+        #expect(error.code == .noSuchSession)
+    }
+
+    @Test("No frame yet is a retryable answer, not a broken recording")
+    func noFrameYetIsDistinct() async throws {
+        // Telling an agent the session is gone would make it stop and restart a
+        // recording that is perfectly healthy and half a frame old.
+        let coordinator = FakeCoordinator()
+        let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
+        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")))
+        let session = try #require(await coordinator.startCalls.first)
+        await coordinator.setScreenshotResult(.noFrameYet)
+
+        guard case .failure(let error) =
+                await host.handle(.screenshot(sessionID: session, label: nil)) else {
+            Issue.record("expected a failure"); return
+        }
+        #expect(error.code != .noSuchSession,
+                "a healthy recording was reported as a missing session")
+        #expect(error.hint?.contains("try again") == true)
     }
 }
