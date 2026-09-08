@@ -184,6 +184,8 @@ public final class TimelineView: NSView {
     /// Source-time peaks per audio track. Empty until sampling finishes, which
     /// draws as a plain band — see `EditorTimelineState.waveforms`.
     private var waveforms: [WaveformSamples] = []
+    /// Source-time thumbnails for the video band; nil until decoding finishes.
+    private var filmstrip: FilmstripFrames?
     /// OUTPUT time (M5f Task 3) — see `EditorTimelineState.displayState`'s
     /// doc comment for why these arrive unconverted.
     /// What the marker TRACK draws — `MarkerTrackPoints.compute`, which keeps
@@ -275,7 +277,8 @@ public final class TimelineView: NSView {
                        playhead: Double, selection: Selection? = nil,
                        expandedCutIDs: Set<UUID> = [],
                        trackStates: [TrackState] = [],
-                       waveforms: [WaveformSamples] = []) {
+                       waveforms: [WaveformSamples] = [],
+                       filmstrip: FilmstripFrames? = nil) {
         self.duration = duration
         self.cuts = cuts
         self.markerPoints = markerPoints
@@ -284,6 +287,7 @@ public final class TimelineView: NSView {
         self.expandedCutIDs = expandedCutIDs
         self.trackStates = trackStates
         self.waveforms = waveforms
+        self.filmstrip = filmstrip
         rebuildGeometry()
         needsDisplay = true
     }
@@ -758,6 +762,37 @@ public final class TimelineView: NSView {
 
     // MARK: - Drawing (appearance only — deliberately untested, see Task 6 brief)
 
+    /// Tiles thumbnails across the video band, each one chosen by the SOURCE
+    /// instant its slot shows.
+    ///
+    /// Slots are one thumbnail wide rather than one pixel, so this asks
+    /// `TimelineSampleIndex` once per tile instead of once per column — but the
+    /// mapping is the same one the waveform uses, so both bands agree about
+    /// what moment a given x shows, and a cut makes the strip jump exactly
+    /// where the waveform does.
+    private func drawFilmstrip(_ strip: FilmstripFrames, in rect: NSRect) {
+        guard !strip.frames.isEmpty, rect.height > 2, let context = NSGraphicsContext.current else { return }
+        let kept = KeptRanges.compute(duration: duration, cuts: cuts.map(\.range))
+        let first = strip.frames[0]
+        let aspect = first.height > 0 ? Double(first.width) / Double(first.height) : 16.0 / 9.0
+        let tileWidth = max(8, rect.height * aspect)
+
+        context.saveGraphicsState()
+        NSBezierPath(rect: rect).setClip()
+        var x = rect.minX
+        while x < rect.maxX {
+            defer { x += tileWidth }
+            let output = geometry.outputTime(atX: x + tileWidth / 2).seconds
+            guard let index = TimelineSampleIndex.index(
+                forOutputSeconds: output, keptRanges: kept,
+                samplesPerSecond: strip.samplesPerSecond,
+                sampleCount: strip.frames.count) else { continue }
+            context.cgContext.draw(strip.frames[index],
+                                   in: CGRect(x: x, y: rect.minY, width: tileWidth, height: rect.height))
+        }
+        context.restoreGraphicsState()
+    }
+
     /// Draws one vertical bar per pixel column, mirrored about the band's
     /// centre line.
     ///
@@ -815,6 +850,7 @@ public final class TimelineView: NSView {
         NSBezierPath(rect: bands.marker).fill()
         NSColor.tertiaryLabelColor.setFill()
         NSBezierPath(rect: bands.video).fill()
+        if let filmstrip { drawFilmstrip(filmstrip, in: bands.video) }
         for (track, rect) in bands.audio {
             let muted = trackStates.first { $0.track == track }?.muted ?? false
             // A muted source draws markedly fainter — the one visible

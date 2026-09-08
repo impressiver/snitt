@@ -123,6 +123,10 @@ final class EditorTimelineState: ObservableObject {
     /// a waveform that arrives a moment later.
     @Published var waveforms: [WaveformSamples] = []
 
+    /// Thumbnails for the video track, empty until decoding finishes — drawn
+    /// as a plain band until then, for the same reason as `waveforms`.
+    @Published var filmstrip: FilmstripFrames?
+
     /// Sampled ONCE per document, against the source recording. Cuts and zoom
     /// change which sample a pixel column reads (`TimelineSampleIndex`), never
     /// the samples themselves, so no edit re-triggers this.
@@ -131,6 +135,13 @@ final class EditorTimelineState: ObservableObject {
         Task { [weak self] in
             let samples = try? await WaveformSampler.sample(movieAt: url)
             await MainActor.run { self?.waveforms = samples ?? [] }
+        }
+        Task { [weak self] in
+            // Separate task from the waveform's: a long audio read must not
+            // delay the filmstrip, and vice versa. Whichever finishes first
+            // paints first.
+            let frames = try? await FilmstripSampler.sample(movieAt: url)
+            await MainActor.run { self?.filmstrip = frames }
         }
     }
 
@@ -184,6 +195,8 @@ final class EditorTimelineState: ObservableObject {
         let trackStates: [TrackState]
         /// Source-time peaks per track; empty until sampling finishes.
         let waveforms: [WaveformSamples]
+        /// Source-time thumbnails; nil until decoding finishes.
+        let filmstrip: FilmstripFrames?
     }
 
     func displayState(playhead outputPlayhead: Double) -> DisplayState {
@@ -194,7 +207,8 @@ final class EditorTimelineState: ObservableObject {
                     selection: selection,
                     expandedCutIDs: expandedCutIDs,
                     trackStates: edl.trackStates,
-                    waveforms: waveforms)
+                    waveforms: waveforms,
+                    filmstrip: filmstrip)
     }
 
     /// `time` arrives in SOURCE time — the view's own axis — and must be
@@ -553,7 +567,8 @@ struct TimelineViewRepresentable: NSViewRepresentable {
                      selection: display.selection,
                      expandedCutIDs: display.expandedCutIDs,
                      trackStates: display.trackStates,
-                     waveforms: display.waveforms)
+                     waveforms: display.waveforms,
+                     filmstrip: display.filmstrip)
     }
 }
 
@@ -613,7 +628,12 @@ struct EditorContentView: View {
             // than a sliver; see `TimelineView`'s own `markerTrackHeight`.
             TimelineViewRepresentable(state: state, playhead: playhead,
                                       onEditMarker: { editingMarkerID = $0 })
-                .frame(height: 56)
+                // 120, was 56. The filmstrip and the two waveforms need real
+                // vertical room: at 56 the video band was ~25px, which is
+                // smaller than a thumbnail is useful at, and each audio band
+                // was ~8px — enough to show a band exists, not enough to read
+                // where the sound is.
+                .frame(height: 120)
             HStack(spacing: 12) {
                 Button("Play") { controller.play() }
                 Button("Pause") { controller.pause() }
