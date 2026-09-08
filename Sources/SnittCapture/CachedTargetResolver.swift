@@ -68,23 +68,73 @@ public struct CachedTargetResolver: TargetResolver {
     /// ranking, so `first` meant "an arbitrary window of that app". Ties keep
     /// the earliest candidate, so the order is stable rather than dependent on
     /// how `max(by:)` breaks ties.
-    static func bestMatch(for reference: TargetReference,
-                          among candidates: [WindowCandidate]) -> WindowCandidate? {
-        guard let bundleID = reference.bundleIdentifier else { return nil }
+    /// What matching a reference against what is on screen produced.
+    ///
+    /// `ambiguous` is the case this type used to hide. Before it existed the
+    /// largest window won, on the reasoning that "recording the right app beats
+    /// recording nothing" — true when a person pressed a hotkey with a
+    /// remembered target, and exactly backwards on the agent path, where nobody
+    /// is watching. With ten Chrome windows open that rule silently recorded a
+    /// private pull request instead of the intended demo.
+    enum WindowMatch: Equatable {
+        case one(WindowCandidate)
+        case none
+        /// More than one window fits and nothing chose between them.
+        case ambiguous([WindowCandidate])
+    }
+
+    /// Matches a reference against what is on screen, reporting ambiguity
+    /// rather than guessing past it.
+    ///
+    /// Precedence: an explicit `windowID` names exactly one window; a
+    /// `titleHint` disambiguates among an app's windows; a single eligible
+    /// window needs neither. Anything else is ambiguous and the CALLER decides
+    /// — the agent path refuses, the hotkey path may still prefer the largest.
+    static func match(for reference: TargetReference,
+                      among candidates: [WindowCandidate]) -> WindowMatch {
+        guard let bundleID = reference.bundleIdentifier else { return .none }
         let sameApp = candidates.filter {
             $0.bundleIdentifier == bundleID
                 && $0.width >= minimumWindowEdge
                 && $0.height >= minimumWindowEdge
         }
-        guard let first = sameApp.first else { return nil }
+        guard !sameApp.isEmpty else { return .none }
 
+        // An id from this session's listing names one window and settles it.
+        // Checked before the size floor's survivors are counted, but still
+        // WITHIN them: an id naming a 60x200 palette is refused for the same
+        // reason a bundle id resolving to one is.
+        if let windowID = reference.windowID {
+            guard let exact = sameApp.first(where: { $0.windowID == windowID }) else {
+                return .none
+            }
+            return .one(exact)
+        }
         if let hint = reference.titleHint,
            let exact = sameApp.first(where: { $0.title == hint }) {
-            return exact
+            return .one(exact)
         }
-        return sameApp.dropFirst().reduce(first) { best, candidate in
-            candidate.width * candidate.height > best.width * best.height
-                ? candidate : best
+        if sameApp.count == 1 { return .one(sameApp[0]) }
+        return .ambiguous(sameApp)
+    }
+
+    /// The largest eligible window, ignoring ambiguity.
+    ///
+    /// Kept for callers that must record SOMETHING rather than refuse — a
+    /// person pressing a hotkey with a remembered target. Ties keep the
+    /// earliest candidate, so the order is stable rather than dependent on how
+    /// `max(by:)` breaks ties.
+    static func bestMatch(for reference: TargetReference,
+                          among candidates: [WindowCandidate]) -> WindowCandidate? {
+        switch match(for: reference, among: candidates) {
+        case .one(let candidate): return candidate
+        case .none: return nil
+        case .ambiguous(let candidates):
+            guard let first = candidates.first else { return nil }
+            return candidates.dropFirst().reduce(first) { best, candidate in
+                candidate.width * candidate.height > best.width * best.height
+                    ? candidate : best
+            }
         }
     }
 
@@ -162,11 +212,26 @@ public struct CachedTargetResolver: TargetResolver {
                                 height: Int($0.frame.height),
                                 processID: $0.owningApplication?.processID)
             }
-            guard let match = Self.bestMatch(for: reference, among: candidates),
-                  let window = content.windows.first(where: { $0.windowID == match.windowID })
+            // `match`, not `bestMatch`: this resolver serves the AGENT path
+            // only (the hotkey path goes through the picker, D42), and an agent
+            // that cannot tell which window it got is worse off than one told
+            // to choose. Guessing here recorded a private pull request.
+            let matched: WindowCandidate
+            switch Self.match(for: reference, among: candidates) {
+            case .one(let candidate):
+                matched = candidate
+            case .ambiguous(let all):
+                throw TargetResolutionError.ambiguousWindows(
+                    application: reference.bundleIdentifier ?? "that application",
+                    candidates: all.map { .init(id: $0.windowID, title: $0.title) })
+            case .none:
+                throw Self.failure(for: reference, among: candidates)
+            }
+            guard let window = content.windows.first(where: { $0.windowID == matched.windowID })
             else {
                 throw Self.failure(for: reference, among: candidates)
             }
+            let match = matched
 
             let filter = SCContentFilter(desktopIndependentWindow: window)
             return ResolvedTarget(

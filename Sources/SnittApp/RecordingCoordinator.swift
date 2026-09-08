@@ -28,6 +28,10 @@ public enum FailureReason: Equatable, Sendable {
     /// worth recording. Separate from `targetUnavailable` because the remedy is
     /// different: resize the window, or record a display.
     case targetTooSmall
+    /// The application has several recordable windows and the request named
+    /// none of them. Separate from `targetUnavailable` because the remedy is
+    /// the opposite: not "open it", but "say which one".
+    case ambiguousTarget
     /// Anything else: writer setup, finalization, unexpected errors.
     case internalError
 }
@@ -486,6 +490,22 @@ public actor RecordingCoordinator: AgentRecordingControlling {
             if forcedResolver == nil { try? store.clear() }
             return .failed("\(app) is no longer available. Press again to pick a new target.",
                            reason: .targetUnavailable)
+        } catch TargetResolutionError.ambiguousWindows(let app, let candidates) {
+            // Deliberately does NOT clear the store, for the same reason
+            // `targetTooSmall` does not: nothing is stale, the request was
+            // simply underspecified.
+            //
+            // The candidate list is the whole value of this error. An agent
+            // that just called listTargets has these ids already; naming them
+            // back turns "it recorded the wrong window" into one more call.
+            let listed = candidates.prefix(8)
+                .map { "\($0.id) (\($0.title ?? "untitled"))" }
+                .joined(separator: ", ")
+            return .failed(
+                "\(app) has \(candidates.count) recordable windows. "
+                    + "Pass windowID to choose one: \(listed)"
+                    + (candidates.count > 8 ? ", …" : ""),
+                reason: .ambiguousTarget)
         } catch TargetResolutionError.targetTooSmall(let app) {
             // Deliberately does NOT clear the store: the target is not gone, it
             // is just unusably small, so the human's cached reference is still

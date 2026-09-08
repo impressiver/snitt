@@ -748,7 +748,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
 
         let reference: TargetReference
         if let bundleID = options.bundleIdentifier {
-            reference = .window(bundleIdentifier: bundleID, titleHint: nil)
+            reference = .window(bundleIdentifier: bundleID, titleHint: nil,
+                                windowID: options.windowID)
         } else if let displayID = options.displayID {
             reference = .display(id: displayID)
         } else {
@@ -868,6 +869,18 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                 message: "A recording is already in progress.",
                 hint: "Stop it first with `snitt record stop`, or check `snitt status`. "
                     + "It may have been started by a person from the menu bar.")
+        case .failed(let message, .ambiguousTarget):
+            // Its own arm for the same reason `targetTooSmall` has one: the
+            // generic "the application may not be running" hint is the opposite
+            // of the truth, and the remedy is a parameter rather than an action
+            // in the world. The message already carries the window ids.
+            return AutomationError(
+                code: .targetNotFound,
+                message: message,
+                hint: "Call snitt_list_targets, then pass the windowID of the one you "
+                    + "mean. Snitt refuses to choose for you: with several windows open "
+                    + "it would otherwise record whichever happened to be largest, and "
+                    + "you would not find out until you watched the result.")
         case .failed(let message, .targetTooSmall):
             // Its own arm because the generic hint — "the application may not be
             // running" — is exactly the wrong advice here: the app IS running.

@@ -296,3 +296,28 @@ which direction the playhead would move.
 different questions, and reflow made them different ANSWERS. My own axis test
 passed throughout, because it only checked `x(atOutput:)` against clicks — it
 never asked where the rectangle was drawn.
+
+### 2026-09-08 (first agent-driven recording)
+
+**§13's second validation question got its first real answer**: an agent drove
+Snitt over MCP end to end — start, mark, stop, export with chapters — and
+produced an 88s recording with five chapters. That worked.
+
+**It also found a real defect on the first try.** Asked to record Chrome with
+ten windows open, `snitt_start_recording` recorded a private pull-request diff:
+the resolver returns the LARGEST matching window and the agent had no way to say
+which one it meant. Fixed by D69 — `windowID`, and refusing ambiguity rather
+than guessing.
+
+**What makes this worth remembering** is that the design already knew.
+`TargetSummary` carried the window id, `titleHint` existed for exactly this
+disambiguation, and §8 documented `--window-id` from the start. Three separate
+pieces of the answer were present and none was wired to the others. A feature
+can be fully specified, partly built, and still broken in the way it was
+specified to avoid.
+
+**Open, from the same session:** the agent had to launch Snitt.app itself
+because it was not running. Whether an agent should auto-launch the app — which
+then holds a screen-recording grant on its initiative — is a §5 question nobody
+has decided. §4.9's current answer is the client saying "ask the person at the
+machine to open it".

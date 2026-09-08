@@ -59,6 +59,11 @@ public enum AutomationProtocol {
 
 public struct StartOptions: Codable, Sendable, Equatable {
     public var bundleIdentifier: String?
+    /// A window id from THIS session's `listTargets`, naming exactly one
+    /// window. Without it, an app with several windows is ambiguous and the
+    /// agent path refuses rather than guessing (see
+    /// `TargetResolutionError.ambiguousWindows`).
+    public var windowID: UInt32?
     public var displayID: UInt32?
     public var microphone: Bool
     public var systemAudio: Bool
@@ -72,12 +77,14 @@ public struct StartOptions: Codable, Sendable, Equatable {
     public var workingDirectory: String?
 
     public init(bundleIdentifier: String? = nil,
+                windowID: UInt32? = nil,
                 displayID: UInt32? = nil,
                 microphone: Bool = false,
                 systemAudio: Bool = true,
                 maxDurationSeconds: Double? = nil,
                 workingDirectory: String? = nil) {
         self.bundleIdentifier = bundleIdentifier
+        self.windowID = windowID
         self.displayID = displayID
         self.microphone = microphone
         self.systemAudio = systemAudio
