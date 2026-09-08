@@ -337,3 +337,22 @@ capture should be able to exclude part of a window (`SCStreamConfiguration.
 sourceRect`). It is a stronger guarantee than cropping at export, because the
 BUNDLE stays clean rather than just the exported file — and it contradicts
 §4.5's pristine-capture principle, deliberately. Nothing was built for it.
+
+### 2026-09-08 (the agent could not scroll)
+
+**Observation:** the agent could not scroll the article it was demonstrating —
+its own control tool is allowlisted per domain and that domain was not listed —
+so the recording shows the page static for ~20s.
+
+**Investigated, recorded as D71, open for a ruling.** The interesting part is
+not the friction, it is that D49's stated reason for refusing to drive input
+turns out to be narrower than the ruling built on it. Posting via `CGEvent`
+needs Accessibility and is all-or-nothing, exactly as D49 says. Apple Events
+scripting is a separate grant, per source→target app pair, visible and revocable
+in Settings ▸ Privacy ▸ Automation — and can scroll a scriptable app without
+Accessibility at all.
+
+So "scroll the window you already consented to film, while filming it, with a
+marker at the same instant" is expressible with a much smaller grant than D49
+assumed any control surface would need. Whether to want it is still a product
+call. Nothing built.
