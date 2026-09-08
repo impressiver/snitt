@@ -251,3 +251,28 @@ re-rendering every word on every tick rather than to slow the clock back down.
 tint, with bold carrying the playhead when a word is both. Whether that reads
 clearly, or whether the two states still compete, is a judgement the tests
 cannot make.
+
+### 2026-09-08 (expanded folds reflow)
+
+**Reversal, on product-owner direction:** "the playhead should skip over
+expanded cut sections". Expanded folds now INSERT their space into the timeline
+axis, so content after them shifts right and the playhead jumps the band rather
+than appearing to travel through removed footage.
+
+**This overturns a decision I made and defended twice this session** — that
+expansion must not move `geometry`, on the grounds that a UI-only change to the
+shared axis is M4b's Critical #1. The reasoning was wrong in a specific way:
+the danger is drawing and hit-testing using DIFFERENT axes, not the axis having
+a new term. One mapping with an inserted-space term, used by both, is coherent —
+and `ExpandedFoldAxisTests` now asserts a click after an expanded fold lands on
+the instant drawn there.
+
+`TimelineFoldExtent` was deleted. It existed only to stop an expanded band
+drawing over the next fold, which reflow prevents at its source; clamping now
+would draw a band narrower than the space the axis reserved.
+
+**Judgement call worth an eye:** at the default zoom, fit-to-view now includes
+inserted space, so expanding a fold shrinks everything slightly to make room
+rather than pushing later content off the right edge (where nothing scrolls at
+1x, so it would be unreachable). Whether that rescale reads as helpful or as
+the timeline jumping about is something only using it will tell.

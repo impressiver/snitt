@@ -333,3 +333,47 @@ struct GestureAxisTests {
         }
     }
 }
+
+// MARK: - Expanded folds insert space into the SHARED axis
+
+/// A drag after an expanded fold must select the instant under the cursor.
+///
+/// This is the guard for the change that made expanded folds reflow. Drawing
+/// inserts the cut's source length into the axis so the playhead jumps the band
+/// instead of crawling through removed footage — and if hit-testing did not
+/// insert the same space, every click after an expanded fold would land at a
+/// different instant than the one drawn there. That is M4b's Critical #1, which
+/// is why it is tested here rather than beside the geometry.
+@MainActor
+struct ExpandedFoldAxisTests {
+    @Test("Expanding a fold moves where a later instant is DRAWN and HIT alike")
+    func expansionMovesBothAxesTogether() throws {
+        let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 200, height: 60))
+        var selected: Selection?
+        view.onSelect = { selected = $0 }
+        // 20s source, 4s cut at 5...9 → 16s output, fold at output 5.
+        let cut = Cut(range: TimeRange(start: 5, end: 9))
+        view.update(duration: 20, cuts: [cut], markerPoints: [], playhead: 0)
+
+        // Where output 10 is drawn, collapsed.
+        let collapsedX = view.xForTesting(outputSeconds: 10)
+
+        view.update(duration: 20, cuts: [cut], markerPoints: [], playhead: 0,
+                    expandedCutIDs: [cut.id])
+        let expandedX = view.xForTesting(outputSeconds: 10)
+        #expect(expandedX != collapsedX, "expanding the fold did not move later content")
+
+        // The decisive part: a click at the NEW position must resolve to the
+        // same instant it is drawn at. An implementation that inserts space
+        // when drawing but not when hit-testing fails here while every drawing
+        // assertion above still passes.
+        var scrubbed: Double?
+        view.onScrub = { scrubbed = $0 }
+        view.mouseDown(with: .synthetic(at: NSPoint(x: expandedX, y: 40), in: view))
+        view.mouseUp(with: .synthetic(at: NSPoint(x: expandedX, y: 40), in: view))
+        let landed = try #require(scrubbed)
+        // onScrub reports SOURCE time; output 10 is source 14 past the 4s cut.
+        #expect(abs(landed - 14) < 0.3, "click landed at source \(landed), expected ~14")
+        _ = selected
+    }
+}

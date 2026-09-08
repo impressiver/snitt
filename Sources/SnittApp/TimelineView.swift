@@ -311,7 +311,19 @@ public final class TimelineView: NSView {
     private func rebuildGeometry() {
         let edl = EditDecisionList(cuts: cuts)
         timebase = Timebase(sourceDuration: duration, edl: edl)
-        let base = TimelineGeometry(width: bounds.width, timebase: timebase)
+        // Expanded folds insert their cut's SOURCE length into the axis, so
+        // later content shifts right and the playhead jumps the band rather
+        // than appearing to travel through removed footage. Passed to the
+        // geometry rather than applied at draw time because gestures share
+        // this axis — a drawing that inserted space while hit-testing did not
+        // is M4b's Critical #1.
+        let expansions = cuts
+            .filter { expandedCutIDs.contains($0.id) }
+            .map { TimelineGeometry.Expansion(
+                output: timebase.foldPosition(for: $0),
+                seconds: $0.range.end - $0.range.start) }
+        let base = TimelineGeometry(width: bounds.width, timebase: timebase,
+                                    expansions: expansions)
         // M5f Task 8: reapply whatever zoom is currently in effect on top of
         // the fresh, unzoomed geometry — see `geometry`'s own doc comment
         // for why this recomputes from the anchor every time rather than
@@ -335,13 +347,16 @@ public final class TimelineView: NSView {
     /// dividing by it.
     private func expandedWidthPixels(for cut: Cut) -> Double {
         guard geometry.pixelsPerSecond > 0 else { return 0 }
-        let cutLength = cut.range.end - cut.range.start
-        let natural = cutLength * geometry.pixelsPerSecond
-        return TimelineFoldExtent.clampedWidth(
-            naturalWidth: natural,
-            foldX: geometry.x(atFold: cut),
-            otherFoldXs: cuts.filter { $0.id != cut.id }.map { geometry.x(atFold: $0) },
-            viewWidth: bounds.width)
+        // Exactly the space the geometry inserted for it — no clamp.
+        //
+        // `TimelineFoldExtent` used to bound this against the next fold and the
+        // view edge, because expansion did not reflow and an unbounded band
+        // drew straight over whatever followed. Reflow removes the overlap at
+        // its source: the next fold has itself moved right by this band's
+        // width, so there is nothing left to collide with. Clamping now would
+        // be actively wrong — it would draw a band narrower than the space the
+        // axis reserved, leaving a gap.
+        return (cut.range.end - cut.range.start) * geometry.pixelsPerSecond
     }
 
     /// The pixel height of the thin marker lane at the very top of the view
@@ -838,6 +853,12 @@ public final class TimelineView: NSView {
                 NSBezierPath(rect: NSRect(x: x, y: rect.maxY - 2, width: 1, height: 2)).fill()
             }
         }
+    }
+
+    /// Where an output instant is drawn. A test seam, so a test can assert
+    /// that drawing and hit-testing agree without reaching into `geometry`.
+    func xForTesting(outputSeconds: Double) -> Double {
+        geometry.x(atOutput: OutputTime(outputSeconds))
     }
 
     public override func draw(_ dirtyRect: NSRect) {

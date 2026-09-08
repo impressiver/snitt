@@ -25,6 +25,31 @@ import Foundation
 /// offset (`visibleOffset`) to this type, right here rather than spread
 /// across every caller — see `zoomed(by:anchoredAt:)`.
 public struct TimelineGeometry: Equatable, Sendable {
+    /// Space an EXPANDED fold occupies on the output axis (M5f follow-on).
+    ///
+    /// An expanded fold shows the footage a cut removed. That footage has no
+    /// output time — it is not in the export — so the space it occupies is
+    /// INSERTED into the axis rather than mapped from it. Everything after the
+    /// fold shifts right by `seconds`, and the playhead jumps the gap instead
+    /// of appearing to travel through removed footage.
+    ///
+    /// Held by `TimelineGeometry` rather than applied by the view at draw time
+    /// because gestures share this axis: if drawing inserted space and
+    /// `outputTime(atX:)` did not, a click after an expanded fold would select
+    /// a different instant than the one under the cursor — M4b's Critical #1
+    /// exactly, which `GestureAxisTests` exists to prevent.
+    public struct Expansion: Equatable, Sendable {
+        /// The fold's own position on the (unexpanded) output axis.
+        public let output: OutputTime
+        /// How many seconds of space it occupies — the cut's SOURCE length.
+        public let seconds: Double
+
+        public init(output: OutputTime, seconds: Double) {
+            self.output = output
+            self.seconds = seconds
+        }
+    }
+
     public let width: Double
     /// The trimmed timeline's own length — what will actually export, not
     /// `capture.mov`'s. See the type's doc comment.
@@ -44,18 +69,32 @@ public struct TimelineGeometry: Equatable, Sendable {
     /// timeline is wider than the view and this is how much of it has
     /// scrolled out of view on the left.
     public let visibleOffset: Double
+    /// Expanded folds, ascending by `output`. Empty is the common case and
+    /// costs nothing — every mapping below short-circuits on it.
+    public let expansions: [Expansion]
     private let timebase: Timebase
 
-    public init(width: Double, timebase: Timebase) {
+    public init(width: Double, timebase: Timebase, expansions: [Expansion] = []) {
         self.width = width
         self.timebase = timebase
         self.duration = timebase.outputDuration
-        self.pixelsPerSecond = (width > 0 && self.duration > 0) ? width / self.duration : 0
+        let sorted = expansions.sorted { $0.output < $1.output }
+        // Fit-to-view includes INSERTED space. Without this, expanding a fold
+        // pushes later content past `width`, where `x(atOutput:)` clamps it —
+        // and since nothing scrolls at the default zoom, that content becomes
+        // unreachable rather than merely off-screen. Everything shrinks
+        // slightly to make room instead, which is what an editor does when
+        // something is inserted.
+        let fitted = self.duration + sorted.reduce(0) { $0 + $1.seconds }
+        self.pixelsPerSecond = (width > 0 && fitted > 0) ? width / fitted : 0
         self.visibleOffset = 0
+        self.expansions = sorted
     }
 
     private init(width: Double, duration: Double, timebase: Timebase,
-                pixelsPerSecond: Double, visibleOffset: Double) {
+                pixelsPerSecond: Double, visibleOffset: Double,
+                expansions: [Expansion]) {
+        self.expansions = expansions
         self.width = width
         self.duration = duration
         self.timebase = timebase
@@ -90,8 +129,43 @@ public struct TimelineGeometry: Equatable, Sendable {
     /// whichever edge it clamped to, and the NEXT zoom step would then pivot
     /// around that wrong edge instead of the real anchor.
     private func rawX(atOutput time: OutputTime) -> Double {
-        (time.seconds - visibleOffset) * pixelsPerSecond
+        (expandedTime(forOutput: time.seconds) - visibleOffset) * pixelsPerSecond
     }
+
+    /// An output instant moved onto the axis the view actually draws, with
+    /// every expanded fold before it inserted.
+    ///
+    /// An expansion AT `seconds` counts: the inserted band opens at the fold,
+    /// so an instant exactly on it is drawn past the band, which is what makes
+    /// the playhead jump the gap in one step rather than crawl through it.
+    private func expandedTime(forOutput seconds: Double) -> Double {
+        guard !expansions.isEmpty else { return seconds }
+        return seconds + expansions.reduce(0) {
+            $1.output.seconds <= seconds ? $0 + $1.seconds : $0
+        }
+    }
+
+    /// The inverse: an instant on the drawn axis back to output time.
+    ///
+    /// A position INSIDE an inserted band belongs to no output instant — that
+    /// footage was removed — so it resolves to the fold itself. A click there
+    /// therefore means "the cut", which is the same answer clicking a collapsed
+    /// fold gives.
+    private func outputTime(forExpanded expanded: Double) -> Double {
+        guard !expansions.isEmpty else { return expanded }
+        var inserted = 0.0
+        for expansion in expansions {
+            let bandStart = expansion.output.seconds + inserted
+            if expanded < bandStart { break }
+            if expanded < bandStart + expansion.seconds { return expansion.output.seconds }
+            inserted += expansion.seconds
+        }
+        return expanded - inserted
+    }
+
+    /// Total inserted seconds — how much longer the drawn axis is than the
+    /// output timeline.
+    public var expandedSeconds: Double { expansions.reduce(0) { $0 + $1.seconds } }
 
     /// Maps an OUTPUT-timeline instant to a pixel, clamped to `0...width` —
     /// an out-of-viewport instant (scrolled off either edge, or simply past
@@ -121,7 +195,8 @@ public struct TimelineGeometry: Equatable, Sendable {
     /// in.
     public func outputTime(atX x: Double) -> OutputTime {
         guard !isDegenerate, pixelsPerSecond > 0 else { return OutputTime(0) }
-        return OutputTime(min(max(visibleOffset + x / pixelsPerSecond, 0), duration))
+        let expanded = visibleOffset + x / pixelsPerSecond
+        return OutputTime(min(max(outputTime(forExpanded: expanded), 0), duration))
     }
 
     /// The number of OUTPUT seconds `pixels` pixels span at the CURRENT
@@ -167,10 +242,14 @@ public struct TimelineGeometry: Equatable, Sendable {
         // is nothing to scroll to — clamp to 0 rather than let the anchor
         // solve for a negative offset that would leave empty space before
         // the timeline's own start.
-        let maxOffset = max(0, duration - width / newPixelsPerSecond)
+        // The scrollable extent includes inserted space, or expanding a fold
+        // near the end would push content past a limit computed as though it
+        // were not there.
+        let maxOffset = max(0, duration + expandedSeconds - width / newPixelsPerSecond)
         let newOffset = min(max(rawOffset, 0), maxOffset)
         return TimelineGeometry(width: width, duration: duration, timebase: timebase,
-                                pixelsPerSecond: newPixelsPerSecond, visibleOffset: newOffset)
+                                pixelsPerSecond: newPixelsPerSecond, visibleOffset: newOffset,
+                                expansions: expansions)
     }
 
     /// The pixel position where `cut`'s own two edges meet once folded —
