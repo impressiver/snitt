@@ -18,12 +18,22 @@ import SnittDocument
 /// Pure — the split decision is made from peaks alone, with no asset, no
 /// recognizer and no I/O, which is what makes the boundary rules testable.
 public enum SpeechChunker {
-    /// Fraction of the loudest peak below which audio counts as silence.
+    /// Fraction of the recording's *typical loud* level below which audio
+    /// counts as silence.
     ///
     /// Relative rather than absolute because recording levels vary by an order
     /// of magnitude between machines and microphones: the first real recording
     /// made with this app peaked at 0.231, so any fixed threshold tuned for a
     /// hot signal would treat all of it as silence.
+    ///
+    /// Measured against a HIGH PERCENTILE rather than the maximum, which is the
+    /// difference between working and not. A single loud instant sets the floor
+    /// for the whole recording if the maximum is the reference: a recording
+    /// made with speakers on rather than headphones had music bleed into the
+    /// microphone and clip at 2.216, which put the threshold at 0.177 — above
+    /// almost all of the speech, so 81% of the file read as silence and the
+    /// transcript came back with five words for thirty-two seconds. One cough,
+    /// one door, one notification chime does the same thing.
     public static let silenceFraction: Float = 0.08
     /// A floor under that fraction, so a recording of pure noise does not have
     /// its own noise floor promoted to "speech".
@@ -40,6 +50,19 @@ public enum SpeechChunker {
     /// reappear inside it.
     public static let defaultMaxChunk = 40.0
 
+    /// The level the silence threshold is measured against: the 90th
+    /// percentile of the peaks.
+    ///
+    /// High enough to sit among the loud passages rather than the quiet ones,
+    /// and low enough that isolated spikes — a clip, a chime, music bleeding in
+    /// from speakers — cannot drag it up and swallow the speech.
+    static func referenceLevel(of peaks: [Float]) -> Float {
+        guard !peaks.isEmpty else { return 0 }
+        let sorted = peaks.sorted()
+        let index = min(sorted.count - 1, Int(Double(sorted.count) * 0.9))
+        return sorted[index]
+    }
+
     public static func chunkRanges(peaks: [Float],
                                    samplesPerSecond: Double,
                                    duration: Double,
@@ -50,8 +73,7 @@ public enum SpeechChunker {
             return [TimeRange(start: 0, end: duration)]
         }
 
-        let loudest = peaks.max() ?? 0
-        let threshold = max(absoluteSilenceFloor, loudest * silenceFraction)
+        let threshold = max(absoluteSilenceFloor, referenceLevel(of: peaks) * silenceFraction)
         let minSilenceSamples = max(1, Int(minSilenceSeconds * samplesPerSecond))
 
         // Boundaries at the MIDDLE of each qualifying silence, so the pause is
