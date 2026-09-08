@@ -231,11 +231,12 @@ func requestBody(for command: ParsedCommand,
         // here is louder than a `.status` fallback that would silently make
         // `snitt setup` report whether a recording is running.
         fatalError("setup is handled before the client connects")
-    case .export(let path, let format, let out, let scale, let chapters, let maxSizeBytes):
+    case .export(let path, let format, let out, let scale, let chapters, let subtitles, let maxSizeBytes):
         return .export(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
                        format: format,
                        outputPath: PathResolver.resolve(out, workingDirectory: currentDirectory),
-                       scale: scale, chapters: chapters, maxSizeBytes: maxSizeBytes)
+                       scale: scale, chapters: chapters, subtitles: subtitles,
+                      maxSizeBytes: maxSizeBytes)
     case .diagnosticsExport(let path):
         return .diagnostics(outputPath: PathResolver.resolve(path, workingDirectory: currentDirectory))
     case .help: return .status  // unreachable; handled above

@@ -33,10 +33,19 @@ public enum MarkerMapping {
                 // filtered sub-frame sliver) — dropped.
                 continue
             }
-            mapped.append(LoggedEvent(
-                timeSeconds: timeSeconds,
-                kind: .marker,
-                label: marker.label))
+            // `id` and `transcript` carried, not dropped. This rebuilt the
+            // event from three fields and predates both: `id` arrived with
+            // M5f's marker track, `transcript` with D50. The consequence was
+            // silent and total — a transcript could never reach an export, so
+            // subtitles rendered empty and D51's burn-in would have too, with
+            // the data sitting correctly in `events.json` the whole time.
+            //
+            // Only `timeSeconds` is meant to change here. Constructing a fresh
+            // value and listing the fields to keep is what let two of them go
+            // missing; the map now copies and adjusts.
+            var moved = marker
+            moved.timeSeconds = timeSeconds
+            mapped.append(moved)
         }
         return mapped.sorted { $0.timeSeconds < $1.timeSeconds }
     }

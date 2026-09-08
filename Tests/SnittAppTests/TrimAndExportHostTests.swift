@@ -184,7 +184,7 @@ func wallAndMediaDurationsDisagreeButTrimAndExportMustAgree() async throws {
     defer { try? FileManager.default.removeItem(at: output) }
     let exportResponse = await host.handle(
         .export(bundlePath: bundle.url.path, format: "mp4", outputPath: output.path,
-               scale: 1.0, chapters: false, maxSizeBytes: nil))
+               scale: 1.0, chapters: false, subtitles: false, maxSizeBytes: nil))
     guard case .exported(let manifest) = exportResponse else {
         Issue.record("expected exported, got \(exportResponse)"); return
     }
@@ -220,7 +220,7 @@ func exportWithCorruptEDLFailsExplicitly() async throws {
     let host = AutomationHost.forTesting()
     let response = await host.handle(
         .export(bundlePath: bundle.url.path, format: "mp4", outputPath: output.path,
-               scale: 1.0, chapters: false, maxSizeBytes: nil))
+               scale: 1.0, chapters: false, subtitles: false, maxSizeBytes: nil))
 
     guard case .failure(let error) = response else {
         Issue.record("export with a corrupt edit.json must fail, not silently export the full range"); return
@@ -255,7 +255,7 @@ func exportWithNoEDLFileExportsFullRange() async throws {
     let host = AutomationHost.forTesting()
     let response = await host.handle(
         .export(bundlePath: bundle.url.path, format: "mp4", outputPath: output.path,
-               scale: 1.0, chapters: false, maxSizeBytes: nil))
+               scale: 1.0, chapters: false, subtitles: false, maxSizeBytes: nil))
 
     guard case .exported(let manifest) = response else {
         Issue.record("expected exported, got \(response)"); return

@@ -87,7 +87,7 @@ func trimNeedsSomething() {
 
 @Test("export parses its format, output and scale")
 func parsesExport() {
-    guard case .success(.export(let path, let format, let out, let scale, let chapters, _)) =
+    guard case .success(.export(let path, let format, let out, let scale, let chapters, _, _)) =
         CommandLineParser.parse(["export", "/tmp/x.snitt", "--format", "mp4",
                                  "--out", "/tmp/demo.mp4", "--scale", "0.5", "--chapters"])
     else { Issue.record("parse failed"); return }
@@ -100,7 +100,7 @@ func parsesExport() {
 
 @Test("export defaults to full scale and no chapters")
 func exportDefaults() {
-    guard case .success(.export(_, _, _, let scale, let chapters, let maxSizeBytes)) =
+    guard case .success(.export(_, _, _, let scale, let chapters, _, let maxSizeBytes)) =
         CommandLineParser.parse(["export", "/tmp/x.snitt", "--format", "mp4",
                                  "--out", "/tmp/demo.mp4"])
     else { Issue.record("parse failed"); return }
@@ -113,7 +113,7 @@ func exportDefaults() {
 func exportAcceptsGif() {
     let result = CommandLineParser.parse(
         ["export", "/tmp/b.snitt", "--format", "gif", "--out", "/tmp/o.gif"])
-    guard case .success(.export(_, let format, _, _, _, _)) = result else {
+    guard case .success(.export(_, let format, _, _, _, _, _)) = result else {
         Issue.record("expected success, got \(result)"); return
     }
     #expect(format == "gif")
@@ -124,7 +124,7 @@ func maxSizeParsed() {
     let result = CommandLineParser.parse(
         ["export", "/tmp/b.snitt", "--format", "mp4", "--out", "/tmp/o.mp4",
          "--max-size", "10MB"])
-    guard case .success(.export(_, _, _, _, _, let maxSize)) = result else {
+    guard case .success(.export(_, _, _, _, _, _, let maxSize)) = result else {
         Issue.record("expected success, got \(result)"); return
     }
     // Asserts the VALUE reached the command, not merely that parsing

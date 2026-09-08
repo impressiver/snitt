@@ -107,7 +107,7 @@ public struct AutomationRequest: Codable, Sendable {
         case resumeRecording(sessionID: String)
         case screenshot(sessionID: String, label: String?)
         case export(bundlePath: String, format: String, outputPath: String,
-                    scale: Double, chapters: Bool, maxSizeBytes: Int?)
+                    scale: Double, chapters: Bool, subtitles: Bool, maxSizeBytes: Int?)
         /// `outputPath` arrives already resolved against the CALLER's working
         /// directory (`PathResolver.resolve`, done by the CLI before this is
         /// sent) — never the app's, whose own cwd is not the caller's (M3c

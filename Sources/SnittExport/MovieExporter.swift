@@ -205,6 +205,7 @@ public enum MovieExporter {
                               scale: Double,
                               to outputURL: URL,
                               chaptersURL: URL? = nil,
+                              subtitlesURL: URL? = nil,
                               format: String = "mp4",
                               maxSizeBytes: Int? = nil) async throws -> ExportManifest {
         var built: BuiltComposition
@@ -287,6 +288,16 @@ public enum MovieExporter {
         let vtt = WebVTTChapters.render(markers: mappedMarkers, duration: built.duration)
         if let chaptersURL {
             try vtt.write(to: chaptersURL, atomically: true, encoding: .utf8)
+        }
+
+        // A SEPARATE file from chapters, not an alternative rendering of the
+        // same one (D50). They carry different fields, have different timing
+        // rules, and a player loads them into different tracks — merging them
+        // would put "Paused" and "Screenshot" into the captions.
+        if let subtitlesURL {
+            let subtitles = WebVTTSubtitles.render(markers: mappedMarkers,
+                                                   duration: built.duration)
+            try subtitles.write(to: subtitlesURL, atomically: true, encoding: .utf8)
         }
 
         let chapters = WebVTTChapters.titledMarkers(mappedMarkers)

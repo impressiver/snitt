@@ -316,9 +316,11 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         case .crop(let bundlePath, let rect):
             return await crop(bundlePath: bundlePath, rect: rect)
 
-        case .export(let bundlePath, let format, let outputPath, let scale, let chapters, let maxSizeBytes):
+        case .export(let bundlePath, let format, let outputPath, let scale, let chapters,
+                     let subtitles, let maxSizeBytes):
             return await export(bundlePath: bundlePath, format: format, outputPath: outputPath,
-                                scale: scale, chapters: chapters, maxSizeBytes: maxSizeBytes)
+                                scale: scale, chapters: chapters, subtitles: subtitles,
+                                maxSizeBytes: maxSizeBytes)
 
         case .diagnostics(let outputPath):
             return await diagnosticsExport(outputPath: outputPath)
@@ -549,7 +551,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// Files-and-Folders TCC service — so it cannot build the composition
     /// itself, only ask the app to.
     private func export(bundlePath: String, format: String, outputPath: String,
-                        scale: Double, chapters: Bool, maxSizeBytes: Int?) async -> AutomationResponse {
+                        scale: Double, chapters: Bool, subtitles: Bool,
+                        maxSizeBytes: Int?) async -> AutomationResponse {
         // Opening the gif seam must not open it to everything else. The CLI
         // and MCP frontends refuse anything else with matching wording
         // (§8) — this must match too, or a client could send a format the
@@ -589,10 +592,17 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         let chaptersURL = chapters
             ? outputURL.deletingPathExtension().appendingPathExtension("vtt")
             : nil
+        // `.subtitles.vtt`, not `.vtt`: both can be requested at once, and a
+        // shared name would have one silently overwrite the other — a caption
+        // track replaced by a chapter list, discovered only on playback.
+        let subtitlesURL = subtitles
+            ? outputURL.deletingPathExtension().appendingPathExtension("subtitles.vtt")
+            : nil
 
         do {
             let manifest = try await MovieExporter.export(
-                bundle: bundle, edl: edl, scale: scale, to: outputURL, chaptersURL: chaptersURL,
+                bundle: bundle, edl: edl, scale: scale, to: outputURL,
+                chaptersURL: chaptersURL, subtitlesURL: subtitlesURL,
                 format: format, maxSizeBytes: maxSizeBytes)
             return .exported(manifest)
         } catch CompositionError.everythingCut {

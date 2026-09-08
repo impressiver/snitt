@@ -334,7 +334,9 @@ public enum MCPBridge {
                         "scale": ["type": "number", "default": 1.0,
                                   "description": "Pixel-dimension multiplier"],
                         "chapters": ["type": "boolean", "default": false,
-                                     "description": "Write a .vtt beside the output from the bundle's markers"],
+                                     "description": "Write a .vtt chapter list beside the output, from marker labels — navigation, not speech"],
+                        "subtitles": ["type": "boolean", "default": false,
+                                      "description": "Write a .subtitles.vtt beside the output from marker TRANSCRIPTS. Only markers that carry narration produce cues, so a demo with no transcripts produces an empty file."],
                         "maxSize": [
                             "type": "string",
                             "description": "A byte budget like \"10MB\". The exporter walks "
@@ -577,7 +579,9 @@ public enum MCPBridge {
             return .success(.export(bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory),
                                      format: format,
                                      outputPath: PathResolver.resolve(outputPath, workingDirectory: workingDirectory),
-                                     scale: scale, chapters: chapters, maxSizeBytes: maxSizeBytes))
+                                     scale: scale, chapters: chapters,
+                                     subtitles: (arguments["subtitles"] as? Bool) ?? false,
+                                     maxSizeBytes: maxSizeBytes))
 
         case "snitt_diagnostics_export":
             guard let outputPath = arguments["outputPath"] as? String else {
