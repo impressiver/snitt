@@ -79,3 +79,25 @@ a licence" becomes actionable, since D66 makes open source a pillar:
 What is NOT settled by this: going public also publishes `docs/superpowers/`,
 including every plan, execution ledger and this file. That is a judgement call
 about how much working process to show, not a security question.
+
+### 2026-09-07 (later)
+
+**Observation — a stale incremental build looks exactly like a memory-corruption
+bug.** Adding `crop` to `EditDecisionList` changed the layout of a public struct
+in `SnittDocument`. SwiftPM's incremental build did not recompile every
+dependent, and the resulting binary crashed with SIGSEGV/SIGBUS at a *different*
+test each run, generated no crash report, and survived every line-level revert of
+the change that "caused" it. `rm -rf .build` fixed it outright.
+
+Cost: about forty minutes of bisection, most of it spent believing the source was
+wrong. What eventually pointed the right way was that reverting each individual
+line still crashed — the layout change persisted through all of them.
+
+**Rule for next time: when a crash is (a) at a varying location, (b) produces no
+crash report, and (c) survives reverting the lines that supposedly cause it,
+clean-build BEFORE bisecting further.** Especially after adding or reordering a
+stored property on a public struct in a library target.
+
+Worth noting what did work: grepping for `signal code` rather than trusting
+`swift test`'s exit status caught it at all. The suite reports success on a
+segfault, so the commit would otherwise have gone in green.

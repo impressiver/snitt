@@ -62,7 +62,20 @@ enum SyntheticFrameContent {
     // added here too so the two enums don't drift on this case specifically,
     // even though nothing in this target currently constructs `.ramp`.
     case ramp
+    /// Four solid quadrants with distinct luma, so WHICH REGION survived a
+    /// transform is observable. A crop test needs this: dimensions alone
+    /// cannot tell a correct crop from one with a flipped y axis or a
+    /// transposed origin, since both produce identically-sized output.
+    ///
+    /// Values, top-left origin as the image is displayed:
+    ///   TL 32   TR 96
+    ///   BL 160  BR 224
+    case quadrants
 }
+
+/// Luma of each quadrant in `.quadrants`, in display order (top-left origin).
+let quadrantTopLeft = 32, quadrantTopRight = 96
+let quadrantBottomLeft = 160, quadrantBottomRight = 224
 
 /// What samples a synthetic audio track is filled with.
 ///
@@ -243,6 +256,23 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
                     // output byte-for-byte reproducible across runs.
                     fillWithSeededNoise(base, byteCount: byteCount,
                                         seed: UInt64(videoProgress.value) &+ 1)
+                case .quadrants:
+                    let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+                    let height = CVPixelBufferGetHeight(buffer)
+                    let width = CVPixelBufferGetWidth(buffer)
+                    // Row 0 is the TOP of the displayed image in a
+                    // CVPixelBuffer, so the top-left value is written first.
+                    for row in 0..<height {
+                        let rowBase = base.advanced(by: row * bytesPerRow)
+                            .assumingMemoryBound(to: UInt8.self)
+                        let top = row < height / 2
+                        for column in 0..<width {
+                            let left = column < width / 2
+                            let value = UInt8(top ? (left ? quadrantTopLeft : quadrantTopRight)
+                                                  : (left ? quadrantBottomLeft : quadrantBottomRight))
+                            for channel in 0..<4 { rowBase[column * 4 + channel] = value }
+                        }
+                    }
                 case .ramp:
                     // Kept in step with the `SnittAppTests` copy's `.ramp`
                     // fill so the two enums agree on more than just the case

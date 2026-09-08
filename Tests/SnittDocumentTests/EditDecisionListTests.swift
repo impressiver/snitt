@@ -181,3 +181,49 @@ struct EditDecisionListWriteVersionTests {
         #expect(header.schemaVersion == EditDecisionList.currentSchemaVersion)
     }
 }
+
+// D60's defect class, one field later: a rebuild that forgets a field.
+//
+// `trimmed(keeping:duration:)` constructs a fresh EditDecisionList. When crop
+// was added it was NOT carried, so `snitt trim` on a cropped bundle silently
+// discarded the crop — the same shape as D60's original finding, where the same
+// function discarded the GUI's cuts. §4.8 holds that the CLI and the GUI are one
+// model; a CLI that drops half the model is two.
+@Test("Trimming preserves a crop set in the editor")
+func trimPreservesTheCrop() throws {
+    let edl = EditDecisionList(
+        cuts: [Cut(range: TimeRange(start: 1, end: 2))],
+        crop: CropRect(x: 0.25, y: 0.25, width: 0.5, height: 0.5))
+    let trimmed = edl.trimmed(keeping: TimeRange(start: 0.5, end: 9), duration: 10)
+    #expect(trimmed.crop == edl.crop, "trim dropped the crop — D60's bug, new field")
+}
+
+@Test("An edit.json written before crop existed still opens")
+func legacyEditWithoutCropDecodes() throws {
+    // decodeIfPresent, not decode. Every bundle recorded before this field has
+    // no `crop` key, and a required key would make all of them unopenable.
+    let json = #"{"schemaVersion":2,"cuts":[],"trackStates":[]}"#
+    let edl = try JSONDecoder().decode(EditDecisionList.self, from: Data(json.utf8))
+    #expect(edl.crop == nil)
+}
+
+@Test("An uncropped EDL writes no crop key at all")
+func uncroppedEDLOmitsTheKey() throws {
+    let data = try JSONEncoder().encode(EditDecisionList())
+    let text = String(data: data, encoding: .utf8) ?? ""
+    #expect(!text.contains("crop"), "an uncropped edit.json should not carry the key: \(text)")
+}
+
+@Test("A crop rect clamps rather than escaping the frame")
+func cropClampsToTheUnitSquare() {
+    // A crop is a view onto the source. A rect reaching past the edge means the
+    // caller wanted the edge; the alternative is a render larger than the frame
+    // with nothing in the overhang.
+    let over = CropRect(x: 0.8, y: 0.8, width: 0.5, height: 0.5)
+    // Tolerance, not equality: 1 - 0.8 is 0.19999999999999996 in binary
+    // floating point, and a clamp that lands there is correct.
+    #expect(abs(over.width - 0.2) < 1e-9 && abs(over.height - 0.2) < 1e-9)
+    #expect(over.x + over.width <= 1.0, "a clamped crop must not escape the frame")
+    let negative = CropRect(x: -1, y: -1, width: 0.5, height: 0.5)
+    #expect(negative.x == 0 && negative.y == 0)
+}

@@ -233,8 +233,24 @@ public enum CompositionBuilder {
 
         let naturalSize = try await sourceVideo.load(.naturalSize)
         let preferredTransform = try await sourceVideo.load(.preferredTransform)
-        let renderSize = CGSize(width: (naturalSize.width * scale).rounded(),
-                                height: (naturalSize.height * scale).rounded())
+        // Crop is a view onto the source, applied as a translation plus a
+        // smaller `renderSize` — NOT a custom compositor and NOT
+        // `AVVideoCompositionCoreAnimationTool` (§9, as narrowed): a geometric
+        // transform on a layer instruction applies identically in
+        // `AVPlayerItem` playback and `AVAssetExportSession` export, so the
+        // editor previews a crop live and §9's one-builder guarantee holds
+        // without an exception.
+        //
+        // `crop` is normalized, `scale` is a multiplier, and they commute —
+        // the render is (crop × natural × scale) either way.
+        let crop = (edl.crop?.isFullFrame == false && edl.crop?.isEmpty == false) ? edl.crop : nil
+        let cropOrigin = CGPoint(x: (crop?.x ?? 0) * naturalSize.width,
+                                 y: (crop?.y ?? 0) * naturalSize.height)
+        let croppedSize = CGSize(width: (crop?.width ?? 1) * naturalSize.width,
+                                 height: (crop?.height ?? 1) * naturalSize.height)
+
+        let renderSize = CGSize(width: (croppedSize.width * scale).rounded(),
+                                height: (croppedSize.height * scale).rounded())
 
         let videoComposition = AVMutableVideoComposition()
         videoComposition.renderSize = renderSize
@@ -246,8 +262,15 @@ public enum CompositionBuilder {
         // Passthrough plus scale. Still passthrough in §9's sense — there is no
         // custom compositor class — but expressed as a real instruction rather
         // than a nil, so overlays attach here later.
+        // Order matters and reads left-to-right: orient the source, slide the
+        // crop's top-left corner to the render origin, then scale. Because
+        // `concatenating` applies the receiver first, the translation is
+        // expressed in post-orientation pixels and is itself scaled — which is
+        // what makes `renderSize` above the exact bounds of the result.
         layer.setTransform(
-            preferredTransform.concatenating(CGAffineTransform(scaleX: scale, y: scale)),
+            preferredTransform
+                .concatenating(CGAffineTransform(translationX: -cropOrigin.x, y: -cropOrigin.y))
+                .concatenating(CGAffineTransform(scaleX: scale, y: scale)),
             at: .zero)
         instruction.layerInstructions = [layer]
         videoComposition.instructions = [instruction]

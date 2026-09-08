@@ -101,6 +101,47 @@ public enum EditDecisionListError: Error, Equatable, CustomStringConvertible {
     }
 }
 
+/// A crop, expressed in fractions of the source's natural size (0...1), with
+/// the origin at the **top-left** of the displayed image.
+///
+/// Normalized rather than in pixels so it survives a change of source
+/// resolution and composes with `--scale` without either needing to know about
+/// the other: the render size is (crop × natural × scale), and those two
+/// multipliers commute.
+///
+/// Non-destructive per §4.5 — this lives in `edit.json` and `capture.mov` is
+/// never touched, so a crop is as reversible as a cut.
+public struct CropRect: Codable, Equatable, Sendable {
+    public var x: Double
+    public var y: Double
+    public var width: Double
+    public var height: Double
+
+    /// Clamps into the unit square. A crop is a view onto the source, so a
+    /// rect reaching past the edge means the caller wanted the edge — the
+    /// alternative is either a throw at every construction site or a render
+    /// size larger than the frame, filled with nothing.
+    public init(x: Double, y: Double, width: Double, height: Double) {
+        let clampedX = min(max(x, 0), 1)
+        let clampedY = min(max(y, 0), 1)
+        self.x = clampedX
+        self.y = clampedY
+        self.width = min(max(width, 0), 1 - clampedX)
+        self.height = min(max(height, 0), 1 - clampedY)
+    }
+
+    public static let full = CropRect(x: 0, y: 0, width: 1, height: 1)
+
+    /// A crop that removes nothing renders identically to no crop, so callers
+    /// can skip the whole transform rather than multiplying by one.
+    public var isFullFrame: Bool { x == 0 && y == 0 && width == 1 && height == 1 }
+
+    /// A zero-area crop would produce a zero-size render — a file with no
+    /// picture in it. Callers treat this the way they treat `isFullFrame`:
+    /// as "do not apply this".
+    public var isEmpty: Bool { width <= 0 || height <= 0 }
+}
+
 /// The only mutable part of a recording (spec section 7). Editing never
 /// touches capture.mov.
 public struct EditDecisionList: Codable, Sendable {
@@ -108,22 +149,34 @@ public struct EditDecisionList: Codable, Sendable {
     /// bare `{start, end}` — schemaVersion 1's shape — via `Cut.init(from:)`
     /// minting an id; a version ABOVE this one is refused outright rather
     /// than partially decoded (D60, `EditDecisionListError`).
-    public static let currentSchemaVersion = 2
+    /// Bumped 2 -> 3 by the crop work. This one is NOT additive in the way
+    /// `Cut.id` was: an older build decodes an `edit.json` it can read,
+    /// silently ignores a `crop` key it has no field for, and the next
+    /// autosave writes back a cropless EDL — destroying the crop with
+    /// `capture.mov` untouched and no error anywhere. That is precisely the
+    /// "next non-additive change" `encode(to:)`'s comment predicts below, so
+    /// the version gate has to fire for it.
+    public static let currentSchemaVersion = 3
 
     public var schemaVersion: Int
     public var cuts: [Cut]
     public var trackStates: [TrackState]
+    /// `nil` means "no crop", which is distinct from `.full` only in what gets
+    /// written to disk — both render the whole frame.
+    public var crop: CropRect?
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, cuts, trackStates
+        case schemaVersion, cuts, trackStates, crop
     }
 
     public init(schemaVersion: Int = EditDecisionList.currentSchemaVersion,
                 cuts: [Cut] = [],
-                trackStates: [TrackState] = []) {
+                trackStates: [TrackState] = [],
+                crop: CropRect? = nil) {
         self.schemaVersion = schemaVersion
         self.cuts = cuts
         self.trackStates = trackStates
+        self.crop = crop
     }
 
     /// Custom rather than synthesized so `schemaVersion` can be checked
@@ -147,6 +200,9 @@ public struct EditDecisionList: Codable, Sendable {
         self.schemaVersion = schemaVersion
         self.cuts = try container.decode([Cut].self, forKey: .cuts)
         self.trackStates = try container.decode([TrackState].self, forKey: .trackStates)
+        // decodeIfPresent, not decode: every bundle written before this field
+        // existed has no `crop` key, and those must keep opening.
+        self.crop = try container.decodeIfPresent(CropRect.self, forKey: .crop)
     }
 
     /// Custom rather than synthesized so a WRITE always declares the version
@@ -179,6 +235,9 @@ public struct EditDecisionList: Codable, Sendable {
         try container.encode(Self.currentSchemaVersion, forKey: .schemaVersion)
         try container.encode(cuts, forKey: .cuts)
         try container.encode(trackStates, forKey: .trackStates)
+        // encodeIfPresent: an uncropped EDL writes no `crop` key at all, so a
+        // file's shape still tells you whether a crop was ever set.
+        try container.encodeIfPresent(crop, forKey: .crop)
     }
 
     /// The default EDL for a fresh recording: nothing cut, nothing muted.
@@ -267,7 +326,15 @@ extension EditDecisionList {
         candidates.append(contentsOf: cuts.map { ($0, false) })
         return EditDecisionList(schemaVersion: schemaVersion,
                                 cuts: Self.merged(candidates),
-                                trackStates: trackStates)
+                                trackStates: trackStates,
+                                // Carried, not dropped. D60 is exactly this
+                                // defect one field earlier: `trimmed` rebuilt
+                                // the EDL from scratch, so `snitt trim` silently
+                                // destroyed cuts the GUI had made. A rebuild
+                                // that forgets a field is the same bug whatever
+                                // the field is, and §4.8 holds that the CLI and
+                                // GUI are one model rather than two.
+                                crop: crop)
     }
 
     /// Sorts cuts by start and coalesces any that overlap or touch into a
