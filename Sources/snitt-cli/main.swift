@@ -74,6 +74,7 @@ snitt — record a window and hand back a .snitt bundle
   snitt targets list                     what can be recorded, as JSON
   snitt record start --app <bundle-id>   start; prints a session id
         [--window-id <id>]               required if the app has >1 window
+        (records the WHOLE window, tab strip included)
         [--display <id>] [--max-duration <seconds>]
         [--mic] [--no-system-audio]        parsed, not yet applied (M3)
   snitt record stop <session-id>         stop; prints the bundle path

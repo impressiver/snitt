@@ -321,3 +321,19 @@ because it was not running. Whether an agent should auto-launch the app — whic
 then holds a screen-recording grant on its initiative — is a §5 question nobody
 has decided. §4.9's current answer is the client saying "ask the person at the
 machine to open it".
+### 2026-09-08 (in-window exposure)
+
+**Observation, from the second agent recording session:** the agent went to
+record a Chrome window and noticed it also held a Namecheap order confirmation
+and a Carta login — whose tab titles would have been in every frame. It moved
+the page to its own window to avoid that, which took several steps of AppleScript
+window choreography.
+
+It got this right unprompted. The next one may not, so the warning is now in
+`snitt_start_recording`'s description and the CLI usage.
+
+**The real question is recorded as D70 and is yours to rule on:** whether
+capture should be able to exclude part of a window (`SCStreamConfiguration.
+sourceRect`). It is a stronger guarantee than cropping at export, because the
+BUNDLE stays clean rather than just the exported file — and it contradicts
+§4.5's pristine-capture principle, deliberately. Nothing was built for it.
