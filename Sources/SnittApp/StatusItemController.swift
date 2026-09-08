@@ -4,6 +4,12 @@ import Foundation
 public enum RecordingState: Equatable, Sendable {
     case idle
     case recording(startedAt: Date)
+    /// An agent paused this recording (M5e, D53). A distinct state rather than
+    /// a flag on `.recording`, because §5.3's indicator obligation is about
+    /// what a PERSON can tell at a glance: "recording" and "paused but still
+    /// holding the camera" are different situations, and D53 names a human at
+    /// the machine as the only fallback when an agent forgets to resume.
+    case paused(startedAt: Date, pausedSeconds: Double)
     case stopping
 }
 
@@ -44,6 +50,16 @@ final class StatusItemController: NSObject {
             let text = String(format: "%d:%02d", elapsed / 60, elapsed % 60)
             return StatusItemPresentation(symbolName: "stop.circle.fill",
                                           title: text,
+                                          isStopEnabled: true)
+        case .paused(let startedAt, let pausedSeconds):
+            // The FOOTAGE, not the wall clock — the counter should not keep
+            // climbing while nothing is being filmed, or a glance says the
+            // recording is fine when it is frozen. The word "Paused" carries
+            // the state; a filled circle would read as still recording.
+            let footage = Int(max(0, now.timeIntervalSince(startedAt) - pausedSeconds))
+            return StatusItemPresentation(symbolName: "pause.circle.fill",
+                                          title: String(format: "Paused %d:%02d",
+                                                        footage / 60, footage % 60),
                                           isStopEnabled: true)
         case .stopping:
             return StatusItemPresentation(symbolName: "stop.circle",
