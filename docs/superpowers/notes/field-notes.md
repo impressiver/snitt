@@ -138,3 +138,34 @@ thumbnails is too few on a long recording.
 **Next session: record something and look at it.** That is the D65 signal, and
 these two features are the first work in a while whose quality genuinely cannot
 be judged from tests.
+
+## Manual checklist — for the next session at the machine
+
+Ordered by how much is riding on the answer.
+
+1. **Run the S6 probe: `swift run S6TranscriptionProbe`.** It generates its own
+   speech with `say`, so no recording is needed. macOS will prompt for Speech
+   Recognition — the grant goes to the *terminal*, not to Snitt.app. The line
+   that decides things is `WORD-LEVEL timings present` vs `NOT word-level`. If
+   absent, D62's text-based editing is not buildable at the §4.6 floor and
+   either the floor moves or the pillar shrinks to captions.
+
+2. **Record something, then open it.** The waveform and filmstrip have never
+   been seen. Specifically worth judging, because tests cannot:
+   - Is 60 samples/second enough resolution to find a pause by eye?
+   - Does the microphone band read at a sensible amplitude beside system audio,
+     or is one of them a flat line next to the other?
+   - Are 120 thumbnails too few across a long recording — does the strip read as
+     motion or as a slideshow?
+   - Is the 120pt timeline the right height now that it carries three bands?
+
+3. **Try crop.** Drag on the preview, check the export matches what the editor
+   showed, undo it, re-crop (it should compose, not re-anchor), and `Reset Crop`.
+   Then the same through the CLI: `snitt crop <bundle> --x 0.25 --y 0.25
+   --width 0.5 --height 0.5` and `--reset`.
+
+4. **The two long-standing human-only checks** (carried since M5f):
+   - Record with the hotkey and the picker with the microphone ON. Mic capture
+     has only ever been verified through the agent path.
+   - Press the record hotkey and confirm **no window opens on start** (§4.11).
+     The editor-on-stop half (D48) is tested; this half is not.
