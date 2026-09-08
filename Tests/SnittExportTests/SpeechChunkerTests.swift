@@ -105,3 +105,57 @@ struct SpeechChunkerTests {
         #expect(ranges == [TimeRange(start: 0, end: 9)])
     }
 }
+
+/// One loud instant must not redefine what silence is.
+///
+/// The recording that produced these: narration recorded with SPEAKERS on
+/// rather than headphones, so the music bled into the microphone and clipped at
+/// 2.216. With the maximum as the reference the threshold landed at 0.177 —
+/// above almost all of the speech, which peaked between 0.07 and 0.19. 81% of
+/// the file read as silence and the transcript came back with five words for
+/// thirty-two seconds. A cough, a door or a notification chime does the same.
+@Suite
+struct SilenceReferenceTests {
+    private let rate = 10.0
+
+    /// Quiet speech, one real pause, and one very loud instant.
+    private func peaksWithSpike() -> [Float] {
+        var samples = (0..<Int(20 * rate)).map { index -> Float in
+            let t = Double(index) / rate
+            return (t >= 10.0 && t < 11.0) ? 0.002 : 0.1     // speech is quiet
+        }
+        samples[Int(17 * rate)] = 2.216                      // the clip
+        return samples
+    }
+
+    @Test("A spike does not turn the whole recording into silence")
+    func spikeDoesNotSwallowSpeech() {
+        let reference = SpeechChunker.referenceLevel(of: peaksWithSpike())
+        // The maximum would be 2.216; the 90th percentile is the speech level.
+        #expect(reference < 0.5, "reference \(reference) — a single instant set it")
+        let threshold = max(SpeechChunker.absoluteSilenceFloor,
+                            reference * SpeechChunker.silenceFraction)
+        #expect(threshold < 0.05, "threshold \(threshold) is above the speech at 0.1")
+    }
+
+    @Test("Chunking still splits at the REAL pause when a spike is present")
+    func chunksLandOnTheRealPause() throws {
+        let ranges = SpeechChunker.chunkRanges(peaks: peaksWithSpike(),
+                                               samplesPerSecond: rate, duration: 20)
+        try #require(ranges.count == 2, "got \(ranges.count) chunks: \(ranges.map { $0.end })")
+        #expect(abs(ranges[0].end - 10.5) < 0.3,
+                "boundary at \(ranges[0].end), not the pause at 10-11s")
+    }
+
+    @Test("The reference still tracks a recording with no spike at all")
+    func referenceIsUnchangedWithoutSpikes() {
+        // The fix must not make ordinary recordings behave differently.
+        let flat = [Float](repeating: 0.4, count: 200)
+        #expect(abs(SpeechChunker.referenceLevel(of: flat) - 0.4) < 0.001)
+    }
+
+    @Test("An empty recording has a reference of zero rather than crashing")
+    func emptyPeaks() {
+        #expect(SpeechChunker.referenceLevel(of: []) == 0)
+    }
+}
