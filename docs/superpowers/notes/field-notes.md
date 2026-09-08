@@ -112,3 +112,29 @@ stored property on a public struct in a library target.
 Worth noting what did work: grepping for `signal code` rather than trusting
 `swift test`'s exit status caught it at all. The suite reports success on a
 segfault, so the commit would otherwise have gone in green.
+
+### 2026-09-07 (waveform + filmstrip)
+
+**Built.** Audio tracks draw a waveform, the video track draws a filmstrip, and
+the timeline grew 56pt → 120pt to give them room.
+
+**The design decision worth remembering:** both are sampled ONCE against
+`capture.mov` in source time, and each pixel column asks
+`TimelineSampleIndex` which source instant it shows. So cuts, zoom and scroll
+cost nothing — the movie is decoded once per document, not once per edit. It
+also means the waveform and the filmstrip agree with each other by construction,
+because they use the same mapping.
+
+**Not yet verified against a real recording.** There are no `.snitt` bundles on
+this machine — `~/Documents/Snitt` is empty. Everything here is tested against
+synthetic fixtures: a sine tone versus silence for the waveform, and the `.ramp`
+fill (each frame's pixels encode its index) for the filmstrip. Those catch the
+failures that matter — a sampler returning a constant, or every thumbnail taken
+from t=0 — but they cannot tell whether a real screen recording's waveform is
+*legible*: whether 60 samples/second is enough resolution, whether a desk-mic
+track reads at a sensible amplitude next to system audio, or whether 120
+thumbnails is too few on a long recording.
+
+**Next session: record something and look at it.** That is the D65 signal, and
+these two features are the first work in a while whose quality genuinely cannot
+be judged from tests.
