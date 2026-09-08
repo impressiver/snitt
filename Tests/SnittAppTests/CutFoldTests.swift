@@ -271,7 +271,7 @@ struct CutFoldTimelineViewTests {
         let foldX = CGFloat(geometry.x(atFold: cut))
 
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: 40))
-        view.update(duration: duration, cuts: [cut], jumpPoints: [], playhead: 0)
+        view.update(duration: duration, cuts: [cut], markerPoints: [], playhead: 0)
         var scrubbed: Double?
         var toggled: UUID?
         view.onScrub = { scrubbed = $0 }
@@ -296,7 +296,7 @@ struct CutFoldTimelineViewTests {
         let duration = 20.0
         let cut = Cut(range: TimeRange(start: 10, end: 12))
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: 40))
-        view.update(duration: duration, cuts: [cut], jumpPoints: [], playhead: 0)
+        view.update(duration: duration, cuts: [cut], markerPoints: [], playhead: 0)
         var scrubbed: Double?
         var toggled: UUID?
         view.onScrub = { scrubbed = $0 }
@@ -328,7 +328,7 @@ struct CutFoldTimelineViewTests {
         let foldX = geometry.x(atFold: cut)
 
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: 40))
-        view.update(duration: duration, cuts: [cut], jumpPoints: [], playhead: 0)
+        view.update(duration: duration, cuts: [cut], markerPoints: [], playhead: 0)
         var scrubbed: Double?
         var toggled: UUID?
         view.onScrub = { scrubbed = $0 }
@@ -360,7 +360,7 @@ struct CutFoldTimelineViewTests {
         let midpoint = CGFloat(foldX + expandedWidth / 2)
 
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: 40))
-        view.update(duration: duration, cuts: [cut], jumpPoints: [], playhead: 0,
+        view.update(duration: duration, cuts: [cut], markerPoints: [], playhead: 0,
                    expandedCutIDs: [cut.id])
         var toggled: UUID?
         view.onToggleExpansion = { toggled = $0 }
@@ -381,7 +381,7 @@ struct CutFoldTimelineViewTests {
         let foldX = CGFloat(geometry.x(atFold: cut))
 
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: 40))
-        view.update(duration: duration, cuts: [cut], jumpPoints: [], playhead: 0)
+        view.update(duration: duration, cuts: [cut], markerPoints: [], playhead: 0)
 
         let menu = view.menu(for: .synthetic(at: NSPoint(x: foldX, y: 20), in: view))
         let item = try #require(menu?.items.first, "no context menu near the fold")
@@ -395,7 +395,7 @@ struct CutFoldTimelineViewTests {
         let duration = 20.0
         let cut = Cut(range: TimeRange(start: 10, end: 12))
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: 40))
-        view.update(duration: duration, cuts: [cut], jumpPoints: [], playhead: 0)
+        view.update(duration: duration, cuts: [cut], markerPoints: [], playhead: 0)
 
         let menu = view.menu(for: .synthetic(at: NSPoint(x: 100, y: 20), in: view))
         #expect(menu == nil)
@@ -405,7 +405,7 @@ struct CutFoldTimelineViewTests {
     func choosingRemoveCutFiresOnRemoveCutWithTheCutsID() {
         let cut = Cut(range: TimeRange(start: 10, end: 12))
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
-        view.update(duration: 20, cuts: [cut], jumpPoints: [], playhead: 0)
+        view.update(duration: 20, cuts: [cut], markerPoints: [], playhead: 0)
         var removed: UUID?
         view.onRemoveCut = { removed = $0 }
 

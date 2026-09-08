@@ -182,7 +182,11 @@ public final class TimelineView: NSView {
     private var trackStates: [TrackState] = []
     /// OUTPUT time (M5f Task 3) — see `EditorTimelineState.displayState`'s
     /// doc comment for why these arrive unconverted.
-    private var jumpPoints: [JumpPoint] = []
+    /// What the marker TRACK draws — `MarkerTrackPoints.compute`, which keeps
+    /// markers whose instant was cut and places them at the fold. Distinct
+    /// from `PreviewController.jumpPoints`, which drops those because a jump
+    /// list must not offer to seek to a moment the viewer never sees.
+    private var markerPoints: [JumpPoint] = []
     /// OUTPUT time (M5f Task 3) — `PreviewController`'s player plays the
     /// composition `CompositionBuilder` built from kept ranges only, so its
     /// `currentTime()` already IS output time before it ever reaches here.
@@ -263,13 +267,13 @@ public final class TimelineView: NSView {
     /// different clocks. `selection` defaults to `nil`, and `expandedCutIDs`
     /// to empty, for callers (existing tests among them) that don't drive
     /// them at all.
-    public func update(duration: Double, cuts: [Cut], jumpPoints: [JumpPoint],
+    public func update(duration: Double, cuts: [Cut], markerPoints: [JumpPoint],
                        playhead: Double, selection: Selection? = nil,
                        expandedCutIDs: Set<UUID> = [],
                        trackStates: [TrackState] = []) {
         self.duration = duration
         self.cuts = cuts
-        self.jumpPoints = jumpPoints
+        self.markerPoints = markerPoints
         self.playhead = playhead
         self.selection = selection
         self.expandedCutIDs = expandedCutIDs
@@ -348,7 +352,7 @@ public final class TimelineView: NSView {
     private func markerHit(at point: NSPoint) -> JumpPoint? {
         guard point.y <= markerTrackHeight else { return nil }
         guard bounds.width > 0, geometry.duration > 0 else { return nil }
-        for marker in jumpPoints {
+        for marker in markerPoints {
             let x = geometry.x(atOutput: OutputTime(marker.timeSeconds))
             if abs(point.x - x) <= Self.markerHitMarginPixels { return marker }
         }
@@ -478,7 +482,7 @@ public final class TimelineView: NSView {
         let raw = geometry.outputTime(atX: x)
         guard bounds.width > 0, geometry.duration > 0 else { return raw }
         var candidates: [OutputTime] = cuts.map { timebase.foldPosition(for: $0) }
-        candidates.append(contentsOf: jumpPoints.map { OutputTime($0.timeSeconds) })
+        candidates.append(contentsOf: markerPoints.map { OutputTime($0.timeSeconds) })
         candidates.append(OutputTime(playhead))
 
         var best: (output: OutputTime, distance: Double)?
@@ -855,8 +859,15 @@ public final class TimelineView: NSView {
         // (`activeMarkerDrag`) draws at its LIVE preview position instead of
         // its stale `jumpPoints` one, so it visibly follows the cursor
         // rather than jumping only once the drag ends.
-        NSColor.systemYellow.setFill()
-        for point in jumpPoints {
+        for point in markerPoints {
+            // A marker whose instant was cut draws hollow rather than solid:
+            // it is still there, still draggable and deletable, but it sits on
+            // a fold rather than on footage anyone will see.
+            if point.isInsideCut {
+                NSColor.systemYellow.withAlphaComponent(0.35).setFill()
+            } else {
+                NSColor.systemYellow.setFill()
+            }
             let seconds = (point.id == activeMarkerDrag)
                 ? (markerDragPreviewOutputTime ?? point.timeSeconds)
                 : point.timeSeconds

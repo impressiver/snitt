@@ -47,7 +47,7 @@ struct GestureAxisTests {
     private static func makeView(cuts: [Cut], jumpPoints: [JumpPoint] = [],
                                  playhead: Double = 0, height: Double = 40) -> TimelineView {
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        view.update(duration: sourceDuration, cuts: cuts, jumpPoints: jumpPoints,
+        view.update(duration: sourceDuration, cuts: cuts, markerPoints: jumpPoints,
                     playhead: playhead)
         return view
     }
@@ -94,7 +94,7 @@ struct GestureAxisTests {
         #expect(abs(first.range.end - 5.0) < 0.01)
         edl.cuts.append(Cut(range: first.range))
         #expect(abs(Self.timebase(cuts: edl.cuts).outputDuration - 8.0) < 0.01)
-        view.update(duration: Self.sourceDuration, cuts: edl.cuts, jumpPoints: [], playhead: 0)
+        view.update(duration: Self.sourceDuration, cuts: edl.cuts, markerPoints: [], playhead: 0)
 
         let second = try dragOverTheSamePixels()
         // The SAME pixels, now over a shorter timeline: output 2.4...4.0,
@@ -261,7 +261,7 @@ struct GestureAxisTests {
         let sourceDuration = 20.0
         let timebase = Timebase(sourceDuration: sourceDuration, edl: EditDecisionList(cuts: [cut]))
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: Self.width, height: 40))
-        view.update(duration: sourceDuration, cuts: [cut], jumpPoints: [], playhead: 17.0)
+        view.update(duration: sourceDuration, cuts: [cut], markerPoints: [], playhead: 17.0)
         for _ in 0..<2 { view.zoomIn() }   // 4x, anchored on the playhead
 
         // The geometry the view is now on — the same `zoomed(by:anchoredAt:)`

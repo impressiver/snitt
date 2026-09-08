@@ -151,7 +151,9 @@ final class EditorTimelineState: ObservableObject {
         /// to survive the trip down to the view; a bare `TimeRange` here
         /// would strip exactly the identity the fold UI needs.
         let cuts: [Cut]
-        let jumpPoints: [JumpPoint]
+        /// The marker TRACK's points — includes markers inside cuts, drawn at
+        /// the fold. Not `controller.jumpPoints`, which drops them.
+        let markerPoints: [JumpPoint]
         let playhead: Double
         let selection: Selection?
         /// See `expandedCutIDs`'s own doc comment.
@@ -165,7 +167,7 @@ final class EditorTimelineState: ObservableObject {
     func displayState(playhead outputPlayhead: Double) -> DisplayState {
         DisplayState(duration: controller.sourceDurationSeconds,
                     cuts: edl.cuts,
-                    jumpPoints: controller.jumpPoints,
+                    markerPoints: controller.markerTrackPoints,
                     playhead: outputPlayhead,
                     selection: selection,
                     expandedCutIDs: expandedCutIDs,
@@ -523,7 +525,7 @@ struct TimelineViewRepresentable: NSViewRepresentable {
         let display = state.displayState(playhead: playhead)
         nsView.update(duration: display.duration,
                      cuts: display.cuts,
-                     jumpPoints: display.jumpPoints,
+                     markerPoints: display.markerPoints,
                      playhead: display.playhead,
                      selection: display.selection,
                      expandedCutIDs: display.expandedCutIDs,

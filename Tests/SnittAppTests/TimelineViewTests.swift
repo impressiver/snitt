@@ -50,7 +50,7 @@ struct TimelineViewTests {
     @Test("A click scrubs and does not select")
     func clickScrubsWithoutSelecting() {
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
-        view.update(duration: 20, cuts: [], jumpPoints: [], playhead: 0)
+        view.update(duration: 20, cuts: [], markerPoints: [], playhead: 0)
         var scrubbed: Double?
         var selected: Selection?
         view.onScrub = { scrubbed = $0 }
@@ -69,7 +69,7 @@ struct TimelineViewTests {
     @Test("A drag selects the range it covered, in either direction")
     func dragSelectsNormalisedRange() throws {
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
-        view.update(duration: 20, cuts: [], jumpPoints: [], playhead: 0)
+        view.update(duration: 20, cuts: [], markerPoints: [], playhead: 0)
         var selected: Selection?
         view.onSelect = { selected = $0 }
 
@@ -89,7 +89,7 @@ struct TimelineViewTests {
         // so this happens on every launch.
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 0, height: 40))
         view.update(duration: 20, cuts: [Cut(range: TimeRange(start: 1, end: 2))],
-                    jumpPoints: [], playhead: 5)
+                    markerPoints: [], playhead: 5)
         var scrubbed: Double?
         var selected: Selection?
         view.onScrub = { scrubbed = $0 }
@@ -114,7 +114,7 @@ struct TimelineViewTests {
         // 800px/20s timeline is well under the 3px minimum, so this must
         // read as a click, not a selection.
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
-        view.update(duration: 20, cuts: [], jumpPoints: [], playhead: 0)
+        view.update(duration: 20, cuts: [], markerPoints: [], playhead: 0)
         var scrubbed: Double?
         var selected: Selection?
         view.onScrub = { scrubbed = $0 }
@@ -149,7 +149,7 @@ struct TimelineViewTests {
         // selection against that constant. The real pixel-derived threshold
         // (3px, ~2.25s here) must still absorb it.
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
-        view.update(duration: 600, cuts: [], jumpPoints: [], playhead: 0)
+        view.update(duration: 600, cuts: [], markerPoints: [], playhead: 0)
         var selected: Selection?
         view.onSelect = { selected = $0 }
 
@@ -168,7 +168,7 @@ struct TimelineViewTests {
         // real pixel threshold (3px, ~0.019s here), which must let it
         // through as a deliberate selection.
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
-        view.update(duration: 5, cuts: [], jumpPoints: [], playhead: 0)
+        view.update(duration: 5, cuts: [], markerPoints: [], playhead: 0)
         var selected: Selection?
         view.onSelect = { selected = $0 }
 
@@ -191,7 +191,7 @@ struct TimelineViewTests {
         // deliberate drag does) at the same duration the reverted constant
         // gets wrong.
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
-        view.update(duration: 600, cuts: [], jumpPoints: [], playhead: 0)
+        view.update(duration: 600, cuts: [], markerPoints: [], playhead: 0)
         var selected: Selection?
         view.onSelect = { selected = $0 }
 
@@ -227,7 +227,7 @@ struct TimelineViewZoomAndSnappingTests {
         // 800px / 600s (10 minutes) — `TrimGesture.ended`'s own cited case,
         // ~0.75s/pixel unzoomed.
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
-        view.update(duration: 600, cuts: [], jumpPoints: [], playhead: 0)
+        view.update(duration: 600, cuts: [], markerPoints: [], playhead: 0)
         var selected: Selection?
         view.onSelect = { selected = $0 }
 
@@ -286,7 +286,7 @@ struct TimelineViewZoomAndSnappingTests {
             width: 800, timebase: Timebase(sourceDuration: 20, edl: EditDecisionList(cuts: [cut])))
         let foldX = geometry.x(atFold: cut)
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
-        view.update(duration: 20, cuts: [cut], jumpPoints: [], playhead: 0)
+        view.update(duration: 20, cuts: [cut], markerPoints: [], playhead: 0)
         var selected: Selection?
         view.onSelect = { selected = $0 }
 
@@ -312,7 +312,7 @@ struct TimelineViewZoomAndSnappingTests {
             width: 800, timebase: Timebase(sourceDuration: 20, edl: EditDecisionList(cuts: [cut])))
         let foldX = geometry.x(atFold: cut)
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
-        view.update(duration: 20, cuts: [cut], jumpPoints: [], playhead: 0)
+        view.update(duration: 20, cuts: [cut], markerPoints: [], playhead: 0)
         var selected: Selection?
         view.onSelect = { selected = $0 }
 
@@ -346,7 +346,7 @@ struct TimelineViewZoomAndSnappingTests {
             width: 800, timebase: Timebase(sourceDuration: 20, edl: EditDecisionList(cuts: [cut])))
         let markerX = geometry.x(atOutput: OutputTime(marker.timeSeconds))
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
-        view.update(duration: 20, cuts: [cut], jumpPoints: [marker], playhead: 0)
+        view.update(duration: 20, cuts: [cut], markerPoints: [marker], playhead: 0)
         var selected: Selection?
         view.onSelect = { selected = $0 }
 
@@ -366,7 +366,7 @@ struct TimelineViewZoomAndSnappingTests {
             width: 800, timebase: Timebase(sourceDuration: 20, edl: EditDecisionList(cuts: [cut])))
         let playheadX = geometry.x(atOutput: OutputTime(6.0))
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
-        view.update(duration: 20, cuts: [cut], jumpPoints: [], playhead: 6.0)
+        view.update(duration: 20, cuts: [cut], markerPoints: [], playhead: 6.0)
         var selected: Selection?
         view.onSelect = { selected = $0 }
 
@@ -386,7 +386,7 @@ struct TimelineViewZoomAndSnappingTests {
         // that only checks `zoomIn()`/`zoomOut()` directly, so this drives
         // the actual keyboard path (`keyDown(with:)`) instead.
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
-        view.update(duration: 600, cuts: [], jumpPoints: [], playhead: 0)
+        view.update(duration: 600, cuts: [], markerPoints: [], playhead: 0)
         var selected: Selection?
         view.onSelect = { selected = $0 }
 
@@ -412,7 +412,7 @@ struct TimelineViewZoomAndSnappingTests {
         // with no `default` case reaching `super`, or one that zooms
         // unconditionally) from one that only reacts to `+`/`=`/`-`.
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
-        view.update(duration: 600, cuts: [], jumpPoints: [], playhead: 0)
+        view.update(duration: 600, cuts: [], markerPoints: [], playhead: 0)
         var selected: Selection?
         view.onSelect = { selected = $0 }
 

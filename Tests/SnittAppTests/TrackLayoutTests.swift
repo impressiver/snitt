@@ -60,7 +60,7 @@ struct TrackLayoutTimelineViewTests {
         let y = windowY(forViewY: 5, height: height)
 
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        view.update(duration: duration, cuts: [], jumpPoints: [marker], playhead: 0)
+        view.update(duration: duration, cuts: [], markerPoints: [marker], playhead: 0)
         var scrubbed: Double?
         var selected: Selection?
         var edited: UUID?
@@ -97,7 +97,7 @@ struct TrackLayoutTimelineViewTests {
         let y = windowY(forViewY: 5, height: height)
 
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        view.update(duration: duration, cuts: [], jumpPoints: [marker], playhead: 0)
+        view.update(duration: duration, cuts: [], markerPoints: [marker], playhead: 0)
         var edited: UUID?
         var moved: (id: UUID, outputTime: Double)?
         view.onEditMarker = { edited = $0 }
@@ -131,7 +131,7 @@ struct TrackLayoutTimelineViewTests {
         let y = windowY(forViewY: 30, height: height)
 
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        view.update(duration: duration, cuts: [], jumpPoints: [marker], playhead: 0)
+        view.update(duration: duration, cuts: [], markerPoints: [marker], playhead: 0)
         var scrubbed: Double?
         var edited: UUID?
         view.onScrub = { scrubbed = $0 }
@@ -156,7 +156,7 @@ struct TrackLayoutTimelineViewTests {
         let y = windowY(forViewY: 5, height: height)
 
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        view.update(duration: duration, cuts: [], jumpPoints: [marker], playhead: 0)
+        view.update(duration: duration, cuts: [], markerPoints: [marker], playhead: 0)
         var scrubbed: Double?
         var edited: UUID?
         view.onScrub = { scrubbed = $0 }

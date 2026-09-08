@@ -54,7 +54,7 @@ struct TimelineZoomAffordanceTests {
         var selected: Selection?
         handle.onSelect = { selected = $0 }
         handle.setFrameSize(NSSize(width: 800, height: 56))
-        handle.update(duration: 600, cuts: [], jumpPoints: [], playhead: 0)
+        handle.update(duration: 600, cuts: [], markerPoints: [], playhead: 0)
 
         func dragWidth() -> Double {
             selected = nil

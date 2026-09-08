@@ -31,9 +31,10 @@ in the surface used daily.
 
 - **An expanded cut fold does not reflow later content.** Expanding a fold in
   place overlaps whatever follows instead of pushing it right.
-- **A marker inside a cut is missing from the marker track.** It survives in the
-  data (markers are dropped, not clamped, at export) but the track does not draw
-  it, so there is no way to see or move it.
+- ~~**A marker inside a cut is missing from the marker track.**~~ FIXED
+  2026-09-07: the track now has its own list (`MarkerTrackPoints`) that keeps
+  cut-interior markers at the fold and draws them hollow. The jump list still
+  drops them, deliberately, and a test asserts the two do not converge.
 - ~~**No on-screen zoom affordance.**~~ FIXED 2026-09-07: "+"/"−" buttons in the
   editor's control row, wired to the `zoomIn()`/`zoomOut()` that have existed
   since M5f Task 8 and were reachable only by trackpad pinch or a shortcut on a

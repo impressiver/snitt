@@ -25,6 +25,9 @@ import SnittExport
 @MainActor
 public class PreviewController {
     public private(set) var jumpPoints: [JumpPoint]
+    /// What the timeline's marker TRACK draws — keeps markers whose instant was
+    /// cut, placed at the fold. `jumpPoints` above drops those on purpose.
+    public private(set) var markerTrackPoints: [JumpPoint]
     public private(set) var durationSeconds: Double
     /// The SOURCE recording's media duration (`BuiltComposition.sourceDuration`)
     /// — never `durationSeconds` above, which is the TRIMMED (output)
@@ -82,6 +85,7 @@ public class PreviewController {
     public init(built: BuiltComposition, jumpPoints: [JumpPoint],
                 bundle: SnittBundle, scale: Double) {
         self.jumpPoints = jumpPoints
+        self.markerTrackPoints = jumpPoints
         self.durationSeconds = built.duration
         self.sourceDurationSeconds = built.sourceDuration
         self.keptRanges = built.keptRanges
@@ -135,6 +139,7 @@ public class PreviewController {
     /// accomplish nothing beyond what this one line already does directly.
     public func refreshJumpPoints(events: [LoggedEvent]) {
         self.jumpPoints = MarkerJumpPoints.compute(events: events, keptRanges: keptRanges)
+        self.markerTrackPoints = MarkerTrackPoints.compute(events: events, keptRanges: keptRanges)
     }
 
     /// Rebuilds the composition through `CompositionBuilder.build` — never
@@ -170,6 +175,7 @@ public class PreviewController {
         self.sourceDurationSeconds = built.sourceDuration
         self.keptRanges = built.keptRanges
         self.jumpPoints = MarkerJumpPoints.compute(events: events, keptRanges: built.keptRanges)
+        self.markerTrackPoints = MarkerTrackPoints.compute(events: events, keptRanges: built.keptRanges)
     }
 
     /// Exact seeking. `seek(to:)` without tolerances snaps to the nearest

@@ -51,7 +51,7 @@ struct SelectionTests {
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
         view.onScrub = { [weak state] in state?.onScrub($0) }
         view.onSelect = { [weak state] in state?.onSelect($0) }
-        view.update(duration: sourceSeconds, cuts: [], jumpPoints: [], playhead: 0)
+        view.update(duration: sourceSeconds, cuts: [], markerPoints: [], playhead: 0)
 
         // A deliberate drag, comfortably past the pixel threshold: source
         // 2s..6s on an 800px/8s view (x200 -> x600).

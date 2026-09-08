@@ -80,7 +80,7 @@ struct EditorTimelineStateTests {
         func refreshView() {
             let display = state.displayState(playhead: 0)
             view.update(duration: display.duration, cuts: display.cuts,
-                        jumpPoints: display.jumpPoints, playhead: display.playhead,
+                        markerPoints: display.markerPoints, playhead: display.playhead,
                         selection: display.selection)
         }
         refreshView()
@@ -189,7 +189,7 @@ struct EditorTimelineStateTests {
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 40))
         view.onScrub = { [weak state] in state?.onScrub($0) }
         view.onSelect = { [weak state] in state?.onSelect($0) }
-        view.update(duration: sourceSeconds, cuts: [], jumpPoints: [], playhead: 0)
+        view.update(duration: sourceSeconds, cuts: [], markerPoints: [], playhead: 0)
 
         // Cut source 2-4s: x200 -> x400 on an 800px view of an 8s source.
         // The drag only selects (D56) — `cutSelection()` is the deliberate
@@ -200,7 +200,7 @@ struct EditorTimelineStateTests {
         state.cutSelection()
         await waitForDuration(controller, toApproach: sourceSeconds - 2.0)
 
-        view.update(duration: sourceSeconds, cuts: state.edl.cuts, jumpPoints: [], playhead: 0)
+        view.update(duration: sourceSeconds, cuts: state.edl.cuts, markerPoints: [], playhead: 0)
         await controller.seek(toSeconds: 0)
 
         // Source 3.0s — squarely inside the removed 2-4s region, and the
@@ -274,7 +274,7 @@ struct EditorTimelineStateTests {
         await waitForDuration(controller, toApproach: sourceSeconds - 2.0)
 
         let display = state.displayState(playhead: 0)
-        let jumpPoint = try #require(display.jumpPoints.first)
+        let jumpPoint = try #require(display.markerPoints.first)
         // The prior (source-converting) implementation would report 5.0
         // here instead.
         #expect(abs(jumpPoint.timeSeconds - 3.0) < 0.2)
