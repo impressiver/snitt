@@ -371,6 +371,30 @@ final class EditorTimelineState: ObservableObject {
         applyAndSave()
     }
 
+    /// Applies a crop drawn over the preview.
+    ///
+    /// `sub` is expressed in the coordinates of the frame CURRENTLY on screen,
+    /// which is already cropped if a crop exists — so it composes rather than
+    /// replaces (`CropRect.composing`). Undo goes through the same whole-EDL
+    /// snapshot `cutSelection` uses, so a crop is as undoable as a cut and the
+    /// two interleave on one stack.
+    func applyCrop(_ sub: CropRect) {
+        let current = edl
+        undoManager?.registerUndo(withTarget: self) { $0.restore(current) }
+        edl.crop = (edl.crop ?? .full).composing(sub)
+        applyAndSave()
+    }
+
+    /// Removes the crop entirely. Distinct from cropping to the full frame only
+    /// in what reaches disk — `nil` writes no `crop` key at all.
+    func resetCrop() {
+        guard edl.crop != nil else { return }
+        let current = edl
+        undoManager?.registerUndo(withTarget: self) { $0.restore(current) }
+        edl.crop = nil
+        applyAndSave()
+    }
+
     /// Restores a prior whole-EDL snapshot and pushes the CURRENT state back
     /// onto the undo stack as the redo — this is what makes undo/redo
     /// multi-level rather than a single toggle between two states.
@@ -505,6 +529,9 @@ private struct EditorContentView: View {
     /// `EditorTimelineState`, because it is presentation state a SwiftUI
     /// runtime test cannot exercise anyway.
     @State private var editingMarkerID: UUID?
+    /// Crop mode. UI-only, like `editingMarkerID`: what is asserted is that
+    /// `applyCrop`/`resetCrop` persist and undo, not which mode a view is in.
+    @State private var croppingActive = false
 
     private var controller: PreviewController { state.controller }
 
@@ -523,6 +550,17 @@ private struct EditorContentView: View {
         VStack(spacing: 0) {
             PlayerLayerView(player: controller.player)
                 .frame(minWidth: 480, minHeight: 270)
+                .overlay {
+                    // Only while cropping: an always-live drag layer would
+                    // swallow clicks meant for the player.
+                    if croppingActive {
+                        CropDragOverlay(videoSize: controller.player.currentItem?.presentationSize
+                                                   ?? CGSize(width: 16, height: 9)) { sub in
+                            state.applyCrop(sub)
+                            croppingActive = false
+                        }
+                    }
+                }
             // D56 (M5f Task 6): three stacked tracks — a thin marker lane
             // above, video, then audio — replacing the single undifferentiated
             // track Task 5 left behind. The taller frame (56, was 40) gives
@@ -540,6 +578,10 @@ private struct EditorContentView: View {
                 // decision that does.
                 Button("Cut") { state.cutSelection() }
                     .disabled(state.selection == nil)
+                Divider().frame(height: 16)
+                Button(croppingActive ? "Cancel Crop" : "Crop") { croppingActive.toggle() }
+                Button("Reset Crop") { state.resetCrop() }
+                    .disabled(state.edl.crop == nil)
             }
             .padding(8)
             if !controller.jumpPoints.isEmpty {

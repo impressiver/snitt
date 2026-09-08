@@ -132,6 +132,20 @@ public struct CropRect: Codable, Equatable, Sendable {
 
     public static let full = CropRect(x: 0, y: 0, width: 1, height: 1)
 
+    /// Applies `sub` — a crop expressed in the coordinates of what THIS crop
+    /// already shows — and returns the equivalent crop of the original source.
+    ///
+    /// Needed because the editor previews the cropped frame: a second drag is
+    /// against the visible picture, not against `capture.mov`. Storing that
+    /// drag directly would silently re-anchor the crop to the wrong origin,
+    /// and the error compounds with every further adjustment.
+    public func composing(_ sub: CropRect) -> CropRect {
+        CropRect(x: x + sub.x * width,
+                 y: y + sub.y * height,
+                 width: sub.width * width,
+                 height: sub.height * height)
+    }
+
     /// A crop that removes nothing renders identically to no crop, so callers
     /// can skip the whole transform rather than multiplying by one.
     public var isFullFrame: Bool { x == 0 && y == 0 && width == 1 && height == 1 }

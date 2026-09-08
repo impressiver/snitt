@@ -227,3 +227,24 @@ func cropClampsToTheUnitSquare() {
     let negative = CropRect(x: -1, y: -1, width: 0.5, height: 0.5)
     #expect(negative.x == 0 && negative.y == 0)
 }
+
+@Test("Re-cropping composes against the source, not the visible frame")
+func cropComposes() {
+    // The editor previews the CROPPED frame, so a second drag is expressed in
+    // the coordinates of what is on screen. Storing it directly would re-anchor
+    // the crop to the wrong origin, and the error compounds with each further
+    // adjustment.
+    let first = CropRect(x: 0.5, y: 0, width: 0.5, height: 1)   // right half
+    let second = CropRect(x: 0.5, y: 0, width: 0.5, height: 1)  // right half OF THAT
+    let composed = first.composing(second)
+    // Right half of the right half is the last quarter of the source.
+    #expect(abs(composed.x - 0.75) < 1e-9)
+    #expect(abs(composed.width - 0.25) < 1e-9)
+    #expect(abs(composed.height - 1.0) < 1e-9)
+}
+
+@Test("Composing with a full-frame sub-crop changes nothing")
+func composingFullIsIdentity() {
+    let crop = CropRect(x: 0.2, y: 0.3, width: 0.4, height: 0.5)
+    #expect(crop.composing(.full) == crop)
+}
