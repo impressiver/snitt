@@ -212,3 +212,23 @@ immediately. Low-confidence words draw dimmed ("loom is" at 0.34 — probably
 **Worth judging by eye:** the pane is a fixed 250pt beside the player; whether
 strike-through reads clearly at callout size; whether click-to-seek feels right
 or should audition a couple of words around the click.
+
+### 2026-09-08 (transcript gap)
+
+**Observation (product owner):** "the transcript is missing the first ~10s".
+Correct, and I had reported the cause backwards — I read the transcript starting
+at 11.28s as *the recording being silent until then* and wrote that into D68 as
+evidence the recognizer handled long silences.
+
+**Root cause, measured not guessed.** Per-second mic peaks showed signal across
+the WHOLE recording (the loudest second, 0.23, was one the recognizer never
+returned), and the extracted track matched, so the loss was in recognition.
+Logging every result the recognizer emits showed it plainly: partials climb
+through the first utterance, restart for the second, and the single `isFinal`
+carries only the second. Timestamps are 0 on every partial, so accumulating
+them is not an option when word timings are the point.
+
+**Rule this reinforces:** an absence in output is not evidence of absence in
+input. Both times I have trusted a "the data just isn't there" reading this
+session (the `~/Desktop` permission error, now this) it was wrong — and both
+times one measurement of the *input* settled it in under a minute.
