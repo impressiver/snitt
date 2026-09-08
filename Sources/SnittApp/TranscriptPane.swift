@@ -13,6 +13,13 @@ struct TranscriptPane: View {
     @State private var selection: Set<UUID> = []
     /// Anchor for shift-click range extension.
     @State private var anchorID: UUID?
+    /// The word being corrected inline, if any (D62 second slice). UI-only,
+    /// like `editingMarkerID`: what is asserted elsewhere is that
+    /// `correctWord` persists and undoes; which word has a text field open is
+    /// presentation state.
+    @State private var editingWordID: UUID?
+    @State private var editingText = ""
+    @FocusState private var editingFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -77,7 +84,22 @@ struct TranscriptPane: View {
         .padding(.bottom, 6)
     }
 
+    @ViewBuilder
     private func wordView(_ word: TranscriptWord, isCut: Bool) -> some View {
+        if editingWordID == word.id {
+            // Inline, not a sheet: correction is frequent (every proper noun
+            // the recognizer fumbles) and the field replaces the word exactly
+            // where the eye already is — the marker sheet's own rationale
+            // (occasional use, no room) does not apply here.
+            TextField("", text: $editingText)
+                .textFieldStyle(.roundedBorder)
+                .font(.callout)
+                .frame(minWidth: 60, maxWidth: 140)
+                .focused($editingFocused)
+                .onSubmit { commitEdit(word) }
+                .onExitCommand { editingWordID = nil }   // Esc cancels
+                .onAppear { editingFocused = true }
+        } else {
         Text(word.text)
             .font(.callout)
             // Struck through when the EDL cuts it — undoing the cut un-strikes
@@ -92,7 +114,28 @@ struct TranscriptPane: View {
             .background(selection.contains(word.id)
                         ? Color.accentColor.opacity(0.3) : Color.clear,
                         in: RoundedRectangle(cornerRadius: 3))
+            // count: 2 registered FIRST — SwiftUI resolves simultaneous tap
+            // gestures in declaration order, and the reverse order makes the
+            // double-tap unreachable behind two single-taps.
+            .onTapGesture(count: 2) { beginEdit(word) }
             .onTapGesture { handleTap(word) }
+            .contextMenu {
+                Button("Edit Word…") { beginEdit(word) }
+            }
+        }
+    }
+
+    private func beginEdit(_ word: TranscriptWord) {
+        editingText = word.text
+        editingWordID = word.id
+    }
+
+    private func commitEdit(_ word: TranscriptWord) {
+        // Empty commits are a cancel, not a removal — `correctWord` refuses
+        // them too, so this is presentation matching the model rather than a
+        // second rule.
+        state.correctWord(id: word.id, text: editingText)
+        editingWordID = nil
     }
 
     private func handleTap(_ word: TranscriptWord) {

@@ -138,3 +138,131 @@ struct TranscriptEditorTests {
         }
     }
 }
+
+/// Word correction (D62 second slice) — the fix for D68's own "loom is".
+@MainActor
+struct WordCorrectionTests {
+    private func makeState() async throws -> (EditorTimelineState, SnittBundle, Transcript) {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(SnittBundle.fileExtension)
+        let bundle = try SnittBundle(creatingAt: url)
+        try await writeSyntheticMovie(to: bundle.captureURL, seconds: 15.0)
+        try EditDecisionList.fullRange().write(to: bundle)
+        let transcript = Transcript(words: [
+            TranscriptWord(text: "loom is", start: 12.81, duration: 0.48, confidence: 0.34),
+            TranscriptWord(text: "first", start: 13.4, duration: 0.3, confidence: 0.92),
+        ], locale: "en-US")
+        try transcript.write(to: bundle)
+        let built = try await CompositionBuilder.build(bundle: bundle, edl: .fullRange(), scale: 1.0)
+        let controller = PreviewController(built: built, jumpPoints: [], bundle: bundle, scale: 1.0)
+        let state = EditorTimelineState(controller: controller, edl: .fullRange(), events: [])
+        state.loadTranscript()
+        return (state, bundle, transcript)
+    }
+
+    @Test("A correction changes the text, reaches disk, and clears the doubt-dimming")
+    func correctionPersists() async throws {
+        let (state, bundle, transcript) = try await makeState()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+        state.correctWord(id: transcript.words[0].id, text: "Loom is")
+        await state.waitForPendingSave()
+
+        let onDisk = try Transcript.read(from: bundle)
+        let word = try #require(onDisk.words.first)
+        #expect(word.text == "Loom is", "correction never reached transcript.json")
+        // Human-verified: the recognizer's 0.34 no longer applies, and the
+        // word stops rendering dimmed.
+        #expect(word.confidence == 1.0)
+    }
+
+    @Test("Correcting text does not move the word in time")
+    func timingIsUntouched() async throws {
+        // The word WAS said at 12.81s; only the spelling was wrong. Moving it
+        // would shift cut spans out from under existing edits.
+        let (state, bundle, transcript) = try await makeState()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+        state.correctWord(id: transcript.words[0].id, text: "Loom is")
+        await state.waitForPendingSave()
+
+        let word = try #require(try Transcript.read(from: bundle).words.first)
+        #expect(abs(word.start - 12.81) < 1e-9)
+        #expect(abs(word.duration - 0.48) < 1e-9)
+    }
+
+    @Test("Undo restores the text AND the recognizer's confidence")
+    func correctionUndoes() async throws {
+        // Restoring the text but leaving confidence at 1.0 would leave a wrong
+        // word rendering as human-verified — worse than never correcting it.
+        let (state, bundle, transcript) = try await makeState()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let undoManager = UndoManager()
+        state.undoManager = undoManager
+
+        state.correctWord(id: transcript.words[0].id, text: "Loom is")
+        await state.waitForPendingSave()
+        undoManager.undo()
+        await state.waitForPendingSave()
+
+        let word = try #require(try Transcript.read(from: bundle).words.first)
+        #expect(word.text == "loom is")
+        #expect(abs(word.confidence - 0.34) < 1e-9,
+                "undo left the wrong word marked human-verified")
+
+        undoManager.redo()
+        await state.waitForPendingSave()
+        #expect(try Transcript.read(from: bundle).words.first?.text == "Loom is")
+    }
+
+    @Test("Empty text is a cancel, not a removal")
+    func emptyIsANoOp() async throws {
+        // Removing a word from the transcript is not an operation that exists:
+        // deleting what was SAID is deleteWords, which cuts footage. A word
+        // with no footage behind it would be a lie about the recording.
+        let (state, bundle, transcript) = try await makeState()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let undoManager = UndoManager()
+        state.undoManager = undoManager
+
+        state.correctWord(id: transcript.words[0].id, text: "   ")
+        #expect(undoManager.canUndo == false, "an empty commit registered an undo step")
+        #expect(state.transcript?.words.first?.text == "loom is")
+    }
+
+    @Test("Re-typing the same text is not an edit")
+    func identicalTextIsANoOp() async throws {
+        let (state, bundle, transcript) = try await makeState()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let undoManager = UndoManager()
+        state.undoManager = undoManager
+
+        state.correctWord(id: transcript.words[0].id, text: "loom is")
+        #expect(undoManager.canUndo == false)
+    }
+
+    @Test("A correction and a cut interleave on one undo stack")
+    func correctionAndCutShareTheStack() async throws {
+        // The whole point of routing everything through one undoManager: the
+        // user thinks "undo my last edit", not "undo my last edit of kind X".
+        let (state, bundle, transcript) = try await makeState()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let undoManager = UndoManager()
+        state.undoManager = undoManager
+
+        state.correctWord(id: transcript.words[0].id, text: "Loom is")
+        await state.waitForPendingSave()
+        state.deleteWords(ids: [transcript.words[1].id])
+        await state.waitForPendingSave()
+
+        undoManager.undo()   // the cut
+        await state.waitForPendingSave()
+        #expect(state.edl.cuts.isEmpty, "first undo should revert the cut")
+        #expect(state.transcript?.words.first?.text == "Loom is", "the correction went too")
+
+        undoManager.undo()   // the correction
+        await state.waitForPendingSave()
+        #expect(state.transcript?.words.first?.text == "loom is")
+    }
+}

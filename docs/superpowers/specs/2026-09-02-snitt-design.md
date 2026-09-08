@@ -949,9 +949,11 @@ must not produce an unbuildable order.
    editor open (on-device, word-level, after capture per D68), stores
    `transcript.json` with a D60-style version gate, and the transcript pane is
    an editing surface: click a word to seek, select a phrase and delete it to
-   cut those seconds through the same EDL as every other edit. Not yet built:
-   correcting recognized text in place, and D57's use of the word spans as its
-   dead-air signal.
+   cut those seconds through the same EDL as every other edit. Second slice
+   (same day): in-place correction — double-click a word, or Edit Word… from
+   its context menu; corrections persist, undo on the shared stack, and clear
+   the doubt-dimming (confidence becomes 1.0, human-verified). Not yet built:
+   D57's use of the word spans as its dead-air signal.
 4. **`auto-deep-trim` (D57)** — *needs 3*. Honestly priced now that D59 refuted the
    `HealthSampler` path: it needs its own per-span signal, and D62's transcript is
    a better one than an RMS threshold.

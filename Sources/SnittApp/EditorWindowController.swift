@@ -467,6 +467,7 @@ final class EditorTimelineState: ObservableObject {
     func loadTranscript() {
         guard let existing = try? Transcript.read(from: controller.snittBundle) else { return }
         transcript = existing
+        lastSavedTranscript = existing
         transcriptionStatus = .ready
     }
 
@@ -508,6 +509,7 @@ final class EditorTimelineState: ObservableObject {
                 try result.write(to: bundle)
                 await MainActor.run {
                     self?.transcript = result
+                    self?.lastSavedTranscript = result
                     self?.transcriptionStatus = .ready
                 }
             } catch {
@@ -516,6 +518,72 @@ final class EditorTimelineState: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Corrects one recognized word's text (D62 second slice).
+    ///
+    /// Text only — the timing is untouched, because the word WAS said at that
+    /// instant; only the spelling was wrong. Changing timing here would move
+    /// cut spans out from under existing edits.
+    ///
+    /// Confidence becomes 1.0: a human typed this, so the doubt-dimming the
+    /// recognizer earned no longer applies. That also makes "which words did I
+    /// fix" visible — corrected words render at full opacity.
+    ///
+    /// Empty or whitespace text is a NO-OP, not a removal: removing a word
+    /// from the transcript is not an operation that exists — deleting what was
+    /// SAID is `deleteWords`, which cuts the footage. A transcript word with
+    /// no footage behind it would be a lie about the recording.
+    func correctWord(id: UUID, text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              var current = transcript,
+              let index = current.words.firstIndex(where: { $0.id == id }),
+              current.words[index].text != trimmed else { return }
+
+        let snapshot = current
+        undoManager?.registerUndo(withTarget: self) { $0.restoreTranscript(snapshot) }
+        current.words[index].text = trimmed
+        current.words[index].confidence = 1.0
+        transcript = current
+        applyAndSaveTranscript()
+    }
+
+    /// The transcript's twin of `restore(_:)`: whole-value snapshots, so undo
+    /// is multi-level by construction and redo falls out of registering the
+    /// current value on the way back.
+    private func restoreTranscript(_ snapshot: Transcript) {
+        guard let current = transcript else { return }
+        undoManager?.registerUndo(withTarget: self) { $0.restoreTranscript(current) }
+        transcript = snapshot
+        applyAndSaveTranscript()
+    }
+
+    /// Chained onto the same save queue as EDL and event writes, so the three
+    /// sidecars cannot interleave their failure handling — and a failed write
+    /// reverts to the last value that IS on disk, exactly as event edits do.
+    private func applyAndSaveTranscript() {
+        guard let transcript else { return }
+        let controller = self.controller
+        let previousSave = pendingSaveTask
+        outstandingSaves += 1
+        pendingSaveTask = Task { @MainActor [weak self] in
+            await previousSave?.value
+            do {
+                try transcript.write(to: controller.snittBundle)
+                self?.lastSavedTranscript = transcript
+            } catch {
+                self?.transcriptEditWasRejected(error)
+            }
+            self?.outstandingSaves -= 1
+        }
+    }
+
+    private var lastSavedTranscript: Transcript?
+
+    private func transcriptEditWasRejected(_ error: Error) {
+        transcript = lastSavedTranscript
+        onEditRejected?(error)
     }
 
     /// Deletes words: their spans become cuts on the SAME EDL every other edit
