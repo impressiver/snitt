@@ -84,6 +84,9 @@ public class PreviewController {
     /// taken against the SOURCE, never the trimmed composition, so an edit is a
     /// lookup rather than a re-read.
     var captureURL: URL { bundle.captureURL }
+    /// The whole bundle, for sidecars beyond capture.mov — transcript.json's
+    /// read/write path (D62).
+    var snittBundle: SnittBundle { bundle }
     private let scale: Double
 
     public init(built: BuiltComposition, jumpPoints: [JumpPoint],

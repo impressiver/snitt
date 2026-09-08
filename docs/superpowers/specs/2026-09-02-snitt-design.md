@@ -945,11 +945,13 @@ must not produce an unbuildable order.
 2. **The editor's known defects.** Whatever `docs/superpowers/notes/field-notes.md`
    is carrying. "Focused in-app editing" is a D66 pillar and the editor is the
    surface used daily; a defect in built work outranks a new feature.
-3. **Transcription (D62)** — **unblocked; S6 answered yes** (D68): word-level
-   timings on-device at this floor, 0.05× realtime. Two D66 pillars at once
-   (transcription, on-device) and, with the agent surface, one of the two things
-   no competitor combines. Transcribe after capture, when the editor opens — at
-   that speed there is nothing to gain from doing it during.
+3. **Transcription (D62) — BUILT, first slice (2026-09-08).** Transcribes on
+   editor open (on-device, word-level, after capture per D68), stores
+   `transcript.json` with a D60-style version gate, and the transcript pane is
+   an editing surface: click a word to seek, select a phrase and delete it to
+   cut those seconds through the same EDL as every other edit. Not yet built:
+   correcting recognized text in place, and D57's use of the word spans as its
+   dead-air signal.
 4. **`auto-deep-trim` (D57)** — *needs 3*. Honestly priced now that D59 refuted the
    `HealthSampler` path: it needs its own per-span signal, and D62's transcript is
    a better one than an RMS threshold.

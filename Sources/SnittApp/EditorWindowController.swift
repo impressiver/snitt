@@ -436,6 +436,108 @@ final class EditorTimelineState: ObservableObject {
         applyAndSave()
     }
 
+    // MARK: - Transcript (D62)
+
+    enum TranscriptionStatus: Equatable {
+        /// No transcript and no way to make one (no mic track, or unsupported).
+        case none
+        /// Available but the user has not been asked for the Speech grant yet —
+        /// §4.10: ask at first USE, so the pane shows a button, not a dialog.
+        case needsPermission
+        case transcribing
+        case ready
+        case failed(String)
+    }
+
+    @Published var transcript: Transcript?
+    @Published var transcriptionStatus: TranscriptionStatus = .none
+
+    /// Words currently removed by the EDL, for striking through.
+    ///
+    /// Derived, never stored on the word: the EDL is the single source of what
+    /// is cut, so undoing a cut un-strikes the words with no bookkeeping.
+    var cutWordIDs: Set<UUID> {
+        guard let transcript else { return [] }
+        return TranscriptEditing.cutWordIDs(in: transcript, cuts: edl.cuts)
+    }
+
+    /// Loads transcript.json if the bundle has one. Separated from
+    /// `beginTranscriptionIfNeeded` so tests can exercise the load/edit path
+    /// without the TCC-gated recognizer anywhere near them.
+    func loadTranscript() {
+        guard let existing = try? Transcript.read(from: controller.snittBundle) else { return }
+        transcript = existing
+        transcriptionStatus = .ready
+    }
+
+    /// Kicks off transcription when there is no transcript yet and the
+    /// recognizer is usable. Called by the window controller after the editor
+    /// opens — deliberately NOT from init, so the test host never constructs a
+    /// recognizer as a side effect of making a state.
+    func beginTranscriptionIfNeeded() {
+        guard transcript == nil, transcriptionStatus == .none else { return }
+        switch Transcriber.availability() {
+        case .unsupported, .denied: transcriptionStatus = .none
+        case .notYetRequested: transcriptionStatus = .needsPermission
+        case .available: startTranscription()
+        }
+    }
+
+    /// The §4.10 rung: the user clicked "Transcribe", so NOW the dialog has a
+    /// visible cause.
+    func requestTranscriptionPermission() {
+        Task { [weak self] in
+            let granted = await Transcriber.requestAuthorization()
+            await MainActor.run {
+                guard let self else { return }
+                if granted { self.startTranscription() } else { self.transcriptionStatus = .none }
+            }
+        }
+    }
+
+    private func startTranscription() {
+        transcriptionStatus = .transcribing
+        let bundle = controller.snittBundle
+        Task { [weak self] in
+            do {
+                guard let result = try await Transcriber.transcribe(bundle: bundle) else {
+                    // No mic track — a normal recording, not a failure.
+                    await MainActor.run { self?.transcriptionStatus = .none }
+                    return
+                }
+                try result.write(to: bundle)
+                await MainActor.run {
+                    self?.transcript = result
+                    self?.transcriptionStatus = .ready
+                }
+            } catch {
+                await MainActor.run {
+                    self?.transcriptionStatus = .failed(error.localizedDescription)
+                }
+            }
+        }
+    }
+
+    /// Deletes words: their spans become cuts on the SAME EDL every other edit
+    /// uses (D62's payoff). Undoable through the same whole-EDL snapshot as
+    /// cuts, crop and gain, so a text deletion and a drag-cut interleave on one
+    /// stack.
+    func deleteWords(ids: Set<UUID>) {
+        guard let transcript else { return }
+        let selected = transcript.words.filter { ids.contains($0.id) }
+        let ranges = TranscriptEditing.cutRanges(removing: selected, from: transcript)
+        guard !ranges.isEmpty else { return }
+        let current = edl
+        undoManager?.registerUndo(withTarget: self) { $0.restore(current) }
+        edl.cuts.append(contentsOf: ranges.map { Cut(range: $0) })
+        applyAndSave()
+    }
+
+    /// Seeks the preview to where a word is spoken. Through `onScrub`, which
+    /// already maps source time to the trimmed timeline and snaps a click
+    /// inside a cut to the nearest kept edge.
+    func seek(toWord word: TranscriptWord) { onScrub(word.start) }
+
     /// Sets one audio track's gain (M5f follow-on; `TrackState.gain` has
     /// existed and been applied by the export mix since M3 with no way to set
     /// it).
@@ -645,6 +747,7 @@ struct EditorContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 0) {
             PlayerLayerView(player: controller.player)
                 .frame(minWidth: 480, minHeight: 270)
                 .overlay {
@@ -658,6 +761,12 @@ struct EditorContentView: View {
                         }
                     }
                 }
+            if state.transcriptionStatus != .none {
+                Divider()
+                TranscriptPane(state: state)
+                    .frame(width: 250)
+            }
+            }
             // D56 (M5f Task 6): three stacked tracks — a thin marker lane
             // above, video, then audio — replacing the single undifferentiated
             // track Task 5 left behind. The taller frame (56, was 40) gives
@@ -955,6 +1064,11 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         self.bundleURL = Self.normalizedBundleURL(bundleURL)
         let state = EditorTimelineState(controller: controller, edl: edl, events: events)
         self.state = state
+        // Transcript (D62): load an existing one, or start making one. From
+        // here rather than the state's init, so the TCC-gated recognizer is
+        // never constructed as a side effect of a test building a state.
+        state.loadTranscript()
+        state.beginTranscriptionIfNeeded()
         let hosting = NSHostingView(rootView: EditorContentView(state: state))
         let window = NSWindow(
             contentRect: Self.openingContentRect(on: NSScreen.main?.visibleFrame),

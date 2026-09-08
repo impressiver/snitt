@@ -195,3 +195,20 @@ actual recording: the loudest bar moves from 23% of the band (linear) to 79%
 clipped buckets even at 4x gain — so the clipping marks will appear only when
 earned. `TrackState.gain` had been applied by the export mix since M3 with no
 way to set it; the same model-without-a-surface shape crop had.
+
+### 2026-09-08 (later)
+
+**D62 first slice built.** The editor transcribes on open (when the Speech
+grant exists — the pane offers a Transcribe button the first time), and the
+transcript is an editing surface: click a word to seek, shift-click to select a
+phrase, Delete Words to cut its seconds. Cut words strike through, derived from
+the EDL, so a timeline cut strikes text and undoing un-strikes it.
+
+**The production path ran against the real recording** and wrote its
+transcript.json — opening `Snitt-1788888317.snitt` shows the 16 words
+immediately. Low-confidence words draw dimmed ("loom is" at 0.34 — probably
+"Loom is"); there is no in-place correction yet.
+
+**Worth judging by eye:** the pane is a fixed 250pt beside the player; whether
+strike-through reads clearly at callout size; whether click-to-seek feels right
+or should audition a couple of words around the click.

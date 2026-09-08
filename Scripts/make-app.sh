@@ -76,6 +76,11 @@ cat > "$APP/Contents/Info.plist" <<PLIST
        separate, earlier gate. Same value, same single source. -->
   <key>CFBundleVersion</key><string>$APP_VERSION</string>
   <key>LSMinimumSystemVersion</key><string>15.0</string>
+  <!-- D62/D68: transcription is on-device only; this grant never sends audio
+       anywhere. Requested at first USE of transcription, not at launch
+       (the 4.10 ladder). -->
+  <key>NSSpeechRecognitionUsageDescription</key>
+  <string>Snitt transcribes your narration on this Mac to make recordings searchable and editable as text. Audio never leaves your computer.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>Snitt records your microphone when you enable it for a recording.</string>
   <!-- A .snitt is a DIRECTORY bundle, so the exported type must conform to

@@ -23,6 +23,8 @@ public struct SnittBundle: Sendable {
     public var editURL: URL { url.appendingPathComponent("edit.json") }
     public var metaURL: URL { url.appendingPathComponent("meta.json") }
     public var posterURL: URL { url.appendingPathComponent("poster.png") }
+    /// Word-level transcript (D62), written the first time transcription runs.
+    public var transcriptURL: URL { url.appendingPathComponent("transcript.json") }
 
     /// Where agent screenshots land (M5e, D53).
     ///
