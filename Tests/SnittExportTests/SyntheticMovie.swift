@@ -71,6 +71,21 @@ enum SyntheticFrameContent {
     ///   TL 32   TR 96
     ///   BL 160  BR 224
     case quadrants
+    /// Flat gray for the first half, two strongly contrasting bands for the
+    /// second.
+    ///
+    /// Models the shape of a real screen recording: it opens on a blank
+    /// desktop or a window that has not painted yet, and the content arrives
+    /// later. `RecordingIcon`'s poster picker exists precisely to not choose
+    /// from the blank half, and a fixture with uniform content cannot tell a
+    /// working picker from one that returns the first frame it is handed.
+    ///
+    /// Bands rather than `.noise`: the picker scores frames at icon
+    /// resolution, where per-pixel noise averages back to flat gray and
+    /// therefore scores no better than the blank half. That is correct
+    /// behaviour — see `RecordingIcon.detailScore` — but it makes noise
+    /// useless as the "has content" half of this fixture.
+    case blankThenBands
 }
 
 /// Luma of each quadrant in `.quadrants`, in display order (top-left origin).
@@ -256,6 +271,17 @@ func writeSyntheticMovie(to url: URL, seconds: Double,
                     // output byte-for-byte reproducible across runs.
                     fillWithSeededNoise(base, byteCount: byteCount,
                                         seed: UInt64(videoProgress.value) &+ 1)
+                case .blankThenBands:
+                    if videoProgress.value < frameCount / 2 {
+                        memset(base, 128, byteCount)
+                    } else {
+                        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
+                        let height = CVPixelBufferGetHeight(buffer)
+                        for row in 0..<height {
+                            memset(base.advanced(by: row * bytesPerRow),
+                                   row < height / 2 ? 20 : 235, bytesPerRow)
+                        }
+                    }
                 case .quadrants:
                     let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
                     let height = CVPixelBufferGetHeight(buffer)
