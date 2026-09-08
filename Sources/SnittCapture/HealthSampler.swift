@@ -173,6 +173,13 @@ public final class HealthSampler: @unchecked Sendable {
         let system = systemSampleCount > 0
             ? (systemSumOfSquares / Double(systemSampleCount)).squareRoot() : nil
         return CaptureHealth(meanFrameVariance: meanVariance,
-                             micRMS: mic, systemAudioRMS: system)
+                             micRMS: mic, systemAudioRMS: system,
+                             // Read at finalization rather than at start: the
+                             // route can change mid-recording (headphones
+                             // pulled out), and what matters for explaining a
+                             // transcript is where the sound was actually
+                             // going, which the end is at least as good a
+                             // sample of as the beginning.
+                             outputRoute: AudioOutputRoute.current().rawValue)
     }
 }

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SnittCapture
 
 public enum RecordingState: Equatable, Sendable {
     case idle
@@ -99,6 +100,25 @@ final class StatusItemController: NSObject {
         onClick?()
     }
 
+    /// The speaker-bleed warning to show, or nil when there is nothing to warn
+    /// about (D73).
+    ///
+    /// Separated from the menu because a menu item is untestable and this
+    /// decision is not. `captureSystemAudio` is read from `CaptureOptions`'s
+    /// own default rather than written as `true` here: that default is what
+    /// `RecordingCoordinator.humanCaptureOptions` actually leaves in place, and
+    /// duplicating it as a literal is how the warning would keep firing after
+    /// someone made system audio opt-in.
+    nonisolated static func speakerBleedWarning(route: AudioOutputRoute,
+                                                microphoneEnabled: Bool) -> String? {
+        guard AudioOutputRoute.bleedRisk(
+            route: route,
+            capturingMicrophone: microphoneEnabled,
+            capturingSystemAudio: CaptureOptions().captureSystemAudio)
+        else { return nil }
+        return "⚠︎ Speakers will be recorded by the mic — use headphones"
+    }
+
     /// Right-click menu. Attached only for the duration of the click, then
     /// detached, so left-click keeps invoking `onClick` (the kill switch).
     private func showContextMenu() {
@@ -129,6 +149,21 @@ final class StatusItemController: NSObject {
         microphoneItem.target = self
         microphoneItem.state = microphoneEnabled ? .on : .off
         menu.addItem(microphoneItem)
+
+        // D73. Built here rather than cached because this menu is constructed
+        // fresh on every right-click, so it reflects whatever is plugged in at
+        // the moment someone is about to record — which is the only moment the
+        // warning is worth anything.
+        if let warning = Self.speakerBleedWarning(route: AudioOutputRoute.current(),
+                                                  microphoneEnabled: microphoneEnabled) {
+            let item = NSMenuItem(title: warning, action: nil, keyEquivalent: "")
+            // Informational, not actionable: there is nothing for Snitt to DO
+            // about it, and §4.11 forbids putting a dialog in front of the
+            // fast path. Telling the truth at the moment of the decision is
+            // the whole intervention.
+            item.isEnabled = false
+            menu.addItem(item)
+        }
 
         // §12's opt-in: with this off, `snitt diagnostics export` never reads
         // `~/Library/Logs/DiagnosticReports/` at all. This menu item is the

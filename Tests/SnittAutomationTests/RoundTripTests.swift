@@ -110,13 +110,28 @@ final class SilentPeer: @unchecked Sendable {
             $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, size) }
         }
         guard bindResult == 0 else { close(fd); throw ServerError.bindFailed("bind failed") }
-        guard listen(fd, 1) == 0 else { close(fd); throw ServerError.listenFailed("listen failed") }
+        // Backlog of 8, not 1: `AutomationClient.send` probes with `canConnect`
+        // BEFORE the request connection, so a single round trip arrives here as
+        // two connections. With a backlog of one and a single `accept` below,
+        // the second was intermittently refused and the client reported
+        // `notRunning` in 0.001s instead of timing out in 1s — a flake that
+        // failed roughly one run in five and looked like the timeout itself
+        // regressing.
+        guard listen(fd, 8) == 0 else { close(fd); throw ServerError.listenFailed("listen failed") }
 
         self.fd = fd
         queue.async { [fd] in
-            // Accept and then just sit on the connection, never reading or
-            // writing, until the socket is torn down by stop().
-            _ = accept(fd, nil, nil)
+            // Accept every connection and then sit on it, never reading or
+            // writing, until the socket is torn down by stop(). A loop rather
+            // than one `accept` for the same reason as the backlog above: the
+            // probe and the request are two connections, and accepting only
+            // the first leaves the one under test unattended.
+            while true {
+                let client = accept(fd, nil, nil)
+                if client < 0 { return }        // the listener was closed by stop()
+                // Deliberately never closed: closing would send EOF, and this
+                // peer exists to model a process that is alive and silent.
+            }
         }
     }
 
