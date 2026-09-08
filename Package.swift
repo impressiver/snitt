@@ -99,6 +99,7 @@ let package = Package(
         .executableTarget(name: "S1KeystrokeProbe", path: "Spikes/S1KeystrokeProbe"),
         .executableTarget(name: "S3IPCCaptureProbe", path: "Spikes/S3IPCCaptureProbe"),
         .executableTarget(name: "S4NagObservation", path: "Spikes/S4NagObservation"),
+        .executableTarget(name: "S6TranscriptionProbe", path: "Spikes/S6TranscriptionProbe"),
         .executableTarget(name: "S5RealTopology", dependencies: ["SnittCapture"], path: "Spikes/S5RealTopology"),
     ]
 )
