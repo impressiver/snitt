@@ -367,6 +367,102 @@ final class EditorTimelineState: ObservableObject {
         applyAndSaveEvents()
     }
 
+    // MARK: - Chapter index (the marker pane)
+
+    /// The markers as a chapter list, in the order they occur.
+    ///
+    /// Derived rather than stored: `events` is the single source of truth for
+    /// markers, and a parallel list would be one more thing to keep in step
+    /// with cuts, undo, and the timeline lane — which all already read
+    /// `events`.
+    ///
+    /// `outputTime` is nil for a marker sitting inside a cut. Those are still
+    /// listed, dimmed: a marker silently vanishing from the index because a
+    /// nearby cut swallowed it looks like data loss, and the marker really is
+    /// still in the file — `moveMarker` can bring it back out.
+    var chapters: [MarkerChapter] {
+        let timebase = Timebase(sourceDuration: controller.sourceDurationSeconds, edl: edl)
+        return events
+            .filter { $0.kind == .marker }
+            .sorted { $0.timeSeconds < $1.timeSeconds }
+            .enumerated()
+            .map { index, event in
+                MarkerChapter(
+                    id: event.id,
+                    outputTime: timebase.outputTime(forSource: SourceTime(event.timeSeconds))?.seconds,
+                    label: event.label?.isEmpty == false ? event.label! : "Marker \(index + 1)",
+                    hasCustomLabel: event.label?.isEmpty == false,
+                    transcript: event.transcript)
+            }
+    }
+
+    /// Which chapter the playhead is inside.
+    ///
+    /// A chapter runs until the NEXT one starts — that is what makes this an
+    /// index rather than a list of instants. Highlighting only while the
+    /// playhead sits exactly on a marker would mean nothing is ever
+    /// highlighted, since a marker has no duration.
+    func currentChapterID(atOutputSeconds outputSeconds: Double) -> UUID? {
+        var current: UUID?
+        for chapter in chapters {
+            guard let start = chapter.outputTime else { continue }
+            // A small tolerance so seeking TO a chapter highlights it rather
+            // than landing a hair before its own start.
+            if start <= outputSeconds + 0.01 { current = chapter.id } else { break }
+        }
+        return current
+    }
+
+    /// Drops a marker at the playhead.
+    ///
+    /// Until now markers could only be created while recording, which means a
+    /// recording made by an agent — or by anyone who did not think to press
+    /// the key at the right moment — could never be chaptered at all.
+    func addMarker(atOutput outputTime: Double) {
+        let timebase = Timebase(sourceDuration: controller.sourceDurationSeconds, edl: edl)
+        guard let sourceTime = timebase.sourceTime(forOutput: OutputTime(outputTime))?.seconds
+        else { return }
+        let previous = events
+        undoManager?.registerUndo(withTarget: self) { target in
+            target.restoreEvents(previous)
+        }
+        events.append(LoggedEvent(timeSeconds: sourceTime, kind: .marker))
+        // Kept in time order for the same reason `Recorder` sorts before
+        // writing: every consumer reads this array as a timeline.
+        events.sort { $0.timeSeconds < $1.timeSeconds }
+        applyAndSaveEvents()
+    }
+
+    /// Removes a marker. Undoable on the same stack as every other edit.
+    func deleteMarker(id: UUID) {
+        guard let index = events.firstIndex(where: { $0.id == id }),
+              events[index].kind == .marker else { return }
+        let previous = events
+        undoManager?.registerUndo(withTarget: self) { target in
+            target.restoreEvents(previous)
+        }
+        events.remove(at: index)
+        applyAndSaveEvents()
+    }
+
+    /// Renames a marker, keeping its transcript.
+    ///
+    /// Goes through `updateMarker` rather than writing `label` directly,
+    /// because that method's whole contract is that both fields are written
+    /// together — a rename that passed `transcript: nil` would silently
+    /// destroy narration text the sheet had set.
+    func renameMarker(id: UUID, to label: String) {
+        guard let event = events.first(where: { $0.id == id }) else { return }
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        updateMarker(id: id, label: trimmed.isEmpty ? nil : trimmed,
+                     transcript: event.transcript)
+    }
+
+    /// Seeks the preview to a chapter. Through `onScrub` for the same reason
+    /// `seek(toWord:)` is: it is the one path that keeps the timeline playhead
+    /// and the panes agreeing about where playback is.
+    func seek(toOutput seconds: Double) { onScrub(seconds) }
+
     /// The events-side twin of `restore(_:)`: pushes the CURRENT `events`
     /// back onto the undo stack as the redo before installing `snapshot`, so
     /// marker undo/redo is multi-level exactly like cut undo/redo.
@@ -856,6 +952,14 @@ struct EditorContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 0) {
+            // The chapter index, always present rather than conditional on
+            // there being markers: it is now the only way to CREATE one
+            // outside of recording, so hiding it when the list is empty would
+            // hide the affordance exactly when it is needed.
+            MarkerPane(state: state, playhead: playhead,
+                       onEditMarker: { editingMarkerID = $0 })
+                .frame(width: 220)
+            Divider()
             PlayerLayerView(player: controller.player)
                 .frame(minWidth: 480, minHeight: 270)
                 .overlay {
