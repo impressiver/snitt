@@ -153,34 +153,60 @@ output when a failure appears.
 
 ## Manual checklist — for the next session at the machine
 
-Ordered by how much is riding on the answer.
+*S6 is done (D68). What follows is ordered by whether it needs a new recording.*
 
-1. **Run the S6 probe: `swift run S6TranscriptionProbe`.** It generates its own
-   speech with `say`, so no recording is needed. macOS will prompt for Speech
-   Recognition — the grant goes to the *terminal*, not to Snitt.app. The line
-   that decides things is `WORD-LEVEL timings present` vs `NOT word-level`. If
-   absent, D62's text-based editing is not buildable at the §4.6 floor and
-   either the floor moves or the pillar shrinks to captions.
+### A. Answerable right now, from recordings already on disk
 
-2. **Record something, then open it.** The waveform and filmstrip have never
-   been seen. Specifically worth judging, because tests cannot:
-   - Is 60 samples/second enough resolution to find a pause by eye?
-   - Does the microphone band read at a sensible amplitude beside system audio,
-     or is one of them a flat line next to the other?
-   - Are 120 thumbnails too few across a long recording — does the strip read as
-     motion or as a slideshow?
-   - Is the 120pt timeline the right height now that it carries three bands?
+**A1 — `open ~/Documents/Snitt/Snitt-1788888317.snitt`** (20.9s, voiceover, a
+33-word transcript, one cut). This is the only bundle that exercises nearly
+everything built since, all at once:
 
-3. **Try crop.** Drag on the preview, check the export matches what the editor
-   showed, undo it, re-crop (it should compose, not re-anchor), and `Reset Crop`.
-   Then the same through the CLI: `snitt crop <bundle> --x 0.25 --y 0.25
-   --width 0.5 --height 0.5` and `--reset`.
+- **Waveform legibility.** The mic peaked at 0.231, which the log scale draws at
+  79% of the band. Is a pause findable by eye? Is 60 samples/second enough?
+- **Transcript pane.** 33 words, already transcribed. Click a word — does the
+  preview land where it was said? Press play — does the highlight track, and
+  does the pane scroll only while playing?
+- **Correction.** Double-click "loom is" (dimmed, confidence 0.34) and type
+  "Loom is". It should stop being dimmed. ⌘Z should restore BOTH the text and
+  the dimming.
+- **Text deletion.** Select a phrase, Delete Words. It should become a red fold
+  on the timeline and undo on the same stack.
+- **Fold expansion.** Expand the existing cut. Later content should shift right
+  and the playhead should JUMP the band, not crawl through it. Clicking the red
+  band should collapse it.
+- **Gain.** Drag the mic slider. The waveform should redraw as you drag, and go
+  red if you push it into clipping.
+- **Crop.** Drag on the preview, export, undo, re-crop (it should compose, not
+  re-anchor), Reset Crop.
 
-4. **The two long-standing human-only checks** (carried since M5f):
-   - Record with the hotkey and the picker with the microphone ON. Mic capture
-     has only ever been verified through the agent path.
-   - Press the record hotkey and confirm **no window opens on start** (§4.11).
-     The editor-on-stop half (D48) is tested; this half is not.
+**A2 — `open ~/Documents/Snitt/Snitt-1788896932.snitt`** (200s, no audio). The
+only long recording: does the filmstrip read as motion or as a slideshow at 120
+frames across three and a half minutes? Its audio bands will be flat, which is
+correct and is itself worth seeing.
+
+**A3 — the CLI half of crop**, which has never been run by hand:
+`snitt crop ~/Documents/Snitt/Snitt-1788888317.snitt --x 0.25 --y 0.25
+--width 0.5 --height 0.5`, then `--reset`.
+
+### B. Needs a new recording
+
+**B1 — the two human-only checks carried since M5f.** Press the record hotkey:
+**no window should open** (§4.11 — the editor-on-stop half is tested, this half
+never has been). Pick a target with the microphone ON, and confirm the mic band
+is not flat afterwards. Mic capture has only ever been verified through the
+agent path.
+
+**B2 — is system audio captured at all?** Every one of the five recordings on
+disk has `systemAudioRMS` exactly 0. That is plausible — none of them obviously
+made a sound — but it means the path has no positive evidence anywhere. Play
+something audible for a few seconds while recording, then check the system-audio
+band is not a flat line.
+
+**B3 — a LONG narrated recording**, if you want the open performance question
+answered: does a ~1500-word transcript still highlight smoothly at 20Hz? No
+existing recording has both length and voiceover, so nothing on disk can answer
+it. The fix, if it stutters, is to stop re-rendering every word per tick rather
+than to slow the clock.
 
 ### 2026-09-08
 
