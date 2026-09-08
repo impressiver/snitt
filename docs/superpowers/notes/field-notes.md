@@ -64,3 +64,18 @@ transform extending the call `CompositionBuilder` already makes for `--scale` �
 and nothing depends on it.
 
 *(No usage observations yet. First entry with real recordings goes here.)*
+
+**Check (2026-09-07) — the repo is clean to open-source.** Run before §13's "pick
+a licence" becomes actionable, since D66 makes open source a pillar:
+
+- No key-shaped file appears anywhere in git history.
+- The working tree holds nothing credential-shaped. The only two greps that hit
+  are `.gitignore` itself and an M5b ledger line recording that `AuthKey_*.p8`
+  was added to it.
+- `Info.plist` ships `SUPublicEDKey` — the **public** half. The EdDSA private key
+  lives in the login Keychain, never in a file, and `.gitignore` nets the export
+  filenames anyway.
+
+What is NOT settled by this: going public also publishes `docs/superpowers/`,
+including every plan, execution ledger and this file. That is a judgement call
+about how much working process to show, not a security question.
