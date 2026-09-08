@@ -830,7 +830,7 @@ public final class TimelineView: NSView {
         let kept = KeptRanges.compute(duration: duration, cuts: cuts.map(\.range))
         let midY = rect.midY
         let halfHeight = (rect.height - 2) / 2
-        let normal = NSColor.labelColor.withAlphaComponent(muted ? 0.2 : 0.55)
+        let normal = muted ? Palette.waveformMuted : Palette.waveform
         // Clipping stays visible on a muted track: muting is an edit decision,
         // clipping is damage, and hiding the damage because the track is
         // currently silent is how it survives to the export.
@@ -869,8 +869,50 @@ public final class TimelineView: NSView {
         geometry.x(atOutput: OutputTime(outputSeconds))
     }
 
+    /// The timeline's own surface colours.
+    ///
+    /// Explicit greys rather than the semantic `NSColor`s this view used to
+    /// fill with, for two reasons.
+    ///
+    /// The first is a bug. The bands were filled with `tertiaryLabelColor` and
+    /// the waveform drawn in `labelColor` — LABEL colours used as BACKGROUND
+    /// fills. Label colours invert with the appearance, so in dark mode the
+    /// audio band rendered as a pale slab and the waveform, also pale, sank
+    /// into it. The band was at its least readable in the appearance the rest
+    /// of the window was already using.
+    ///
+    /// The second is deliberate. A timeline is a dark surface in every editor
+    /// that has one, because the content on it — waveforms, thumbnails, cut
+    /// marks — is what should carry the colour. So these do not follow the
+    /// system appearance in either direction, which is also why the playhead
+    /// and separators are spelled out here: on a fixed dark ground, a
+    /// `labelColor` playhead would be black-on-black under a light system
+    /// theme.
+    enum Palette {
+        /// sRGB rather than `NSColor(white:)`: the latter lands in a generic
+        /// gray space whose numbers do not correspond to the hex value they
+        /// look like, and the first pass of these came out markedly darker
+        /// than the values read.
+        private static func grey(_ v: CGFloat) -> NSColor {
+            NSColor(srgbRed: v, green: v, blue: v, alpha: 1)
+        }
+        static let background = grey(0.13)
+        static let markerLane = grey(0.26)
+        static let videoBand = grey(0.17)
+        /// Lighter than `background`, so an audio band reads as a band rather
+        /// than as the waveform floating on the view's backdrop.
+        static let audioBand = grey(0.22)
+        /// A muted source draws flatter and darker — the one visible
+        /// difference between "this audio is in the export" and "it is not".
+        static let audioBandMuted = grey(0.155)
+        static let separator = grey(0.34)
+        static let playhead = grey(0.97)
+        static let waveform = NSColor.systemOrange
+        static let waveformMuted = NSColor.systemOrange.withAlphaComponent(0.28)
+    }
+
     public override func draw(_ dirtyRect: NSRect) {
-        NSColor.controlBackgroundColor.setFill()
+        Palette.background.setFill()
         NSBezierPath(rect: bounds).fill()
 
         // D56 (M5f Task 6): three stacked tracks — a thin marker lane above
@@ -892,22 +934,20 @@ public final class TimelineView: NSView {
         let bands = TimelineTrackLayout.bands(in: bounds,
                                               markerHeight: markerTrackHeight,
                                               audioTracks: tracks)
-        NSColor.quaternaryLabelColor.setFill()
+        Palette.markerLane.setFill()
         NSBezierPath(rect: bands.marker).fill()
-        NSColor.tertiaryLabelColor.setFill()
+        Palette.videoBand.setFill()
         NSBezierPath(rect: bands.video).fill()
         if let filmstrip { drawFilmstrip(filmstrip, in: bands.video) }
         for (track, rect) in bands.audio {
             let muted = trackStates.first { $0.track == track }?.muted ?? false
-            // A muted source draws markedly fainter — the one visible
-            // difference between "this audio is in the export" and "it is not".
-            NSColor.tertiaryLabelColor.withAlphaComponent(muted ? 0.15 : 0.6).setFill()
+            (muted ? Palette.audioBandMuted : Palette.audioBand).setFill()
             NSBezierPath(rect: rect).fill()
             if let samples = waveforms.first(where: { $0.track == track }) {
                 let gain = trackStates.first { $0.track == track }?.gain ?? 1.0
                 drawWaveform(samples, in: rect, muted: muted, gain: gain)
             }
-            NSColor.separatorColor.setFill()
+            Palette.separator.setFill()
             NSBezierPath(rect: NSRect(x: 0, y: rect.minY, width: bounds.width, height: 1)).fill()
         }
 
@@ -1012,7 +1052,7 @@ public final class TimelineView: NSView {
                                       height: max(0, markerTrackHeight - 2))).fill()
         }
 
-        NSColor.labelColor.setFill()
+        Palette.playhead.setFill()
         let playheadX = geometry.x(atOutput: OutputTime(playhead))
         NSBezierPath(rect: NSRect(x: playheadX - 1, y: 0, width: 2, height: bounds.height)).fill()
     }
