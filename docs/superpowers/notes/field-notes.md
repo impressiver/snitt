@@ -356,3 +356,22 @@ So "scroll the window you already consented to film, while filming it, with a
 marker at the same instant" is expressible with a much smaller grant than D49
 assumed any control surface would need. Whether to want it is still a product
 call. Nothing built.
+
+### 2026-09-08 (rulings on D70 and D71)
+
+Both deferred by the product owner, with triggers named so a later session does
+not re-litigate them:
+
+- **D70 (excluding part of a window at capture):** leave it; build it if it is
+  asked for. The shipped warning is the response. Reopen when somebody has a
+  bundle they cannot share because of what its chrome captured.
+- **D71 (Snitt scrolling the recorded window):** agents should handle their own
+  scrolling. Reopen only on RECURRING friction across different agents and
+  tools — the instance that prompted the investigation was a missing domain in
+  one agent's own allowlist, which is its gap and not Snitt's.
+
+Worth keeping straight: D71's investigation stands even though the ruling is
+"no". It found that D49's stated premise — that driving input needs the global
+Accessibility grant — is too narrow, since Apple Events scripting is per-app and
+revocable. That changes what is POSSIBLE, not what is wanted, and it is written
+down so a future reopen starts from the real constraint rather than the old one.
