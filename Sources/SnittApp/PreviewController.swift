@@ -80,6 +80,10 @@ public class PreviewController {
     /// other source for them, since `BuiltComposition` itself doesn't carry
     /// them back out.
     private let bundle: SnittBundle
+    /// The unedited recording, for sampling waveforms and filmstrips. Those are
+    /// taken against the SOURCE, never the trimmed composition, so an edit is a
+    /// lookup rather than a re-read.
+    var captureURL: URL { bundle.captureURL }
     private let scale: Double
 
     public init(built: BuiltComposition, jumpPoints: [JumpPoint],

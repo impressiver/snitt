@@ -112,6 +112,26 @@ final class EditorTimelineState: ObservableObject {
         self.lastSavedEDL = edl
         self.events = events
         self.lastSavedEvents = events
+        loadWaveforms()
+    }
+
+    /// Peak amplitudes per audio track, empty until the read finishes.
+    ///
+    /// Empty is a legitimate state the timeline draws as a plain band, not an
+    /// error: reading every audio sample of a long recording takes real time,
+    /// and blocking the editor's first paint on it would be a worse trade than
+    /// a waveform that arrives a moment later.
+    @Published var waveforms: [WaveformSamples] = []
+
+    /// Sampled ONCE per document, against the source recording. Cuts and zoom
+    /// change which sample a pixel column reads (`TimelineSampleIndex`), never
+    /// the samples themselves, so no edit re-triggers this.
+    private func loadWaveforms() {
+        let url = controller.captureURL
+        Task { [weak self] in
+            let samples = try? await WaveformSampler.sample(movieAt: url)
+            await MainActor.run { self?.waveforms = samples ?? [] }
+        }
     }
 
     /// Everything `TimelineView` needs. `duration`/`cuts`/`selection` stay on
@@ -162,6 +182,8 @@ final class EditorTimelineState: ObservableObject {
         /// draws one band per source, so muting has a visible effect — until
         /// now `TrackState.muted` changed the export and nothing on screen.
         let trackStates: [TrackState]
+        /// Source-time peaks per track; empty until sampling finishes.
+        let waveforms: [WaveformSamples]
     }
 
     func displayState(playhead outputPlayhead: Double) -> DisplayState {
@@ -171,7 +193,8 @@ final class EditorTimelineState: ObservableObject {
                     playhead: outputPlayhead,
                     selection: selection,
                     expandedCutIDs: expandedCutIDs,
-                    trackStates: edl.trackStates)
+                    trackStates: edl.trackStates,
+                    waveforms: waveforms)
     }
 
     /// `time` arrives in SOURCE time — the view's own axis — and must be
@@ -529,7 +552,8 @@ struct TimelineViewRepresentable: NSViewRepresentable {
                      playhead: display.playhead,
                      selection: display.selection,
                      expandedCutIDs: display.expandedCutIDs,
-                     trackStates: display.trackStates)
+                     trackStates: display.trackStates,
+                     waveforms: display.waveforms)
     }
 }
 
