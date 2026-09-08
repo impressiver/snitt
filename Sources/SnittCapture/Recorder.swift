@@ -248,10 +248,47 @@ public actor Recorder {
     ///
     /// Returns the offset so the caller can report it — an agent that just
     /// marked "ran the tests" wants to know where that fell.
-    public func mark(label: String?) async -> Double {
+    /// Stops recording without ending the session (M5e, D53).
+    ///
+    /// The agent case this exists for: deliberation is not worth filming, and
+    /// D49 makes Snitt the coordinator rather than the driver, so pausing while
+    /// the agent thinks is how a demo avoids minutes of a static screen.
+    ///
+    /// Drops a marker, so "where did the pause happen" is answerable from the
+    /// recording itself rather than only from the agent's own logs. §5.3's
+    /// indicator obligation is why `paused` is also reported in status: a
+    /// person at the machine must be able to tell a paused recording from a
+    /// running one.
+    public func pause() async {
+        guard !session.isPaused else { return }
+        session.pause()
+        await eventLog.add(at: await currentOffset(), kind: .marker, label: "Paused")
+    }
+
+    /// Resumes a paused recording. Idempotent.
+    public func resume() async {
+        guard session.isPaused else { return }
+        session.resume()
+        await eventLog.add(at: await currentOffset(), kind: .marker, label: "Resumed")
+    }
+
+    public var isPaused: Bool { session.isPaused }
+
+    /// Seconds spent paused so far — the difference between how long this
+    /// session has been alive and how much footage it holds.
+    public var pausedSeconds: Double { session.pausedSeconds }
+
+    /// The offset a marker dropped right now would carry. Extracted from
+    /// `mark` so pause/resume stamp on exactly the same clock, rather than
+    /// growing a second, subtly different implementation of "now".
+    private func currentOffset() async -> Double {
         let wallClock = startedAt.map { Date().timeIntervalSince($0) } ?? 0
-        let offset = CaptureSession.plausibleOffset(
+        return CaptureSession.plausibleOffset(
             media: session.mediaOffsetNow(), wallClock: wallClock) ?? wallClock
+    }
+
+    public func mark(label: String?) async -> Double {
+        let offset = await currentOffset()
         await eventLog.add(at: offset, kind: .marker, label: label)
         return offset
     }

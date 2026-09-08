@@ -45,6 +45,16 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
     private var stream: SCStream?
     private let lock = NSLock()
     private var didBegin = false
+    /// Pause bookkeeping (M5e, D53). Guarded by `lock` like `didBegin`.
+    ///
+    /// `pauseRequested` is what `pause()`/`resume()` set; the LEDGER is only
+    /// ever advanced inside `handle`, using a real buffer's presentation
+    /// timestamp. That keeps every value in the ledger on the media clock —
+    /// mixing a wall-clock pause instant into a media-clock shift is the kind
+    /// of error that produces a file which plays perfectly with every marker in
+    /// the wrong place.
+    private var pauseRequested = false
+    private var pauses = PauseLedger()
 
     /// The presentation timestamp of the first delivered buffer — the video
     /// track's t=0, on SCStream's host/mach clock. Guarded by `lock` alongside
@@ -185,6 +195,52 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
         handle(sampleBuffer, of: type)
     }
 
+    /// Stops writing buffers until `resume()`. Idempotent.
+    func pause() { lock.lock(); pauseRequested = true; lock.unlock() }
+
+    /// Resumes writing. Idempotent.
+    func resume() { lock.lock(); pauseRequested = false; lock.unlock() }
+
+    /// Whether buffers are currently being dropped.
+    var isPaused: Bool { lock.lock(); defer { lock.unlock() }; return pauseRequested }
+
+    /// Total time spent paused so far, in seconds.
+    var pausedSeconds: Double {
+        lock.lock(); defer { lock.unlock() }
+        let total = pauses.totalPaused
+        return total.isValid ? total.seconds : 0
+    }
+
+    /// A copy of `buffer` with every timing shifted back by `offset`.
+    ///
+    /// Returns nil rather than throwing if the copy fails; the caller appends
+    /// the original, which is worse (a gap) but not fatal — losing the buffer
+    /// entirely would tear a hole in the recording that no later frame fills.
+    static func retimed(_ buffer: CMSampleBuffer, by offset: CMTime) -> CMSampleBuffer? {
+        let count = CMSampleBufferGetNumSamples(buffer)
+        var timings = [CMSampleTimingInfo](repeating: .invalid, count: max(1, count))
+        var produced = 0
+        guard CMSampleBufferGetSampleTimingInfoArray(
+            buffer, entryCount: timings.count, arrayToFill: &timings,
+            entriesNeededOut: &produced) == noErr else { return nil }
+        for index in timings.indices {
+            if timings[index].presentationTimeStamp.isValid {
+                timings[index].presentationTimeStamp =
+                    CMTimeSubtract(timings[index].presentationTimeStamp, offset)
+            }
+            if timings[index].decodeTimeStamp.isValid {
+                timings[index].decodeTimeStamp =
+                    CMTimeSubtract(timings[index].decodeTimeStamp, offset)
+            }
+        }
+        var copy: CMSampleBuffer?
+        guard CMSampleBufferCreateCopyWithNewTiming(
+            allocator: kCFAllocatorDefault, sampleBuffer: buffer,
+            sampleTimingEntryCount: timings.count, sampleTimingArray: &timings,
+            sampleBufferOut: &copy) == noErr else { return nil }
+        return copy
+    }
+
     /// Routes one buffer. Separated from the delegate method so tests can
     /// drive the pipeline without an SCStream (spec section 15).
     func handle(_ buffer: CMSampleBuffer, of type: SCStreamOutputType) {
@@ -208,6 +264,21 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
         lock.lock()
         defer { lock.unlock() }
 
+        // Pause transitions are settled HERE, against a real media timestamp,
+        // rather than when pause()/resume() were called. A pause therefore
+        // takes effect at the next buffer, which is sub-frame precision and
+        // costs nothing, and the ledger never sees a clock other than this one.
+        if pauseRequested, !pauses.isPaused {
+            pauses.pause(at: buffer.presentationTimeStamp)
+        } else if !pauseRequested, pauses.isPaused {
+            pauses.resume(at: buffer.presentationTimeStamp)
+        }
+        // Dropped, not written: an AVAssetWriter session cannot be paused, so
+        // the pause IS the absence of these buffers. Every later timestamp is
+        // shifted back by the total paused time so the file stays continuous —
+        // a viewer sees a jump, never a frozen gap.
+        if pauses.isPaused { return }
+
         do {
             // The session starts at the first buffer's timestamp, so the
             // three tracks share one timeline from the same clock.
@@ -216,7 +287,10 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
                 didBegin = true
                 firstPresentationTime = buffer.presentationTimeStamp
             }
-            try sink.append(buffer, to: track)
+            let toAppend = pauses.totalPaused == .zero
+                ? buffer
+                : (Self.retimed(buffer, by: pauses.totalPaused) ?? buffer)
+            try sink.append(toAppend, to: track)
         } catch {
             // Dropping a buffer must never tear down the stream; a partial
             // recording beats no recording (spec section 11).

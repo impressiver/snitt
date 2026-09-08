@@ -102,3 +102,34 @@ func makeAudioBuffer(at seconds: Double) -> CMSampleBuffer {
     )
     return sampleBuffer!
 }
+
+/// A video buffer stamped at an ABSOLUTE media time, not anchored to the host
+/// clock.
+///
+/// `makeVideoBuffer(at:)` deliberately anchors to `CMClockGetHostTimeClock()`
+/// so media-offset arithmetic is exercised the way real SCStream buffers
+/// exercise it. Pause/resume arithmetic is about relative SPANS between
+/// buffers, and an implementation-visible "now" makes the expected values
+/// unwritable — a test asserting "the 4s frame is written at 2s" needs 4s to
+/// mean 4s.
+func makeVideoBufferAtAbsoluteTime(seconds: Double, size: CGSize) -> CMSampleBuffer {
+    var pixelBuffer: CVPixelBuffer?
+    CVPixelBufferCreate(kCFAllocatorDefault, Int(size.width), Int(size.height),
+                        kCVPixelFormatType_32BGRA, nil, &pixelBuffer)
+    let buffer = pixelBuffer!
+    var formatDescription: CMVideoFormatDescription?
+    CMVideoFormatDescriptionCreateForImageBuffer(
+        allocator: kCFAllocatorDefault, imageBuffer: buffer,
+        formatDescriptionOut: &formatDescription)
+    var timing = CMSampleTimingInfo(
+        duration: CMTime(value: 1, timescale: 60),
+        presentationTimeStamp: CMTime(seconds: seconds, preferredTimescale: 600),
+        decodeTimeStamp: .invalid)
+    var sampleBuffer: CMSampleBuffer?
+    CMSampleBufferCreateForImageBuffer(
+        allocator: kCFAllocatorDefault, imageBuffer: buffer, dataReady: true,
+        makeDataReadyCallback: nil, refcon: nil,
+        formatDescription: formatDescription!, sampleTiming: &timing,
+        sampleBufferOut: &sampleBuffer)
+    return sampleBuffer!
+}
