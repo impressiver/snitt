@@ -22,13 +22,27 @@ public struct CaptureHealth: Codable, Sendable, Equatable {
     public var meanFrameVariance: Double?
     public var micRMS: Double?
     public var systemAudioRMS: Double?
+    /// Where the Mac was playing sound during the recording, as
+    /// `AudioOutputRoute`'s raw value — `"builtInSpeakers"`, `"headphones"`,
+    /// `"external"` or `"unknown"`.
+    ///
+    /// A `String` rather than the enum because that type lives in
+    /// `SnittCapture`, which depends on this module and not the other way
+    /// round. Recorded so a poor transcript can be EXPLAINED after the fact:
+    /// `"builtInSpeakers"` alongside a non-nil `micRMS` and `systemAudioRMS`
+    /// means the microphone was recording the speakers as well as the voice,
+    /// which is the difference between "the recogniser is bad" and "the take
+    /// was unusable before it started" (D73).
+    public var outputRoute: String?
 
     public init(meanFrameVariance: Double? = nil,
                 micRMS: Double? = nil,
-                systemAudioRMS: Double? = nil) {
+                systemAudioRMS: Double? = nil,
+                outputRoute: String? = nil) {
         self.meanFrameVariance = meanFrameVariance
         self.micRMS = micRMS
         self.systemAudioRMS = systemAudioRMS
+        self.outputRoute = outputRoute
     }
 }
 
