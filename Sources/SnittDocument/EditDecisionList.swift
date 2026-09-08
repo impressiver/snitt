@@ -425,6 +425,10 @@ extension EditDecisionList {
     public static func autoTrimRange(events: [LoggedEvent],
                                      duration: Double,
                                      padding: Double = 0.5) throws -> TimeRange {
+        // Reported input counts. D44 and D49 both note that agent recordings
+        // log no OS input, which is why auto-trim refused them — an agent that
+        // now reports its own clicks has given exactly the signal that refusal
+        // was missing, and trimming to it is the point of reporting.
         let inputTimes = events.filter { $0.kind != .marker }.map(\.timeSeconds).sorted()
         guard let first = inputTimes.first, let last = inputTimes.last else {
             throw AutoTrimError.noInputEvents

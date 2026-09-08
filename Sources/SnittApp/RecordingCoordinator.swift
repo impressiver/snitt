@@ -88,6 +88,8 @@ public protocol AgentRecordingControlling: Sendable {
     func setPausedForAgent(sessionID: String, paused: Bool) async -> AgentMarkResult
     func pauseStateForAgent() async -> (paused: Bool, pausedSeconds: Double)?
     func screenshotForAgent(sessionID: String, label: String?) async -> AgentScreenshotResult
+    func reportInputForAgent(sessionID: String, kind: EventKind,
+                             x: Double, y: Double, label: String?) async -> AgentMarkResult
 }
 
 /// The outcome of an agent's screenshot request.
@@ -319,6 +321,29 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         } catch {
             return .notRecording
         }
+    }
+
+    /// Records an input event the OS never delivered (M5e follow-on).
+    ///
+    /// Browser automation dispatches into the page rather than through the
+    /// window server, so `element.click()` moves no cursor and reaches no event
+    /// tap. The recording then shows a button changing state with nothing
+    /// having visibly caused it. Reporting the click puts it on the recording's
+    /// own clock, where a later render can draw it.
+    ///
+    /// This is not Snitt driving anything — D49 is untouched. Nothing is
+    /// posted, no Accessibility grant is involved, and the caller has already
+    /// done the thing it is describing. Snitt is recording, which is its job.
+    ///
+    /// Ownership is checked as everywhere else on this surface: an agent may
+    /// only annotate the session it started, or it could write input into a
+    /// person's recording.
+    public func reportInputForAgent(sessionID: String, kind: EventKind,
+                                    x: Double, y: Double,
+                                    label: String?) async -> AgentMarkResult {
+        guard let recorder = active, agentSessionID != nil else { return .notRecording }
+        guard agentSessionID == sessionID else { return .notCurrentSession }
+        return .marked(await recorder.reportInput(kind: kind, x: x, y: y, label: label))
     }
 
     /// The live pause state, for `status`. Nil when nothing is recording.
