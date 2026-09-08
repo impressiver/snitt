@@ -152,7 +152,13 @@ public enum MCPBridge {
             ToolDefinition(
                 name: "snitt_start_recording",
                 description: "Start recording a window belonging to an application. "
-                           + "Returns a session id used to stop it.",
+                           + "Returns a session id used to stop it. "
+                           + "EVERYTHING IN THE WINDOW IS RECORDED, including its "
+                           + "chrome — a browser's tab strip puts the titles of every "
+                           + "other open tab into every frame, and those routinely name "
+                           + "accounts, orders and internal tools. Before recording a "
+                           + "browser, move the page you are demonstrating into its own "
+                           + "window, or expect to crop the strip out before sharing.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
