@@ -940,6 +940,14 @@ reasoning in it is still load-bearing) and what is next, **in priority order**.
   was decided and built while this list still ran M5c → M5d, which is the drift
   D47's conformance guard exists to catch.*
 - **v0.1.0** — built, signed, notarized, stapled, published. Not a gate (D65).
+- **Export knobs and pre-flight (D80, 2026-09-08)** — `--resolution`, `snitt
+  estimate`. Recorded here because it arrived as product-owner direction rather
+  than off this list, and a reader of the priority order would otherwise not
+  know it exists.
+- **CI and repo hygiene (2026-09-08/09)** — GitHub Actions on every PR and on
+  main, the macOS floor raised to 26 (D77), `docs/DEVELOPING.md`. CI runs the
+  five targets a headless runner can finish; export, composition, the editor and
+  the timeline are verified locally only.
 
 ### Next, in order
 
@@ -960,7 +968,12 @@ must not produce an unbuildable order.
    2026-09-08: the transcript's missing first utterances (D73), the expanded
    fold's misplaced band, the playhead landing left of an expanded cut, markers
    readable only by scrubbing (D75), and a waveform that sank into its own band
-   (D76).
+   (D76). A second batch, cleared 2026-09-09: a dragged marker reverting until
+   the timeline was clicked again (D82), crop applying on mouse-up with no way
+   to adjust it (D85), a scrub that left playback running so the playhead walked
+   off the frame aimed at, and no way back to the start (D87), and adjusting
+   gain resetting the playhead because a volume change rebuilt the whole
+   composition (D88).
 3. **Transcription (D62) — BUILT, first slice (2026-09-08).** Transcribes on
    editor open (on-device, word-level, after capture per D68), stores
    `transcript.json` with a D60-style version gate, and the transcript pane is
@@ -971,8 +984,15 @@ must not produce an unbuildable order.
    the doubt-dimming (confidence becomes 1.0, human-verified). Third slice (2026-09-08):
    **D73's speaker-bleed warning** — the status menu says so when a voiceover
    would be recorded through the Mac's own speakers, and the route is stored in
-   `CaptureHealth` so a bad transcript is explainable afterwards. Not yet
-   built: D57's use of the word spans as its dead-air signal.
+   `CaptureHealth` so a bad transcript is explainable afterwards. Fourth slice
+   (2026-09-09, D81): the recording carries the words its transcription should
+   expect, editable and re-runnable from the editor. **Corrected 2026-09-09:
+   this item claimed "not yet built: D57's use of the word spans as its dead-air
+   signal" — it was built.** `AutoDeepTrim.deadSpans` takes a `transcript:` and
+   marks every word span alive, and BOTH call sites pass one
+   (`EditorWindowController` and `AutomationHost`, so the editor, the CLI and
+   MCP all use it). This is the FOURTH time this list has recorded shipped work
+   as pending; see the countermeasure in `field-notes.md` (2026-09-08).
 4. **`auto-deep-trim` (D57) — BUILT, first slice (2026-09-08).** All five
    criteria over a 20Hz grid, applied from the editor's Auto-Trim menu as
    ordinary undoable cuts. D59 was right that `HealthSampler` could not supply
@@ -1020,6 +1040,28 @@ must not produce an unbuildable order.
 subscription" is one of D66's five reasons this exists, and the repo is private
 today *because* the licence is unsettled. Choosing one unblocks going public,
 which in turn unparks update hosting.
+
+### Queued enhancements — requested, recorded, NOT ranked
+
+Direction from the product owner that was deliberately not built when it
+arrived. Listed here because a decision-log entry alone is invisible to
+planning: "queued as an enhancement" means nothing if the priority surface does
+not carry it. **Their position in the order above is an open question** — they
+have not been ranked against items 7-10 or against each other.
+
+- **D83 — per-channel gain automation.** A level line per audio lane with
+  draggable points and eased segments, replacing the global sliders.
+  `AVMutableAudioMix.setVolumeRamp` makes the export side small; the work is an
+  envelope in SOURCE time that survives cuts.
+- **D84 — editor keyboard shortcuts.** Space to start/stop, rewind, jump to
+  previous/next marker. The trap is that space and the arrows are also text
+  input and the editor has live fields.
+- **D86 — full-screen capture.** `SCContentFilter(display:)` is small; D69's
+  "name which window, never guess" returns as "which display" on a
+  multi-monitor Mac, and §5's picker-every-time (D42) is the other half.
+- **D89 — the transcript as a timeline lane**, words positioned at the times
+  they are spoken. The data is already the right shape; the work is density
+  (~150 words a minute against ~1000px) and positioning in OUTPUT time.
 
 ### Parked, with the condition that would unpark each
 
@@ -1551,6 +1593,14 @@ window-relative overlay. **Zoom + follow-mouse is per *segment*, and segments do
 | D84 | **QUEUED, not built: editor keyboard shortcuts — space to start/stop the playhead, a shortcut for rewind, and shortcuts to jump to the previous/next marker** | Product-owner direction, explicitly deferred ("add keyboard shortcuts as a task, don't do it now"). Space-to-play is the convention in every editor a user arrives from, and marker-to-marker jumping is the gesture the chapter panel exists to serve — the panel gives it a mouse target, this gives it a key. **The trap to plan for, not discover**: space and the arrow keys are also text input, and the editor has live text fields (chapter names, transcript corrections, the vocabulary box). A key handler installed at the window level will eat the space bar while somebody is naming a chapter. The shortcuts belong on menu items with key equivalents, or behind a first-responder check, and "typing a space into a field pauses playback instead" is the regression a test must name. Jump-to-marker needs a definition of "next" when the playhead is exactly on one, and must navigate OUTPUT time so a marker inside a cut is skipped rather than seeked to (D75 lists those but the transport cannot reach them) | §4.5, D50, D75, D82; `EditorWindowController.swift`, `MarkerPane.swift`, main menu | Queued (not built) | space-is-also-a-character |
 
 `conformance: 2026-09-07` (post-D66 refinement pass)
+
+`conformance: 2026-09-09` — walk of D74-D89 against the tree. One drift found
+and fixed: §13 item 3 claimed D57's use of transcript word spans was "not yet
+built" while `AutoDeepTrim.deadSpans` takes a `transcript:` and both call sites
+pass one. Fourth instance of this list recording shipped work as pending. Also
+added: the 2026-09-09 editor-defect batch to item 2, D80 and the CI work to
+Shipped, and a "Queued enhancements" subsection for D83/D84/D86/D89, which had
+decision-log entries and no presence on the planning surface at all.
 
 ### Termination
 
