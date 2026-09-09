@@ -1977,32 +1977,76 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
 /// boundary — exactly the `Sendable`-crossing error `-strict-concurrency
 /// =complete` exists to catch — for no benefit, since there is only ever
 /// one MainActor to contend for anyway.
+///
+/// **Bounded, deliberately** — the same correction `SparkleTestGate` received on
+/// 2026-09-09, and this gate was the LARGER exposure of the two: 52 call sites
+/// across 10 files against that one's five. The original `acquire()` waited on
+/// a `CheckedContinuation` with no ceiling, so a single holder that never
+/// finished blocked every other windowed test forever, producing no output and
+/// no failing test. A full-suite run did exactly that for ten minutes before
+/// anyone could tell it apart from ordinary slow progress.
+///
+/// A test gate must turn a hang into a FAILURE. A failure names the culprit and
+/// lets the rest of the suite finish; a hang costs the whole run and names
+/// nobody. The risk is asymmetric in the same direction: too tight a bound
+/// yields a loud, obvious flake, while no bound yields silence.
 @MainActor
 enum EditorWindowTestGate {
-    private static var locked = false
-    private static var waiters: [CheckedContinuation<Void, Never>] = []
+    /// How long a test may WAIT for the gate before giving up.
+    ///
+    /// Generous: window tests queue behind this gate constantly, and their
+    /// reported durations under the full suite are dominated by that queueing
+    /// rather than by work. This exists to catch a holder that will NEVER
+    /// finish, not one that is merely slow.
+    static let acquireTimeout: TimeInterval = 300
 
-    private static func acquire() async {
-        if !locked {
-            locked = true
-            return
+    struct Timeout: Error, CustomStringConvertible {
+        let description: String
+    }
+
+    private static var locked = false
+    private static var holderDescription = "none"
+
+    /// Whether the gate is held, and by whom — the seam the gate's own test
+    /// needs to know its holder really acquired before testing a waiter.
+    static var currentHolder: String? { locked ? holderDescription : nil }
+
+    /// Polls rather than queueing on a continuation: a `CheckedContinuation`
+    /// must be resumed exactly once, which makes racing it against a deadline
+    /// easy to get wrong in a way that crashes the test process. On
+    /// `@MainActor`, `Task.sleep` yields the actor so the holder still runs.
+    /// FIFO fairness is lost and no test needs it.
+    private static func acquire(for label: String, timeout: TimeInterval) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while locked {
+            if Date() >= deadline {
+                throw Timeout(description: """
+                    "\(label)" waited \(Int(timeout))s for EditorWindowTestGate and gave up. \
+                    It was held by "\(holderDescription)", which never released it — that holder \
+                    is the defect, not this test.
+                    """)
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
         }
-        await withCheckedContinuation { waiters.append($0) }
+        locked = true
+        holderDescription = label
     }
 
     private static func release() {
-        if waiters.isEmpty {
-            locked = false
-        } else {
-            waiters.removeFirst().resume()
-        }
+        locked = false
+        holderDescription = "none"
     }
 
     /// Runs `body` with the gate held for its ENTIRE duration — the whole
     /// snapshot-mutate-assert critical section a test cares about, not just
     /// the moment a window is created.
-    static func run<T>(_ body: () async throws -> T) async rethrows -> T {
-        await acquire()
+    ///
+    /// `label` defaults to the calling function, so a timeout names a real test
+    /// without anyone having to remember to pass a string.
+    static func run<T>(_ label: String = #function,
+                       timeout: TimeInterval = acquireTimeout,
+                       _ body: () async throws -> T) async throws -> T {
+        try await acquire(for: label, timeout: timeout)
         defer { release() }
         return try await body()
     }

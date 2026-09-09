@@ -30,8 +30,8 @@ struct AppShellTests {
     init() { _ = NSApplication.shared }
 
     @Test("The app is a regular app, not an accessory")
-    func appIsRegular() async {
-        await EditorWindowTestGate.run {
+    func appIsRegular() async throws {
+        try await EditorWindowTestGate.run {
             AppShell.install(into: NSApplication.shared)
             // Assert the OBSERVABLE policy, not that a setter ran. A test that
             // spies on setActivationPolicy passes against an implementation that
@@ -41,8 +41,8 @@ struct AppShellTests {
     }
 
     @Test("Installing actually assigns the built menu as the app's main menu")
-    func installAssignsMainMenu() async {
-        await EditorWindowTestGate.run {
+    func installAssignsMainMenu() async throws {
+        try await EditorWindowTestGate.run {
             // F1: a mutant `install` that builds the menu but never assigns
             // `app.mainMenu` left this suite green — every other test calls
             // `buildMainMenu()` directly and never touches `NSApp.mainMenu`.
@@ -56,8 +56,8 @@ struct AppShellTests {
     }
 
     @Test("Installing wires the Window and Help menus so AppKit can auto-populate them")
-    func installAssignsWindowsAndHelpMenus() async {
-        await EditorWindowTestGate.run {
+    func installAssignsWindowsAndHelpMenus() async throws {
+        try await EditorWindowTestGate.run {
             // F3: an unassigned `NSApp.windowsMenu` means the Window menu never
             // gains AppKit's automatic list of open windows; same for Help's
             // search field via `helpMenu`. Built but never assigned is still
@@ -71,8 +71,8 @@ struct AppShellTests {
     }
 
     @Test("The main menu has the standard top-level menus")
-    func mainMenuHasStandardStructure() async {
-        await EditorWindowTestGate.run {
+    func mainMenuHasStandardStructure() async throws {
+        try await EditorWindowTestGate.run {
             let menu = AppShell.buildMainMenu()
             let titles = menu.items.map(\.title)
             #expect(titles.contains("File"))
@@ -161,8 +161,8 @@ struct AppShellTests {
     }
 
     @Test("validateMenuItem stays pass-through (true) for every action except Cut Selection")
-    func validateMenuItemIsPassThroughForOtherActions() async {
-        await EditorWindowTestGate.run {
+    func validateMenuItemIsPassThroughForOtherActions() async throws {
+        try await EditorWindowTestGate.run {
             let delegate = AppDelegate()
             // Any other wired action — `exportDocument` here, but the point
             // is that this is NOT `cutTimelineSelection` — must stay live
