@@ -86,4 +86,68 @@ struct TranscriptPlayheadTests {
         #expect(TranscriptPlayhead.currentWordID(outputSeconds: 1.0, words: [],
                                                  keptRanges: kept) == nil)
     }
+
+    // MARK: - The seek clock
+
+    /// `CMTime(seconds:preferredTimescale: 600)`, which is what
+    /// `PreviewController.seek` builds its target from and therefore what the
+    /// player reports back afterwards. Rounds half away from zero, like CMTime.
+    private static func throughTheSeekClock(_ seconds: Double) -> Double {
+        (seconds * 600).rounded() / 600
+    }
+
+    @Test("Clicking a word highlights THAT word, whatever its start rounds to")
+    func clickRoundTripsThroughTheSeekClock() throws {
+        // The reported defect: click a word, the word BEFORE it lights up.
+        //
+        // This is the whole path, not a piece of it — source start, out
+        // through the mapping `seek(toWord:)` uses, through the seek clock's
+        // rounding, and back in through the mapping the highlight uses. The
+        // starts are contiguous and chosen so their fractional parts round
+        // both ways at 1/600: 5.0004 rounds DOWN to 5.0 and 6.5008 down to
+        // 6.5, while 7.7777 rounds UP. Against the implementation before this
+        // fix the two that round down return the PREVIOUS word and the one
+        // that rounds up is correct, which is exactly the coin flip that made
+        // this read as intermittent.
+        let contiguous = [
+            Self.word("alpha", 4.5, 0.5004),     // ends where beta begins
+            Self.word("beta", 5.0004, 1.5004),   // ends where gamma begins
+            Self.word("gamma", 6.5008, 1.2769),  // ends where delta begins
+            Self.word("delta", 7.7777, 0.9),
+        ]
+        for word in contiguous {
+            let trimmed = TimeRangeMapping.nearestTrimmedTime(toSourceTime: word.start,
+                                                              keptRanges: kept)
+            let playhead = try Self.throughTheSeekClock(#require(trimmed))
+            let id = TranscriptPlayhead.currentWordID(outputSeconds: playhead,
+                                                      words: contiguous, keptRanges: kept)
+            #expect(id == word.id, "clicking \(word.text) highlighted a different word")
+        }
+    }
+
+    @Test("The tolerance reaches back one clock tick, not into the previous word")
+    func toleranceDoesNotSwallowThePreviousWord() {
+        // The other half of the fix: a tolerance generous enough to make the
+        // test above pass can also light a word before it is spoken. Four
+        // milliseconds before the boundary is still firmly inside "alpha" —
+        // more than the 1.667ms tick, less than any word — so a tolerance of
+        // 10ms (or of a whole 0.06s word) fails here while the shipped value
+        // passes. Without this, `clockTolerance` could be raised without
+        // limit and no test would object.
+        let touching = [Self.word("alpha", 0.0, 1.0), Self.word("beta", 1.0, 1.0)]
+        let whole = [TimeRange(start: 0, end: 10)]
+        let id = TranscriptPlayhead.currentWordID(outputSeconds: 1.0 - 0.004,
+                                                  words: touching, keptRanges: whole)
+        #expect(id == touching[0].id, "the tolerance reached back into the previous word")
+    }
+
+    @Test("The tolerance is at least the seek clock's own error")
+    func toleranceCoversTheSeekClock() {
+        // A unit check on the constant itself, in the terms it is derived
+        // from. `clockTolerance = 0` restores the original defect and this is
+        // the assertion that names why.
+        #expect(TranscriptPlayhead.clockTolerance >= 1.0 / 1200.0)
+        #expect(TranscriptPlayhead.clockTolerance < 0.06,
+                "a tolerance approaching a word's length lights the next word early")
+    }
 }
