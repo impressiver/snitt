@@ -95,12 +95,15 @@ snitt — record a window and hand back a .snitt bundle
         [--input-padding S] [--reading-time S]
                                          a preset sets all five; each flag
                                           overrides one of them
+  snitt estimate <bundle> [--scale F]    duration, size and an upper bound on
+                                          bytes, without doing the export
   snitt inspect <bundle>                 metadata as JSON, no GUI
   snitt trim <bundle> --start <s> --end <s>   cut a range (edit.json only)
   snitt trim <bundle> --auto-trim        trim bookends from a human recording's
                                           input events; refused on recordings
                                           with none
   snitt export <bundle> --format mp4|gif --out <path>   render a movie
+        [--resolution 1080p|720p|540p|480p|2160p|source]
         [--scale <factor>] [--chapters] [--subtitles] [--clicks]
         [--max-size 10MB]
                                           scale pixels; write a .vtt from markers;
@@ -240,6 +243,10 @@ func requestBody(for command: ParsedCommand,
     case .crop(let path, let rect):
         return .crop(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
                      rect: rect)
+    case .estimate(let path, let scale, let format):
+        return .estimateExport(
+            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
+            scale: scale, format: format)
     case .autoDeepTrim(let path, let criteria):
         return .autoDeepTrim(
             bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
@@ -251,12 +258,12 @@ func requestBody(for command: ParsedCommand,
         // `snitt setup` report whether a recording is running.
         fatalError("setup is handled before the client connects")
     case .export(let path, let format, let out, let scale, let chapters, let subtitles,
-                 let maxSizeBytes, let clicks):
+                 let maxSizeBytes, let resolution, let clicks):
         return .export(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
                        format: format,
                        outputPath: PathResolver.resolve(out, workingDirectory: currentDirectory),
                        scale: scale, chapters: chapters, subtitles: subtitles,
-                      maxSizeBytes: maxSizeBytes, clicks: clicks)
+                      maxSizeBytes: maxSizeBytes, resolution: resolution, clicks: clicks)
     case .diagnosticsExport(let path):
         return .diagnostics(outputPath: PathResolver.resolve(path, workingDirectory: currentDirectory))
     case .help: return .status  // unreachable; handled above
@@ -334,6 +341,23 @@ do {
         note(summary.crop == nil
              ? "Crop removed. Exports at \(summary.pixelWidth)x\(summary.pixelHeight)."
              : "Cropped. Exports at \(summary.pixelWidth)x\(summary.pixelHeight).")
+    case .estimated(let estimates):
+        emit(estimates)
+        // A table, because the useful act is comparing. "at most" on every row
+        // rather than once at the bottom: the number is a generous ceiling, and
+        // a reader who skims one line should still see which way it errs.
+        if let first = estimates.first {
+            note(String(format: "%.1fs of footage. Estimates are AVFOUNDATION CEILINGS "
+                              + "and run generous — about 4x the real file on a 5K "
+                              + "recording. Use --max-size to actually fit a budget.",
+                        first.durationSeconds))
+        }
+        for estimate in estimates {
+            note(String(format: "  %-7@ %5dx%-5d at most %7.1fMB",
+                        estimate.resolution.rawValue as NSString,
+                        estimate.width, estimate.height,
+                        Double(estimate.estimatedMaxBytes) / 1_000_000))
+        }
     case .autoTrimmed(let summary):
         emit(summary)
         // "Removed nothing" is a normal outcome and has to READ as one — the

@@ -100,6 +100,19 @@ func describe(_ response: AutomationResponse) -> String {
         // work it should not have to do.
         return String(format: "Screenshot of the recording at %.2fs, saved to %@. "
                     + "A marker was placed at the same instant.", timeSeconds, path as NSString)
+    case .estimated(let estimates):
+        guard let first = estimates.first else { return "No resolutions available." }
+        // Every option in one answer, and the caveat stated once at the top
+        // rather than implied: these are ceilings, and generous ones.
+        let rows = estimates.map {
+            String(format: "  %@: %dx%d, no larger than %.1fMB",
+                   $0.resolution.rawValue as NSString, $0.width, $0.height,
+                   Double($0.estimatedMaxBytes) / 1_000_000)
+        }.joined(separator: "\n")
+        return String(format: "%.1fs of footage. These are AVFoundation ceilings and run "
+                            + "generous (about 4x the real file on a 5K recording) — use "
+                            + "them to choose a resolution, and maxSize to fit a budget.\n%@",
+                      first.durationSeconds, rows as NSString)
     case .autoTrimmed(let summary):
         // Seconds, not span boundaries: an agent cannot watch the result, and
         // what it needs to decide next is how much is left.

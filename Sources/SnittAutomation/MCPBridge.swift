@@ -450,6 +450,31 @@ public enum MCPBridge {
                     "required": ["bundlePath"],
                 ]),
             ToolDefinition(
+                name: "snitt_estimate_export",
+                description: "Find out how long, how large and what dimensions an "
+                           + "export would be, WITHOUT doing it. Costs a two-second "
+                           + "encode instead of the whole file. Use it to pick a scale "
+                           + "that fits an attachment limit before committing, rather "
+                           + "than exporting and discovering. The size is an UPPER "
+                           + "BOUND, not a prediction — the real file comes in under "
+                           + "it, so a budget you fit here you will fit. Duration and "
+                           + "dimensions are exact. mp4 only.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "bundlePath": [
+                            "type": "string",
+                            "description": "Path printed by snitt_stop_recording",
+                        ],
+                        "scale": [
+                            "type": "number",
+                            "description": "Pixel scale to estimate, e.g. 0.5 for half "
+                                + "size. Defaults to 1.0.",
+                        ],
+                    ],
+                    "required": ["bundlePath"],
+                ]),
+            ToolDefinition(
                 name: "snitt_export",
                 description: "Render the trimmed recording to a movie file and return a "
                            + "manifest — duration, dimensions, byte size, chapters — that "
@@ -474,6 +499,16 @@ public enum MCPBridge {
                                      "description": "Write a .vtt chapter list beside the output, from marker labels — navigation, not speech"],
                         "subtitles": ["type": "boolean", "default": false,
                                       "description": "Write a .subtitles.vtt beside the output from marker TRANSCRIPTS. Only markers that carry narration produce cues, so a demo with no transcripts produces an empty file."],
+                        "resolution": [
+                            "type": "string",
+                            "enum": ExportResolution.allCases.map(\.rawValue),
+                            "description": "Output size to target: 1080p, 720p, 540p, "
+                                + "480p, 2160p, or source to keep the recording's own "
+                                + "dimensions. Never enlarges — asking for more than "
+                                + "the recording has keeps what it has. Use "
+                                + "snitt_estimate_export first to see what each costs. "
+                                + "Defaults to source.",
+                        ],
                         "clicks": [
                             "type": "boolean",
                             "description": "Draw a ring where each click you "
@@ -760,6 +795,24 @@ public enum MCPBridge {
             return .success(.trim(bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory),
                                    start: start, end: end, auto: auto))
 
+        case "snitt_estimate_export":
+            guard let path = arguments["bundlePath"] as? String else {
+                return .failure(MCPBridgeError("snitt_estimate_export requires bundlePath"))
+            }
+            let estimateScale: Double
+            switch numericValue(arguments["scale"], parameter: "scale") {
+            case .failure(let error): return .failure(error)
+            case .success(let value):
+                estimateScale = value ?? 1.0
+                guard estimateScale > 0 else {
+                    return .failure(MCPBridgeError(
+                        "snitt_estimate_export scale must be greater than 0"))
+                }
+            }
+            return .success(.estimateExport(
+                bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory),
+                scale: estimateScale, format: "mp4"))
+
         case "snitt_export":
             guard let path = arguments["bundlePath"] as? String else {
                 return .failure(MCPBridgeError("snitt_export requires bundlePath"))
@@ -813,6 +866,18 @@ public enum MCPBridge {
             // a mistyped flag ("clicks": "yes") should be refused by name
             // rather than silently exporting without the thing that was asked
             // for.
+            let resolutionValue: ExportResolution
+            if let raw = arguments["resolution"] {
+                guard let name = raw as? String,
+                      let parsed = ExportResolution(rawValue: name) else {
+                    return .failure(MCPBridgeError(
+                        "snitt_export resolution must be one of: "
+                      + ExportResolution.allCases.map(\.rawValue).joined(separator: ", ")))
+                }
+                resolutionValue = parsed
+            } else {
+                resolutionValue = .source
+            }
             let clicksFlag: Bool
             switch booleanValue(arguments["clicks"], parameter: "clicks") {
             case .success(let value): clicksFlag = value ?? false
@@ -824,6 +889,7 @@ public enum MCPBridge {
                                      scale: scale, chapters: chapters,
                                      subtitles: (arguments["subtitles"] as? Bool) ?? false,
                                      maxSizeBytes: maxSizeBytes,
+                                    resolution: resolutionValue,
                                     clicks: clicksFlag))
 
         case "snitt_diagnostics_export":
