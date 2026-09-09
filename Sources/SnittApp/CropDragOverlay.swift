@@ -1,67 +1,146 @@
 import SwiftUI
 import SnittDocument
 
-/// The drag surface for choosing a crop.
+/// The adjustable crop box drawn over the preview.
 ///
 /// Drawn only while crop mode is on — an always-present overlay would swallow
 /// every click meant for the player underneath.
 ///
-/// All the arithmetic lives in `CropGeometry`, which is pure and tested. This
-/// view's job is to collect two points and draw a rectangle between them; it
-/// deliberately holds no knowledge of letterboxing, aspect ratios, or how a
-/// re-crop composes, because none of that can be tested through a SwiftUI
-/// gesture.
+/// The box is *proposed*, not applied: a drag moves and resizes it, and
+/// nothing reaches the EDL until the editor's Apply button commits it. The
+/// first version applied on mouse-up, which made a crop a single unrepeatable
+/// gesture — the only correction available was undo and a second attempt from
+/// scratch, and the box you were aiming for was already gone from the screen.
+///
+/// The proposal lives in the CALLER (`box`), normalized to the picture rather
+/// than to the view, for two reasons: the Apply button is in the toolbar and
+/// cannot read this view's state, and a window resize must not move a box the
+/// user already placed.
+///
+/// All the arithmetic lives in `CropBox` and `CropGeometry`, which are pure and
+/// tested. This view collects gestures and draws; it deliberately holds no
+/// knowledge of letterboxing, minimum sizes, or how a re-crop composes, because
+/// none of that can be tested through a SwiftUI gesture.
 struct CropDragOverlay: View {
     let videoSize: CGSize
-    let onCommit: (CropRect) -> Void
+    @Binding var box: CropRect
 
-    @State private var start: CGPoint?
-    @State private var current: CGPoint?
-
-    private var dragRect: CGRect? {
-        guard let start, let current else { return nil }
-        return CGRect(x: min(start.x, current.x), y: min(start.y, current.y),
-                      width: abs(current.x - start.x), height: abs(current.y - start.y))
-    }
+    /// The proposal as it was when the current drag began. SwiftUI reports a
+    /// drag's translation from its start point, so every frame must be
+    /// computed against the box at that start, not against the live one.
+    @State private var dragStartBox: CropRect?
+    @State private var activeHandle: CropHandle?
+    /// Set instead of `activeHandle` when a drag began off the box: the user
+    /// is drawing a replacement rather than adjusting this one.
+    @State private var freshStart: CGPoint?
 
     var body: some View {
         GeometryReader { geometry in
             let bounds = CGRect(origin: .zero, size: geometry.size)
             let video = CropGeometry.videoRect(videoSize: videoSize, in: bounds)
+            let rect = denormalized(box, in: video)
             ZStack(alignment: .topLeading) {
-                // Dimming the letterbox as well as the un-selected picture
-                // makes the croppable area visible before the first drag —
-                // otherwise the pillarbox looks croppable and is not.
-                Color.black.opacity(0.35)
-                Rectangle()
-                    .path(in: video)
-                    .fill(Color.white.opacity(0.001))
-                if let dragRect {
-                    Rectangle()
-                        .path(in: dragRect.intersection(video))
-                        .fill(Color.white.opacity(0.12))
-                    Rectangle()
-                        .path(in: dragRect.intersection(video))
-                        .stroke(Color.white, lineWidth: 1)
+                // Dim everything OUTSIDE the proposal, including the letterbox
+                // — the un-dimmed region is exactly what the export will keep,
+                // which is the whole question the box is asking.
+                Path { path in
+                    path.addRect(bounds)
+                    path.addRect(rect)
+                }
+                .fill(Color.black.opacity(0.45), style: FillStyle(eoFill: true))
+
+                Rectangle().path(in: rect).stroke(Color.white, lineWidth: 1)
+                thirds(in: rect)
+                ForEach(Array(CropHandle.allCases.enumerated()), id: \.offset) { _, handle in
+                    if let point = handlePoint(handle, in: rect) {
+                        Rectangle()
+                            .fill(Color.white)
+                            .frame(width: 8, height: 8)
+                            .position(point)
+                    }
                 }
             }
             .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 2)
-                    .onChanged { value in
-                        if start == nil { start = value.startLocation }
-                        current = value.location
-                    }
-                    .onEnded { _ in
-                        defer { start = nil; current = nil }
-                        guard let dragRect,
-                              let crop = CropGeometry.crop(fromDrag: dragRect,
-                                                           videoSize: videoSize,
-                                                           in: bounds)
-                        else { return }
-                        onCommit(crop)
-                    }
-            )
+            .gesture(dragGesture(rect: rect, video: video))
         }
+    }
+
+    /// Rule-of-thirds guides, at 40% opacity so they read as guidance rather
+    /// than as part of the picture.
+    private func thirds(in rect: CGRect) -> some View {
+        Path { path in
+            for i in 1...2 {
+                let x = rect.minX + rect.width * CGFloat(i) / 3
+                let y = rect.minY + rect.height * CGFloat(i) / 3
+                path.move(to: CGPoint(x: x, y: rect.minY))
+                path.addLine(to: CGPoint(x: x, y: rect.maxY))
+                path.move(to: CGPoint(x: rect.minX, y: y))
+                path.addLine(to: CGPoint(x: rect.maxX, y: y))
+            }
+        }
+        .stroke(Color.white.opacity(0.4), lineWidth: 0.5)
+    }
+
+    private func dragGesture(rect: CGRect, video: CGRect) -> some Gesture {
+        DragGesture(minimumDistance: 1)
+            .onChanged { value in
+                if activeHandle == nil && freshStart == nil {
+                    if let handle = CropBox.handle(at: value.startLocation, in: rect) {
+                        activeHandle = handle
+                        dragStartBox = box
+                    } else if video.contains(value.startLocation) {
+                        freshStart = value.startLocation
+                    } else {
+                        // A drag beginning in the letterbox is not a crop
+                        // gesture: there is no picture there to keep.
+                        return
+                    }
+                }
+                if let activeHandle, let dragStartBox {
+                    let start = denormalized(dragStartBox, in: video)
+                    box = normalized(
+                        CropBox.adjusted(start, handle: activeHandle,
+                                         by: value.translation, limit: video),
+                        in: video)
+                } else if let freshStart,
+                          let drawn = CropBox.box(from: freshStart, to: value.location,
+                                                  limit: video) {
+                    box = normalized(drawn, in: video)
+                }
+            }
+            .onEnded { _ in
+                activeHandle = nil
+                dragStartBox = nil
+                freshStart = nil
+            }
+    }
+
+    private func handlePoint(_ handle: CropHandle, in rect: CGRect) -> CGPoint? {
+        switch handle {
+        case .topLeft:     return CGPoint(x: rect.minX, y: rect.minY)
+        case .top:         return CGPoint(x: rect.midX, y: rect.minY)
+        case .topRight:    return CGPoint(x: rect.maxX, y: rect.minY)
+        case .left:        return CGPoint(x: rect.minX, y: rect.midY)
+        case .right:       return CGPoint(x: rect.maxX, y: rect.midY)
+        case .bottomLeft:  return CGPoint(x: rect.minX, y: rect.maxY)
+        case .bottom:      return CGPoint(x: rect.midX, y: rect.maxY)
+        case .bottomRight: return CGPoint(x: rect.maxX, y: rect.maxY)
+        case .inside:      return nil  // the interior is a target, not a dot
+        }
+    }
+
+    private func denormalized(_ crop: CropRect, in video: CGRect) -> CGRect {
+        CGRect(x: video.minX + crop.x * video.width,
+               y: video.minY + crop.y * video.height,
+               width: crop.width * video.width,
+               height: crop.height * video.height)
+    }
+
+    private func normalized(_ rect: CGRect, in video: CGRect) -> CropRect {
+        guard video.width > 0, video.height > 0 else { return .full }
+        return CropRect(x: (rect.minX - video.minX) / video.width,
+                        y: (rect.minY - video.minY) / video.height,
+                        width: rect.width / video.width,
+                        height: rect.height / video.height)
     }
 }

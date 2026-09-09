@@ -222,7 +222,23 @@ final class EditorTimelineState: ObservableObject {
     func displayState(playhead outputPlayhead: Double) -> DisplayState {
         DisplayState(duration: controller.sourceDurationSeconds,
                     cuts: edl.cuts,
-                    markerPoints: controller.markerTrackPoints,
+                    // Derived from `events` — the @Published source of truth —
+                    // NOT from `controller.markerTrackPoints`.
+                    //
+                    // That cache is refreshed inside `applyAndSaveEvents`'s
+                    // async task, and `PreviewController` is a plain class with
+                    // no @Published anything, so nothing re-renders when it
+                    // lands. Dragging a marker mutated `events` synchronously,
+                    // SwiftUI re-rendered at once and read the STALE cache, and
+                    // the marker snapped back to where it started — until some
+                    // unrelated redraw (clicking the timeline) happened to pick
+                    // up the new value.
+                    //
+                    // The same projection the chapter panel uses, for the same
+                    // reason: one source, so the lane and the list cannot
+                    // disagree.
+                    markerPoints: MarkerTrackPoints.compute(
+                        events: events, keptRanges: controller.keptRanges),
                     playhead: outputPlayhead,
                     selection: selection,
                     expandedCutIDs: expandedCutIDs,
@@ -582,6 +598,49 @@ final class EditorTimelineState: ObservableObject {
                      transcript: event.transcript)
     }
 
+    /// One chapter edit — the time and the label together — as a single
+    /// mutation.
+    ///
+    /// Deliberately NOT `moveMarker` followed by `renameMarker`. Undo is not
+    /// the reason: `UndoManager.groupsByEvent` is on by default, so two
+    /// registrations in one run-loop pass collapse into one ⌘Z anyway (a first
+    /// version of this claimed otherwise and its test passed against both
+    /// implementations, which is how the claim was caught). The reasons are
+    /// that two calls write `events.json` twice for one edit, and that between
+    /// them `events` is published with the new time and the OLD name — a state
+    /// the user never typed, rendered by every view watching the array. This
+    /// assigns once, so there is no such frame.
+    ///
+    /// A `timeText` that does not parse leaves the time alone rather than
+    /// moving the chapter to zero — a half-typed "1:" is a person still
+    /// typing, not a request to jump to the start. A time past the end is
+    /// clamped rather than ignored, matching a drag, which cannot go past the
+    /// end because there is no timeline there to drop on.
+    ///
+    /// A no-op if `id` doesn't name a current event, matching `moveMarker`.
+    func applyChapterEdit(id: UUID, timeText: String, label: String) {
+        guard let index = events.firstIndex(where: { $0.id == id }) else { return }
+        let timebase = Timebase(sourceDuration: controller.sourceDurationSeconds, edl: edl)
+        var newSource: Double?
+        if let typed = MarkerPane.parseTimestamp(timeText) {
+            let clamped = min(max(typed, 0), timebase.outputDuration)
+            newSource = timebase.sourceTime(forOutput: OutputTime(clamped))?.seconds
+        }
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let previous = events
+        undoManager?.registerUndo(withTarget: self) { target in
+            target.restoreEvents(previous)
+        }
+        // One assignment, not two: `events` is @Published, and mutating two
+        // fields in place publishes twice — the second of which is the only
+        // one anybody should see.
+        var updated = events
+        if let newSource { updated[index].timeSeconds = newSource }
+        updated[index].label = trimmed.isEmpty ? nil : trimmed
+        events = updated
+        applyAndSaveEvents()
+    }
+
     /// Seeks the preview to a chapter. Through `onScrub` for the same reason
     /// `seek(toWord:)` is: it is the one path that keeps the timeline playhead
     /// and the panes agreeing about where playback is.
@@ -724,12 +783,59 @@ final class EditorTimelineState: ObservableObject {
         }
     }
 
-    private func startTranscription() {
+    /// The terms the recogniser is told to expect (D81), as the pane edits them.
+    ///
+    /// Comma or newline separated, because that is how somebody pastes a list
+    /// of symbol names. Loaded from the recording so the field shows what the
+    /// current transcript was actually made with, not a blank box.
+    @Published var vocabularyText: String = ""
+
+    /// Testing seam: install a transcript without running the recogniser,
+    /// which is TCC-gated and absent on a machine that has not granted it.
+    func setTranscriptForTesting(_ value: Transcript) {
+        transcript = value
+        lastSavedTranscript = value
+        transcriptionStatus = .ready
+    }
+
+    /// Load the recording's stored vocabulary into the editable field.
+    func loadVocabulary() {
+        let stored = (try? RecordingMetadata.read(from: controller.snittBundle))?.vocabulary
+        vocabularyText = (stored ?? []).joined(separator: ", ")
+    }
+
+    /// Transcribe again, with whatever the field now says.
+    ///
+    /// Replaces the transcript outright, which DISCARDS in-place corrections
+    /// (D62) — a corrected word is only marked by `confidence == 1.0`, which a
+    /// confident recognition also produces, so there is no way to tell them
+    /// apart and preserve one. Undo is the answer instead: the old transcript
+    /// goes on the shared stack before the new one lands, so ⌘Z brings the
+    /// corrections back. The pane says so before the button is pressed.
+    func retranscribe() {
+        let terms = Vocabulary.prepare(
+            vocabularyText.split(whereSeparator: { $0 == "," || $0.isNewline })
+                .map(String.init)).terms
+        // Persisted BEFORE transcribing, so a re-transcription that crashes or
+        // is closed mid-run still leaves the recording knowing what it was
+        // asked to expect.
+        if var meta = try? RecordingMetadata.read(from: controller.snittBundle) {
+            meta.vocabulary = terms.isEmpty ? nil : terms
+            try? meta.write(to: controller.snittBundle)
+        }
+        if let current = transcript {
+            undoManager?.registerUndo(withTarget: self) { $0.restoreTranscript(current) }
+        }
+        startTranscription(vocabulary: terms)
+    }
+
+    private func startTranscription(vocabulary: [String]? = nil) {
         transcriptionStatus = .transcribing
         let bundle = controller.snittBundle
         Task { [weak self] in
             do {
-                guard let result = try await Transcriber.transcribe(bundle: bundle) else {
+                guard let result = try await Transcriber.transcribe(
+                    bundle: bundle, vocabulary: vocabulary) else {
                     // No mic track — a normal recording, not a failure.
                     await MainActor.run { self?.transcriptionStatus = .none }
                     return
@@ -1059,6 +1165,12 @@ struct EditorContentView: View {
     /// Crop mode. UI-only, like `editingMarkerID`: what is asserted is that
     /// `applyCrop`/`resetCrop` persist and undo, not which mode a view is in.
     @State private var croppingActive = false
+    /// The crop the box is currently PROPOSING, normalized to the picture on
+    /// screen. Lives here rather than in `CropDragOverlay` because Apply is in
+    /// the toolbar and has to be able to read it — and because normalizing to
+    /// the picture keeps a placed box where the user put it when the window
+    /// resizes under it.
+    @State private var cropBox: CropRect = .full
 
     private var controller: PreviewController { state.controller }
 
@@ -1109,10 +1221,8 @@ struct EditorContentView: View {
                     // swallow clicks meant for the player.
                     if croppingActive {
                         CropDragOverlay(videoSize: controller.player.currentItem?.presentationSize
-                                                   ?? CGSize(width: 16, height: 9)) { sub in
-                            state.applyCrop(sub)
-                            croppingActive = false
-                        }
+                                                   ?? CGSize(width: 16, height: 9),
+                                        box: $cropBox)
                     }
                 }
             if state.transcriptionStatus != .none {
@@ -1162,7 +1272,25 @@ struct EditorContentView: View {
                 Button("Cut") { state.cutSelection() }
                     .disabled(state.selection == nil)
                 Divider().frame(height: 16)
-                Button(croppingActive ? "Cancel Crop" : "Crop") { croppingActive.toggle() }
+                Button(croppingActive ? "Cancel Crop" : "Crop") {
+                    // Entering starts from the whole picture rather than from
+                    // the last proposal: the preview already SHOWS the current
+                    // crop (`applyCrop` composes), so the full frame is the
+                    // "no further crop" identity, and a leftover box from a
+                    // cancelled attempt would silently re-propose itself.
+                    if !croppingActive { cropBox = .full }
+                    croppingActive.toggle()
+                }
+                if croppingActive {
+                    Button("Apply Crop") {
+                        state.applyCrop(cropBox)
+                        croppingActive = false
+                    }
+                    // Applying the whole frame composes to a no-op. Disabling
+                    // says "adjust the box first" instead of leaving a button
+                    // that appears to do nothing.
+                    .disabled(cropBox == .full)
+                }
                 Button("Reset Crop") { state.resetCrop() }
                     .disabled(state.edl.crop == nil)
                 Divider().frame(height: 16)
