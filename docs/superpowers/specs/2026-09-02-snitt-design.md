@@ -977,10 +977,19 @@ must not produce an unbuildable order.
    `snitt_auto_deep_trim` followed, mapping to the same request body the CLI
    sends. Remaining: a higher-rate frame pass in the EDITOR if the filmstrip's
    resolution proves too coarse in use.
-5. **Agent discovery (S5/D63), then M5e's agent primitives** — *S5 gates M5e*.
-   Pause/resume, screenshot, marker transcripts as WebVTT, D53's correlation
-   primitive and `paused` state. D66's first pillar, and the differentiator with
-   the widest moat: no competitor has an agent surface at all.
+5. **Agent discovery (S5/D63) and M5e's agent primitives — BUILT; one question
+   left open (2026-09-08).** Every primitive this item listed already existed
+   when it was checked: pause/resume, screenshot, marker transcripts as WebVTT
+   (`WebVTTSubtitles`, written by `MovieExporter`), D53's `paused` state
+   (`StatusInfo.paused`/`pausedSeconds`, with `elapsedSeconds` on the wall clock
+   so `maxDuration` accounting is settled), and D53's correlation primitive —
+   `Recorder.screenshot` logs its marker at the FRAME's offset rather than at
+   call time, which is the guarantee D53 asked for. S5's registration half was
+   likewise already solved. What S5's check DID find was drift in the one text
+   that tells an agent any of this exists, now guarded by
+   `ServerInstructionsTests`. **Still open, and needing a real agent session
+   rather than reasoning:** whether an agent with a registered server reaches
+   for it mid-task at all — S5's disclosure half.
 6. **The shared window-frame track**, then **visible clicks** — *5 is independent
    of this; do whichever is wanted*. Record the window's frame (position + size)
    over time as ONE capture-side track, then click positions on top of it. Serves
