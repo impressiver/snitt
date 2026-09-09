@@ -117,6 +117,10 @@ public struct AutomationRequest: Codable, Sendable {
         /// (M5e follow-on). `x`/`y` are fractions of the recorded window.
         case reportInput(sessionID: String, kind: String,
                          x: Double, y: Double, label: String?)
+        /// D57's automatic trim. Carries the resolved criteria rather than a
+        /// preset name, so the CLI's per-criterion flags and its `--preset`
+        /// arrive here as the same thing and the app has one code path.
+        case autoDeepTrim(bundlePath: String, criteria: DeepTrimCriteria)
         case export(bundlePath: String, format: String, outputPath: String,
                     scale: Double, chapters: Bool, subtitles: Bool, maxSizeBytes: Int?)
         /// `outputPath` arrives already resolved against the CALLER's working
@@ -279,6 +283,7 @@ public enum AutomationResponse: Codable, Sendable, Equatable {
     case inspected(InspectReport)
     case trimmed(TrimSummary)
     case cropped(CropSummary)
+    case autoTrimmed(AutoTrimSummary)
     case screenshotTaken(path: String, timeSeconds: Double)
     case exported(ExportManifest)
     case diagnosticsWritten(DiagnosticsReport)
@@ -300,6 +305,28 @@ public struct CropSummary: Codable, Sendable, Equatable {
         self.crop = crop
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
+    }
+}
+
+/// What an automatic trim removed (D57).
+public struct AutoTrimSummary: Codable, Sendable, Equatable {
+    /// Spans this run removed. Zero is a normal outcome, not a failure — the
+    /// recording simply had no dead air by the criteria asked for.
+    public var spans: Int
+    public var seconds: Double
+    /// Cuts in the recording afterwards, INCLUDING any that were already
+    /// there. Reported separately from `spans` because re-running is expected
+    /// and a caller needs to distinguish "added nothing" from "there is
+    /// nothing here".
+    public var totalCuts: Int
+    /// Output duration after the trim.
+    public var remainingSeconds: Double
+
+    public init(spans: Int, seconds: Double, totalCuts: Int, remainingSeconds: Double) {
+        self.spans = spans
+        self.seconds = seconds
+        self.totalCuts = totalCuts
+        self.remainingSeconds = remainingSeconds
     }
 }
 
