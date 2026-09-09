@@ -302,10 +302,15 @@ public enum MCPBridge {
                 ]),
             ToolDefinition(
                 name: "snitt_trim",
-                description: "Cut dead time from a recording by editing its edit decision "
-                           + "list. Never touches capture.mov. Provide either an explicit "
-                           + "start/end range or autoTrim to trim bookends from a human "
-                           + "recording's input events.",
+                description: "Cut the setup and teardown off a recording — the "
+                           + "seconds before the first thing happened and after the last "
+                           + "— by editing its edit decision list. Never touches "
+                           + "capture.mov. Give it an explicit start/end range, or "
+                           + "autoTrim to find the bookends from input events. "
+                           + "IF YOU REPORTED YOUR CLICKS with snitt_report_input, "
+                           + "autoTrim works on your own recording: reported input is "
+                           + "input. Without any input events it is refused, because "
+                           + "there is nothing to trim against.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -317,9 +322,13 @@ public enum MCPBridge {
                         "end": ["type": "number", "description": "Seconds to cut from the end"],
                         "autoTrim": [
                             "type": "boolean",
-                            "description": "Trim bookends using recorded input events. Only "
-                                + "works on human recordings — agent recordings have no "
-                                + "input events and are refused.",
+                            "description": "Trim bookends to the first and last input "
+                                + "event. Counts input you REPORTED as well as input the "
+                                + "OS saw, so this works on a recording you made if you "
+                                + "called snitt_report_input as you went. Refused only "
+                                + "when the recording has no input events at all — "
+                                + "markers do not count, since a marker says \"this "
+                                + "moment matters\", not \"something happened here\".",
                         ],
                     ],
                     "required": ["bundlePath"],

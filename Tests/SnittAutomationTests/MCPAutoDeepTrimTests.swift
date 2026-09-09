@@ -120,3 +120,70 @@ struct MCPAutoDeepTrimTests {
         #expect(Set(values) == Set(DeepTrimPreset.allCases.map(\.rawValue)))
     }
 }
+
+/// What the two trim tools tell an agent about ITS OWN recordings.
+///
+/// The engine has counted reported input toward auto-trim since D72 —
+/// `autoTrimRange` says so in as many words. The tool description did not, and
+/// went on telling agents "agent recordings have no input events and are
+/// refused" long after that stopped being true. An agent believes the
+/// description; it never reads `autoTrimRange`.
+@Suite
+struct AgentTrimGuidanceTests {
+
+    private func tool(_ name: String) throws -> ToolDefinition {
+        try #require(MCPBridge.toolDefinitions().first { $0.name == name })
+    }
+
+    private func autoTrimText(_ tool: ToolDefinition) throws -> String {
+        let properties = try #require(tool.inputSchema["properties"] as? [String: Any])
+        let autoTrim = try #require(properties["autoTrim"] as? [String: Any])
+        return try #require(autoTrim["description"] as? String)
+    }
+
+    @Test("snitt_trim no longer tells agents auto-trim cannot work for them")
+    func autoTrimIsNotDescribedAsHumanOnly() throws {
+        let trim = try tool("snitt_trim")
+        let text = trim.description + " " + (try autoTrimText(trim))
+        // The exact claim that was false: it is refused for want of EVENTS, not
+        // for being an agent's recording.
+        #expect(!text.lowercased().contains("only works on human"),
+                "still claims auto-trim is human-only: \(text)")
+        #expect(text.contains("snitt_report_input") || text.lowercased().contains("reported"),
+                "does not tell an agent how to make auto-trim work: \(text)")
+    }
+
+    @Test("The two trim tools describe different jobs")
+    func theTwoTrimsAreDistinguishable() throws {
+        let bookends = try tool("snitt_trim").description.lowercased()
+        let deep = try tool("snitt_auto_deep_trim").description.lowercased()
+        // An agent choosing between them needs to know one takes the ENDS off
+        // and the other removes gaps throughout. Two descriptions that both
+        // said "cut dead time" would leave it guessing.
+        #expect(bookends.contains("setup") || bookends.contains("bookend"),
+                "snitt_trim does not say it trims the ends: \(bookends)")
+        #expect(deep.contains("spans where nothing happened") || deep.contains("gap"),
+                "snitt_auto_deep_trim does not say it removes interior gaps: \(deep)")
+    }
+
+    @Test("Reported input really does satisfy auto-trim, not just in the prose")
+    func reportedInputActuallyUnlocksAutoTrim() throws {
+        // The claim the description now makes, checked against the engine
+        // rather than trusted: a recording whose ONLY input is reported still
+        // auto-trims.
+        let reported = [
+            LoggedEvent(timeSeconds: 4.0, kind: .click, x: 0.5, y: 0.5, source: .reported),
+            LoggedEvent(timeSeconds: 16.0, kind: .cursor, x: 0.6, y: 0.4, source: .reported),
+        ]
+        let range = try EditDecisionList.autoTrimRange(events: reported, duration: 20)
+        #expect(abs(range.start - 3.5) < 0.001)
+        #expect(abs(range.end - 16.5) < 0.001)
+
+        // And markers alone still are not enough — a marker says "this moment
+        // matters", not "something happened here".
+        let markersOnly = [LoggedEvent(timeSeconds: 5, kind: .marker, label: "here")]
+        #expect(throws: AutoTrimError.noInputEvents) {
+            try EditDecisionList.autoTrimRange(events: markersOnly, duration: 20)
+        }
+    }
+}
