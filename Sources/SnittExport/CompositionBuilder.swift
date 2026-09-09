@@ -178,7 +178,30 @@ public enum CompositionBuilder {
     /// muting system audio did nothing, and muting "video" silenced it. See
     /// task-1b-report.md for the full finding; name matching against the
     /// shared `AudioTrackOrder.canonical` is the fix.
-    private static func audioMix(for tracks: [AVMutableCompositionTrack],
+    /// The mix for an ALREADY-BUILT composition, so a mute or gain change can
+    /// be applied without rebuilding anything.
+    ///
+    /// Mute and gain are the only two things in the EDL that touch nothing but
+    /// this mix: they do not change which tracks exist, where they sit, or how
+    /// long the result is. Rebuilding the composition to express them replaces
+    /// the player's item, which throws the playhead back to zero — so dragging
+    /// a gain slider mid-recording sent you back to the start, repeatedly.
+    ///
+    /// Returns nil on the same terms as the private builder below: nothing to
+    /// express. A caller must ASSIGN that nil rather than skip the assignment,
+    /// or a track returned to unity keeps whatever mix was last applied.
+    public static func audioMix(for asset: AVAsset,
+                                edl: EditDecisionList) async throws -> AVAudioMix? {
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        return audioMix(for: tracks, states: edl.trackStates)
+    }
+
+    /// Takes `AVAssetTrack`, not `AVMutableCompositionTrack`: the only thing
+    /// done with a track here is handing it to
+    /// `AVMutableAudioMixInputParameters(track:)`, which asks for no more than
+    /// that, and the narrower type would stop the public entry point above
+    /// from reading the tracks back off a finished composition.
+    private static func audioMix(for tracks: [AVAssetTrack],
                                  states: [TrackState]) -> AVAudioMix? {
         guard !tracks.isEmpty else { return nil }
         // NOT `Dictionary(uniqueKeysWithValues:)`: that TRAPS on a repeated
