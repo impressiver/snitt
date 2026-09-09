@@ -44,6 +44,7 @@ struct MarkerPane: View {
 
     @State private var editingID: UUID?
     @State private var editingText = ""
+    @State private var editingTime = ""
     @FocusState private var editingFocused: Bool
 
     var body: some View {
@@ -119,15 +120,24 @@ struct MarkerPane: View {
                     .foregroundStyle(chapter.isInsideCut ? AnyShapeStyle(.tertiary)
                                                          : AnyShapeStyle(.secondary))
                 if editingID == chapter.id {
+                    // The time is editable alongside the name: a chapter in the
+                    // wrong place is as wrong as one with the wrong name, and
+                    // dragging it on a zoomed-out timeline is a pixel-accurate
+                    // gesture for a value the person already knows.
+                    TextField("0:00", text: $editingTime)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(.caption, design: .monospaced))
+                        .frame(width: 62)
+                        .onSubmit { commit(chapter) }
                     TextField("Chapter name", text: $editingText)
                         .textFieldStyle(.roundedBorder)
                         .focused($editingFocused)
-                        .onSubmit { commitRename(chapter) }
+                        .onSubmit { commit(chapter) }
                         // Clicking away keeps the edit rather than discarding
                         // it — the same choice the transcript's word editor
                         // makes, so the two do not behave differently.
                         .onChange(of: editingFocused) { _, focused in
-                            if !focused, editingID == chapter.id { commitRename(chapter) }
+                            if !focused, editingID == chapter.id { commit(chapter) }
                         }
                 } else {
                     // Wraps rather than truncating: real marker labels are
@@ -174,15 +184,44 @@ struct MarkerPane: View {
     private func beginRename(_ chapter: MarkerChapter) {
         // Empty rather than the generated "Marker 3": pre-filling the
         // placeholder makes renaming start by deleting text the user never
-        // typed.
+        // typed. The TIME is pre-filled, because there is no placeholder
+        // problem there — every chapter has one, and editing usually means
+        // nudging it.
         editingText = chapter.hasCustomLabel ? chapter.label : ""
+        editingTime = Self.timestamp(chapter.outputTime)
         editingID = chapter.id
         editingFocused = true
     }
 
-    private func commitRename(_ chapter: MarkerChapter) {
-        state.renameMarker(id: chapter.id, to: editingText)
+    /// Apply both fields as one edit, then close the row.
+    private func commit(_ chapter: MarkerChapter) {
+        state.applyChapterEdit(id: chapter.id, timeText: editingTime, label: editingText)
         editingID = nil
+    }
+
+    /// Read a timestamp back, in any form somebody would type it.
+    ///
+    /// `1:23`, `0:05`, `1:02:03`, or a bare `83` — because the field shows
+    /// `m:ss` and a person editing it will either adjust what is there or type
+    /// the seconds they have in mind, and refusing one of those is refusing
+    /// half of them.
+    ///
+    /// Returns nil for anything it cannot read, so the caller keeps the old
+    /// time rather than moving a chapter to zero.
+    static func parseTimestamp(_ text: String) -> Double? {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        let parts = trimmed.split(separator: ":", omittingEmptySubsequences: false)
+        guard parts.count <= 3 else { return nil }
+        var seconds = 0.0
+        for part in parts {
+            // Each segment past the first must be a whole, non-negative number
+            // of minutes or seconds; "1:-3" and "1:2.5.6" are typos, not times.
+            guard let value = Double(part), value >= 0, value.isFinite else { return nil }
+            if parts.count > 1 && part != parts.first && value >= 60 { return nil }
+            seconds = seconds * 60 + value
+        }
+        return seconds
     }
 
     /// `m:ss`, or `h:mm:ss` once a recording is long enough to need it.
