@@ -49,12 +49,49 @@ public enum MovieExporter {
             .appendingPathExtension(url.pathExtension)
     }
 
+    /// Encode only the first `seconds` of a composition.
+    ///
+    /// Exists so a size can be MEASURED rather than modelled: the same encoder
+    /// on the same pictures at the same dimensions, just less of it.
+    static func exportSlice(_ built: BuiltComposition, to url: URL,
+                            from start: Double = 0,
+                            seconds: Double) async throws {
+        guard let session = AVAssetExportSession(
+            asset: built.composition, presetName: AVAssetExportPresetHighestQuality)
+        else { throw ExportError.noExportSession }
+        session.videoComposition = built.videoComposition
+        session.audioMix = built.audioMix
+        let begin = max(0, min(start, max(0, built.duration - seconds)))
+        session.timeRange = CMTimeRange(
+            start: CMTime(seconds: begin, preferredTimescale: 600),
+            duration: CMTime(seconds: min(seconds, built.duration - begin),
+                             preferredTimescale: 600))
+        try? FileManager.default.removeItem(at: url)
+        try await session.export(to: url, as: .mp4)
+    }
+
+    /// The export preset for a requested resolution.
+    ///
+    /// `HighestQuality` for `source`, which is what every export used before
+    /// there was a choice, so asking for nothing behaves exactly as it did.
+    static func presetName(for resolution: ExportResolution) -> String {
+        switch resolution {
+        case .source: AVAssetExportPresetHighestQuality
+        case .uhd2160p: AVAssetExportPreset3840x2160
+        case .hd1080p: AVAssetExportPreset1920x1080
+        case .hd720p: AVAssetExportPreset1280x720
+        case .sd540p: AVAssetExportPreset960x540
+        case .sd480p: AVAssetExportPreset640x480
+        }
+    }
+
     public static func exportMovie(_ built: BuiltComposition,
                                    to url: URL,
                                    maxSizeBytes: Int? = nil,
-                                   clicks: [ClickMark] = []) async throws {
+                                   clicks: [ClickMark] = [],
+                                   resolution: ExportResolution = .source) async throws {
         guard let session = AVAssetExportSession(
-            asset: built.composition, presetName: AVAssetExportPresetHighestQuality)
+            asset: built.composition, presetName: presetName(for: resolution))
         else { throw ExportError.noExportSession }
 
         // With clicks, an export-only copy carrying the animation tool; without
@@ -222,6 +259,7 @@ public enum MovieExporter {
                               subtitlesURL: URL? = nil,
                               format: String = "mp4",
                               maxSizeBytes: Int? = nil,
+                              resolution: ExportResolution = .source,
                               // D64. Off by default: a recording's clicks are
                               // data (§4.5), and drawing them is a choice the
                               // person exporting makes, not something that
@@ -266,7 +304,8 @@ public enum MovieExporter {
                             // Per rung, for the same reason the GIF ladder
                             // recomputes: this rung is a different scale and
                             // therefore a different render transform.
-                            clicks: clickMarks(for: rungBuilt, events: clickEvents))
+                            clicks: clickMarks(for: rungBuilt, events: clickEvents),
+                            resolution: resolution)
                     } catch {
                         // The session may throw rather than produce a
                         // best-effort file when the limit is impossible. Either
@@ -301,13 +340,15 @@ public enum MovieExporter {
                     built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: smallestScale)
                     effectiveScale = smallestScale
                     try await exportMovie(built, to: outputURL, maxSizeBytes: nil,
-                                          clicks: clickMarks(for: built, events: clickEvents))
+                                          clicks: clickMarks(for: built, events: clickEvents),
+                                          resolution: resolution)
                     byteSize = try fileByteSize(at: outputURL)
                     sizeMet = byteSize <= maxSizeBytes
                 }
             } else {
                 try await exportMovie(built, to: outputURL, maxSizeBytes: nil,
-                                          clicks: clickMarks(for: built, events: clickEvents))
+                                          clicks: clickMarks(for: built, events: clickEvents),
+                                          resolution: resolution)
                 byteSize = try fileByteSize(at: outputURL)
             }
         }
@@ -337,13 +378,24 @@ public enum MovieExporter {
         let chapters = WebVTTChapters.titledMarkers(mappedMarkers)
             .map { ExportManifest.Chapter(timeSeconds: $0.time, title: $0.title) }
 
+        // Read back from the FILE, not from the composition. A resolution
+        // preset resizes during export, so the composition's renderSize is the
+        // size before that happened: a 720p export of a 5K recording reported
+        // 4112x2580 for a file that is actually 1280x804. The manifest is what
+        // an agent quotes to describe a demo it cannot watch, so it has to
+        // describe the demo.
+        //
+        // Falls back to the composition's size when the file cannot be read,
+        // which is the pre-existing behaviour and no worse than it was.
+        let written = (try? await videoSize(of: outputURL))
+            ?? built.videoComposition.renderSize
         return ExportManifest(
             outputPath: outputURL.path,
             format: format,
             byteSize: byteSize,
             durationSeconds: built.duration,
-            width: Int(built.videoComposition.renderSize.width),
-            height: Int(built.videoComposition.renderSize.height),
+            width: Int(written.width),
+            height: Int(written.height),
             // The scale actually used, not the one requested — the ladder
             // may have dropped below `scale` to hit the target.
             scale: effectiveScale,
@@ -380,6 +432,18 @@ public enum MovieExporter {
         return ClickOverlay.marks(events: events, keptRanges: built.keptRanges,
                                   naturalSize: built.naturalSize,
                                   renderTransform: built.renderTransform)
+    }
+
+    /// The video dimensions a written file actually has.
+    private static func videoSize(of url: URL) async throws -> CGSize? {
+        guard let track = try await AVURLAsset(url: url)
+            .loadTracks(withMediaType: .video).first else { return nil }
+        let size = try await track.load(.naturalSize)
+        let transform = try await track.load(.preferredTransform)
+        // Through the transform, so a rotated recording reports the dimensions
+        // a viewer sees rather than the ones stored.
+        let oriented = size.applying(transform)
+        return CGSize(width: abs(oriented.width), height: abs(oriented.height))
     }
 
     private static func readBundleEvents(_ bundle: SnittBundle) throws -> [LoggedEvent] {

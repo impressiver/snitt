@@ -447,7 +447,9 @@ final class EditorTimelineState: ObservableObject {
         undoManager?.registerUndo(withTarget: self) { target in
             target.restore(previous)
         }
-        edl.cuts.append(contentsOf: fresh.map { Cut(range: $0) })
+        edl.cuts.append(contentsOf: fresh.map {
+                Cut(range: $0, label: FoldLabel.describe(span: $0, markers: events))
+            })
         applyAndSave()
         return finish(.cut(spans: fresh.count,
                            seconds: fresh.reduce(0) { $0 + ($1.end - $1.start) }))

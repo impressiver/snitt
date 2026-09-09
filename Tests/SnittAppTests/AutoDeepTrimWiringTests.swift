@@ -34,7 +34,8 @@ struct AutoDeepTrimWiringTests {
     /// editor can load a waveform, which its own tests cover. Decoding a real
     /// twenty-second movie here would test AVFoundation instead.
     private func makeState(loaded: Bool = true,
-                           silent: Bool = false) async throws -> EditorTimelineState {
+                           silent: Bool = false,
+                           events: [LoggedEvent] = []) async throws -> EditorTimelineState {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension(SnittBundle.fileExtension)
@@ -43,7 +44,7 @@ struct AutoDeepTrimWiringTests {
         let built = try await CompositionBuilder.build(bundle: bundle, edl: EditDecisionList(),
                                                        scale: 1.0)
         let controller = PreviewController(built: built, jumpPoints: [], bundle: bundle, scale: 1.0)
-        let state = EditorTimelineState(controller: controller, edl: EditDecisionList(), events: [])
+        let state = EditorTimelineState(controller: controller, edl: EditDecisionList(), events: events)
         guard loaded else { return state }
 
         if silent {
@@ -80,6 +81,27 @@ struct AutoDeepTrimWiringTests {
         #expect(spans >= 1)
         #expect(seconds > 10, "only \(seconds)s of an eighteen-second silence")
         #expect(state.edl.cuts.count == spans, "the spans were not added to the EDL")
+    }
+
+    @Test("Every automatic fold is named for what was happening")
+    func foldsAreLabelled() async throws {
+        // The whole point of the feature: a trim leaves holes, and a hole says
+        // nothing about what used to be in it. `Cut` carried only `id` and
+        // `range` until now, so an automatic trim produced anonymous gaps a
+        // viewer had to expand one at a time.
+        // A marker just before the dead stretch, which begins at 2s.
+        let state = try await makeState(events: [
+            LoggedEvent(timeSeconds: 1.5, kind: .marker, label: "running the build"),
+        ])
+        let outcome = state.autoDeepTrim(preset: .default)
+        guard case .cut = outcome else { Issue.record("cut nothing: \(outcome)"); return }
+
+        let cut = try #require(state.edl.cuts.first)
+        let label = try #require(cut.label, "the fold has no label")
+        #expect(label.hasPrefix("running the build — "),
+                "named \(label), not for the marker that preceded it")
+        // And it says how long, because that is the other thing a hole hides.
+        #expect(label.contains("s") || label.contains("m"))
     }
 
     @Test("An automatic trim is undoable like any other edit")
