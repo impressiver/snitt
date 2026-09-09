@@ -86,6 +86,25 @@ public struct FrameActivity: Sendable, Equatable {
 ///   recording and the picture carries the entire decision. That is exactly
 ///   the case D57 warns about, and treating a missing log as proof of
 ///   stillness is how it would go wrong.
+/// What is known about a recording's audio.
+///
+/// Three states, because an empty array of waveforms means two completely
+/// different things and collapsing them cost this feature its most common case.
+/// A 200-second screen recording with no voiceover has NO audio track at all;
+/// treating that as "we could not measure the audio" made `auto-deep-trim`
+/// silently do nothing on it — which is precisely the agent-recording case D57
+/// says matters most, since those have no input events either.
+public enum AudioEvidence: Sendable {
+    /// The movie has no audio tracks. There is no sound, so "the audio is
+    /// nothing but background noise" is trivially true.
+    case silentByConstruction
+    /// Measured peaks, one entry per audio track.
+    case sampled([WaveformSamples])
+    /// Audio may exist but has not been measured — still decoding, or the
+    /// read failed. Nothing can be concluded, so nothing is.
+    case unavailable
+}
+
 public enum AutoDeepTrim {
 
     /// Instants per second at which the criteria are evaluated.
@@ -96,17 +115,27 @@ public enum AutoDeepTrim {
     static let resolution = 20.0
 
     public static func deadSpans(duration: Double,
-                                 waveforms: [WaveformSamples],
+                                 audio: AudioEvidence,
                                  frames: FrameActivity?,
                                  transcript: Transcript?,
                                  events: [LoggedEvent],
                                  criteria: DeepTrimCriteria) -> [TimeRange] {
         guard duration > 0 else { return [] }
 
-        // Required evidence. Both missing-data checks return NOTHING, not
-        // everything — see the type's doc comment.
-        let tracks = waveforms.filter { !$0.peaks.isEmpty && $0.samplesPerSecond > 0 }
-        guard !tracks.isEmpty else { return [] }
+        // Required evidence — but "there is no audio" is evidence, and "we did
+        // not measure the audio" is not. See `AudioEvidence`.
+        let tracks: [WaveformSamples]
+        switch audio {
+        case .unavailable:
+            return []
+        case .silentByConstruction:
+            tracks = []
+        case .sampled(let sampled):
+            tracks = sampled.filter { !$0.peaks.isEmpty && $0.samplesPerSecond > 0 }
+            // Sampling that produced nothing usable is `unavailable` in
+            // disguise, not silence.
+            guard !tracks.isEmpty else { return [] }
+        }
         guard let frames, !frames.differences.isEmpty, frames.samplesPerSecond > 0
         else { return [] }
 

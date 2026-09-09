@@ -448,7 +448,11 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
 
         do {
             let duration = try await CompositionBuilder.mediaDuration(of: bundle)
-            let waveforms = try await WaveformSampler.sample(movieAt: bundle.captureURL)
+            // Sampling ran to completion here, so an empty result means the
+            // movie HAS no audio tracks rather than that they are still
+            // loading — the distinction `AudioEvidence` exists for.
+            let sampled = try await WaveformSampler.sample(movieAt: bundle.captureURL)
+            let audio: AudioEvidence = sampled.isEmpty ? .silentByConstruction : .sampled(sampled)
             let filmstrip = try await FilmstripSampler.sample(
                 movieAt: bundle.captureURL,
                 // Four per second rather than the editor's few-hundred cap: the
@@ -462,7 +466,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             var edl = try Self.readEDL(for: bundle)
             let kept = KeptRanges.compute(duration: duration, cuts: edl.cuts.map(\.range))
             let found = AutoDeepTrim.deadSpans(
-                duration: duration, waveforms: waveforms,
+                duration: duration, audio: audio,
                 frames: FrameActivity.from(filmstrip),
                 transcript: transcript, events: events, criteria: criteria)
             // Already-removed material is not proposed again, so re-running is

@@ -130,6 +130,12 @@ final class EditorTimelineState: ObservableObject {
     /// and blocking the editor's first paint on it would be a worse trade than
     /// a waveform that arrives a moment later.
     @Published var waveforms: [WaveformSamples] = []
+    /// Whether waveform sampling has FINISHED, regardless of what it found.
+    ///
+    /// `waveforms.isEmpty` alone cannot tell "this recording has no audio" from
+    /// "the audio has not been decoded yet", and those need opposite answers
+    /// from `autoDeepTrim`.
+    @Published var waveformsLoaded = false
 
     /// Thumbnails for the video track, empty until decoding finishes — drawn
     /// as a plain band until then, for the same reason as `waveforms`.
@@ -142,7 +148,13 @@ final class EditorTimelineState: ObservableObject {
         let url = controller.captureURL
         Task { [weak self] in
             let samples = try? await WaveformSampler.sample(movieAt: url)
-            await MainActor.run { self?.waveforms = samples ?? [] }
+            await MainActor.run {
+                self?.waveforms = samples ?? []
+                // Set even when the result is empty: a recording with no audio
+                // track samples to nothing, and without this flag that is
+                // indistinguishable from "still decoding" forever.
+                self?.waveformsLoaded = samples != nil
+            }
         }
         Task { [weak self] in
             // Separate task from the waveform's: a long audio read must not
@@ -406,14 +418,19 @@ final class EditorTimelineState: ObservableObject {
             lastTrimOutcome = outcome
             return outcome
         }
-        guard !waveforms.isEmpty, let filmstrip, !filmstrip.frames.isEmpty else {
+        guard waveformsLoaded, let filmstrip, !filmstrip.frames.isEmpty else {
             return finish(.notReady)
         }
+        // A recording with no audio track is SILENT, not unmeasured — and
+        // those are the recordings most likely to have dead air, since a
+        // silent screencast is usually an agent's.
+        let audio: AudioEvidence = waveforms.isEmpty ? .silentByConstruction
+                                                     : .sampled(waveforms)
         let kept = KeptRanges.compute(duration: controller.sourceDurationSeconds,
                                       cuts: edl.cuts.map(\.range))
         let found = AutoDeepTrim.deadSpans(
             duration: controller.sourceDurationSeconds,
-            waveforms: waveforms,
+            audio: audio,
             frames: FrameActivity.from(filmstrip),
             transcript: transcript,
             events: events,
