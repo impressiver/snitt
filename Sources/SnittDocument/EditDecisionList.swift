@@ -30,19 +30,29 @@ public struct TimeRange: Codable, Equatable, Sendable {
 public struct Cut: Equatable, Sendable, Identifiable {
     public let id: UUID
     public var range: TimeRange
+    /// What this fold removed, in words — "waiting for build — 4m 12s".
+    ///
+    /// A fold is a hole in the recording, and a hole says nothing about what
+    /// used to be in it. Without this, an automatic trim leaves a timeline of
+    /// anonymous gaps that a viewer has to expand one at a time to understand.
+    /// `nil` for a cut somebody made by hand: they know what they removed, and
+    /// inventing a description of their own edit would be putting words in
+    /// their mouth.
+    public var label: String?
 
     /// `id` defaults to a fresh `UUID()` PER CALL (not a shared static
     /// default) — two `Cut(range:)` calls with identical ranges must not
     /// collide, or removing one fold would remove both.
-    public init(id: UUID = UUID(), range: TimeRange) {
+    public init(id: UUID = UUID(), range: TimeRange, label: String? = nil) {
         self.id = id
         self.range = range
+        self.label = label
     }
 }
 
 extension Cut: Codable {
     private enum CodingKeys: String, CodingKey {
-        case id, start, end
+        case id, start, end, label
     }
 
     public init(from decoder: Decoder) throws {
@@ -52,7 +62,11 @@ extension Cut: Codable {
         // Legacy (pre-M5f) cuts carry no `id` key at all — mint one rather
         // than failing to decode, so a v0.1.0 edit.json still opens.
         let id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
-        self.init(id: id, range: TimeRange(start: start, end: end))
+        // Absent on every cut written before folds carried words, and on every
+        // hand-made cut since — the same `decodeIfPresent` treatment `id` gets,
+        // for the same reason.
+        let label = try container.decodeIfPresent(String.self, forKey: .label)
+        self.init(id: id, range: TimeRange(start: start, end: end), label: label)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -60,6 +74,10 @@ extension Cut: Codable {
         try container.encode(id, forKey: .id)
         try container.encode(range.start, forKey: .start)
         try container.encode(range.end, forKey: .end)
+        // `encodeIfPresent`, so an unlabelled cut writes no key at all rather
+        // than a null — an edit.json full of `"label": null` is noise in the
+        // one file a person might read by hand.
+        try container.encodeIfPresent(label, forKey: .label)
     }
 }
 
