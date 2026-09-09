@@ -28,7 +28,25 @@ if [ -z "$APP_VERSION" ]; then
   exit 1
 fi
 
-swift build -c debug --product SnittApp
+# Universal (arm64 + x86_64) whenever this is a RELEASE build, and on request
+# otherwise. Every dependency is already universal — Sparkle ships both slices
+# — so an arm64-only Snitt was the single thing stopping it launching on an
+# Intel Mac, and macOS 26 is the last release those can run. Tying it to
+# SNITT_SIGN_IDENTITY rather than leaving it a separate flag is deliberate: a
+# release must not be able to ship one slice because somebody forgot a
+# variable. Development builds stay native, because doubling every compile to
+# serve a machine the developer does not have is a bad trade.
+if [ -n "${SNITT_SIGN_IDENTITY+x}" ] || [ -n "${SNITT_UNIVERSAL+x}" ]; then
+  ARCH_FLAGS=(--arch arm64 --arch x86_64)
+  # A multi-arch `swift build` writes here instead of .build/debug.
+  PRODUCT_DIR=".build/apple/Products/Debug"
+  echo "Building universal (arm64 + x86_64)."
+else
+  ARCH_FLAGS=()
+  PRODUCT_DIR=".build/debug"
+fi
+
+swift build -c debug ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --product SnittApp
 
 # The two client frontends ship INSIDE the app (D63). Until v0.1.0 they were
 # built and then left in .build/, so an installed Snitt.app carried no `snitt`
@@ -37,12 +55,12 @@ swift build -c debug --product SnittApp
 # and released. They are thin clients by construction (§4.9): they hold no TCC
 # grant and only ask the running app to act, so shipping them inside the bundle
 # costs nothing but bytes and gives `snitt setup` one fixed place to point at.
-swift build -c debug --product snitt-cli
-swift build -c debug --product snitt-mcp
+swift build -c debug ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --product snitt-cli
+swift build -c debug ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --product snitt-mcp
 
 for required in SnittApp snitt-cli snitt-mcp; do
-  if [ ! -f ".build/debug/$required" ]; then
-    echo "error: swift build did not produce .build/debug/$required" >&2
+  if [ ! -f "$PRODUCT_DIR/$required" ]; then
+    echo "error: swift build did not produce $PRODUCT_DIR/$required" >&2
     exit 1
   fi
 done
@@ -65,6 +83,17 @@ cat > "$APP/Contents/Info.plist" <<PLIST
        generate-app-icon.swift), and copied into place below alongside the
        rest of this script's asset copies. -->
   <key>CFBundleIconFile</key><string>AppIcon.icns</string>
+  <!-- Standard keys a shipped Mac app is expected to carry. None changes
+       behaviour; their absence shows up in the About box, in Finder's
+       "Kind" column, and in any store or catalogue listing. -->
+  <key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+  <key>CFBundleDevelopmentRegion</key><string>en</string>
+  <key>NSPrincipalClass</key><string>NSApplication</string>
+  <!-- developer-tools rather than video: what this records is work, and who
+       it records it for is a developer or an agent acting for one (D66).
+       Change it here if that ever stops being true. -->
+  <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
+  <key>NSHumanReadableCopyright</key><string>Copyright (c) 2026 impressiver LLC. All rights reserved.</string>
   <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
   <!-- Sparkle's SUHost.validVersion reads ONLY CFBundleVersion (not
        CFBundleShortVersionString above). Without it, SPUUpdater's own
@@ -163,8 +192,24 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-if [ -f ".build/debug/SnittApp" ]; then
-  cp ".build/debug/SnittApp" "$APP/Contents/MacOS/Snitt"
+if [ -f "$PRODUCT_DIR/SnittApp" ]; then
+  cp "$PRODUCT_DIR/SnittApp" "$APP/Contents/MacOS/Snitt"
+  # Sparkle.framework sits BESIDE this binary in Contents/MacOS, so the binary
+  # needs an @loader_path rpath to find it.
+  #
+  # A single-arch `swift build` emits that rpath itself. A multi-arch one goes
+  # through a different build path and emits `@executable_path/../lib`
+  # INSTEAD — so the universal binary looks in Contents/lib, which does not
+  # exist, and the app dies at launch with
+  # "Library not loaded: @rpath/Sparkle.framework". Verified by running it:
+  # exit 134, dyld naming both paths it tried.
+  #
+  # Added here rather than as a linker flag because this layout is make-app.sh's
+  # decision, not the package's, and it must hold however the binary was built.
+  # Before signing, deliberately: install_name_tool invalidates a signature.
+  if ! otool -l "$APP/Contents/MacOS/Snitt" | grep -qE 'path @loader_path \(offset'; then
+    install_name_tool -add_rpath "@loader_path" "$APP/Contents/MacOS/Snitt"
+  fi
 fi
 
 # `snitt-cli` builds under its target name; it ships as `snitt`, which is the
@@ -180,8 +225,8 @@ fi
 # first build after this was written. A separate directory removes the
 # collision rather than relying on nobody renaming anything.
 mkdir -p "$APP/Contents/Helpers"
-cp ".build/debug/snitt-cli" "$APP/Contents/Helpers/snitt"
-cp ".build/debug/snitt-mcp" "$APP/Contents/Helpers/snitt-mcp"
+cp "$PRODUCT_DIR/snitt-cli" "$APP/Contents/Helpers/snitt"
+cp "$PRODUCT_DIR/snitt-mcp" "$APP/Contents/Helpers/snitt-mcp"
 
 # Must exist before signing: codesign seals Contents/Resources into the
 # app's signature, so an icon dropped in afterward would invalidate it.

@@ -29,6 +29,12 @@ time, and only a user who can't reach Apple's servers ever sees it fail.
 
    ```sh
    SNITT_SIGN_IDENTITY="Developer ID Application: impressiver LLC (TEGDRM8W7U)" ./Scripts/make-app.sh
+
+   Setting `SNITT_SIGN_IDENTITY` also makes this a UNIVERSAL build (arm64 +
+   x86_64). That is deliberate coupling, not a coincidence: a release must not
+   be able to ship one architecture because a second flag was forgotten. Check
+   it landed with `lipo -archs build/Snitt.app/Contents/MacOS/Snitt`, which
+   should print both. Development builds stay native and single-arch.
    ```
 
    Produces `build/Snitt.app`, version-stamped from

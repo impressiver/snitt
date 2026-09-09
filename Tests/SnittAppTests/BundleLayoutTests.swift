@@ -937,3 +937,64 @@ func embeddedMCPServerAnswersInitialize() throws {
     let instructions = try #require(result["instructions"] as? String, "initialize carried no instructions")
     #expect(instructions.contains("snitt_start_recording"))
 }
+
+// A release must ship a universal binary, and must not be able to ship one
+// slice because somebody forgot a flag.
+//
+// Every dependency is already universal — Sparkle carries both slices — so an
+// arm64-only Snitt was the single thing stopping it from launching on an Intel
+// Mac, and macOS 26 is the last release those can run. Coupling the arch flags
+// to SNITT_SIGN_IDENTITY (the release path, see release-runbook.md step 1)
+// rather than to a separate opt-in is what makes forgetting impossible.
+//
+// Read from the script rather than from a built bundle, deliberately: a
+// developer's local bundle is built native on purpose, so asserting on
+// `lipo -archs build/Snitt.app/...` would either fail for everyone or pass
+// vacuously. What is checkable everywhere is that the RULE is still wired.
+@Test("A Developer ID build is universal, without needing a second flag")
+func releaseBuildsAreUniversal() throws {
+    let source = try String(contentsOf: makeAppScript, encoding: .utf8)
+
+    // The release path implies universal — checked at the CONDITION that
+    // actually guards the arch flags, not by looking for the variable name
+    // somewhere in the file. It appears in the signing block too, so a
+    // whole-file search passes against a build that dropped the coupling
+    // entirely; a mutant that did exactly that survived the first version of
+    // this test.
+    let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+    let archLine = try #require(lines.firstIndex { $0.contains("ARCH_FLAGS=(--arch") },
+                                "make-app.sh no longer sets architecture flags")
+    let guardLine = try #require(
+        lines[..<archLine].lastIndex { $0.hasPrefix("if ") || $0.contains("elif ") },
+        "the arch flags are not inside a conditional at all")
+    #expect(lines[guardLine].contains("SNITT_SIGN_IDENTITY"),
+            "universal is no longer implied by a release build; it reads: \(lines[guardLine])")
+    #expect(source.contains("--arch arm64"), "make-app.sh builds no arm64 slice")
+    #expect(source.contains("--arch x86_64"),
+            "make-app.sh builds only one architecture")
+
+    // And the products are copied from wherever that build actually wrote
+    // them. A multi-arch `swift build` writes to .build/apple/Products, not
+    // .build/debug — copying from a hardcoded .build/debug would silently
+    // package the stale single-arch binary instead.
+    #expect(source.contains("PRODUCT_DIR"),
+            "the copy step is not parameterised on the build's output directory")
+    let copiesFromHardcodedDebug = source
+        .split(separator: "\n")
+        .filter { $0.contains("cp \"") && $0.contains(".build/debug/") }
+    #expect(copiesFromHardcodedDebug.isEmpty,
+            "still copying from a hardcoded .build/debug: \(copiesFromHardcodedDebug)")
+}
+
+@Test("The bundle carries the standard identifying keys a Mac app is expected to have")
+func infoPlistCarriesStandardKeys() throws {
+    // Absent, these show up as a blank About box, a vague Finder "Kind", and
+    // no category in any listing. None changes behaviour, which is exactly why
+    // nobody notices they are missing.
+    let source = try String(contentsOf: makeAppScript, encoding: .utf8)
+    for key in ["CFBundleInfoDictionaryVersion", "CFBundleDevelopmentRegion",
+                "NSPrincipalClass", "LSApplicationCategoryType",
+                "NSHumanReadableCopyright"] {
+        #expect(source.contains("<key>\(key)</key>"), "Info.plist is missing \(key)")
+    }
+}
