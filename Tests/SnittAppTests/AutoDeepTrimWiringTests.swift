@@ -169,3 +169,53 @@ struct AutoDeepTrimWiringTests {
         #expect(captions[1].contains("4 spans"), "plural: \(captions[1])")
     }
 }
+
+/// Which terms a transcription biases toward (D81).
+@Suite(.serialized)
+@MainActor
+struct TranscriberVocabularyTests {
+
+    private func bundle(vocabulary: [String]?) throws -> SnittBundle {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "vocab-\(UUID().uuidString).snitt")
+        let bundle = try SnittBundle(creatingAt: root)
+        try RecordingMetadata(createdAt: Date(), initiator: .agent,
+                              vocabulary: vocabulary).write(to: bundle)
+        return bundle
+    }
+
+    @Test("Re-transcribing uses the hints the recording was made with")
+    func storedVocabularyIsUsed() throws {
+        // The case that matters: a re-transcription usually happens BECAUSE
+        // the first one got the names wrong, so dropping the hints then is
+        // dropping them exactly when they are needed.
+        let source = try bundle(vocabulary: ["KeptRanges", "SCStream"])
+        defer { try? FileManager.default.removeItem(at: source.url) }
+        #expect(Transcriber.resolveVocabulary(override: nil, bundle: source)
+                == ["KeptRanges", "SCStream"])
+    }
+
+    @Test("An explicit list overrides what the recording stored")
+    func overrideWins() throws {
+        let source = try bundle(vocabulary: ["Stored"])
+        defer { try? FileManager.default.removeItem(at: source.url) }
+        #expect(Transcriber.resolveVocabulary(override: ["Better"], bundle: source)
+                == ["Better"])
+    }
+
+    @Test("A recording with no vocabulary transcribes with none, not a crash")
+    func absentVocabularyIsEmpty() throws {
+        let source = try bundle(vocabulary: nil)
+        defer { try? FileManager.default.removeItem(at: source.url) }
+        #expect(Transcriber.resolveVocabulary(override: nil, bundle: source).isEmpty)
+    }
+
+    @Test("Stored terms are cleaned on the way out, not trusted raw")
+    func storedTermsArePrepared() throws {
+        // A bundle can be hand-edited, and metadata written by an older build
+        // was never passed through `Vocabulary.prepare`.
+        let source = try bundle(vocabulary: ["  Padded  ", "", "Padded"])
+        defer { try? FileManager.default.removeItem(at: source.url) }
+        #expect(Transcriber.resolveVocabulary(override: nil, bundle: source) == ["Padded"])
+    }
+}

@@ -68,6 +68,14 @@ public struct StartOptions: Codable, Sendable, Equatable {
     public var microphone: Bool
     public var systemAudio: Bool
     public var maxDurationSeconds: Double?
+    /// Terms the speech recogniser should expect to hear (D81).
+    ///
+    /// Supplied when the recording STARTS because that is when the caller knows
+    /// them — an agent about to demonstrate `KeptRanges` knows it is going to
+    /// say "KeptRanges", and no general model has heard the word. Stored in the
+    /// recording's metadata, so a transcription that happens later, or again,
+    /// still has them.
+    public var vocabulary: [String]?
     /// The client's working directory, used to discover git context (§7).
     ///
     /// Filled by the CLI, not the app: `Snitt.app`'s own directory is `/`, so it
@@ -82,7 +90,8 @@ public struct StartOptions: Codable, Sendable, Equatable {
                 microphone: Bool = false,
                 systemAudio: Bool = true,
                 maxDurationSeconds: Double? = nil,
-                workingDirectory: String? = nil) {
+                workingDirectory: String? = nil,
+                vocabulary: [String]? = nil) {
         self.bundleIdentifier = bundleIdentifier
         self.windowID = windowID
         self.displayID = displayID
@@ -90,6 +99,7 @@ public struct StartOptions: Codable, Sendable, Equatable {
         self.systemAudio = systemAudio
         self.maxDurationSeconds = maxDurationSeconds
         self.workingDirectory = workingDirectory
+        self.vocabulary = vocabulary
     }
 }
 

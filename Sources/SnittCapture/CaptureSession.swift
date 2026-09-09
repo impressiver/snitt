@@ -4,6 +4,11 @@ import CoreMedia
 import SnittDocument
 
 public struct CaptureOptions: Sendable {
+    /// Terms the speech recogniser should expect (D81). Carried from the
+    /// request that started the recording and stored in its metadata, so a
+    /// transcription that happens later — or again — uses the hints the person
+    /// who made the recording supplied.
+    public var vocabulary: [String] = []
     public var captureMicrophone: Bool
     public var captureSystemAudio: Bool
     public var maxDuration: Duration?

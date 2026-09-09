@@ -27,6 +27,9 @@ public actor Recorder {
     private let eventLog = SessionEventLog()
 
     private let logInputEvents: Bool
+    /// Kept from the options this recording was started with, so it can be
+    /// written into the metadata a later transcription reads (D81).
+    private var vocabulary: [String] = []
     /// Internal rather than private so tests can observe that a monitor is
     /// created only when asked, and that `stop()` drops it. `logInputEvents`
     /// was previously unreachable from any test at all.
@@ -78,6 +81,7 @@ public actor Recorder {
         self.initiator = initiator
         self.git = git
         self.logInputEvents = options.logInputEvents
+        self.vocabulary = options.vocabulary
         self.isInputMonitoringGranted = InputMonitoringAccess.isGranted
         self.session = CaptureSession(target: target, sink: sink, options: options)
     }
@@ -361,7 +365,8 @@ public actor Recorder {
             initiator: initiator,
             durationSeconds: duration,
             git: git,
-            health: session.health()
+            health: session.health(),
+            vocabulary: vocabulary.isEmpty ? nil : vocabulary
         )
         try metadata.write(to: bundle)
         // Sorted by time, not left in arrival order. Input events are appended
