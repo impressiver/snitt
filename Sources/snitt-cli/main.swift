@@ -1,3 +1,9 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+//
+// Copyright © 2026 Ian White.
+
 // The `snitt` CLI: one request, one JSON document on stdout, one exit code.
 //
 // Deliberately thin. It never touches ScreenCaptureKit — macOS attributes a
