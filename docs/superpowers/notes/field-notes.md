@@ -640,3 +640,41 @@ everything above.** SnittAppTests alone is 52.4s. SnittExportTests alone is
 MainActor, the WindowServer and the video encoder. No amount of fixture caching
 touches that; it is a consequence of running one process with 38 of 62 app-test
 files on `@MainActor`, 28 `.serialized` suites, and three global gates.
+
+### 2026-09-09 (the hang was a modal dialog, and the gates could never have caught it)
+
+**Observation (product owner), with a photograph:** a dialog on screen mid-run —
+*"Snitt has no recent recordings to reopen. Use ⌥⌘5 to start one, or File ▸ Open
+to pick a file."* — while the suite sat there doing nothing.
+
+**That is the ten-minute hang.** `DockReopenTests` calls the real
+`AppDelegate.applicationShouldHandleReopen`, whose "most recent document" comes
+from `NSDocumentController.recentDocumentURLs` — **machine-global** state that
+`AppShellTests` and `DocumentOpenerTests` each wipe in a `defer`. The test noted
+its URL OUTSIDE `EditorWindowTestGate` and read it INSIDE, so a concurrent suite
+could clear the entry in between. Lose that race and the reopen path finds no
+recents, takes the alert branch, and `NSAlert.runModal()` blocks the main thread
+until a human clicks OK.
+
+**The uncomfortable part: the bounded gates added the same morning could never
+have caught this.** They poll with `Task.sleep` on the MainActor — the very
+actor the modal run loop is holding. The watchdog cannot run for the same reason
+the tests cannot. A timeout only converts a hang into a failure when something
+is still scheduled to observe the deadline.
+
+**Fixed at the source rather than the symptom.** `AppDelegate.presentMessage` is
+now a seam; tests install a recorder, so raising a modal is impossible rather
+than unlikely. The `note`/read race is closed by moving `note` inside the gate,
+but that is the lesser half — the seam is what makes the class unreachable.
+
+**Rules worth keeping:**
+- **A unit test must never be able to raise modal UI.** Not "should not" —
+  *cannot*. Make the presentation injectable and install a recorder.
+- **Machine-global state shared between suites needs the same gate as the
+  resource it stands for**, and every read must sit inside the same critical
+  section as the write it depends on.
+- **A watchdog that shares a resource with the thing it watches is not a
+  watchdog.** Ask what the hang would starve before trusting the timeout.
+- Three of four hypotheses this session were wrong (`--filter` skipping tests,
+  DNS stalls, encoder contention as the hang cause). Each died to one
+  measurement. The one that solved it came from somebody looking at the screen.

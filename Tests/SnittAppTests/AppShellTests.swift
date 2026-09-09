@@ -163,6 +163,7 @@ struct AppShellTests {
     @Test("validateMenuItem stays pass-through (true) for every action except Cut Selection")
     func validateMenuItemIsPassThroughForOtherActions() async throws {
         try await EditorWindowTestGate.run {
+            NoModalAlerts.silence()
             let delegate = AppDelegate()
             // Any other wired action — `exportDocument` here, but the point
             // is that this is NOT `cutTimelineSelection` — must stay live
@@ -194,6 +195,7 @@ struct AppShellTests {
     @Test("Cut Selection is disabled when there is no key editor to apply it to")
     func cutSelectionDisabledWithNoKeyEditor() async throws {
         try await EditorWindowTestGate.run {
+            NoModalAlerts.silence()
             let delegate = AppDelegate()
             let menu = AppShell.buildMainMenu()
             let edit = try #require(menu.items.first { $0.title == "Edit" }?.submenu)
@@ -245,6 +247,7 @@ struct AppShellTests {
 
             RecentDocuments.note(url)
 
+            NoModalAlerts.silence()
             let delegate = AppDelegate()
             delegate.menuNeedsUpdate(staleSubmenu)
 
