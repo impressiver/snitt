@@ -1,3 +1,9 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+//
+// Copyright © 2026 Ian White.
+
 // Manual verification harness for M1. Replaced by the real app at M2.
 //
 // This tool exists to debug permission-gated capture, so it must never die
