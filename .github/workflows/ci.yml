@@ -25,7 +25,7 @@ jobs:
     # cost 10x on a private repo. Everything requiring a compiler is below.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: No build artifacts committed
         run: |
@@ -80,7 +80,7 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Toolchain
         run: |
@@ -162,6 +162,6 @@ jobs:
     runs-on: macos-26
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build release
         run: swift build --configuration release -Xswiftc -warnings-as-errors
