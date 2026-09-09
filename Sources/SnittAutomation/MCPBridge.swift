@@ -474,6 +474,16 @@ public enum MCPBridge {
                                      "description": "Write a .vtt chapter list beside the output, from marker labels — navigation, not speech"],
                         "subtitles": ["type": "boolean", "default": false,
                                       "description": "Write a .subtitles.vtt beside the output from marker TRANSCRIPTS. Only markers that carry narration produce cues, so a demo with no transcripts produces an empty file."],
+                        "clicks": [
+                            "type": "boolean",
+                            "description": "Draw a ring where each click you "
+                                + "REPORTED happened, so a viewer can see what "
+                                + "caused each change. Only reported clicks can "
+                                + "be drawn — the ones you made with "
+                                + "snitt_report_input — because a click the OS "
+                                + "saw carries no position Snitt can place. "
+                                + "Off by default.",
+                        ],
                         "maxSize": [
                             "type": "string",
                             "description": "A byte budget like \"10MB\". The exporter walks "
@@ -799,12 +809,22 @@ public enum MCPBridge {
                 }
                 maxSizeBytes = bytes
             }
+            // `booleanValue`, not `as? Bool ?? false` like the lines above:
+            // a mistyped flag ("clicks": "yes") should be refused by name
+            // rather than silently exporting without the thing that was asked
+            // for.
+            let clicksFlag: Bool
+            switch booleanValue(arguments["clicks"], parameter: "clicks") {
+            case .success(let value): clicksFlag = value ?? false
+            case .failure(let error): return .failure(error)
+            }
             return .success(.export(bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory),
                                      format: format,
                                      outputPath: PathResolver.resolve(outputPath, workingDirectory: workingDirectory),
                                      scale: scale, chapters: chapters,
                                      subtitles: (arguments["subtitles"] as? Bool) ?? false,
-                                     maxSizeBytes: maxSizeBytes))
+                                     maxSizeBytes: maxSizeBytes,
+                                    clicks: clicksFlag))
 
         case "snitt_diagnostics_export":
             guard let outputPath = arguments["outputPath"] as? String else {

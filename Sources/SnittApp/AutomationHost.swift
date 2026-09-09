@@ -323,10 +323,10 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             return await autoDeepTrim(bundlePath: bundlePath, criteria: criteria)
 
         case .export(let bundlePath, let format, let outputPath, let scale, let chapters,
-                     let subtitles, let maxSizeBytes):
+                     let subtitles, let maxSizeBytes, let clicks):
             return await export(bundlePath: bundlePath, format: format, outputPath: outputPath,
                                 scale: scale, chapters: chapters, subtitles: subtitles,
-                                maxSizeBytes: maxSizeBytes)
+                                maxSizeBytes: maxSizeBytes, clicks: clicks)
 
         case .diagnostics(let outputPath):
             return await diagnosticsExport(outputPath: outputPath)
@@ -627,7 +627,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// itself, only ask the app to.
     private func export(bundlePath: String, format: String, outputPath: String,
                         scale: Double, chapters: Bool, subtitles: Bool,
-                        maxSizeBytes: Int?) async -> AutomationResponse {
+                        maxSizeBytes: Int?, clicks: Bool) async -> AutomationResponse {
         // Opening the gif seam must not open it to everything else. The CLI
         // and MCP frontends refuse anything else with matching wording
         // (§8) — this must match too, or a client could send a format the
@@ -678,7 +678,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             let manifest = try await MovieExporter.export(
                 bundle: bundle, edl: edl, scale: scale, to: outputURL,
                 chaptersURL: chaptersURL, subtitlesURL: subtitlesURL,
-                format: format, maxSizeBytes: maxSizeBytes)
+                format: format, maxSizeBytes: maxSizeBytes, clicks: clicks)
             return .exported(manifest)
         } catch CompositionError.everythingCut {
             return .failure(AutomationError(
