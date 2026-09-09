@@ -185,6 +185,23 @@ public class PreviewController {
         self.markerTrackPoints = MarkerTrackPoints.compute(events: events, keptRanges: built.keptRanges)
     }
 
+    /// Re-applies ONLY the audio mix, leaving the composition and the player
+    /// item exactly where they are.
+    ///
+    /// The counterpart to `apply(edl:events:)` for the two EDL fields that
+    /// change nothing else — `TrackState.muted` and `TrackState.gain`. Going
+    /// through `apply` for those calls `replaceCurrentItem`, which resets the
+    /// playhead to zero: adjusting gain while listening to a passage sent you
+    /// back to the start of the recording every time.
+    ///
+    /// Assigns the result even when it is nil. A nil mix means "no mute, no
+    /// gain, nothing to express", and skipping the assignment would leave a
+    /// track that has just been returned to unity playing at whatever the
+    /// previous mix said — including silent, if it had been muted.
+    public func applyAudioMix(edl: EditDecisionList) async throws {
+        item.audioMix = try await CompositionBuilder.audioMix(for: item.asset, edl: edl)
+    }
+
     /// Exact seeking. `seek(to:)` without tolerances snaps to the nearest
     /// keyframe, which puts a marker jump seconds from the marker.
     ///

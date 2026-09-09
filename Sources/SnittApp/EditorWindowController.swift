@@ -972,7 +972,10 @@ final class EditorTimelineState: ObservableObject {
         let current = edl
         undoManager?.registerUndo(withTarget: self) { $0.restore(current) }
         edl.trackStates[index].gain = clamped
-        applyAndSave()
+        // `rebuild: false` — gain touches nothing but the audio mix, and a
+        // rebuild would replace the player's item and send the playhead back
+        // to zero on every slider tick.
+        applyAndSave(rebuild: false)
     }
 
     /// Mutes or unmutes one audio track.
@@ -982,7 +985,7 @@ final class EditorTimelineState: ObservableObject {
         let current = edl
         undoManager?.registerUndo(withTarget: self) { $0.restore(current) }
         edl.trackStates[index].muted = muted
-        applyAndSave()
+        applyAndSave(rebuild: false)
     }
 
     /// The audio tracks this recording actually has, in draw order — the same
@@ -1036,7 +1039,16 @@ final class EditorTimelineState: ObservableObject {
     /// from the EDL as it was BEFORE the user's last edit.
     func awaitPendingSave() async { await pendingSaveTask?.value }
 
-    private func applyAndSave() {
+    /// - Parameter rebuild: whether the change needs a NEW composition. True
+    ///   for anything that moves material — cuts, folds, crop, scale. False
+    ///   for mute and gain, which are expressed entirely in the audio mix:
+    ///   rebuilding for those calls `replaceCurrentItem`, which resets the
+    ///   playhead, so adjusting gain while listening to a passage sent you
+    ///   back to the start. Everything else about the save is identical,
+    ///   including the serialization against the previous save — a gain
+    ///   change and a cut both write the whole `edit.json`, so they must not
+    ///   race each other.
+    private func applyAndSave(rebuild: Bool = true) {
         // Marked here, synchronously, NOT inside the save task below. The EDL
         // has already changed by the time this is called, and a user who cuts
         // and immediately closes the window would otherwise race the save: the
@@ -1053,7 +1065,11 @@ final class EditorTimelineState: ObservableObject {
         pendingSaveTask = Task { @MainActor [weak self] in
             await previousSave?.value
             do {
-                try await controller.apply(edl: edl, events: events)
+                if rebuild {
+                    try await controller.apply(edl: edl, events: events)
+                } else {
+                    try await controller.applyAudioMix(edl: edl)
+                }
                 try controller.persist(edl)
                 self?.lastSavedEDL = edl
             } catch {
