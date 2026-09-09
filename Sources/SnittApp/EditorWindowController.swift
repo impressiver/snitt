@@ -222,7 +222,23 @@ final class EditorTimelineState: ObservableObject {
     func displayState(playhead outputPlayhead: Double) -> DisplayState {
         DisplayState(duration: controller.sourceDurationSeconds,
                     cuts: edl.cuts,
-                    markerPoints: controller.markerTrackPoints,
+                    // Derived from `events` — the @Published source of truth —
+                    // NOT from `controller.markerTrackPoints`.
+                    //
+                    // That cache is refreshed inside `applyAndSaveEvents`'s
+                    // async task, and `PreviewController` is a plain class with
+                    // no @Published anything, so nothing re-renders when it
+                    // lands. Dragging a marker mutated `events` synchronously,
+                    // SwiftUI re-rendered at once and read the STALE cache, and
+                    // the marker snapped back to where it started — until some
+                    // unrelated redraw (clicking the timeline) happened to pick
+                    // up the new value.
+                    //
+                    // The same projection the chapter panel uses, for the same
+                    // reason: one source, so the lane and the list cannot
+                    // disagree.
+                    markerPoints: MarkerTrackPoints.compute(
+                        events: events, keptRanges: controller.keptRanges),
                     playhead: outputPlayhead,
                     selection: selection,
                     expandedCutIDs: expandedCutIDs,
@@ -558,6 +574,49 @@ final class EditorTimelineState: ObservableObject {
         let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
         updateMarker(id: id, label: trimmed.isEmpty ? nil : trimmed,
                      transcript: event.transcript)
+    }
+
+    /// One chapter edit — the time and the label together — as a single
+    /// mutation.
+    ///
+    /// Deliberately NOT `moveMarker` followed by `renameMarker`. Undo is not
+    /// the reason: `UndoManager.groupsByEvent` is on by default, so two
+    /// registrations in one run-loop pass collapse into one ⌘Z anyway (a first
+    /// version of this claimed otherwise and its test passed against both
+    /// implementations, which is how the claim was caught). The reasons are
+    /// that two calls write `events.json` twice for one edit, and that between
+    /// them `events` is published with the new time and the OLD name — a state
+    /// the user never typed, rendered by every view watching the array. This
+    /// assigns once, so there is no such frame.
+    ///
+    /// A `timeText` that does not parse leaves the time alone rather than
+    /// moving the chapter to zero — a half-typed "1:" is a person still
+    /// typing, not a request to jump to the start. A time past the end is
+    /// clamped rather than ignored, matching a drag, which cannot go past the
+    /// end because there is no timeline there to drop on.
+    ///
+    /// A no-op if `id` doesn't name a current event, matching `moveMarker`.
+    func applyChapterEdit(id: UUID, timeText: String, label: String) {
+        guard let index = events.firstIndex(where: { $0.id == id }) else { return }
+        let timebase = Timebase(sourceDuration: controller.sourceDurationSeconds, edl: edl)
+        var newSource: Double?
+        if let typed = MarkerPane.parseTimestamp(timeText) {
+            let clamped = min(max(typed, 0), timebase.outputDuration)
+            newSource = timebase.sourceTime(forOutput: OutputTime(clamped))?.seconds
+        }
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let previous = events
+        undoManager?.registerUndo(withTarget: self) { target in
+            target.restoreEvents(previous)
+        }
+        // One assignment, not two: `events` is @Published, and mutating two
+        // fields in place publishes twice — the second of which is the only
+        // one anybody should see.
+        var updated = events
+        if let newSource { updated[index].timeSeconds = newSource }
+        updated[index].label = trimmed.isEmpty ? nil : trimmed
+        events = updated
+        applyAndSaveEvents()
     }
 
     /// Seeks the preview to a chapter. Through `onScrub` for the same reason
