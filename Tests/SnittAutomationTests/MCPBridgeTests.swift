@@ -41,6 +41,8 @@ func everyToolMaps() {
             json = #"{"bundlePath": "/tmp/x.snitt", "reset": true}"#
         case "snitt_trim":
             json = #"{"bundlePath": "/tmp/x.snitt", "autoTrim": true}"#
+        case "snitt_estimate_export":
+            json = #"{"bundlePath": "/tmp/x.snitt"}"#
         case "snitt_auto_deep_trim":
             // Deliberately the MINIMAL call: everything but the path is
             // optional, and if that ever stops being true this is where it
@@ -66,7 +68,7 @@ func toolNamesAreStable() {
     #expect(names == ["snitt_list_targets", "snitt_start_recording",
                       "snitt_stop_recording", "snitt_status", "snitt_add_marker",
                       "snitt_inspect", "snitt_trim", "snitt_crop", "snitt_export",
-                      "snitt_auto_deep_trim",
+                      "snitt_auto_deep_trim", "snitt_estimate_export",
                       "snitt_pause_recording", "snitt_resume_recording",
                       "snitt_screenshot", "snitt_report_input",
                       "snitt_diagnostics_export"])
@@ -162,7 +164,7 @@ func exportResolvesRelativePaths() {
         arguments: jsonArguments(#"{"bundlePath": "d.snitt", "format": "mp4", "outputPath": "out.mp4"}"#),
         workingDirectory: workingDirectory)
     else { Issue.record("MCP could not express an export"); return }
-    guard case .export(let resolvedBundlePath, _, let resolvedOutputPath, _, _, _, _, _) = body else {
+    guard case .export(let resolvedBundlePath, _, let resolvedOutputPath, _, _, _, _, _, _) = body else {
         Issue.record("expected .export, got \(body)"); return
     }
 
@@ -254,7 +256,7 @@ func integerScaleOfOneAcceptedFromRealJSON() {
         forTool: "snitt_export",
         arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
             + #""outputPath": "/tmp/demo.mp4", "scale": 1}"#))
-    guard case .success(.export(_, _, _, let scale, _, _, _, _)) = mapped else {
+    guard case .success(.export(_, _, _, let scale, _, _, _, _, _)) = mapped else {
         Issue.record("scale: 1, decoded from JSON, must be accepted as a number"); return
     }
     #expect(scale == 1.0)
@@ -454,7 +456,7 @@ func numericChaptersOneAcceptedAsTrue() {
         forTool: "snitt_export",
         arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
             + #""outputPath": "/tmp/demo.mp4", "chapters": 1}"#))
-    guard case .success(.export(_, _, _, _, let chapters, _, _, _)) = mapped else {
+    guard case .success(.export(_, _, _, _, let chapters, _, _, _, _)) = mapped else {
         Issue.record("chapters: 1, decoded from JSON, must be accepted as true"); return
     }
     #expect(chapters == true)
@@ -466,7 +468,7 @@ func mcpAcceptsGifAndMaxSize() {
     {"bundlePath":"/tmp/b.snitt","format":"gif","outputPath":"/tmp/o.gif","maxSize":"5MB"}
     """)
     guard case .success(let request) = MCPBridge.request(forTool: "snitt_export", arguments: args),
-          case .export(_, let format, _, _, _, _, let maxSize, _) = request else {
+          case .export(_, let format, _, _, _, _, let maxSize, _, _) = request else {
         Issue.record("expected a successful export request"); return
     }
     #expect(format == "gif")
@@ -490,7 +492,7 @@ func mcpAbsentMaxSizeIsNoLimit() {
     {"bundlePath":"/tmp/b.snitt","format":"mp4","outputPath":"/tmp/o.mp4"}
     """)
     guard case .success(let request) = MCPBridge.request(forTool: "snitt_export", arguments: args),
-          case .export(_, _, _, _, _, _, let maxSize, _) = request else {
+          case .export(_, _, _, _, _, _, let maxSize, _, _) = request else {
         Issue.record("expected success"); return
     }
     // A `?? 0` default would make every export target zero bytes and walk

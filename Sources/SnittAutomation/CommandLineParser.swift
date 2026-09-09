@@ -27,6 +27,7 @@ public enum ParsedCommand: Equatable {
     /// each per-criterion flag overrides one field of it, so the two forms the
     /// decision calls for are one value by the time anything acts on it.
     case autoDeepTrim(bundlePath: String, criteria: DeepTrimCriteria)
+    case estimate(bundlePath: String, scale: Double, format: String)
     /// Register the bundled MCP server with the agent hosts on this machine.
     /// Prints by default; `apply` actually runs the registration commands.
     case setup(apply: Bool)
@@ -40,7 +41,7 @@ public enum ParsedCommand: Equatable {
     case recordInput(sessionID: String, kind: String, x: Double?, y: Double?)
     case export(bundlePath: String, format: String, outputPath: String,
                 scale: Double, chapters: Bool, subtitles: Bool, maxSizeBytes: Int?,
-                clicks: Bool)
+                resolution: ExportResolution, clicks: Bool)
     /// `outputPath` here is still the RAW string typed on the command line —
     /// `main.swift` resolves it against the caller's cwd before it reaches
     /// the wire, the same as `.export`'s `outputPath`/`.trim`'s
@@ -179,6 +180,44 @@ public enum CommandLineParser {
                   + "Use the path `snitt record stop` printed."))
             }
             return parseCrop(path: path, args: Array(args.dropFirst()))
+
+        case "estimate":
+            guard let path = args.first else {
+                return .failure(ParseFailure(
+                    "`estimate` needs a path to a .snitt bundle. "
+                  + "Use the path `snitt record stop` printed."))
+            }
+            var estScale = 1.0
+            var estFormat = "mp4"
+            var estArgs = Array(args.dropFirst())
+            while let flag = estArgs.first {
+                estArgs.removeFirst()
+                switch flag {
+                case "--scale":
+                    guard let raw = estArgs.first, let value = Double(raw), value > 0 else {
+                        return .failure(ParseFailure("--scale needs a number greater than 0"))
+                    }
+                    estArgs.removeFirst()
+                    estScale = value
+                case "--format":
+                    guard let raw = estArgs.first else {
+                        return .failure(ParseFailure("--format needs a value"))
+                    }
+                    estArgs.removeFirst()
+                    // Refused here as well as in the app, with matching wording
+                    // (§8): a client should not be told yes and then no.
+                    guard raw == "mp4" else {
+                        return .failure(ParseFailure(
+                            "estimate supports --format mp4 only. GIF size tracks how much "
+                          + "the picture moves rather than how long it runs, so a sample of "
+                          + "one says too little about the whole to be worth reporting."))
+                    }
+                    estFormat = raw
+                default:
+                    return .failure(ParseFailure("Unknown estimate option: \(flag)"))
+                }
+            }
+            return .success(.estimate(bundlePath: path, scale: estScale, format: estFormat))
 
         case "auto-deep-trim":
             guard let path = args.first else {
@@ -406,6 +445,7 @@ public enum CommandLineParser {
         var chapters = false
         var subtitles = false
         var clicks = false
+        var resolution = ExportResolution.source
         var maxSizeBytes: Int?
         var index = 0
         while index < args.count {
@@ -430,6 +470,21 @@ public enum CommandLineParser {
                 subtitles = true
             case "--clicks":
                 clicks = true
+            case "--resolution":
+                index += 1
+                guard index < args.count else {
+                    return .failure(ParseFailure("--resolution needs a value"))
+                }
+                // Refused by name rather than silently falling back to source:
+                // an export that quietly ignored the size you asked for is the
+                // failure this whole flag exists to prevent.
+                guard let parsed = ExportResolution(rawValue: args[index]) else {
+                    return .failure(ParseFailure(
+                        "--resolution must be one of: "
+                      + ExportResolution.allCases.map(\.rawValue).joined(separator: ", ")
+                      + ", got \"\(args[index])\""))
+                }
+                resolution = parsed
             case "--max-size":
                 index += 1
                 guard index < args.count else { return .failure(ParseFailure("--max-size needs a value")) }
@@ -466,7 +521,7 @@ public enum CommandLineParser {
         }
         return .success(.export(bundlePath: path, format: format, outputPath: outputPath,
                                  scale: scale, chapters: chapters, subtitles: subtitles, maxSizeBytes: maxSizeBytes,
-                                clicks: clicks))
+                                resolution: resolution, clicks: clicks))
     }
 
     private static func parseDiagnosticsExport(_ args: [String]) -> Result<ParsedCommand, ParseFailure> {

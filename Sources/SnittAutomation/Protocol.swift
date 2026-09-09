@@ -122,8 +122,16 @@ public struct AutomationRequest: Codable, Sendable {
         /// preset name, so the CLI's per-criterion flags and its `--preset`
         /// arrive here as the same thing and the app has one code path.
         case autoDeepTrim(bundlePath: String, criteria: DeepTrimCriteria)
+        /// What an export would produce, without producing it. A separate verb
+        /// rather than a flag on `export`, because it answers a different
+        /// question and needs no output path.
+        case estimateExport(bundlePath: String, scale: Double, format: String)
         case export(bundlePath: String, format: String, outputPath: String,
                     scale: Double, chapters: Bool, subtitles: Bool, maxSizeBytes: Int?,
+                    /// Output size to target. `.source` keeps the recording's
+                    /// own dimensions, which is what every export did before
+                    /// there was a choice.
+                    resolution: ExportResolution,
                     /// D64: draw reported clicks onto the video. Off unless
                     /// asked — a recording's clicks are data (§4.5), and
                     /// burning them in is a choice, not a consequence of having
@@ -290,6 +298,7 @@ public enum AutomationResponse: Codable, Sendable, Equatable {
     case trimmed(TrimSummary)
     case cropped(CropSummary)
     case autoTrimmed(AutoTrimSummary)
+    case estimated([ExportEstimate])
     case screenshotTaken(path: String, timeSeconds: Double)
     case exported(ExportManifest)
     case diagnosticsWritten(DiagnosticsReport)

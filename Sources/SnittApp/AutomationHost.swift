@@ -322,11 +322,15 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         case .autoDeepTrim(let bundlePath, let criteria):
             return await autoDeepTrim(bundlePath: bundlePath, criteria: criteria)
 
+        case .estimateExport(let bundlePath, let scale, let format):
+            return await estimateExport(bundlePath: bundlePath, scale: scale, format: format)
+
         case .export(let bundlePath, let format, let outputPath, let scale, let chapters,
-                     let subtitles, let maxSizeBytes, let clicks):
+                     let subtitles, let maxSizeBytes, let resolution, let clicks):
             return await export(bundlePath: bundlePath, format: format, outputPath: outputPath,
                                 scale: scale, chapters: chapters, subtitles: subtitles,
-                                maxSizeBytes: maxSizeBytes, clicks: clicks)
+                                maxSizeBytes: maxSizeBytes, resolution: resolution,
+                                clicks: clicks)
 
         case .diagnostics(let outputPath):
             return await diagnosticsExport(outputPath: outputPath)
@@ -421,6 +425,51 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             return .failure(AutomationError(
                 code: .internalError,
                 message: "Could not write the crop to this recording.",
+                hint: String(describing: error)))
+        }
+    }
+
+    /// What an export would produce, without producing it.
+    ///
+    /// Costs a two-second encode rather than the whole file, which is the point:
+    /// `--max-size` already fits an export to a budget by DOING it, and that is
+    /// the wrong trade when the question is which scale to ask for.
+    private func estimateExport(bundlePath: String, scale: Double,
+                                format: String) async -> AutomationResponse {
+        let bundle: SnittBundle
+        do {
+            bundle = try SnittBundle(opening: URL(fileURLWithPath: bundlePath))
+        } catch {
+            return .failure(AutomationError(
+                code: .targetNotFound,
+                message: "Could not read a recording at that path.",
+                hint: "Use the path `snitt record stop` printed."))
+        }
+        do {
+            let edl = try Self.readEDL(for: bundle)
+            guard format != "gif" else { throw EstimateError.unsupportedFormat(format) }
+            // Every resolution at once: building the composition is the
+            // expensive part and asking each preset costs microseconds, so a
+            // caller choosing where to land sees the whole menu rather than
+            // guessing and re-asking.
+            return .estimated(try await ExportEstimator.menu(
+                bundle: bundle, edl: edl, scale: scale))
+        } catch EstimateError.unsupportedFormat(let format) {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "Cannot estimate a \(format) export.",
+                hint: "GIF size tracks how much the picture moves rather than how long "
+                    + "it runs, so a short sample says too little about the whole. "
+                    + "Export with --max-size instead, which fits by measuring."))
+        } catch CompositionError.everythingCut {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "The current trim removes the entire recording.",
+                hint: "Widen the kept range before estimating."))
+        } catch {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "Could not estimate this export.",
                 hint: String(describing: error)))
         }
     }
@@ -627,7 +676,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// itself, only ask the app to.
     private func export(bundlePath: String, format: String, outputPath: String,
                         scale: Double, chapters: Bool, subtitles: Bool,
-                        maxSizeBytes: Int?, clicks: Bool) async -> AutomationResponse {
+                        maxSizeBytes: Int?, resolution: ExportResolution,
+                        clicks: Bool) async -> AutomationResponse {
         // Opening the gif seam must not open it to everything else. The CLI
         // and MCP frontends refuse anything else with matching wording
         // (§8) — this must match too, or a client could send a format the
@@ -678,7 +728,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             let manifest = try await MovieExporter.export(
                 bundle: bundle, edl: edl, scale: scale, to: outputURL,
                 chaptersURL: chaptersURL, subtitlesURL: subtitlesURL,
-                format: format, maxSizeBytes: maxSizeBytes, clicks: clicks)
+                format: format, maxSizeBytes: maxSizeBytes, resolution: resolution,
+                clicks: clicks)
             return .exported(manifest)
         } catch CompositionError.everythingCut {
             return .failure(AutomationError(
