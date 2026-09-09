@@ -702,12 +702,59 @@ final class EditorTimelineState: ObservableObject {
         }
     }
 
-    private func startTranscription() {
+    /// The terms the recogniser is told to expect (D81), as the pane edits them.
+    ///
+    /// Comma or newline separated, because that is how somebody pastes a list
+    /// of symbol names. Loaded from the recording so the field shows what the
+    /// current transcript was actually made with, not a blank box.
+    @Published var vocabularyText: String = ""
+
+    /// Testing seam: install a transcript without running the recogniser,
+    /// which is TCC-gated and absent on a machine that has not granted it.
+    func setTranscriptForTesting(_ value: Transcript) {
+        transcript = value
+        lastSavedTranscript = value
+        transcriptionStatus = .ready
+    }
+
+    /// Load the recording's stored vocabulary into the editable field.
+    func loadVocabulary() {
+        let stored = (try? RecordingMetadata.read(from: controller.snittBundle))?.vocabulary
+        vocabularyText = (stored ?? []).joined(separator: ", ")
+    }
+
+    /// Transcribe again, with whatever the field now says.
+    ///
+    /// Replaces the transcript outright, which DISCARDS in-place corrections
+    /// (D62) — a corrected word is only marked by `confidence == 1.0`, which a
+    /// confident recognition also produces, so there is no way to tell them
+    /// apart and preserve one. Undo is the answer instead: the old transcript
+    /// goes on the shared stack before the new one lands, so ⌘Z brings the
+    /// corrections back. The pane says so before the button is pressed.
+    func retranscribe() {
+        let terms = Vocabulary.prepare(
+            vocabularyText.split(whereSeparator: { $0 == "," || $0.isNewline })
+                .map(String.init)).terms
+        // Persisted BEFORE transcribing, so a re-transcription that crashes or
+        // is closed mid-run still leaves the recording knowing what it was
+        // asked to expect.
+        if var meta = try? RecordingMetadata.read(from: controller.snittBundle) {
+            meta.vocabulary = terms.isEmpty ? nil : terms
+            try? meta.write(to: controller.snittBundle)
+        }
+        if let current = transcript {
+            undoManager?.registerUndo(withTarget: self) { $0.restoreTranscript(current) }
+        }
+        startTranscription(vocabulary: terms)
+    }
+
+    private func startTranscription(vocabulary: [String]? = nil) {
         transcriptionStatus = .transcribing
         let bundle = controller.snittBundle
         Task { [weak self] in
             do {
-                guard let result = try await Transcriber.transcribe(bundle: bundle) else {
+                guard let result = try await Transcriber.transcribe(
+                    bundle: bundle, vocabulary: vocabulary) else {
                     // No mic track — a normal recording, not a failure.
                     await MainActor.run { self?.transcriptionStatus = .none }
                     return
