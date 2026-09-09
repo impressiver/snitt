@@ -1092,6 +1092,33 @@ on a build that uses both paths — it cannot be answered from documentation.**
 Until it is, assume app-wide taint (the conservative reading) and do not claim
 the picker as a product-wide mitigation.
 
+**S5 — PARTLY ANSWERED 2026-09-08. Registration is solved and was solved
+without noticing; disclosure's real problem turned out to be DRIFT, not a
+missing artifact.** Every premise below was checked against the code before any
+of it was acted on, and three of them had gone stale: the bundle **does** embed
+both binaries (`Contents/Helpers/snitt`, `Contents/Helpers/snitt-mcp`),
+`snitt setup` **exists** and writes host configs, and the `instructions` field
+this section calls "cheap and unblocked" **was already set**. What had NOT been
+done is the thing this section warned about in its own text — *"prose drifts
+from the flags it describes, with no equivalent [handshake] to catch it"* — and
+it had already happened twice over. The instructions still told agents *"Snitt
+must already be running... if it is not running there is nobody to start it"*
+months after launch-on-demand made that false, so an agent believing it would
+refuse to try or ask a person to open an app that opens itself; and the loop
+they described stopped at export, never mentioning `snitt_report_input`,
+`snitt_crop`, `snitt_trim` or `snitt_auto_deep_trim` — while
+`snitt_start_recording`'s own text warned the caller to "expect to crop the
+strip out". **So the answer to "does disclosure need an artifact of its own" is
+not yet a skill or a plugin: it is a GUARD on the artifact that exists.**
+`ServerInstructionsTests` is that guard — every tool the prose names must
+exist, every tool in the workflow must be named (adding one to the list forces
+a mention), the stale claims are pinned, and the opening must still say what
+the server is FOR rather than collapsing into the verb list the tool schemas
+already are. **Still open**, and needing a real agent session rather than
+reasoning: whether an agent with a registered server and this text actually
+reaches for it mid-task, or whether disclosure needs something that arrives
+before a tool list does. Original framing kept below.
+
 **S5 — How does an agent find out Snitt exists?** §4.8 built the *capability* — a
 CLI and an MCP server over one core — and stopped there. Neither is **installed**
 and neither is **announced**: `Scripts/make-app.sh` copies only `SnittApp`,
