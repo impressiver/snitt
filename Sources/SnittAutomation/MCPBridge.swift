@@ -213,6 +213,17 @@ public enum MCPBridge {
                         "microphone": ["type": "boolean", "default": false],
                         "systemAudio": ["type": "boolean", "default": true],
                         "maxDurationSeconds": ["type": "number"],
+                        "vocabulary": [
+                            "type": "array",
+                            "items": ["type": "string"],
+                            "description": "Words you are about to SAY that a general "
+                                + "speech model has never heard — symbol names, file "
+                                + "names, product names. Biases transcription toward "
+                                + "them without restricting to them, so a term you "
+                                + "never say costs nothing and it is worth listing "
+                                + "generously. Every one it mishears is a correction "
+                                + "somebody makes by hand. Up to 100.",
+                        ],
                     ],
                     // Exactly one of bundleIdentifier/displayID is required, which
                     // JSON Schema's flat "required" array cannot express (that would
@@ -579,6 +590,16 @@ public enum MCPBridge {
             }
             if let max = arguments["maxDurationSeconds"] as? Double {
                 options.maxDurationSeconds = max
+            }
+            if let raw = arguments["vocabulary"] {
+                // Refused by name rather than ignored: a caller that sent the
+                // wrong shape asked for biasing and would otherwise get a
+                // transcript without it and no indication why.
+                guard let terms = raw as? [String] else {
+                    return .failure(MCPBridgeError(
+                        "snitt_start_recording vocabulary must be an array of strings"))
+                }
+                options.vocabulary = terms
             }
             return .success(.startRecording(options))
 

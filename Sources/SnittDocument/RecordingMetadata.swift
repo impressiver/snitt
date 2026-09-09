@@ -78,6 +78,16 @@ public struct RecordingMetadata: Codable, Sendable {
     /// Not the duration of `capture.mov`, which is shorter by the stream's
     /// startup latency, and not the clock marker offsets are on.
     public var durationSeconds: Double?
+    /// Words the speech recogniser should expect to hear (D62's correction
+    /// burden, D81).
+    ///
+    /// Stored on the RECORDING rather than in a global setting because the
+    /// vocabulary that matters is the one this session was about: a demo of
+    /// `KeptRanges` and a demo of `SCContentSharingPicker` need different
+    /// hints, and a setting would carry the wrong one into both. It also
+    /// survives re-transcription, which is when a better hint is most likely
+    /// to be wanted.
+    public var vocabulary: [String]?
     public var git: GitContext?
     public var health: CaptureHealth?
 
@@ -86,13 +96,15 @@ public struct RecordingMetadata: Codable, Sendable {
                 initiator: Initiator,
                 durationSeconds: Double? = nil,
                 git: GitContext? = nil,
-                health: CaptureHealth? = nil) {
+                health: CaptureHealth? = nil,
+                vocabulary: [String]? = nil) {
         self.schemaVersion = schemaVersion
         self.createdAt = createdAt
         self.initiator = initiator
         self.durationSeconds = durationSeconds
         self.git = git
         self.health = health
+        self.vocabulary = vocabulary
     }
 
     public func write(to bundle: SnittBundle) throws {

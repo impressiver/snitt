@@ -844,9 +844,14 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         // `health.micRMS` could only ever be nil.
         // Read at record time rather than cached at launch, so toggling the
         // menu item takes effect on the next recording without a relaunch.
-        let captureOptions = CaptureOptions(captureMicrophone: options.microphone,
+        // Cleaned here, once, so what reaches the recorder is what will reach
+        // the recogniser — a caller that sent 500 terms or a stray empty string
+        // gets the same list back from `snitt_inspect` that biased the
+        // transcript.
+        var captureOptions = CaptureOptions(captureMicrophone: options.microphone,
                                             captureSystemAudio: options.systemAudio,
                                             logInputEvents: EventLoggingSettings.load().enabled)
+        captureOptions.vocabulary = Vocabulary.prepare(options.vocabulary ?? []).terms
 
         let outcome = await coordinator.startForAgent(sessionID: sessionID,
                                                       reference: reference,

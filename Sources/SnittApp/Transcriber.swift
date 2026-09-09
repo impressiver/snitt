@@ -69,7 +69,9 @@ enum Transcriber {
     /// D68 measured 0.05× realtime for one pass, so paying it per chunk is
     /// still far cheaper than the capture it describes.
     static func transcribe(bundle: SnittBundle,
-                           locale: Locale = Locale(identifier: "en-US")) async throws -> Transcript? {
+                           locale: Locale = Locale(identifier: "en-US"),
+                           vocabulary: [String]? = nil) async throws -> Transcript? {
+        let terms = resolveVocabulary(override: vocabulary, bundle: bundle)
         guard let audioURL = try await MicrophoneTrackExtractor.extract(from: bundle) else {
             return nil
         }
@@ -94,7 +96,8 @@ enum Transcriber {
             // error on one utterance leaves the others intact, which is the
             // difference between a gap and a blank pane.
             guard let recognized = try? await recognizeOneUtterance(at: piece,
-                                                                    recognizer: recognizer)
+                                                                    recognizer: recognizer,
+                                                                    vocabulary: terms)
             else { continue }
             // Back onto the recording's clock — the chunk reports its own.
             words.append(contentsOf: recognized.map { word in
@@ -121,11 +124,35 @@ enum Transcriber {
         return out
     }
 
+    /// Which terms this transcription should bias toward.
+    ///
+    /// From the RECORDING unless the caller overrides, so re-transcribing an
+    /// old bundle uses the hints it was made with rather than none — which is
+    /// exactly when they matter, since a re-transcription usually happens
+    /// BECAUSE the first one got the names wrong.
+    ///
+    /// A separate function so it can be exercised without the recogniser, which
+    /// is TCC-gated and absent on any machine that has not granted it.
+    static func resolveVocabulary(override: [String]?, bundle: SnittBundle) -> [String] {
+        let stored = (try? RecordingMetadata.read(from: bundle))?.vocabulary
+        return Vocabulary.prepare(override ?? stored ?? []).terms
+    }
+
     /// Recognizes a single-utterance file. Timestamps are relative to it.
     private static func recognizeOneUtterance(
-        at url: URL, recognizer: SFSpeechRecognizer) async throws -> [TranscriptWord] {
+        at url: URL, recognizer: SFSpeechRecognizer,
+        vocabulary: [String] = []) async throws -> [TranscriptWord] {
         let request = SFSpeechURLRecognitionRequest(url: url)
         request.requiresOnDeviceRecognition = true
+        // D81. Biases toward these without restricting to them, so a term that
+        // is never said costs nothing — which is why an over-broad list is not
+        // the failure mode and an unbounded one is (`Vocabulary.limit`).
+        //
+        // Set per utterance rather than once, because each chunk gets its own
+        // request: `SpeechChunker` splits at silence and every piece is
+        // recognised separately, so a hint applied to the first only would
+        // help the first sentence and no other.
+        if !vocabulary.isEmpty { request.contextualStrings = vocabulary }
         // Still false: within ONE utterance the final result is the complete
         // one, and it is the only result carrying timestamps at all.
         request.shouldReportPartialResults = false
