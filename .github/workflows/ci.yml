@@ -71,11 +71,13 @@ jobs:
 
   build-and-test:
     name: Build and test
-    # macos-15 matches Package.swift's `.macOS(.v15)` floor deliberately.
+    # macos-26 matches Package.swift's `.macOS(.v26)` floor deliberately.
     # Building on the floor is what catches an API newer than the floor being
     # used by accident; a newer runner would compile it happily and ship
-    # something that traps on a supported machine.
-    runs-on: macos-15
+    # something that traps on a supported machine. This job earned that keep
+    # before it ever went green: pinned to the previous floor, its first run
+    # proved the package no longer compiled at the floor it then declared.
+    runs-on: macos-26
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
@@ -135,7 +137,7 @@ jobs:
     # costs a second macOS job — worth paying once per merge rather than on
     # every push to every branch.
     if: github.event_name == 'push'
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
