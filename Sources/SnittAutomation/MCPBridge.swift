@@ -119,28 +119,54 @@ public enum MCPBridge {
     /// unwatchable so `snitt_inspect` is the only way to know what was made,
     /// and that Snitt.app must already be running because these tools ask it to
     /// record rather than recording themselves (§4.9).
+    /// What the server is FOR, as against what each tool does.
+    ///
+    /// S5's second problem: a tool list answers "how do I call this" and never
+    /// "why would I record my screen". An agent that never considers making a
+    /// demo never reads the schema, so this is the only text that gets a
+    /// chance to change its mind.
+    ///
+    /// S5 also names the hazard in writing it: prose drifts from the surface it
+    /// describes, and §10's version handshake covers the wire protocol, not the
+    /// documentation. `ServerInstructionsTests` is that missing guard —
+    /// every tool named below must exist, the workflow tools must all be
+    /// named, and the specific claims that went stale before are pinned.
     public static let serverInstructions = """
         Snitt records a macOS window to a .snitt bundle, so you can show work \
         instead of describing it: a demo attached to a pull request, a bug \
         reproduced on video, a before-and-after.
 
         Snitt films; it does not click or type. Drive the UI with your own \
-        tools and use these to wrap a recording around that work.
+        tools and use these to wrap a recording around that work. You do not \
+        need to ask anyone to open Snitt first — if it is not running, calling \
+        one of these starts it.
 
-        The loop is snitt_start_recording, then the work — calling \
-        snitt_add_marker at each step a reviewer should be able to jump to — \
-        then snitt_stop_recording, snitt_inspect, snitt_export. You cannot \
-        watch what you recorded, so snitt_inspect is how you find out what you \
-        made, and its output is what to quote when describing the demo. Pass \
-        maxSize to snitt_export when the file is going somewhere with an \
-        attachment limit.
+        The loop:
 
-        Snitt.app must already be running: these tools ask it to record, they \
-        do not record themselves, and if it is not running there is nobody to \
-        start it. Recording is scoped to one application's window by default \
-        — prefer bundleIdentifier over displayID, which additionally requires \
-        a person to have turned on full-display agent recording. A person at \
-        the machine can see and stop any recording at any time.
+        1. snitt_start_recording. Recording is scoped to one application's \
+           window by default — prefer bundleIdentifier over displayID, which \
+           additionally requires a person to have turned on full-display agent \
+           recording.
+        2. Do the work. Call snitt_report_input as you go: your clicks and \
+           keystrokes never reach the screen, so without this the recording \
+           shows things changing with no visible cause, which is what makes an \
+           agent demo unwatchable. It also earns you step 4 — auto-trim finds \
+           a recording's bookends from input events, and reported input counts.
+        3. snitt_add_marker at each step a reviewer should be able to jump to.
+        4. snitt_stop_recording, then tidy up: snitt_trim with autoTrim cuts \
+           the setup and teardown off the ends, and snitt_auto_deep_trim \
+           removes the gaps in between — the seconds spent waiting for a page \
+           to load. Both are non-destructive and reversible.
+        5. snitt_crop if the window's chrome carries anything that should not \
+           be shared. A browser's tab strip puts the titles of every other open \
+           tab into every frame.
+        6. snitt_inspect, then snitt_export. You cannot watch what you \
+           recorded, so snitt_inspect is how you find out what you made, and \
+           its output is what to quote when describing the demo. Pass maxSize \
+           to snitt_export when the file is going somewhere with an attachment \
+           limit.
+
+        A person at the machine can see and stop any recording at any time.
         """
 
     public static func toolDefinitions() -> [ToolDefinition] {
