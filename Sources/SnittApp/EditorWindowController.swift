@@ -239,11 +239,33 @@ final class EditorTimelineState: ObservableObject {
     /// doing nothing. The cut is drawn on the timeline, so it is a visible
     /// thing the user aimed at; swallowing that click with no feedback is
     /// the silent no-op this project keeps finding elsewhere.
+    /// Scrubbing STOPS playback (D87). Aiming at a frame while the picture
+    /// keeps moving means the frame you aimed at is gone by the time the seek
+    /// lands and you look at it — and the playhead then walks away from where
+    /// you just put it, which reads as the click having been ignored.
+    ///
+    /// Every navigation gesture shares this path deliberately — the timeline,
+    /// a chapter in the panel, a word in the transcript — because they are the
+    /// same act with different targets. `rewind()` is the one that does NOT,
+    /// and says why.
     func onScrub(_ time: Double) {
         guard let trimmedTime = TimeRangeMapping.nearestTrimmedTime(
             toSourceTime: time, keptRanges: controller.keptRanges) else { return }
+        controller.pause()
         Task { await controller.seek(toSeconds: trimmedTime) }
     }
+
+    /// Sends the playhead back to the start.
+    ///
+    /// Deliberately NOT through `onScrub`, and so deliberately does not pause:
+    /// a rewind during playback restarts the run from the top, which is the
+    /// replay gesture — the whole reason to press it while watching. A scrub
+    /// is aiming at one frame; a rewind is aiming at a beginning.
+    ///
+    /// Seeks the composition directly rather than mapping through
+    /// `keptRanges`: zero in OUTPUT time is the start of the edit whatever is
+    /// cut, so there is nothing to resolve.
+    func rewind() { Task { await controller.seek(toSeconds: 0) } }
 
     /// `selection` arrives from the view already resolved (SOURCE time): a
     /// real drag becomes `Selection(range:)`, a plain click — or a drag too
@@ -1130,6 +1152,7 @@ struct EditorContentView: View {
                 .padding(.top, 4)
             }
             HStack(spacing: 12) {
+                Button("Rewind") { state.rewind() }
                 Button("Play") { controller.play() }
                 Button("Pause") { controller.pause() }
                 // D56 (M5f Task 4): the only place a selection becomes a
