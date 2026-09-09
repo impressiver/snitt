@@ -82,7 +82,7 @@ snitt — record a window and hand back a .snitt bundle
         [--window-id <id>]               required if the app has >1 window
         (records the WHOLE window, tab strip included)
         [--display <id>] [--max-duration <seconds>]
-        [--mic] [--no-system-audio]        parsed, not yet applied (M3)
+        [--mic] [--no-system-audio]        record the mic; drop system audio
   snitt record stop <session-id>         stop; prints the bundle path
   snitt record mark <session-id> [--label <text>]   drop a marker
   snitt record keystroke <session>        report that you typed (no text)
