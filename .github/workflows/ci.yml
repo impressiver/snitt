@@ -109,9 +109,26 @@ jobs:
         run: swift build -Xswiftc -warnings-as-errors
 
       - name: Test
+        # NOT the whole suite, and the exclusion is load-bearing rather than
+        # tidy. SnittExportTests and SnittAppTests HANG on a GitHub-hosted
+        # runner: the first full run got 670 tests in, then stalled for 37
+        # minutes until the job timeout killed it. The 254 that never returned
+        # are exactly the ones that build an AVFoundation composition, encode a
+        # movie, or open a window — work a headless runner with no hardware
+        # video encoder cannot finish.
+        #
+        # So this gates the five targets that DO run: the document model, the
+        # capture layer, the automation protocol, the CLI and the MCP bridge.
+        # 475 tests in about ten seconds.
+        #
+        # What that leaves uncovered is worth naming rather than forgetting:
+        # export, composition, the editor and the timeline are verified
+        # LOCALLY ONLY. `swift test` with no filter is still the gate before a
+        # release, and docs/DEVELOPING.md says so.
         run: |
           set -o pipefail
-          swift test 2>&1 | tee test-output.txt || true
+          swift test --filter 'SnittDocumentTests|SnittCaptureTests|SnittAutomationTests|SnittCLITests|SnittMCPTests' \
+            2>&1 | tee test-output.txt || true
           # `swift test` EXITS 0 WHEN THE TEST BUNDLE SEGFAULTS, printing an
           # inline "signal code 11" and no summary line at all. This project
           # has hit that twice, most recently after adding a stored property to
