@@ -944,124 +944,118 @@ reasoning in it is still load-bearing) and what is next, **in priority order**.
   estimate`. Recorded here because it arrived as product-owner direction rather
   than off this list, and a reader of the priority order would otherwise not
   know it exists.
+- **The six items that finished off the old numbered order** (restructured out of
+  "Next" on 2026-09-09, D90): crop with live preview, undo, `CropRect.composing`
+  and a CLI verb; the editor's known defects, cleared twice (2026-09-08 and
+  2026-09-09); transcription (D62) across four slices including in-place
+  correction, speaker-bleed warning and D81's vocabulary; `auto-deep-trim` (D57)
+  in editor, CLI and MCP, consuming waveforms, filmstrip, events AND transcript
+  word spans; M5e's agent primitives and S5's registration question; and visible
+  clicks for reported input (D78). The reasoning that produced them stays in
+  their decision-log entries.
 - **CI and repo hygiene (2026-09-08/09)** — GitHub Actions on every PR and on
   main, the macOS floor raised to 26 (D77), `docs/DEVELOPING.md`. CI runs the
   five targets a headless runner can finish; export, composition, the editor and
   the timeline are verified locally only.
 
-### Next, in order
+### Next — unblocked, in value order
 
-Ranked by D66's five pillars, with **hard dependencies named** — ranking by value
-must not produce an unbuildable order.
+**Read this list's premises against the code before starting an item.** Five times
+now it has described work that was already built (crop, D73, M5e/S5, D57's word
+spans, D86). D91 adds a mechanical guard; the habit is still the primary defence.
 
-1. **Crop — BUILT (2026-09-07).** `renderSize` plus a layer-instruction
-   transform, extending the call `CompositionBuilder` already makes for
-   `--scale`. Live-previewed by dragging on the preview, undoable on the shared
-   stack, composing rather than replacing when re-cropped (`CropRect.composing`),
-   and reachable from the CLI as `snitt crop <bundle> --x --y --width --height
-   [--reset]`. *Left sitting at position 1 as "the cheapest item in the queue"
-   for a day after it shipped — the same drift D47's conformance guard exists to
-   catch, and the second time this list has recorded built work as pending.*
-2. **The editor's known defects.** Whatever `docs/superpowers/notes/field-notes.md`
-   is carrying. "Focused in-app editing" is a D66 pillar and the editor is the
-   surface used daily; a defect in built work outranks a new feature. Cleared
-   2026-09-08: the transcript's missing first utterances (D73), the expanded
-   fold's misplaced band, the playhead landing left of an expanded cut, markers
-   readable only by scrubbing (D75), and a waveform that sank into its own band
-   (D76). A second batch, cleared 2026-09-09: a dragged marker reverting until
-   the timeline was clicked again (D82), crop applying on mouse-up with no way
-   to adjust it (D85), a scrub that left playback running so the playhead walked
-   off the frame aimed at, and no way back to the start (D87), and adjusting
-   gain resetting the playhead because a volume change rebuilt the whole
-   composition (D88).
-3. **Transcription (D62) — BUILT, first slice (2026-09-08).** Transcribes on
-   editor open (on-device, word-level, after capture per D68), stores
-   `transcript.json` with a D60-style version gate, and the transcript pane is
-   an editing surface: click a word to seek, select a phrase and delete it to
-   cut those seconds through the same EDL as every other edit. Second slice
-   (same day): in-place correction — double-click a word, or Edit Word… from
-   its context menu; corrections persist, undo on the shared stack, and clear
-   the doubt-dimming (confidence becomes 1.0, human-verified). Third slice (2026-09-08):
-   **D73's speaker-bleed warning** — the status menu says so when a voiceover
-   would be recorded through the Mac's own speakers, and the route is stored in
-   `CaptureHealth` so a bad transcript is explainable afterwards. Fourth slice
-   (2026-09-09, D81): the recording carries the words its transcription should
-   expect, editable and re-runnable from the editor. **Corrected 2026-09-09:
-   this item claimed "not yet built: D57's use of the word spans as its dead-air
-   signal" — it was built.** `AutoDeepTrim.deadSpans` takes a `transcript:` and
-   marks every word span alive, and BOTH call sites pass one
-   (`EditorWindowController` and `AutomationHost`, so the editor, the CLI and
-   MCP all use it). This is the FOURTH time this list has recorded shipped work
-   as pending; see the countermeasure in `field-notes.md` (2026-09-08).
-4. **`auto-deep-trim` (D57) — BUILT, first slice (2026-09-08).** All five
-   criteria over a 20Hz grid, applied from the editor's Auto-Trim menu as
-   ordinary undoable cuts. D59 was right that `HealthSampler` could not supply
-   the signal and wrong that a second decode was the only alternative: the
-   editor had already decoded waveforms, a filmstrip, the event log and the
-   transcript for the timeline, so the detector reads those. The CLI verb `snitt auto-deep-trim` followed the
-   same day, with `--preset` and all five per-criterion flags, over the socket
-   like every other document verb. The MCP tool
-   `snitt_auto_deep_trim` followed, mapping to the same request body the CLI
-   sends. Remaining: a higher-rate frame pass in the EDITOR if the filmstrip's
-   resolution proves too coarse in use.
-5. **Agent discovery (S5/D63) and M5e's agent primitives — BUILT; one question
-   left open (2026-09-08).** Every primitive this item listed already existed
-   when it was checked: pause/resume, screenshot, marker transcripts as WebVTT
-   (`WebVTTSubtitles`, written by `MovieExporter`), D53's `paused` state
-   (`StatusInfo.paused`/`pausedSeconds`, with `elapsedSeconds` on the wall clock
-   so `maxDuration` accounting is settled), and D53's correlation primitive —
-   `Recorder.screenshot` logs its marker at the FRAME's offset rather than at
-   call time, which is the guarantee D53 asked for. S5's registration half was
-   likewise already solved. What S5's check DID find was drift in the one text
-   that tells an agent any of this exists, now guarded by
-   `ServerInstructionsTests`. **Still open, and needing a real agent session
-   rather than reasoning:** whether an agent with a registered server reaches
-   for it mid-task at all — S5's disclosure half.
-6. **Visible clicks — BUILT for reported input (2026-09-08, D78).** Rings burn
-   into mp4 and draw into GIF, from one geometry that uses the builder's own
-   render transform. What remains of this item is narrower than it looked: the
-   **shared window-frame track** is needed for OBSERVED clicks only, because
-   `InputEventMonitor` records no coordinates — reported input already carries a
-   window fraction. So the track is now a prerequisite for human recordings'
-   clicks and for zoom + follow-mouse, not for the agent case that motivated it.
-7. **D56 Tier 2 — segments** (slice, reorder, per-track cuts). A schema *and*
-   algorithm replacement: `KeptRanges` sorts cuts and walks a forward cursor, so
-   it cannot express order at all (D59).
-8. **Zoom + follow-mouse** — *needs 6 (coordinates) and 7 (per-segment
-   attachment)*. Cheap in mechanism, gated on both prerequisites.
-9. **Visible keyboard input** — **gated by §5.6** (D67): off by default, chords
+1. **D84 — editor keyboard shortcuts, through a shortcut REGISTRY.** Space to
+   start/stop, rewind, jump to previous/next marker. Product-owner direction
+   (2026-09-09) added the shape: the bindings live in one registry that both
+   installs the menu items and renders a **Help ▸ Keyboard Shortcuts** dialog, so
+   the help cannot drift from what the keys actually do — the same drift class
+   `ServerInstructionsTests` exists to guard, and cheaper to prevent than to
+   detect. **Cheaper than its own decision entry assumed**: the bare-key mechanism
+   already ships. `Cut Selection` binds bare Backspace via
+   `keyEquivalentModifierMask = []` (`AppShell.swift:141-145`) and
+   `AppDelegate`'s `NSMenuItemValidation` is what stops it swallowing the key
+   app-wide (`main.swift:529-534`), which is exactly the "space is also a
+   character" trap D84 worried about, already solved once. `absent: KeyboardShortcutRegistry` (D91).
+2. **D86's missing half — a Full Screen choice in the recording UI.** The capture
+   is BUILT: `StartOptions.displayID` → `TargetReference.display(id:)` →
+   `SCContentFilter(display:excludingWindows:)`, with the resolver erroring on a
+   vanished display, `ConsentPolicy` checking `displayID` before
+   `bundleIdentifier`, and `MCPBridge` requiring exactly one of the two. Only the
+   human-facing affordance is missing. Sized accordingly.
+3. **Pick a licence.** Promoted out of "not a milestone and not expensive"
+   (2026-09-09) because it is the only thing standing between shipped copies and
+   working updates. `v0.1.0` is published, there is no `LICENSE` file, the repo is
+   private, and `SUFeedURL` points at
+   `releases/latest/download/appcast.xml` (`Scripts/make-app.sh:162`) — which
+   404s to anyone unauthenticated. **Every copy in the field is unable to
+   auto-update today**, and D54's mechanism is built and correct behind it. That
+   is a shipped-user-visible symptom, not paperwork.
+4. **Visible keyboard input** — **gated by §5.6** (D67): off by default, chords
    only when on, literal character stream a separate per-recording opt-in. The
    policy is settled; what remains is key identity through the tap callback,
-   `LoggedEvent` and `events.json` behind D60's version gate.
-10. **M5d durability**, rescoped to what protects an unattended agent run.
-    Replan required: the original plan had six verified defects.
+   `LoggedEvent` and `events.json` behind D60's version gate. Confirmed unbuilt
+   2026-09-09: `InputEventMonitor.kind(for:)` maps `.keyDown` to a bare
+   `.keystroke` and reads no `keyCode` (`InputEventMonitor.swift:48`).
+5. **D56 Tier 2 — segments** (slice, reorder, per-track cuts). A schema *and*
+   algorithm replacement: `KeptRanges` sorts cuts and walks a forward cursor, so
+   it cannot express order at all (D59) — confirmed 2026-09-09 at
+   `KeptRanges.swift:12-34`. **Re-priced 2026-09-09; it is the most expensive and
+   most dangerous item here, and it was under-priced.**
+   `EditDecisionList.swift:249-257` records that D60's schema-version gate "never
+   fired for any bundle that actually exists": bundles written before the
+   stamp-on-encode fix declare `schemaVersion: 1` while carrying schema-2,
+   `id`-bearing cuts. The fix is shipped, but **those mis-stamped bundles are on
+   disk**, and this item is precisely the non-additive change that comment warns
+   "turns the same situation into exactly the silent, unrecoverable loss
+   `EditDecisionListError`'s own message promises to prevent." CI cannot catch it
+   — `SnittExportTests` and `SnittAppTests` are excluded because they hang on a
+   headless runner. **Prerequisite: a migration test against a real pre-fix
+   bundle**, run locally under an untrimmed `swift test`, before any merge. `absent: Segment` (D91).
 
-**Pick a licence.** Not a milestone and not expensive, but "open source, free, no
-subscription" is one of D66's five reasons this exists, and the repo is private
-today *because* the licence is unsettled. Choosing one unblocks going public,
-which in turn unparks update hosting.
+### Blocked — and the edge that blocks each
+
+Dependencies are edges, not positions. An item here cannot start until its edge
+clears, whatever its value.
+
+- **Zoom + follow-mouse** — *needs the window-frame coordinate track (for observed
+  coordinates) and D56 Tier 2 (for per-segment attachment)*. Cheap in mechanism,
+  gated on both.
+- **M5d durability**, rescoped to what protects an unattended agent run —
+  *needs its replan first*: `docs/superpowers/plans/2026-09-06-snitt-m5d-durability.md`
+  carries a DO-NOT-EXECUTE banner naming six verified defects. **Defect #6 is not
+  a live bug and must not be cited as one** (established 2026-09-09): it describes
+  stale UI state "after an interruption finalizes", but no interruption path
+  exists — a grep for `SCStreamDelegate`/`didStopWithError`/`ENOSPC` across
+  `SnittCapture` and `RecordingCoordinator` returns nothing — and the *other*
+  unattended path is already handled. `AutomationHost.expire()`
+  (`AutomationHost.swift:1111-1135`) clears state and records
+  `AuditOutcome.capped` on both `.stopped` and `.failed`, and its comment names
+  defect #6's exact failure as the thing the watchdog exists to fix. The real
+  gap is that stream-death and disk-full are **unhandled**, which is a different
+  and still-unobserved claim.
 
 ### Queued enhancements — requested, recorded, NOT ranked
 
-Direction from the product owner that was deliberately not built when it
-arrived. Listed here because a decision-log entry alone is invisible to
-planning: "queued as an enhancement" means nothing if the priority surface does
-not carry it. **Their position in the order above is an open question** — they
-have not been ranked against items 7-10 or against each other.
+Direction from the product owner that was deliberately not built when it arrived.
+Listed here because a decision-log entry alone is invisible to planning. **Their
+position is an open question** — they have not been ranked against the list above.
+D84 and D86 left this section on 2026-09-09 once their real cost was measured.
 
 - **D83 — per-channel gain automation.** A level line per audio lane with
-  draggable points and eased segments, replacing the global sliders.
-  `AVMutableAudioMix.setVolumeRamp` makes the export side small; the work is an
-  envelope in SOURCE time that survives cuts.
-- **D84 — editor keyboard shortcuts.** Space to start/stop, rewind, jump to
-  previous/next marker. The trap is that space and the arrows are also text
-  input and the editor has live fields.
-- **D86 — full-screen capture.** `SCContentFilter(display:)` is small; D69's
-  "name which window, never guess" returns as "which display" on a
-  multi-monitor Mac, and §5's picker-every-time (D42) is the other half.
-- **D89 — the transcript as a timeline lane**, words positioned at the times
-  they are spoken. The data is already the right shape; the work is density
-  (~150 words a minute against ~1000px) and positioning in OUTPUT time.
+  draggable points and eased segments. *Edge: needs D56 Tier 2, OR a design that
+  re-derives the envelope through `Timebase` rather than raw `KeptRanges`.* D83's
+  own text says the envelope "must be re-derived against `KeptRanges`" — the
+  structure Tier 2 replaces. Verified 2026-09-09: `Timebase`
+  (`Timebase.swift:44-97`) already wraps `KeptRanges.compute` as the single
+  conversion point and markers survive cuts through it, so the edge is a design
+  choice rather than a hard gate — but the insulation is partial, since
+  `CompositionBuilder`, `TimelineView`, `TranscriptPane`,
+  `EditorWindowController`, `AutomationHost` and `RecordingIcon` all still read
+  `KeptRanges` directly. `absent: GainEnvelope` (D91).
+- **D89 — the transcript as a timeline lane**, words positioned at the times they
+  are spoken. The data is already the right shape (`TranscriptWord.start`,
+  `TranscriptPlayhead.currentWordID`); the work is density (~150 words a minute
+  against ~1000px) and positioning in OUTPUT time so a cut re-flows them. `absent: TranscriptLane` (D91).
 
 ### Parked, with the condition that would unpark each
 
@@ -1585,12 +1579,16 @@ window-relative overlay. **Zoom + follow-mouse is per *segment*, and segments do
 | D87 | **Scrubbing stops playback; rewind does not** — every navigation gesture (the timeline lane, a chapter in the panel, a word in the transcript) pauses on the way to its target, and a Rewind button sends the playhead to the start without touching the transport | Product-owner direction, reported as two items ("the UI needs a rewind button", "clicking anywhere in the timeline stops playing"). The scrub half is a correction: aiming at a frame while the picture keeps moving means the frame is gone by the time the seek lands, and the playhead then walks away from where it was just put — which reads as the click having been ignored rather than as playback continuing. **All three navigation paths share `onScrub` deliberately**, because they are the same act with different targets, and pausing only on the lane would make the panes behave differently from the timeline for no reason a user could predict. **Rewind is the exception and is the reason it does not route through `onScrub`**: pressed during playback it restarts the run from the top, which is the replay gesture and the whole reason to reach for it while watching. It seeks the composition at zero rather than mapping through `keptRanges` — zero in OUTPUT time is the start of the edit whatever is cut, so there is nothing to resolve, and the mapping would only be an extra way to be wrong. Both mutation-verified on the PLAYER rather than on calls: `rewind()` written as `onScrub(0)` — the obvious implementation, and one that inherits the new pause — fails `rewindKeepsPlaying`, which counting `pause()` calls would not | §4.5, D56, D75, D76, D82; `EditorWindowController.swift` (`onScrub`, `rewind`) | Decided (built) | a-scrub-aims-at-a-frame-a-rewind-aims-at-a-beginning |
 | D85 | **A crop is PROPOSED, then committed** — entering crop mode puts an adjustable bounding box over the whole picture, which drags move and resize until an explicit Apply writes it to the EDL | Product-owner direction ("crop should be a bounding box that can be adjusted before committing to the crop"). The first version applied on mouse-up, which made cropping a single unrepeatable act: the only correction was undo plus a fresh drag, and the box being aimed at had already vanished from the screen. **The proposal lives in the editor view, not the overlay**, normalized to the picture rather than to the view — Apply is a toolbar button that has to read it, and normalizing keeps a placed box where the user put it when the window resizes under it. **The overlay can no longer apply anything**: it takes a `Binding<CropRect>` and has no commit callback at all, so "nothing reaches the EDL until Apply" is a fact about the type rather than a claim a test has to defend. **Entering starts from the full frame every time**, because `applyCrop` COMPOSES onto the existing crop and the preview already shows it — the full frame is the identity, and a leftover box from a cancelled attempt would silently re-propose itself. Apply is disabled at the full frame, since composing it is a no-op and a button that appears to do nothing is worse than one that says why. **Clamping, not flipping, when an edge is dragged past its opposite**, with a 32pt floor: a box that inverts under the pointer is disorienting, and one dragged to zero cannot be recovered because there is nothing left on screen to grab — and the floor yields to a picture smaller than itself, which a narrow window or a pillarboxed portrait recording produces. Moving clamps position without resizing, so shoving the box into a corner does not silently narrow it. All of it in `CropBox`, pure, and mutation-verified against six wrong implementations including a y-flip and an edges-before-corners hit test | §4.8, D64; `CropBox.swift`, `CropDragOverlay.swift`, `CropGeometry.swift` | Decided (built) | a-crop-you-cannot-adjust-is-a-guess |
 
-| D86 | **QUEUED, not built: an option to capture the FULL SCREEN**, alongside the window and region choices the picker offers today | Product-owner direction, explicitly filed as a future enhancement. `ScreenCaptureKit` supports it directly — `SCContentFilter(display:excludingWindows:)` — so the capture side is small. **The work is everything downstream of "which display"**: D69 refuses to guess which window an agent means and the same question returns for displays on a multi-monitor Mac, so `StartOptions` needs a display selector with the same no-guessing stance rather than a bare `fullScreen: true`. §5's consent behaviour is the other half — the picker appears on every recording (D42), and a full-screen grab is the widest capture Snitt can take, so it is the last thing that should acquire a way to skip the picker | §4.11, §5, D42, D69; `CaptureSession.swift`, `StartOptions.swift` | Queued (not built) | which-screen-is-the-same-question-as-which-window |
+| D86 | **Full-screen capture is BUILT; what is missing is a Full Screen choice in the recording UI** — re-scoped 2026-09-09 from "add full-screen capture" | **The entry this replaces was wrong, and I wrote it the day before.** It said "`SCContentFilter(display:excludingWindows:)` makes the capture side small; the work is everything downstream of *which display*" and that "`StartOptions` needs a display selector with the same no-guessing stance" — all of which already existed. Verified end to end: `StartOptions.displayID` (`Protocol.swift:67`), `TargetReference.display(id:)` (`TargetReference.swift:47`), `SCContentFilter(display:excludingWindows:)` (`CaptureTarget.swift:82`), resolution with a `targetGone` error for a vanished display (`CachedTargetResolver.swift:180-195`), a CLI flag (`CommandLineParser.swift:277`), the host mapping it (`AutomationHost.swift:881-882`), **the no-guessing stance** — `MCPBridge` requires exactly one of `bundleIdentifier`/`displayID` (`MCPBridge.swift:228`) — and **the §5 half**, since `ConsentPolicy.evaluate` checks `displayID` BEFORE `bundleIdentifier` (`ConsentPolicy.swift:33`), so consent already treats a display grab as the widest capture. An agent has been able to record a whole display since D69. Only the human cannot ask for it. **This is the fifth time this project's planning surface has described built work as pending**, and the first one authored during the same session that then ranked it — which is why D91 exists | §4.11, §5, D42, D69, D91; `CaptureTarget.swift`, `ConsentPolicy.swift`, `StatusItemController.swift` | Decided (next; capture half already built) | i-planned-work-that-was-already-shipped |
 | D82 | **The chapter panel is the PRECISE editing surface for a marker; the lane is the rough one** — a chapter's time is typed (`m:ss`, `h:mm:ss`, or bare seconds) in the same inline edit as its name, and both commit as one mutation | Product-owner direction, arriving with a bug that turned out to be the same subject. Dragging a marker on the lane is pixel work: on a 20-minute recording zoomed to fit, one pixel is seconds, and the person editing usually already KNOWS the number — "the demo starts at 1:30". So the panel takes typed times, and the lane keeps the drag. **The bug it arrived with**: a dragged marker snapped back to its old position until the timeline was clicked again. `EditorTimelineState.displayState` read `controller.markerTrackPoints`, a cache refreshed inside `applyAndSaveEvents`'s async `Task` on a `PreviewController` that is a plain class with no `@Published` — so the drag mutated `events` (published), SwiftUI re-rendered synchronously, read the *stale* cache, and the later refresh triggered no redraw at all. It now derives from `events` directly via `MarkerTrackPoints.compute`, the same function the cache calls. **One mutation, not `moveMarker` then `renameMarker`.** The first draft justified that with undo and was wrong — `UndoManager.groupsByEvent` is on by default, so two registrations in one run-loop pass collapse into a single ⌘Z, and the test written to prove otherwise passed against both implementations. The real reasons survived: two calls write `events.json` twice for one edit, and between them `events` publishes with the new time and the OLD name, a row nobody typed, rendered by every view watching the array. **Typed time is OUTPUT time**, converted through `Timebase` like every other coordinate the editor shows (M4b shipped that bug once). **Unreadable text keeps the current time rather than reading as zero** — a half-typed `1:` is somebody still typing, not a request to jump to the start — and `1:75` is refused rather than carried to 2:15, because the field closes on commit and a silent carry lands the chapter somewhere unseen. A time past the end clamps, matching a drag, which cannot go past the end because there is no timeline there to drop on | §4.5, D50, D56, D75, D79; `MarkerPane.swift`, `EditorWindowController.swift` (`applyChapterEdit`, `displayState`) | Decided (built) | the-panel-is-for-numbers-you-already-know |
 
 | D83 | **QUEUED, not built: per-channel gain automation — a level line on each audio lane with draggable points and eased segments between them**, replacing the two global gain sliders | Product-owner direction, explicitly deferred ("record 4 as an enhancement, don't do it now"). The motivating case is the one Snitt is built for: a recording where system audio is loud under a demo and the narration is quiet, which a single global gain cannot fix — lowering system audio for the whole recording also lowers the part where it IS the content. **What makes it more than a UI**: `AVMutableAudioMix` already supports this natively via `setVolumeRamp(fromStartVolume:toEndVolume:timeRange:)`, so the export path needs ramps rather than a new mixing stage, and the current global gain is already an `AVMutableAudioMixInputParameters` volume. The work is the editing surface and the model — a per-channel envelope in SOURCE time that survives cuts, which is the part cuts make hard: a ramp spanning a removed span must be re-derived against `KeptRanges` or the eased curve lands wrong after every trim, exactly as marker positions do (D56). **Easing between points, not steps**, because a step change in gain is audible as a click. Not scheduled against a milestone; it re-scopes the editor's audio pane rather than joining an existing item | §4.8, D56, D57, D73; `EditorWindowController.swift` (audio gain), `CompositionBuilder.swift` (audio mix) | Queued (not built) | one-slider-cannot-fix-two-problems |
 
-| D84 | **QUEUED, not built: editor keyboard shortcuts — space to start/stop the playhead, a shortcut for rewind, and shortcuts to jump to the previous/next marker** | Product-owner direction, explicitly deferred ("add keyboard shortcuts as a task, don't do it now"). Space-to-play is the convention in every editor a user arrives from, and marker-to-marker jumping is the gesture the chapter panel exists to serve — the panel gives it a mouse target, this gives it a key. **The trap to plan for, not discover**: space and the arrow keys are also text input, and the editor has live text fields (chapter names, transcript corrections, the vocabulary box). A key handler installed at the window level will eat the space bar while somebody is naming a chapter. The shortcuts belong on menu items with key equivalents, or behind a first-responder check, and "typing a space into a field pauses playback instead" is the regression a test must name. Jump-to-marker needs a definition of "next" when the playhead is exactly on one, and must navigate OUTPUT time so a marker inside a cut is skipped rather than seeked to (D75 lists those but the transport cannot reach them) | §4.5, D50, D75, D82; `EditorWindowController.swift`, `MarkerPane.swift`, main menu | Queued (not built) | space-is-also-a-character |
+| D84 | **Editor keyboard shortcuts, driven by a REGISTRY that also renders the help** — space to start/stop, rewind, jump to previous/next marker, with every binding declared in one place that both installs the menu items and populates a **Help ▸ Keyboard Shortcuts** dialog | Product-owner direction, queued 2026-09-09 and promoted the same day once its real cost was measured. **The registry is the product owner's addition and it is the load-bearing part**: a shortcut list maintained separately from the bindings is a documentation surface that drifts from behaviour, which is precisely the class `ServerInstructionsTests` exists to catch — one source of truth is cheaper than a test that detects the divergence after it happens. **The entry that queued this over-priced it.** It warned that "space and the arrow keys are also text input" and that the shortcuts "belong on menu items with key equivalents, or behind a first-responder check" — that mechanism ALREADY SHIPS: `Cut Selection` binds a bare Backspace with `keyEquivalentModifierMask = []` (`AppShell.swift:141-145`), and `AppDelegate`'s `NSMenuItemValidation` conformance (`main.swift:529-534`) is what keeps that bare key from swallowing Backspace everywhere else in the app. So the work is additive: declare the bindings, add the menu items, widen one single-selector guard into a switch, and render the registry as a window. Jump-to-marker must navigate OUTPUT time so a marker inside a cut is skipped rather than seeked to, and needs a defined answer for "next" when the playhead sits exactly on one | §4.5, D50, D75, D82, D87; `AppShell.swift`, `main.swift` (`validateMenuItem`), `EditorWindowController.swift` | Decided (next) | one-source-of-truth-for-a-binding-and-its-documentation |
+
+| D90 | **§13 retires the predicted total order.** Three sections replace it: *Shipped*, *Next — unblocked, in value order*, and *Blocked — and the edge that blocks each*, with dependencies written as explicit edges rather than as positions in a list | Unanimous across all five personas of the 2026-09-09 refinement debate, which is itself the evidence: no role defended the numbered order. The measured problem is that the order was **fiction maintained at a cost**. Of items 1-10, six were already BUILT — 1, 3, 4, 5, 6, and 2 "cleared" twice — so the list was roughly 60% historical ledger wearing a queue's numbering, and a reader had to work out which numbers were still live before trusting any of them. Meanwhile the last ~15 shipped things arrived as direct product-owner direction rather than off the list, and the list needed correcting four separate times for describing built work as pending. **What was load-bearing survives: the edges.** "Zoom + follow-mouse needs 6 and 7" is a fact about the code; "zoom is item 8" was a guess about a future nobody consulted. The Operator's framing carried it — a numbered list whose live entries cannot be distinguished from its dead ones is stale signage, and the decision log already holds the causal *why* that a total order was pretending to encode. Product/UX conceded outright, having opened by proposing a new position within the very order it then agreed to retire | §13, D47, D52, D65, D66, D91 | Decided (applied) | a-list-nobody-consults-is-a-cost-not-a-plan |
+
+| D91 | **A queued or next item must NAME the symbol it would create, and a test asserts that symbol does not exist yet** | Five instances of one class: §13 recorded shipped work as pending for crop, D73's speaker-bleed warning, M5e's agent primitives (with three of S5's four premises stale), D57's transcript word spans, and D86 — the last written and then ranked inside a single session. `field-notes.md` (2026-09-08) concluded no cheap mechanical check could catch it, "because 'is this built?' is not answerable from prose." **That conclusion is what this decision overturns.** It is not answerable from prose — but a plan item does not have to be prose. An item that names the type it would add — the marker is a bare symbol name, checked as a DECLARATION (`struct X`, `func X`) rather than a mention, so the spec's own vocabulary appearing in a comment does not cry wolf — is making a claim a grep falsifies in milliseconds, and every one of the five instances would have failed such a check on the day it was written. **Known limit, stated rather than hidden**: it covers only items whose completion introduces a named symbol. "A Full Screen menu item" and "pick a licence" carry no marker, so the habit of reading an item's premises against the code remains the primary defence and this is the backstop. The precedent is already here: `ServerInstructionsTests` guards prose that drifted from the agent surface, and `NotarizeScriptTests` reads a shell script. **Five hits is past the point where patching instances is defensible** — the recurrence rule says the third demands a structural guard or an explicit decision not to fix, and this is the fifth. Deliberately weak by design: it proves absence, never presence, so it cannot tell you an item IS built — only that a "not yet built" claim has already stopped being true | §13, §15, D47, D90; `Tests/SnittDocumentTests/` | Decided (applied) | prose-cannot-be-checked-but-a-symbol-name-can |
 
 `conformance: 2026-09-07` (post-D66 refinement pass)
 
@@ -1613,3 +1611,42 @@ were uncontested and recorded directly; the conformance walk is clean.
 Not covered by this pass, by design: adversarial review of code (none exists
 yet — that belongs to `/code-review` once the plan produces a diff), and a
 zero-trust plan-vs-implementation audit. This was the light, memory-carrying pass.
+
+---
+
+## Refinement pass — 2026-09-09 (§13 priority)
+
+Question asked: what is built next, and where do the four queued enhancements sit
+against items 7-10 and against "pick a licence". Five persona sub-agents diverged
+in parallel; all five were resumed with their own context for one cross-examination
+round on the two contested items. **Verdict: Proceed** — the spec's content was
+sound; its §13 *structure* was not.
+
+**What the grounding found.** Items 7, 9 and 10 had accurate premises. Two did not:
+D86 was already built end to end on the agent path, and D84's cost was overstated
+by its own entry because the bare-key-plus-validation mechanism it needs already
+ships. Both errors were mine, written the previous day — a thin source caught
+twice, which is why D91 exists rather than a sixth correction.
+
+**What the debate settled.** D84 next, through a shortcut registry that also feeds
+a Help ▸ Keyboard Shortcuts dialog (product-owner addition: one source of truth
+beats a list that drifts). D86 re-scoped to its missing GUI affordance. The licence
+promoted, because shipped copies cannot auto-update while the repo is private.
+§13's numbered order retired unanimously (D90) — six of ten entries were already
+BUILT, so the numbering was stale signage over a historical ledger.
+
+**Two claims this pass RETIRED rather than ranked.** M5d's defect #6 cannot fire
+today: the watchdog path already handles it and stream-death has no handler to
+reach it from, so it is a defect in an unbuilt plan and must not be cited as a live
+bug. And item 7 was under-priced: mis-stamped pre-fix bundles exist on disk, and it
+is exactly the non-additive change `EditDecisionList` warns turns that into silent
+unrecoverable loss — it now carries a migration-test prerequisite.
+
+**Not covered by this pass, by design:** adversarial review of code (that is
+`/code-review` against a diff), and a zero-trust plan-vs-implementation audit. This
+was the light, memory-carrying pass. Accessibility is discussed in the spec but no
+explicit annotations exist in `Sources/`; SwiftUI defaults cover standard controls
+and the custom-drawn timeline is the open question. Not assessed. The decision log
+is past the ~50-entry compaction threshold and was deliberately not compacted.
+
+`conformance: 2026-09-09` (post-§13-restructure refinement pass)
