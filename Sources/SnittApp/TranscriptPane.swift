@@ -22,6 +22,8 @@ struct TranscriptPane: View {
     /// presentation state.
     @State private var editingWordID: UUID?
     @State private var editingText = ""
+    /// Whether the refine panel is open. UI-only, like `editingWordID`.
+    @State private var refining = false
     @FocusState private var editingFocused: Bool
 
     var body: some View {
@@ -98,7 +100,58 @@ struct TranscriptPane: View {
                 .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 8)
-        .padding(.bottom, 6)
+
+        refinePanel
+            .padding(.horizontal, 8)
+            .padding(.bottom, 6)
+    }
+
+    /// Running the recogniser again with better hints (D81).
+    ///
+    /// Behind a disclosure rather than always open: re-transcribing is a
+    /// deliberate second attempt, not part of reading a transcript, and a text
+    /// field permanently occupying the pane would say otherwise.
+    @ViewBuilder
+    private var refinePanel: some View {
+        DisclosureGroup(isExpanded: $refining) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Words to expect")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                // Symbol names, file names, product names — the things a
+                // general speech model has never heard and will otherwise
+                // guess at.
+                TextField("KeptRanges, SCStream, edit.json",
+                          text: $state.vocabularyText, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...4)
+                    .font(.caption)
+                Text("Comma separated. A word you never say costs nothing, so list "
+                     + "them generously — up to \(Vocabulary.limit).")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                HStack {
+                    Button("Re-transcribe") { state.retranscribe() }
+                        .disabled(state.transcriptionStatus == .transcribing)
+                    if state.transcriptionStatus == .transcribing {
+                        ProgressView().controlSize(.small)
+                    }
+                    Spacer()
+                }
+                // Said BEFORE the button is pressed, not after. A correction is
+                // only marked by confidence 1.0, which a confident recognition
+                // also produces, so there is no way to keep one and replace the
+                // rest — undo is the whole answer and has to be advertised.
+                Text("Replaces the transcript, including any corrections. Undo brings them back.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.top, 4)
+        } label: {
+            Text("Refine transcription")
+                .font(.caption)
+        }
+        .onAppear { state.loadVocabulary() }
     }
 
     @ViewBuilder
