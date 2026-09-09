@@ -425,3 +425,46 @@ time, billed at 10x on a private repo. And several runs before it were
 CANCELLED rather than completed, because `concurrency: cancel-in-progress`
 supersedes a run on every push — correct behaviour, and confusing when you are
 waiting on a result that was never going to arrive.
+
+### 2026-09-08 (the plan lagged the code three times in one day)
+
+`§13`'s "Next, in order" listed built work as pending three separate times, and
+each was found only by checking before starting:
+
+- **Crop** sat at position 1 as "the cheapest item in the queue" a day after it
+  shipped with live preview, undo, `CropRect.composing` and a CLI verb.
+- **D73's speaker-bleed warning** was listed as not-yet-built while being built
+  the same afternoon — that one is ordinary lag.
+- **M5e's agent primitives** were all present: pause/resume, screenshot,
+  WebVTT subtitles, `paused` state, and the screenshot-marks-the-frame
+  correlation guarantee. **S5, which supposedly gates M5e, had three of its
+  four premises stale too** — the bundle already embedded both binaries,
+  `snitt setup` already existed, and the `instructions` field it called "cheap
+  and unblocked" was already set.
+
+D47's conformance guard does not catch this. It checks that §-refs and D-refs
+RESOLVE, not whether a "next" item describes work that is done — and no cheap
+mechanical check does, because "is this built?" is not answerable from prose.
+
+The working countermeasure is behavioural and it earned its keep every time:
+**read the item's premises against the code before starting it.** Twice today
+that turned a planned build into a five-minute correction, and once (S5) it
+redirected the work entirely — from "decide how to register an MCP server" to
+"the prose describing it has gone stale and nothing guards it."
+
+### 2026-09-08 (a documented threshold whose evidence has expired)
+
+`fileLengthLimitAloneShrinksTheFile` failed once in three full-suite runs and
+passed 5/5 standalone: 486,801 bytes against a 470,595 bound, ratio 0.931.
+
+The threshold is not arbitrary — its comment records a mutation-derived basis:
+true-positive ratios "mostly 0.30-0.50, reached as high as 0.79 twice under
+heavy contention", no-op ratios "0.97-1.0", and 0.90 chosen to sit ~0.11 above
+one and ~0.07 below the other.
+
+**Today's true positive was 0.931, above that recorded ceiling.** The gap the
+threshold lives in has narrowed from ~0.18 to ~0.04 as the suite grew to a
+thousand tests and contention rose. Left ALONE deliberately: widening 0.90 on a
+single observation would erase a decision derived from ~30 measured runs, and
+the honest fix is to re-derive the distribution, not to nudge the number until
+it stops failing.
