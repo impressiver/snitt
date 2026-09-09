@@ -123,7 +123,12 @@ public struct AutomationRequest: Codable, Sendable {
         /// arrive here as the same thing and the app has one code path.
         case autoDeepTrim(bundlePath: String, criteria: DeepTrimCriteria)
         case export(bundlePath: String, format: String, outputPath: String,
-                    scale: Double, chapters: Bool, subtitles: Bool, maxSizeBytes: Int?)
+                    scale: Double, chapters: Bool, subtitles: Bool, maxSizeBytes: Int?,
+                    /// D64: draw reported clicks onto the video. Off unless
+                    /// asked — a recording's clicks are data (§4.5), and
+                    /// burning them in is a choice, not a consequence of having
+                    /// logged them.
+                    clicks: Bool)
         /// `outputPath` arrives already resolved against the CALLER's working
         /// directory (`PathResolver.resolve`, done by the CLI before this is
         /// sent) — never the app's, whose own cwd is not the caller's (M3c

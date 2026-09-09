@@ -95,6 +95,9 @@ snitt — record a window and hand back a .snitt bundle
         [--input-padding S] [--reading-time S]
                                          a preset sets all five; each flag
                                           overrides one of them
+  snitt export <bundle> --format mp4|gif --out <path>
+        [--scale F] [--chapters] [--subtitles] [--clicks] [--max-size N]
+                                         --clicks draws reported clicks
   snitt inspect <bundle>                 metadata as JSON, no GUI
   snitt trim <bundle> --start <s> --end <s>   cut a range (edit.json only)
   snitt trim <bundle> --auto-trim        trim bookends from a human recording's
@@ -248,12 +251,13 @@ func requestBody(for command: ParsedCommand,
         // here is louder than a `.status` fallback that would silently make
         // `snitt setup` report whether a recording is running.
         fatalError("setup is handled before the client connects")
-    case .export(let path, let format, let out, let scale, let chapters, let subtitles, let maxSizeBytes):
+    case .export(let path, let format, let out, let scale, let chapters, let subtitles,
+                 let maxSizeBytes, let clicks):
         return .export(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
                        format: format,
                        outputPath: PathResolver.resolve(out, workingDirectory: currentDirectory),
                        scale: scale, chapters: chapters, subtitles: subtitles,
-                      maxSizeBytes: maxSizeBytes)
+                      maxSizeBytes: maxSizeBytes, clicks: clicks)
     case .diagnosticsExport(let path):
         return .diagnostics(outputPath: PathResolver.resolve(path, workingDirectory: currentDirectory))
     case .help: return .status  // unreachable; handled above

@@ -39,7 +39,8 @@ public enum ParsedCommand: Equatable {
     /// `x`/`y` are nil for a `keystroke`, which happens at no particular place.
     case recordInput(sessionID: String, kind: String, x: Double?, y: Double?)
     case export(bundlePath: String, format: String, outputPath: String,
-                scale: Double, chapters: Bool, subtitles: Bool, maxSizeBytes: Int?)
+                scale: Double, chapters: Bool, subtitles: Bool, maxSizeBytes: Int?,
+                clicks: Bool)
     /// `outputPath` here is still the RAW string typed on the command line —
     /// `main.swift` resolves it against the caller's cwd before it reaches
     /// the wire, the same as `.export`'s `outputPath`/`.trim`'s
@@ -404,6 +405,7 @@ public enum CommandLineParser {
         var scale = 1.0
         var chapters = false
         var subtitles = false
+        var clicks = false
         var maxSizeBytes: Int?
         var index = 0
         while index < args.count {
@@ -426,6 +428,8 @@ public enum CommandLineParser {
                 chapters = true
             case "--subtitles":
                 subtitles = true
+            case "--clicks":
+                clicks = true
             case "--max-size":
                 index += 1
                 guard index < args.count else { return .failure(ParseFailure("--max-size needs a value")) }
@@ -461,7 +465,8 @@ public enum CommandLineParser {
             return .failure(ParseFailure("--scale must be greater than 0, got \(scale)"))
         }
         return .success(.export(bundlePath: path, format: format, outputPath: outputPath,
-                                 scale: scale, chapters: chapters, subtitles: subtitles, maxSizeBytes: maxSizeBytes))
+                                 scale: scale, chapters: chapters, subtitles: subtitles, maxSizeBytes: maxSizeBytes,
+                                clicks: clicks))
     }
 
     private static func parseDiagnosticsExport(_ args: [String]) -> Result<ParsedCommand, ParseFailure> {

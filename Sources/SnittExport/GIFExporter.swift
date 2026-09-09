@@ -39,9 +39,34 @@ public enum GIFExporter {
             .appendingPathExtension(url.pathExtension)
     }
 
+    /// Composite the rings visible at this instant onto one decoded frame.
+    ///
+    /// Returns the original image untouched if a context cannot be made, so a
+    /// drawing failure costs the overlay rather than the export.
+    private static func drawClicks(_ marks: [ClickMark], on image: CGImage,
+                                   atOutputTime outputTime: Double,
+                                   renderSize: CGSize) -> CGImage {
+        guard let context = CGContext(
+            data: nil, width: image.width, height: image.height,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return image }
+        context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+        // ClickMark positions have a TOP-LEFT origin; CGContext's is
+        // bottom-left. Flipping here, once, keeps the mark type in one
+        // convention rather than making every reader ask which it is.
+        context.translateBy(x: 0, y: CGFloat(image.height))
+        context.scaleBy(x: 1, y: -1)
+        ClickOverlay.draw(marks: marks, atOutputTime: outputTime,
+                          renderSize: renderSize, into: context)
+        return context.makeImage() ?? image
+    }
+
     public static func write(_ built: BuiltComposition,
                              to url: URL,
-                             framesPerSecond: Double) async throws {
+                             framesPerSecond: Double,
+                             clicks: [ClickMark] = []) async throws {
         let renderSize = built.videoComposition.renderSize
         // MUST precede the assignment below. Not a defensive nicety: the
         // ObjC exception this avoids cannot be caught from Swift, so the
@@ -99,8 +124,19 @@ public enum GIFExporter {
 
         for await result in generator.images(for: times) {
             switch result {
-            case .success(requestedTime: _, image: let image, actualTime: _):
-                CGImageDestinationAddImage(destination, image, frameProperties)
+            case .success(requestedTime: let requested, image: let image, actualTime: _):
+                // Click rings are drawn HERE rather than by an animation tool,
+                // because this path is `AVAssetImageGenerator` and that ignores
+                // `AVVideoComposition.animationTool` entirely. A burn that
+                // worked for mp4 and silently did nothing for GIF is the
+                // failure mode worth avoiding — the caller asked for clicks and
+                // would get a file without them.
+                let frame = clicks.isEmpty
+                    ? image
+                    : drawClicks(clicks, on: image,
+                                 atOutputTime: CMTimeGetSeconds(requested),
+                                 renderSize: renderSize)
+                CGImageDestinationAddImage(destination, frame, frameProperties)
             case .failure(requestedTime: let time, error: let error):
                 // Per-frame failures are DELIVERED, not thrown. Skipping them
                 // writes a GIF that is quietly missing frames — §11 is

@@ -104,6 +104,8 @@ func degenerateRenderSizeRefused() async throws {
         composition: built.composition,
         videoComposition: AVMutableVideoComposition(),   // renderSize .zero
         audioMix: built.audioMix,
+        renderTransform: built.renderTransform,
+        naturalSize: built.naturalSize,
         duration: built.duration,
         sourceDuration: built.sourceDuration,
         keptRanges: built.keptRanges)
@@ -147,6 +149,8 @@ func unfulfillableFrameFailsExport() async throws {
         composition: built.composition,
         videoComposition: built.videoComposition,
         audioMix: built.audioMix,
+        renderTransform: built.renderTransform,
+        naturalSize: built.naturalSize,
         duration: built.duration + 5,
         sourceDuration: built.sourceDuration,
         keptRanges: built.keptRanges)
@@ -197,6 +201,8 @@ func throwingWriteDoesNotDestroyAPreviousGoodFile() async throws {
         composition: built.composition,
         videoComposition: built.videoComposition,
         audioMix: built.audioMix,
+        renderTransform: built.renderTransform,
+        naturalSize: built.naturalSize,
         duration: built.duration + 5,
         sourceDuration: built.sourceDuration,
         keptRanges: built.keptRanges)

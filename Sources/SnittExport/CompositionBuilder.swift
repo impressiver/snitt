@@ -25,6 +25,17 @@ public struct BuiltComposition: @unchecked Sendable {
     /// Built once, inside `build`, and never mutated afterwards: see the
     /// `@unchecked Sendable` note above.
     public let audioMix: AVAudioMix?
+    /// Source pixels to render pixels — the transform the video layer is
+    /// actually drawn with.
+    ///
+    /// Carried so an overlay places itself with the SAME arithmetic the picture
+    /// moved by, rather than reconstructing crop-and-scale from parts. §9 names
+    /// that reconstruction as the reason position-critical overlays drift.
+    public let renderTransform: CGAffineTransform
+    /// The source video's natural size, before orientation, crop or scale.
+    /// An overlay position given as a fraction of the recorded window becomes
+    /// source pixels by multiplying by this.
+    public let naturalSize: CGSize
     public let duration: Double
     /// The SOURCE recording's media duration — `mediaDuration(of:)`'s
     /// result, before any cuts. Distinct from `duration` above, which is
@@ -114,6 +125,28 @@ public enum CompositionBuilder {
             return .zero
         }
         return try await track.load(.naturalSize)
+    }
+
+    /// Source pixels to render pixels.
+    ///
+    /// Extracted so anything that needs to know WHERE something lands in the
+    /// exported frame — a click ring, a future keystroke chip — applies the
+    /// very transform the video does, rather than re-deriving it. §9 names that
+    /// re-derivation as the reason position-critical overlays are hard: "a
+    /// preview overlay and an export burn would each reimplement that math and
+    /// drift". They cannot drift from a function they both call.
+    ///
+    /// Order matters and reads left-to-right: orient the source, slide the
+    /// crop's top-left corner to the render origin, then scale. Because
+    /// `concatenating` applies the receiver first, the translation is expressed
+    /// in post-orientation pixels and is itself scaled — which is what makes
+    /// `renderSize` the exact bounds of the result.
+    public static func renderTransform(preferredTransform: CGAffineTransform,
+                                       cropOrigin: CGPoint,
+                                       scale: Double) -> CGAffineTransform {
+        preferredTransform
+            .concatenating(CGAffineTransform(translationX: -cropOrigin.x, y: -cropOrigin.y))
+            .concatenating(CGAffineTransform(scaleX: scale, y: scale))
     }
 
     public static func mediaDuration(of bundle: SnittBundle) async throws -> Double {
@@ -282,9 +315,8 @@ public enum CompositionBuilder {
         // expressed in post-orientation pixels and is itself scaled — which is
         // what makes `renderSize` above the exact bounds of the result.
         layerConfig.setTransform(
-            preferredTransform
-                .concatenating(CGAffineTransform(translationX: -cropOrigin.x, y: -cropOrigin.y))
-                .concatenating(CGAffineTransform(scaleX: scale, y: scale)),
+            Self.renderTransform(preferredTransform: preferredTransform,
+                                 cropOrigin: cropOrigin, scale: scale),
             at: .zero)
 
         var instructionConfig = AVVideoCompositionInstruction.Configuration()
@@ -306,6 +338,10 @@ public enum CompositionBuilder {
         return BuiltComposition(composition: composition,
                                 videoComposition: videoComposition,
                                 audioMix: mix,
+                                renderTransform: Self.renderTransform(
+                                    preferredTransform: preferredTransform,
+                                    cropOrigin: cropOrigin, scale: scale),
+                                naturalSize: naturalSize,
                                 duration: CMTimeGetSeconds(cursor),
                                 sourceDuration: assetDuration,
                                 keptRanges: kept)

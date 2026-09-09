@@ -51,12 +51,19 @@ public enum MovieExporter {
 
     public static func exportMovie(_ built: BuiltComposition,
                                    to url: URL,
-                                   maxSizeBytes: Int? = nil) async throws {
+                                   maxSizeBytes: Int? = nil,
+                                   clicks: [ClickMark] = []) async throws {
         guard let session = AVAssetExportSession(
             asset: built.composition, presetName: AVAssetExportPresetHighestQuality)
         else { throw ExportError.noExportSession }
 
-        session.videoComposition = built.videoComposition
+        // With clicks, an export-only copy carrying the animation tool; without
+        // them, the shared composition untouched. The copy exists because
+        // `animationTool` cannot be used with `AVPlayerItem` (V5), so setting
+        // it on the object preview also holds would break playback in order to
+        // decorate the export.
+        session.videoComposition = ClickOverlay.exportComposition(
+            from: built.videoComposition, marks: clicks) ?? built.videoComposition
         // The mix lives on the export session, not the player item (M4's
         // preview layer) — §9's whole point is that the two paths cannot
         // apply the mix differently, and putting it here is what
@@ -127,6 +134,7 @@ public enum MovieExporter {
     /// one that hit it untouched. `effectiveFPS` is what makes that
     /// distinguishable.
     private static func exportGIF(bundle: SnittBundle,
+                                  clickEvents: [LoggedEvent] = [],
                                   edl: EditDecisionList,
                                   scale: Double,
                                   to outputURL: URL,
@@ -136,7 +144,8 @@ public enum MovieExporter {
             // No target: one GIF at the base frame rate and the requested
             // scale, no ladder walked at all.
             let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: scale)
-            try await GIFExporter.write(built, to: outputURL, framesPerSecond: defaultGIFFrameRate)
+            try await GIFExporter.write(built, to: outputURL, framesPerSecond: defaultGIFFrameRate,
+                                        clicks: clickMarks(for: built, events: clickEvents))
             let byteSize = try fileByteSize(at: outputURL)
             return (built, scale, defaultGIFFrameRate, byteSize, false)
         }
@@ -153,7 +162,11 @@ public enum MovieExporter {
                 bundle: bundle, edl: edl, scale: rungScale)
             do {
                 try await GIFExporter.write(
-                    rungBuilt, to: outputURL, framesPerSecond: rung.framesPerSecond)
+                    rungBuilt, to: outputURL, framesPerSecond: rung.framesPerSecond,
+                    // Recomputed for THIS rung: a smaller scale is a different
+                    // render transform, and a mark placed for the full-size
+                    // frame lands somewhere else on a scaled one.
+                    clicks: clickMarks(for: rungBuilt, events: clickEvents))
             } catch {
                 // Same contract as the mp4 ladder: a rung that fails to
                 // encode does not abort the whole export, it just isn't
@@ -186,7 +199,8 @@ public enum MovieExporter {
         }
         let smallestScale = scale * smallest.scaleMultiplier
         let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: smallestScale)
-        try await GIFExporter.write(built, to: outputURL, framesPerSecond: smallest.framesPerSecond)
+        try await GIFExporter.write(built, to: outputURL, framesPerSecond: smallest.framesPerSecond,
+                                    clicks: clickMarks(for: built, events: clickEvents))
         byteSize = try fileByteSize(at: outputURL)
         return (built, smallestScale, smallest.framesPerSecond, byteSize, byteSize <= maxSizeBytes)
     }
@@ -207,17 +221,30 @@ public enum MovieExporter {
                               chaptersURL: URL? = nil,
                               subtitlesURL: URL? = nil,
                               format: String = "mp4",
-                              maxSizeBytes: Int? = nil) async throws -> ExportManifest {
+                              maxSizeBytes: Int? = nil,
+                              // D64. Off by default: a recording's clicks are
+                              // data (§4.5), and drawing them is a choice the
+                              // person exporting makes, not something that
+                              // happens to every export because the events
+                              // happen to be there.
+                              clicks: Bool = false) async throws -> ExportManifest {
         var built: BuiltComposition
         var effectiveScale: Double
         var effectiveFPS: Double?
         var byteSize: Int
         var sizeMet = false
 
+        // Read once. `readBundleEvents` throws on damaged JSON and returns []
+        // for a missing file, which is the same distinction chapters rely on:
+        // "no clicks" must mean none were recorded, not that something went
+        // wrong and this shrugged.
+        let clickEvents = clicks ? try readBundleEvents(bundle) : []
+
         if format == "gif" {
             var fps: Double
             (built, effectiveScale, fps, byteSize, sizeMet) = try await exportGIF(
-                bundle: bundle, edl: edl, scale: scale, to: outputURL, maxSizeBytes: maxSizeBytes)
+                bundle: bundle, clickEvents: clickEvents, edl: edl, scale: scale,
+                to: outputURL, maxSizeBytes: maxSizeBytes)
             effectiveFPS = fps
         } else {
             effectiveFPS = nil
@@ -234,7 +261,12 @@ public enum MovieExporter {
                     let rungBuilt = try await CompositionBuilder.build(
                         bundle: bundle, edl: edl, scale: rungScale)
                     do {
-                        try await exportMovie(rungBuilt, to: outputURL, maxSizeBytes: maxSizeBytes)
+                        try await exportMovie(
+                            rungBuilt, to: outputURL, maxSizeBytes: maxSizeBytes,
+                            // Per rung, for the same reason the GIF ladder
+                            // recomputes: this rung is a different scale and
+                            // therefore a different render transform.
+                            clicks: clickMarks(for: rungBuilt, events: clickEvents))
                     } catch {
                         // The session may throw rather than produce a
                         // best-effort file when the limit is impossible. Either
@@ -268,12 +300,14 @@ public enum MovieExporter {
                     let smallestScale = scale * (sizeLadder.last ?? 1.0)
                     built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: smallestScale)
                     effectiveScale = smallestScale
-                    try await exportMovie(built, to: outputURL, maxSizeBytes: nil)
+                    try await exportMovie(built, to: outputURL, maxSizeBytes: nil,
+                                          clicks: clickMarks(for: built, events: clickEvents))
                     byteSize = try fileByteSize(at: outputURL)
                     sizeMet = byteSize <= maxSizeBytes
                 }
             } else {
-                try await exportMovie(built, to: outputURL, maxSizeBytes: nil)
+                try await exportMovie(built, to: outputURL, maxSizeBytes: nil,
+                                          clicks: clickMarks(for: built, events: clickEvents))
                 byteSize = try fileByteSize(at: outputURL)
             }
         }
@@ -335,6 +369,19 @@ public enum MovieExporter {
     /// the sidecar and this code shrugged." A missing file, on the other
     /// hand, is legitimate — a bundle from before M3b, or one with logging
     /// disabled — and must still export cleanly with no chapters.
+    /// The click marks for one built composition.
+    ///
+    /// Takes the composition rather than a precomputed list because both size
+    /// ladders rebuild at smaller scales, and a mark's position comes from the
+    /// render transform — so marks belong to a build, not to an export.
+    private static func clickMarks(for built: BuiltComposition,
+                                   events: [LoggedEvent]) -> [ClickMark] {
+        guard !events.isEmpty else { return [] }
+        return ClickOverlay.marks(events: events, keptRanges: built.keptRanges,
+                                  naturalSize: built.naturalSize,
+                                  renderTransform: built.renderTransform)
+    }
+
     private static func readBundleEvents(_ bundle: SnittBundle) throws -> [LoggedEvent] {
         guard FileManager.default.fileExists(atPath: bundle.eventsURL.path) else { return [] }
         return try EventLog.read(from: bundle).events
