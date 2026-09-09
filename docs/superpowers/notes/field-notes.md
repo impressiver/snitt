@@ -557,3 +557,45 @@ not attached to a tty.
 Expect one cold cache on the first run after the `cache` major: bumping it
 changes the internal cache version, so the existing `spm-*` entries will not
 restore.
+
+### 2026-09-09 (a test gate that could hang forever)
+
+**Observation (product owner):** "test suite seems to be stuck." It was — a full
+unfiltered `swift test` sat at **0% CPU for over ten minutes** and had to be
+killed. No output, no failing test, nothing to read.
+
+**Two hypotheses, both wrong, both killed by one measurement each.**
+
+1. *"`--filter` has been silently skipping these tests all session."*
+   `swift test --list-tests` says all 1143 tests match the filter. Nothing was
+   being skipped. Refuted in one command.
+2. *"These unit tests reach the network and a DNS stall hangs them."* Plausible
+   — a `sample` of the hung process showed `Sparkle` and
+   `URLSessionTransportInternal` frames, and the fixture's `SUFeedURL` was
+   `https://example.invalid`. But `UpdaterControllerTests` runs in **1.99s** in
+   isolation and `example.invalid` NXDOMAINs in **0.02s**. The network is not
+   the cost.
+
+**What it actually was.** `SparkleTestGate.acquire()` waited on a
+`CheckedContinuation` with **no ceiling**. One holder that never finishes blocks
+every other gated test forever. And the ~86s figures that pointed me at Sparkle
+were not Sparkle at all: **214 of 1143 tests report 60s or more**, spread across
+audit paths, transcription, pause/resume, marker drags and window geometry.
+Nearly all of it is queueing behind gates, not working.
+
+**The fix does not make anything faster, and should not be sold as if it did.**
+The duration distribution afterwards is 213 tests ≥60s, against 214 before. What
+changed is the failure MODE: a stuck holder now fails its waiters with a message
+naming the holder, instead of hanging them.
+
+**The rule worth keeping: a hang is the worst shape a failure can take.** It is
+indistinguishable from ordinary slow progress, it costs the whole run instead of
+one test, and it names nobody. A bounded wait that occasionally fails early is
+strictly better — that failure is loud, points at a culprit, and lets the other
+1145 tests finish. Note which direction the risk runs before choosing a ceiling.
+
+**Still carrying the same defect (not fixed here):**
+`EditorWindowTestGate` (`Sources/SnittApp/EditorWindowController.swift:1983`) and
+the queue in `RecordingCoordinatorTests.swift:47` are the same unbounded
+`withCheckedContinuation` shape. `EditorWindowTestGate` guards far more tests
+than the Sparkle gate does, so it is the bigger exposure of the two.

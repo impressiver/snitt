@@ -80,32 +80,84 @@ import Foundation
 /// boundary — exactly the `Sendable`-crossing error `-strict-concurrency
 /// =complete` exists to catch — for no benefit, since there is only ever one
 /// MainActor to contend for anyway.
+/// **Bounded, deliberately.** The first version's `acquire()` waited on a
+/// `CheckedContinuation` with no ceiling, which made a single stuck holder
+/// hang every other gated test — and therefore the whole run — with no
+/// output and no diagnostic. That is exactly what happened on 2026-09-09: a
+/// full-suite run sat at 0% CPU for over ten minutes, and the only way to
+/// learn anything was to `sample` the process by hand.
+///
+/// A test gate must convert a hang into a FAILURE. A failure names the
+/// culprit and lets the other 1142 tests finish; a hang tells you nothing and
+/// costs the whole run. Note which direction the risk runs: an over-tight
+/// bound produces a flaky failure that is loud and obvious, while an unbounded
+/// wait produces silence indistinguishable from ordinary slow progress.
 @MainActor
 enum SparkleTestGate {
-    private static var locked = false
-    private static var waiters: [CheckedContinuation<Void, Never>] = []
+    /// How long a test may WAIT for the gate before giving up.
+    ///
+    /// Generous on purpose. Under the full suite 214 tests already report 60s
+    /// or more — almost all of it queueing behind gates like this one rather
+    /// than working — so a tight ceiling here would fail honest tests. This
+    /// exists to catch a holder that will never finish, not a slow one.
+    static let acquireTimeout: TimeInterval = 300
 
-    private static func acquire() async {
-        if !locked {
-            locked = true
-            return
+    /// How long a test may HOLD the gate before it is declared stuck.
+    ///
+    /// Smaller than `acquireTimeout` so the holder is blamed before its
+    /// waiters give up — otherwise every queued test fails and the one
+    /// actually at fault looks identical to them.
+    static let holdTimeout: TimeInterval = 240
+
+    struct Timeout: Error, CustomStringConvertible {
+        let description: String
+    }
+
+    private static var locked = false
+    private static var holderDescription = "none"
+
+    /// Whether the gate is currently held, and by whom. Exists for the gate's
+    /// OWN test, which must wait for its holder to really acquire before
+    /// testing what a waiter does — otherwise it races the real Sparkle tests
+    /// that share this gate and blames the wrong holder.
+    static var currentHolder: String? { locked ? holderDescription : nil }
+
+    /// Polls rather than queueing on a continuation.
+    ///
+    /// A `CheckedContinuation` must be resumed exactly once, which makes
+    /// racing it against a deadline fiddly and easy to get wrong in a way that
+    /// crashes the test process. Polling on `@MainActor` is uninteresting by
+    /// comparison: `Task.sleep` yields the actor, so the holder runs. FIFO
+    /// fairness is lost and no test needs it.
+    private static func acquire(for label: String, timeout: TimeInterval) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while locked {
+            if Date() >= deadline {
+                throw Timeout(description: """
+                    "\(label)" waited \(Int(acquireTimeout))s for SparkleTestGate and gave up.                     It was held by "\(holderDescription)", which never released it — that holder                     is the defect, not this test.
+                    """)
+            }
+            try await Task.sleep(nanoseconds: 20_000_000)
         }
-        await withCheckedContinuation { waiters.append($0) }
+        locked = true
+        holderDescription = label
     }
 
     private static func release() {
-        if waiters.isEmpty {
-            locked = false
-        } else {
-            waiters.removeFirst().resume()
-        }
+        locked = false
+        holderDescription = "none"
     }
 
     /// Runs `body` with the gate held for its ENTIRE duration — the whole
     /// construct-start-wait-assert critical section a Sparkle-driving test
     /// cares about, not just the moment `SPUUpdater` is created.
-    static func run<T>(_ body: () async throws -> T) async rethrows -> T {
-        await acquire()
+    ///
+    /// `label` defaults to the calling function, so a timeout message names a
+    /// real test without anyone having to remember to pass a string.
+    static func run<T>(_ label: String = #function,
+                       timeout: TimeInterval = acquireTimeout,
+                       _ body: () async throws -> T) async throws -> T {
+        try await acquire(for: label, timeout: timeout)
         defer { release() }
         return try await body()
     }

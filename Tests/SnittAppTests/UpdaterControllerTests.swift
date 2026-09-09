@@ -11,7 +11,7 @@ import Sparkle
 
 @MainActor
 @Test("The updater starts with automatic checks matching the setting")
-func updaterHonoursTheSetting() async {
+func updaterHonoursTheSetting() async throws {
     // `SparkleTestGate` (Tests/SnittAppTests/SparkleTestGate.swift):
     // `UpdaterController.init` constructs a real `SPUStandardUpdaterController`
     // (and, below, mutates its live `SPUUpdater.automaticallyChecksForUpdates`,
@@ -20,7 +20,7 @@ func updaterHonoursTheSetting() async {
     // and this file's other two tests each drive a real `SPUUpdater` too, as
     // unserialized top-level tests, so without this gate this test's reads
     // and writes of shared Sparkle state can interleave with theirs.
-    await SparkleTestGate.run {
+    try await SparkleTestGate.run {
         // `SPUStandardUpdaterController` always targets `Bundle.main`, which in
         // this process has no real bundle identifier, so `SUHost` falls back to
         // `NSUserDefaults.standardUserDefaults` (R20/finding 7 — the reviewer
@@ -277,7 +277,15 @@ private struct SparkleFixture {
             "CFBundleIdentifier": "com.snitt.test.fixture",
             "CFBundleVersion": "1",
             "CFBundleShortVersionString": "1.0",
-            "SUFeedURL": "https://example.invalid/appcast.xml",
+            // Loopback, not `https://example.invalid`. These are unit tests about
+            // SCHEDULING — they read `willSchedule`/`willNotSchedule` off a spy
+            // delegate and never assert on a feed's contents — so they have no
+            // business resolving a hostname at all. `.invalid` is reserved and
+            // normally NXDOMAINs in milliseconds (measured: 0.02s), but it is
+            // still a real DNS round trip that a captive portal, a VPN, or a
+            // hijacking resolver can stall. Port 9 on loopback refuses
+            // instantly and involves no resolver.
+            "SUFeedURL": "http://127.0.0.1:9/appcast.xml",
             "SUPublicEDKey": meaninglessPublicKey,
             // Matches the real built bundle's cold-start default (Ruling
             // R3) so `startUpdateCycle`'s permission-prompt branch is
