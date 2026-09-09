@@ -367,6 +367,75 @@ final class EditorTimelineState: ObservableObject {
         applyAndSaveEvents()
     }
 
+    // MARK: - Automatic trimming (D57)
+
+    /// What the last automatic trim did, for the caption beside the button.
+    @Published var lastTrimOutcome: DeepTrimOutcome?
+
+    /// Why an automatic trim found nothing, when it found nothing.
+    ///
+    /// A button that silently does nothing is indistinguishable from a broken
+    /// one, and the two reasons this finds nothing are completely different
+    /// problems: "there was no dead air" is a fine outcome, "the recording has
+    /// not finished loading its waveform yet" is a wait.
+    enum DeepTrimOutcome: Equatable {
+        case cut(spans: Int, seconds: Double)
+        case nothingToCut
+        case notReady
+    }
+
+    /// Cuts every span of the recording where nothing happened (D57).
+    ///
+    /// Runs over the signals the editor has ALREADY decoded for the timeline —
+    /// the waveforms, the filmstrip, the event log and the transcript — so this
+    /// costs a pass over arrays in memory rather than a second decode of the
+    /// movie. D57 called a dedicated decode "a real architectural fork"; this
+    /// takes the other branch, and the cost is resolution: the filmstrip is
+    /// capped at a few hundred frames, so on a long recording the picture is
+    /// sampled every few seconds and only generously-sized dead spans are
+    /// detectable. That is the right trade for the feature's actual job, which
+    /// is removing the minute someone spent reading documentation, not the
+    /// half-second between two clicks.
+    ///
+    /// The result is ordinary cuts on the shared undo stack — reversible folds
+    /// (D56 Tier 1), individually removable — rather than a bulk edit that has
+    /// to be accepted whole.
+    @discardableResult
+    func autoDeepTrim(preset: DeepTrimPreset) -> DeepTrimOutcome {
+        func finish(_ outcome: DeepTrimOutcome) -> DeepTrimOutcome {
+            lastTrimOutcome = outcome
+            return outcome
+        }
+        guard !waveforms.isEmpty, let filmstrip, !filmstrip.frames.isEmpty else {
+            return finish(.notReady)
+        }
+        let kept = KeptRanges.compute(duration: controller.sourceDurationSeconds,
+                                      cuts: edl.cuts.map(\.range))
+        let found = AutoDeepTrim.deadSpans(
+            duration: controller.sourceDurationSeconds,
+            waveforms: waveforms,
+            frames: FrameActivity.from(filmstrip),
+            transcript: transcript,
+            events: events,
+            criteria: .preset(preset))
+        // Anything already removed is not proposed again: re-running this after
+        // a trim would otherwise stack a second fold onto material that is
+        // already gone, which reads as the button misbehaving.
+        let fresh = found.filter { span in
+            kept.contains { $0.start < span.end && span.start < $0.end }
+        }
+        guard !fresh.isEmpty else { return finish(.nothingToCut) }
+
+        let previous = edl
+        undoManager?.registerUndo(withTarget: self) { target in
+            target.restore(previous)
+        }
+        edl.cuts.append(contentsOf: fresh.map { Cut(range: $0) })
+        applyAndSave()
+        return finish(.cut(spans: fresh.count,
+                           seconds: fresh.reduce(0) { $0 + ($1.end - $1.start) }))
+    }
+
     // MARK: - Chapter index (the marker pane)
 
     /// The markers as a chapter list, in the order they occur.
@@ -952,6 +1021,20 @@ struct EditorContentView: View {
 
     private var controller: PreviewController { state.controller }
 
+    /// What to say after an automatic trim.
+    static func trimCaption(_ outcome: EditorTimelineState.DeepTrimOutcome) -> String {
+        switch outcome {
+        case .cut(let spans, let seconds):
+            let unit = spans == 1 ? "span" : "spans"
+            return String(format: "Cut %d %@, %.1fs", spans, unit, seconds)
+        case .nothingToCut:
+            return "No dead air found"
+        case .notReady:
+            // The distinction that matters: this is a WAIT, not an answer.
+            return "Still loading the waveform"
+        }
+    }
+
     /// The marker the sheet below is editing, re-derived from
     /// `state.events` on every access rather than cached at click time — a
     /// concurrent edit (undo, another drag) must not let the sheet open on
@@ -1040,6 +1123,26 @@ struct EditorContentView: View {
                 Button(croppingActive ? "Cancel Crop" : "Crop") { croppingActive.toggle() }
                 Button("Reset Crop") { state.resetCrop() }
                     .disabled(state.edl.crop == nil)
+                Divider().frame(height: 16)
+                // D57's three presets, named for how much footage SURVIVES
+                // rather than for how hard the trim tries.
+                Menu("Auto-Trim") {
+                    Button("Conservative") { state.autoDeepTrim(preset: .conservative) }
+                    Button("Default") { state.autoDeepTrim(preset: .default) }
+                    Button("Aggressive") { state.autoDeepTrim(preset: .aggressive) }
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Cut the spans where nothing happens")
+                if let outcome = state.lastTrimOutcome {
+                    // Said out loud, because a button that silently does
+                    // nothing is indistinguishable from a broken one — and
+                    // "nothing to cut" and "not loaded yet" are different
+                    // answers that would otherwise look identical.
+                    Text(Self.trimCaption(outcome))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Spacer()
                 // The affordance the zoom feature never had. `TrimGesture`'s
                 // own comment names the density problem these solve: at
