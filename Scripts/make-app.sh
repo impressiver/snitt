@@ -75,7 +75,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
        appcast-item comparison once the updater IS running; this key is a
        separate, earlier gate. Same value, same single source. -->
   <key>CFBundleVersion</key><string>$APP_VERSION</string>
-  <key>LSMinimumSystemVersion</key><string>15.0</string>
+  <key>LSMinimumSystemVersion</key><string>26.0</string>
   <!-- D62/D68: transcription is on-device only; this grant never sends audio
        anywhere. Requested at first USE of transcription, not at launch
        (the 4.10 ladder). -->

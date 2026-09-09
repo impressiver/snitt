@@ -2,7 +2,7 @@
 // Question: does SCStream capture correctly when triggered from a
 // background (non-foreground) process?
 import Foundation
-import ScreenCaptureKit
+@preconcurrency import ScreenCaptureKit
 import AVFoundation
 
 @main

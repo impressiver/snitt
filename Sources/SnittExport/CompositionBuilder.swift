@@ -9,7 +9,7 @@ import SnittDocument
 /// other reference to `composition`, `videoComposition`, or `audioMix`
 /// exists once this value is returned, so there is no concurrent mutation
 /// for the compiler to worry about even though `AVMutableComposition`,
-/// `AVMutableVideoComposition`, and `AVAudioMix` are not themselves
+/// `AVVideoComposition`, and `AVAudioMix` are not themselves
 /// `Sendable`. Callers that hand the same `BuiltComposition` to multiple
 /// tasks and mutate it from more than one of them would violate that
 /// invariant; nothing here does.
@@ -17,7 +17,7 @@ public struct BuiltComposition: @unchecked Sendable {
     public let composition: AVMutableComposition
     /// §9's explicit passthrough slot. Shipping overlays means giving THIS
     /// object a `customVideoCompositorClass` — nothing else changes.
-    public let videoComposition: AVMutableVideoComposition
+    public let videoComposition: AVVideoComposition
     /// The EDL's per-track mute and gain, expressed as an `AVAudioMix`. Nil
     /// when there is nothing to express — no audio tracks, or every track
     /// unmuted at unity gain — so preview and export can each check for nil
@@ -72,7 +72,7 @@ public enum CompositionError: Error, Equatable {
 /// attach to an `AVPlayerItem` (V5), so it would force two overlay
 /// implementations that can diverge.
 public enum CompositionBuilder {
-    /// The frame duration every `AVMutableVideoComposition` this builder
+    /// The frame duration every `AVVideoComposition` this builder
     /// produces is set to. Also the basis for `minimumKeptDuration` — the two
     /// used to be independent `1/60` literals that could drift apart, which
     /// defeats the point of the threshold (it is only meaningful as "one
@@ -266,13 +266,13 @@ public enum CompositionBuilder {
         let renderSize = CGSize(width: (croppedSize.width * scale).rounded(),
                                 height: (croppedSize.height * scale).rounded())
 
-        let videoComposition = AVMutableVideoComposition()
-        videoComposition.renderSize = renderSize
-        videoComposition.frameDuration = compositionFrameDuration
-
-        let instruction = AVMutableVideoCompositionInstruction()
-        instruction.timeRange = CMTimeRange(start: .zero, duration: cursor)
-        let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
+        // `AVVideoComposition.Configuration` rather than the `AVMutable…`
+        // family, which macOS 26 deprecates (D77). The shape is the same three
+        // nested pieces — composition, instruction, layer instruction — but
+        // each is now described by a value type and then made once, so the
+        // result is immutable rather than a mutable object handed out and
+        // trusted not to be changed.
+        var layerConfig = AVVideoCompositionLayerInstruction.Configuration(assetTrack: videoTrack)
         // Passthrough plus scale. Still passthrough in §9's sense — there is no
         // custom compositor class — but expressed as a real instruction rather
         // than a nil, so overlays attach here later.
@@ -281,13 +281,25 @@ public enum CompositionBuilder {
         // `concatenating` applies the receiver first, the translation is
         // expressed in post-orientation pixels and is itself scaled — which is
         // what makes `renderSize` above the exact bounds of the result.
-        layer.setTransform(
+        layerConfig.setTransform(
             preferredTransform
                 .concatenating(CGAffineTransform(translationX: -cropOrigin.x, y: -cropOrigin.y))
                 .concatenating(CGAffineTransform(scaleX: scale, y: scale)),
             at: .zero)
-        instruction.layerInstructions = [layer]
-        videoComposition.instructions = [instruction]
+
+        var instructionConfig = AVVideoCompositionInstruction.Configuration()
+        instructionConfig.timeRange = CMTimeRange(start: .zero, duration: cursor)
+        instructionConfig.layerInstructions = [
+            AVVideoCompositionLayerInstruction(configuration: layerConfig)
+        ]
+
+        var compositionConfig = AVVideoComposition.Configuration()
+        compositionConfig.renderSize = renderSize
+        compositionConfig.frameDuration = compositionFrameDuration
+        compositionConfig.instructions = [
+            AVVideoCompositionInstruction(configuration: instructionConfig)
+        ]
+        let videoComposition = AVVideoComposition(configuration: compositionConfig)
 
         let mix = audioMix(for: audioTrackPairs.map(\.destination), states: edl.trackStates)
 

@@ -6,7 +6,7 @@
 // Run `S5Probe serve` from inside a granted Snitt.app context, and
 // `S5Probe ask` from an unrelated parent process.
 import Foundation
-import ScreenCaptureKit
+@preconcurrency import ScreenCaptureKit
 import CoreMedia
 import CoreVideo
 import SnittCapture

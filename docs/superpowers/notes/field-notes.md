@@ -402,6 +402,30 @@ Accessibility grant — is too narrow, since Apple Events scripting is per-app a
 revocable. That changes what is POSSIBLE, not what is wanted, and it is written
 down so a future reopen starts from the real constraint rather than the old one.
 
+### 2026-09-09 (what a GitHub runner cannot run)
+
+The first CI run that got past compiling revealed which tests need a real Mac.
+670 finished, then the job stalled for 37 minutes until its timeout. The 254
+that never returned map to `SnittExportTests` and `SnittAppTests` only, and
+they share one property: they build an AVFoundation composition, encode a
+movie, or open a window.
+
+A GitHub-hosted macOS runner is headless and has no hardware video encoder, so
+that work does not finish — it does not fail, which would have been easier; it
+hangs, and Swift Testing's parallelism means one blocked primitive takes 254
+tests down with it.
+
+CI now runs the five targets that do work — document model, capture,
+automation, CLI, MCP: 475 tests in about ten seconds. **Export, composition,
+the editor and the timeline are verified locally only.** `swift test` unfiltered
+remains the gate before a release.
+
+Two costs worth remembering. That diagnosis burned ~40 minutes of macOS runner
+time, billed at 10x on a private repo. And several runs before it were
+CANCELLED rather than completed, because `concurrency: cancel-in-progress`
+supersedes a run on every push — correct behaviour, and confusing when you are
+waiting on a result that was never going to arrive.
+
 ### 2026-09-08 (the plan lagged the code three times in one day)
 
 `§13`'s "Next, in order" listed built work as pending three separate times, and

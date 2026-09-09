@@ -8,7 +8,7 @@
 // each recording used and when, so that when a prompt eventually fires the
 // history can be correlated against it.
 import Foundation
-import ScreenCaptureKit
+@preconcurrency import ScreenCaptureKit
 
 @main
 struct S4Probe {
