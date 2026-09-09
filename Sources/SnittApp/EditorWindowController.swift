@@ -1233,7 +1233,7 @@ private struct AudioTrackControls: View {
             }
             .toggleStyle(.checkbox)
 
-            Slider(value: Binding(get: { state.gain }, set: onGain), in: 0...4)
+            Slider(value: Binding(get: { state.gain }, set: { onGain($0) }), in: 0...4)
                 .frame(maxWidth: 220)
                 .disabled(state.muted)
 

@@ -87,8 +87,7 @@ struct RecordingIconTests {
         let kept = [TimeRange(start: 0, end: 5), TimeRange(start: 10, end: 15)]
         // Seven seconds INTO what survives is 12s in the source, not 7s —
         // 7s in the source is inside the cut.
-        let t = try? #require(RecordingIcon.sourceTime(atKeptOffset: 7, in: kept))
-        #expect(t == 12)
+        #expect(RecordingIcon.sourceTime(atKeptOffset: 7, in: kept) == 12)
         #expect(RecordingIcon.sourceTime(atKeptOffset: 2, in: kept) == 2)
     }
 

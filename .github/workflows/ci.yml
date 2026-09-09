@@ -1,0 +1,143 @@
+name: CI
+
+# Runs on every pull request, and on main after a merge. Main is checked
+# separately rather than trusted: PR checks run against the merge candidate,
+# and two PRs that each pass alone can still break main together.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# A new push supersedes the run in flight. macOS minutes bill at 10x on a
+# private repository, so a superseded run is money spent on an answer nobody
+# will read.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  hygiene:
+    name: Hygiene
+    # Ubuntu on purpose: none of these need Swift or macOS, and macOS minutes
+    # cost 10x on a private repo. Everything requiring a compiler is below.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No build artifacts committed
+        run: |
+          tracked=$(git ls-files | grep -E '^(\.build|build)/' || true)
+          if [ -n "$tracked" ]; then
+            echo "::error::build output is tracked in git:"; echo "$tracked"; exit 1
+          fi
+
+      - name: No merge conflict markers
+        run: |
+          # Anchored to line start with a trailing space, so ordinary prose
+          # about diffs and the spec's own tables do not trip it.
+          hits=$(git ls-files '*.swift' '*.md' '*.sh' '*.yml' \
+                 | xargs grep -lE '^(<<<<<<<|>>>>>>>) ' 2>/dev/null || true)
+          if [ -n "$hits" ]; then
+            echo "::error::merge markers in:"; echo "$hits"; exit 1
+          fi
+
+      - name: No trailing whitespace
+        run: |
+          hits=$(git ls-files '*.swift' '*.sh' '*.yml' | xargs grep -lE ' +$' 2>/dev/null || true)
+          if [ -n "$hits" ]; then
+            echo "::error::trailing whitespace in:"; echo "$hits"; exit 1
+          fi
+
+      - name: No tabs in Swift sources
+        run: |
+          # `printf` rather than grep -P: -P is GNU-only, and a check that
+          # cannot be run on a maintainer's Mac is one nobody verifies.
+          hits=$(git ls-files '*.swift' | xargs grep -l "$(printf '\t')" 2>/dev/null || true)
+          if [ -n "$hits" ]; then
+            echo "::error::tab characters in:"; echo "$hits"; exit 1
+          fi
+
+      - name: Scripts are executable and parse
+        run: |
+          for script in $(git ls-files 'Scripts/*.sh' 'Scripts/**/*.sh'); do
+            # A script committed without +x fails only when someone runs it,
+            # which for a release script means at release time.
+            [ -x "$script" ] || { echo "::error file=$script::not executable"; exit 1; }
+            bash -n "$script" || { echo "::error file=$script::syntax error"; exit 1; }
+          done
+
+  build-and-test:
+    name: Build and test
+    # macos-15 matches Package.swift's `.macOS(.v15)` floor deliberately.
+    # Building on the floor is what catches an API newer than the floor being
+    # used by accident; a newer runner would compile it happily and ship
+    # something that traps on a supported machine.
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+
+      # Keyed on the manifest so a dependency change busts it, and restored
+      # loosely so an unrelated change still gets a warm start.
+      - name: Cache SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Build (warnings are errors)
+        # Sources only. The test targets carry 30 warnings of one class
+        # (a redundant `try` on `EditorWindowTestGate.run`) in
+        # DocumentOpenerTests and DockReopenTests; gating those is a separate
+        # change, and source warnings are the ones that ship.
+        run: swift build -Xswiftc -warnings-as-errors
+
+      - name: Test
+        run: |
+          set -o pipefail
+          swift test 2>&1 | tee test-output.txt || true
+          # `swift test` EXITS 0 WHEN THE TEST BUNDLE SEGFAULTS, printing an
+          # inline "signal code 11" and no summary line at all. This project
+          # has hit that twice, most recently after adding a stored property to
+          # a public struct. So the exit status is not the signal — the summary
+          # line is, and its absence is a failure however the process exited.
+          if grep -qE '^.*signal code' test-output.txt; then
+            echo "::error::the test bundle crashed (signal), which swift test reports as success"
+            exit 1
+          fi
+          if ! grep -qE 'Test run with [0-9]+ tests.*passed' test-output.txt; then
+            echo "::error::no passing summary line — treat this as a failure regardless of exit status"
+            tail -40 test-output.txt
+            exit 1
+          fi
+          grep -E 'Test run with [0-9]+ tests' test-output.txt | tail -1
+
+      - name: Upload test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: test-output.txt
+          if-no-files-found: ignore
+
+  release-build:
+    name: Release build
+    # Main only. A release build catches what only the optimiser sees, and
+    # costs a second macOS job — worth paying once per merge rather than on
+    # every push to every branch.
+    if: github.event_name == 'push'
+    runs-on: macos-15
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release
+        run: swift build --configuration release -Xswiftc -warnings-as-errors
