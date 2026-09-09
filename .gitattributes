@@ -1,0 +1,16 @@
+# Normalise line endings on the way in, so a checkout on another platform
+# cannot introduce a diff the hygiene CI job then rejects.
+* text=auto eol=lf
+
+# Binary, so git neither diffs them nor tries to fix their line endings.
+*.icns   binary
+*.png    binary
+*.mov    binary
+*.mp4    binary
+*.gif    binary
+*.zip    binary
+
+# Generated or vendored: keep them out of language statistics and collapsed
+# in review, where their diffs are noise rather than signal.
+Package.resolved  linguist-generated=true
+*.pbxproj         linguist-generated=true

@@ -1,0 +1,22 @@
+version: 2
+updates:
+  # Sparkle is the only third-party dependency, and it is the one that installs
+  # code on a user's machine — an updater with a known vulnerability is a worse
+  # problem than an out-of-date library. Monthly rather than weekly because
+  # there is one dependency and a solo maintainer; a PR nobody reads is noise.
+  - package-ecosystem: "swift"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps"
+
+  # The workflow's own actions pin to major versions, which still drift.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "ci"
