@@ -1143,6 +1143,12 @@ struct EditorContentView: View {
     /// Crop mode. UI-only, like `editingMarkerID`: what is asserted is that
     /// `applyCrop`/`resetCrop` persist and undo, not which mode a view is in.
     @State private var croppingActive = false
+    /// The crop the box is currently PROPOSING, normalized to the picture on
+    /// screen. Lives here rather than in `CropDragOverlay` because Apply is in
+    /// the toolbar and has to be able to read it — and because normalizing to
+    /// the picture keeps a placed box where the user put it when the window
+    /// resizes under it.
+    @State private var cropBox: CropRect = .full
 
     private var controller: PreviewController { state.controller }
 
@@ -1193,10 +1199,8 @@ struct EditorContentView: View {
                     // swallow clicks meant for the player.
                     if croppingActive {
                         CropDragOverlay(videoSize: controller.player.currentItem?.presentationSize
-                                                   ?? CGSize(width: 16, height: 9)) { sub in
-                            state.applyCrop(sub)
-                            croppingActive = false
-                        }
+                                                   ?? CGSize(width: 16, height: 9),
+                                        box: $cropBox)
                     }
                 }
             if state.transcriptionStatus != .none {
@@ -1245,7 +1249,25 @@ struct EditorContentView: View {
                 Button("Cut") { state.cutSelection() }
                     .disabled(state.selection == nil)
                 Divider().frame(height: 16)
-                Button(croppingActive ? "Cancel Crop" : "Crop") { croppingActive.toggle() }
+                Button(croppingActive ? "Cancel Crop" : "Crop") {
+                    // Entering starts from the whole picture rather than from
+                    // the last proposal: the preview already SHOWS the current
+                    // crop (`applyCrop` composes), so the full frame is the
+                    // "no further crop" identity, and a leftover box from a
+                    // cancelled attempt would silently re-propose itself.
+                    if !croppingActive { cropBox = .full }
+                    croppingActive.toggle()
+                }
+                if croppingActive {
+                    Button("Apply Crop") {
+                        state.applyCrop(cropBox)
+                        croppingActive = false
+                    }
+                    // Applying the whole frame composes to a no-op. Disabling
+                    // says "adjust the box first" instead of leaving a button
+                    // that appears to do nothing.
+                    .disabled(cropBox == .full)
+                }
                 Button("Reset Crop") { state.resetCrop() }
                     .disabled(state.edl.crop == nil)
                 Divider().frame(height: 16)
