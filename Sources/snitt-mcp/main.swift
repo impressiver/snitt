@@ -100,6 +100,13 @@ func describe(_ response: AutomationResponse) -> String {
         // work it should not have to do.
         return String(format: "Screenshot of the recording at %.2fs, saved to %@. "
                     + "A marker was placed at the same instant.", timeSeconds, path as NSString)
+    case .autoTrimmed(let summary):
+        // Seconds, not span boundaries: an agent cannot watch the result, and
+        // what it needs to decide next is how much is left.
+        return summary.spans == 0
+            ? "No dead air found; the recording is unchanged."
+            : String(format: "Removed %d dead span(s) totalling %.1fs. %.1fs remains, in %d cut(s).",
+                     summary.spans, summary.seconds, summary.remainingSeconds, summary.totalCuts)
     case .cropped(let summary):
         // Dimensions, not fractions: an agent cannot look at the video, and
         // pixels are what it needs to reason about a --max-size budget.

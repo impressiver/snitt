@@ -2,69 +2,6 @@ import CoreGraphics
 import Foundation
 import SnittDocument
 
-/// How much footage survives an automatic trim (D57).
-///
-/// `conservative` / `default` / `aggressive` names the AXIS — how much is kept
-/// — rather than the enforcement. An earlier draft said "strict", which reads
-/// either as strict about preserving footage or strict about removing it:
-/// opposite meanings in a feature whose entire job is deletion.
-public enum DeepTrimPreset: String, Sendable, CaseIterable {
-    case conservative
-    case `default`
-    case aggressive
-}
-
-/// What counts as dead air.
-public struct DeepTrimCriteria: Sendable, Equatable {
-    /// Shortest span worth removing. Below this a cut costs more attention
-    /// than the seconds it saves.
-    public var minimumSpan: Double
-    /// Audio at or below this fraction of the track's own typical loud level
-    /// is background noise.
-    ///
-    /// Relative, and measured against a high percentile rather than the peak,
-    /// for the reason D73 records: one clipped instant — a cough, a chime,
-    /// music bleeding in from speakers — sets the floor above all the speech
-    /// if the maximum is the reference.
-    public var audioSilenceFraction: Float
-    /// Frame-to-frame difference at or below this is a still picture.
-    public var frameStillnessThreshold: Double
-    /// Seconds kept either side of a click, keystroke or marker.
-    public var inputPadding: Double
-    /// Seconds a spoken word stays "owed" after it finishes.
-    ///
-    /// D44 missed this and D57 added it: a caption still on screen is not dead
-    /// air just because nothing moved while it was being read.
-    public var subtitleReadingTime: Double
-
-    public init(minimumSpan: Double, audioSilenceFraction: Float,
-                frameStillnessThreshold: Double, inputPadding: Double,
-                subtitleReadingTime: Double) {
-        self.minimumSpan = minimumSpan
-        self.audioSilenceFraction = audioSilenceFraction
-        self.frameStillnessThreshold = frameStillnessThreshold
-        self.inputPadding = inputPadding
-        self.subtitleReadingTime = subtitleReadingTime
-    }
-
-    public static func preset(_ preset: DeepTrimPreset) -> DeepTrimCriteria {
-        switch preset {
-        case .conservative:
-            DeepTrimCriteria(minimumSpan: 3.0, audioSilenceFraction: 0.04,
-                             frameStillnessThreshold: 0.002, inputPadding: 1.5,
-                             subtitleReadingTime: 1.5)
-        case .default:
-            DeepTrimCriteria(minimumSpan: 1.5, audioSilenceFraction: 0.08,
-                             frameStillnessThreshold: 0.006, inputPadding: 0.75,
-                             subtitleReadingTime: 0.8)
-        case .aggressive:
-            DeepTrimCriteria(minimumSpan: 0.8, audioSilenceFraction: 0.16,
-                             frameStillnessThreshold: 0.02, inputPadding: 0.3,
-                             subtitleReadingTime: 0.3)
-        }
-    }
-}
-
 /// How much the picture changed, sampled over time.
 ///
 /// A separate input rather than raw frames so the DETECTOR does not care how
@@ -149,6 +86,25 @@ public struct FrameActivity: Sendable, Equatable {
 ///   recording and the picture carries the entire decision. That is exactly
 ///   the case D57 warns about, and treating a missing log as proof of
 ///   stillness is how it would go wrong.
+/// What is known about a recording's audio.
+///
+/// Three states, because an empty array of waveforms means two completely
+/// different things and collapsing them cost this feature its most common case.
+/// A 200-second screen recording with no voiceover has NO audio track at all;
+/// treating that as "we could not measure the audio" made `auto-deep-trim`
+/// silently do nothing on it — which is precisely the agent-recording case D57
+/// says matters most, since those have no input events either.
+public enum AudioEvidence: Sendable {
+    /// The movie has no audio tracks. There is no sound, so "the audio is
+    /// nothing but background noise" is trivially true.
+    case silentByConstruction
+    /// Measured peaks, one entry per audio track.
+    case sampled([WaveformSamples])
+    /// Audio may exist but has not been measured — still decoding, or the
+    /// read failed. Nothing can be concluded, so nothing is.
+    case unavailable
+}
+
 public enum AutoDeepTrim {
 
     /// Instants per second at which the criteria are evaluated.
@@ -159,17 +115,27 @@ public enum AutoDeepTrim {
     static let resolution = 20.0
 
     public static func deadSpans(duration: Double,
-                                 waveforms: [WaveformSamples],
+                                 audio: AudioEvidence,
                                  frames: FrameActivity?,
                                  transcript: Transcript?,
                                  events: [LoggedEvent],
                                  criteria: DeepTrimCriteria) -> [TimeRange] {
         guard duration > 0 else { return [] }
 
-        // Required evidence. Both missing-data checks return NOTHING, not
-        // everything — see the type's doc comment.
-        let tracks = waveforms.filter { !$0.peaks.isEmpty && $0.samplesPerSecond > 0 }
-        guard !tracks.isEmpty else { return [] }
+        // Required evidence — but "there is no audio" is evidence, and "we did
+        // not measure the audio" is not. See `AudioEvidence`.
+        let tracks: [WaveformSamples]
+        switch audio {
+        case .unavailable:
+            return []
+        case .silentByConstruction:
+            tracks = []
+        case .sampled(let sampled):
+            tracks = sampled.filter { !$0.peaks.isEmpty && $0.samplesPerSecond > 0 }
+            // Sampling that produced nothing usable is `unavailable` in
+            // disguise, not silence.
+            guard !tracks.isEmpty else { return [] }
+        }
         guard let frames, !frames.differences.isEmpty, frames.samplesPerSecond > 0
         else { return [] }
 

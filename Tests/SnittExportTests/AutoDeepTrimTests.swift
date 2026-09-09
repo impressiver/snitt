@@ -32,14 +32,14 @@ struct AutoDeepTrimTests {
         return FrameActivity(samplesPerSecond: rate, differences: diffs)
     }
 
-    private func spans(waveforms: [WaveformSamples]? = nil,
+    private func spans(audio: AudioEvidence? = nil,
                        frames frameActivity: FrameActivity? = nil,
                        transcript: Transcript? = nil,
                        events: [LoggedEvent] = [],
                        criteria: DeepTrimCriteria? = nil) -> [TimeRange] {
         AutoDeepTrim.deadSpans(
             duration: duration,
-            waveforms: waveforms ?? [waveform(loud: [(0, 2)])],
+            audio: audio ?? .sampled([waveform(loud: [(0, 2)])]),
             frames: frameActivity ?? frames(moving: [(0, 2)]),
             transcript: transcript,
             events: events,
@@ -62,7 +62,7 @@ struct AutoDeepTrimTests {
     func audioKeepsItAlive() {
         // Someone narrating a still screen. The picture never changes and
         // nothing is clicked; deleting this would delete the narration.
-        let found = spans(waveforms: [waveform(loud: [(0, 20)])],
+        let found = spans(audio: .sampled([waveform(loud: [(0, 20)])]),
                           frames: frames(moving: [(0, 0.4)]))
         #expect(found.isEmpty, "cut a span that had speech over it: \(found)")
     }
@@ -72,7 +72,7 @@ struct AutoDeepTrimTests {
         // The agent case, and D57 names it: agent recordings log no OS input by
         // construction, so the picture carries the entire decision. A silent
         // screencast of something happening must survive.
-        let found = spans(waveforms: [waveform(loud: [(0, 0.4)])],
+        let found = spans(audio: .sampled([waveform(loud: [(0, 0.4)])]),
                           frames: frames(moving: [(0, 20)]))
         #expect(found.isEmpty, "cut a span where the screen was changing: \(found)")
     }
@@ -116,9 +116,12 @@ struct AutoDeepTrimTests {
         // The whole recording is silent and still as far as anything here
         // knows — and the answer is still NOTHING, because "we have no
         // waveform" is not "there was no sound".
-        #expect(spans(waveforms: []).isEmpty)
-        #expect(spans(waveforms: [WaveformSamples(track: "microphone",
-                                                  samplesPerSecond: 10, peaks: [])]).isEmpty)
+        #expect(spans(audio: .unavailable).isEmpty)
+        // Sampling that ran but produced nothing usable is `unavailable` in
+        // disguise, NOT silence — the movie may well have had a track.
+        #expect(spans(audio: .sampled([])).isEmpty)
+        #expect(spans(audio: .sampled([WaveformSamples(track: "microphone",
+                                                       samplesPerSecond: 10, peaks: [])])).isEmpty)
     }
 
     @Test("With no frame activity, nothing is called dead")
@@ -132,12 +135,28 @@ struct AutoDeepTrimTests {
         // test passed against a detector that ignored the nil entirely.
         func withFrames(_ frames: FrameActivity?) -> [TimeRange] {
             AutoDeepTrim.deadSpans(duration: duration,
-                                   waveforms: [waveform(loud: [(0, 2)])],
+                                   audio: .sampled([waveform(loud: [(0, 2)])]),
                                    frames: frames, transcript: nil, events: [],
                                    criteria: criteria)
         }
         #expect(withFrames(nil).isEmpty)
         #expect(withFrames(FrameActivity(samplesPerSecond: 5, differences: [])).isEmpty)
+    }
+
+    @Test("A recording with NO audio track is silent, and can be trimmed")
+    func silentRecordingIsTrimmable() {
+        // Found by running the CLI against a real 200-second screen recording
+        // with zero audio tracks: it reported "no dead air found" for the whole
+        // thing. The empty waveform array had been read as "we could not
+        // measure the audio" when it meant "there is no audio" — and silent
+        // screencasts are exactly the recordings most likely to HAVE dead air,
+        // since D44/D49 make agent recordings log no input either.
+        let found = AutoDeepTrim.deadSpans(
+            duration: duration, audio: .silentByConstruction,
+            frames: frames(moving: [(0, 2)]), transcript: nil, events: [],
+            criteria: criteria)
+        #expect(!found.isEmpty, "a silent recording was treated as unmeasurable")
+        #expect(abs((found.first?.start ?? 0) - 2.0) < 0.3)
     }
 
     @Test("A uniformly quiet track is silence, not loudness relative to itself")
@@ -147,7 +166,7 @@ struct AutoDeepTrimTests {
         // everywhere and nothing would ever be trimmable.
         let whisper = WaveformSamples(track: "microphone", samplesPerSecond: 10,
                                       peaks: [Float](repeating: 0.001, count: 200))
-        #expect(!spans(waveforms: [whisper], frames: frames(moving: [(0, 2)])).isEmpty)
+        #expect(!spans(audio: .sampled([whisper]), frames: frames(moving: [(0, 2)])).isEmpty)
     }
 
     // MARK: - Shape of the answer
@@ -155,7 +174,7 @@ struct AutoDeepTrimTests {
     @Test("A span shorter than the minimum is not worth cutting")
     func shortSpansAreIgnored() {
         // One second of quiet in the middle of activity, against a 1.5s minimum.
-        let found = spans(waveforms: [waveform(loud: [(0, 9), (10, 20)])],
+        let found = spans(audio: .sampled([waveform(loud: [(0, 9), (10, 20)])]),
                           frames: frames(moving: [(0, 9), (10, 20)]))
         #expect(found.isEmpty, "cut a \(criteria.minimumSpan)s-minimum span anyway: \(found)")
     }
@@ -169,7 +188,7 @@ struct AutoDeepTrimTests {
         let active = [(0.0, 1.0), (1.6, 2.6), (3.8, 4.8), (6.8, 7.8), (12.0, 20.0)]
         func removed(_ preset: DeepTrimPreset) -> Double {
             AutoDeepTrim.deadSpans(duration: duration,
-                                   waveforms: [waveform(loud: active)],
+                                   audio: .sampled([waveform(loud: active)]),
                                    frames: frames(moving: active),
                                    transcript: nil, events: [],
                                    criteria: .preset(preset))

@@ -33,7 +33,8 @@ struct AutoDeepTrimWiringTests {
     /// under test is the command — detect, filter, cut, undo — not that the
     /// editor can load a waveform, which its own tests cover. Decoding a real
     /// twenty-second movie here would test AVFoundation instead.
-    private func makeState(loaded: Bool = true) async throws -> EditorTimelineState {
+    private func makeState(loaded: Bool = true,
+                           silent: Bool = false) async throws -> EditorTimelineState {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension(SnittBundle.fileExtension)
@@ -45,10 +46,18 @@ struct AutoDeepTrimWiringTests {
         let state = EditorTimelineState(controller: controller, edl: EditDecisionList(), events: [])
         guard loaded else { return state }
 
-        let rate = 10.0
-        var peaks = [Float](repeating: 0.001, count: Int(duration * rate))
-        for i in 0..<Int(2 * rate) { peaks[i] = 0.6 }
-        state.waveforms = [WaveformSamples(track: "microphone", samplesPerSecond: rate, peaks: peaks)]
+        if silent {
+            // A recording with no audio track: sampling FINISHED and found
+            // nothing, which is different from not having sampled yet.
+            state.waveforms = []
+        } else {
+            let rate = 10.0
+            var peaks = [Float](repeating: 0.001, count: Int(duration * rate))
+            for i in 0..<Int(2 * rate) { peaks[i] = 0.6 }
+            state.waveforms = [WaveformSamples(track: "microphone",
+                                               samplesPerSecond: rate, peaks: peaks)]
+        }
+        state.waveformsLoaded = true
         // Moving for two seconds, then a still picture.
         let frameRate = 5.0
         var frames = [CGImage]()
@@ -108,6 +117,20 @@ struct AutoDeepTrimWiringTests {
         let state = try await makeState(loaded: false)
         #expect(state.autoDeepTrim(preset: .default) == .notReady)
         #expect(state.edl.cuts.isEmpty)
+    }
+
+    @Test("A silent recording is trimmable, not permanently 'not ready'")
+    func silentRecordingIsTrimmable() async throws {
+        // The defect a real 200-second screen recording with zero audio tracks
+        // exposed: an empty waveform array was read as "still loading", so the
+        // command reported not-ready forever on exactly the recordings most
+        // likely to contain dead air.
+        let state = try await makeState(silent: true)
+        let outcome = state.autoDeepTrim(preset: .default)
+        guard case .cut(let spans, _) = outcome else {
+            Issue.record("a silent recording gave \(outcome)"); return
+        }
+        #expect(spans >= 1)
     }
 
     @Test("The caption distinguishes every outcome")

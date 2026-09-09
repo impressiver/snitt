@@ -23,6 +23,10 @@ public enum ParsedCommand: Equatable {
     case trim(bundlePath: String, start: Double?, end: Double?, auto: Bool)
     /// `rect` nil means `--reset`: remove the crop entirely.
     case crop(bundlePath: String, rect: CropRect?)
+    /// D57. Carries the RESOLVED criteria: `--preset` picks a starting set and
+    /// each per-criterion flag overrides one field of it, so the two forms the
+    /// decision calls for are one value by the time anything acts on it.
+    case autoDeepTrim(bundlePath: String, criteria: DeepTrimCriteria)
     /// Register the bundled MCP server with the agent hosts on this machine.
     /// Prints by default; `apply` actually runs the registration commands.
     case setup(apply: Bool)
@@ -163,6 +167,14 @@ public enum CommandLineParser {
             }
             return parseCrop(path: path, args: Array(args.dropFirst()))
 
+        case "auto-deep-trim":
+            guard let path = args.first else {
+                return .failure(ParseFailure(
+                    "`auto-deep-trim` needs a path to a .snitt bundle. "
+                  + "Use the path `snitt record stop` printed."))
+            }
+            return parseAutoDeepTrim(path: path, args: Array(args.dropFirst()))
+
         case "export":
             guard let path = args.first else {
                 return .failure(ParseFailure(
@@ -282,6 +294,55 @@ public enum CommandLineParser {
     /// `CropRect` stores and what survives a change of source resolution.
     /// Accepting pixels would mean this command has to read `capture.mov` to
     /// convert — a read §4.9 says the CLI cannot assume it is allowed to make.
+    /// `auto-deep-trim <bundle> [--preset P] [per-criterion flags]`.
+    ///
+    /// The preset is a STARTING POINT that individual flags override, rather
+    /// than an alternative to them — D57 asks for both, and making them
+    /// exclusive would mean anyone wanting "aggressive but keep two seconds
+    /// around clicks" has to restate all five values.
+    private static func parseAutoDeepTrim(path: String, args: [String])
+        -> Result<ParsedCommand, ParseFailure> {
+        var criteria = DeepTrimCriteria.preset(.default)
+        var remaining = args
+        while let flag = remaining.first {
+            remaining.removeFirst()
+            if flag == "--preset" {
+                guard let raw = remaining.first else {
+                    return .failure(ParseFailure(
+                        "--preset needs one of: "
+                      + DeepTrimPreset.allCases.map(\.rawValue).joined(separator: ", ")))
+                }
+                remaining.removeFirst()
+                guard let preset = DeepTrimPreset(rawValue: raw) else {
+                    return .failure(ParseFailure(
+                        "Unknown preset: \(raw). Expected one of: "
+                      + DeepTrimPreset.allCases.map(\.rawValue).joined(separator: ", ")))
+                }
+                criteria = .preset(preset)
+                continue
+            }
+            let known = ["--min-span", "--audio-silence", "--frame-stillness",
+                         "--input-padding", "--reading-time"]
+            guard known.contains(flag) else {
+                return .failure(ParseFailure(
+                    "Unknown auto-deep-trim option: \(flag). Expected --preset or one of: "
+                  + known.joined(separator: ", ")))
+            }
+            guard let raw = remaining.first, let value = Double(raw), value >= 0 else {
+                return .failure(ParseFailure("\(flag) needs a non-negative number."))
+            }
+            remaining.removeFirst()
+            switch flag {
+            case "--min-span": criteria.minimumSpan = value
+            case "--audio-silence": criteria.audioSilenceFraction = Float(value)
+            case "--frame-stillness": criteria.frameStillnessThreshold = value
+            case "--input-padding": criteria.inputPadding = value
+            default: criteria.subtitleReadingTime = value
+            }
+        }
+        return .success(.autoDeepTrim(bundlePath: path, criteria: criteria))
+    }
+
     private static func parseCrop(path: String, args: [String]) -> Result<ParsedCommand, ParseFailure> {
         var values: [String: Double] = [:]
         var reset = false

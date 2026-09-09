@@ -88,6 +88,12 @@ snitt — record a window and hand back a .snitt bundle
   snitt setup [--apply]                   register the MCP server with agents
   snitt crop <bundle> --x F --y F --width F --height F
         [--reset]                        crop, in fractions of the frame
+  snitt auto-deep-trim <bundle>          cut the spans where nothing happens
+        [--preset conservative|default|aggressive]
+        [--min-span S] [--audio-silence F] [--frame-stillness F]
+        [--input-padding S] [--reading-time S]
+                                         a preset sets all five; each flag
+                                          overrides one of them
   snitt inspect <bundle>                 metadata as JSON, no GUI
   snitt trim <bundle> --start <s> --end <s>   cut a range (edit.json only)
   snitt trim <bundle> --auto-trim        trim bookends from a human recording's
@@ -231,6 +237,10 @@ func requestBody(for command: ParsedCommand,
     case .crop(let path, let rect):
         return .crop(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
                      rect: rect)
+    case .autoDeepTrim(let path, let criteria):
+        return .autoDeepTrim(
+            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
+            criteria: criteria)
     case .setup:
         // Unreachable: `setup` exits above, before any request is built. It
         // never talks to the app, so there is no body for it — and a fatalError
@@ -320,6 +330,15 @@ do {
         note(summary.crop == nil
              ? "Crop removed. Exports at \(summary.pixelWidth)x\(summary.pixelHeight)."
              : "Cropped. Exports at \(summary.pixelWidth)x\(summary.pixelHeight).")
+    case .autoTrimmed(let summary):
+        emit(summary)
+        // "Removed nothing" is a normal outcome and has to READ as one — the
+        // recording had no dead air by the criteria asked for, which is not a
+        // failure and not an error to retry.
+        note(summary.spans == 0
+             ? "No dead air found. \(summary.totalCuts) cut(s) already in this recording."
+             : String(format: "Cut %d span(s), %.1fs. %.1fs remains.",
+                      summary.spans, summary.seconds, summary.remainingSeconds))
     case .exported(let manifest):
         emit(manifest)
         note(exportNote(manifest))

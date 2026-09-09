@@ -319,6 +319,9 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         case .crop(let bundlePath, let rect):
             return await crop(bundlePath: bundlePath, rect: rect)
 
+        case .autoDeepTrim(let bundlePath, let criteria):
+            return await autoDeepTrim(bundlePath: bundlePath, criteria: criteria)
+
         case .export(let bundlePath, let format, let outputPath, let scale, let chapters,
                      let subtitles, let maxSizeBytes):
             return await export(bundlePath: bundlePath, format: format, outputPath: outputPath,
@@ -418,6 +421,75 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             return .failure(AutomationError(
                 code: .internalError,
                 message: "Could not write the crop to this recording.",
+                hint: String(describing: error)))
+        }
+    }
+
+    /// D57's automatic trim, over the socket.
+    ///
+    /// Unlike the editor's version — which reads signals it has already decoded
+    /// for the timeline — this has no open document, so it samples the waveform
+    /// and the filmstrip itself. That is a real decode of the movie and the
+    /// reason this verb is slower than `trim` or `crop`; it is also why the
+    /// filmstrip is asked for at a HIGHER rate than the editor's, since nothing
+    /// here has to stay responsive while it runs and the resolution is what
+    /// bounds the answer.
+    private func autoDeepTrim(bundlePath: String,
+                              criteria: DeepTrimCriteria) async -> AutomationResponse {
+        let bundle: SnittBundle
+        do {
+            bundle = try SnittBundle(opening: URL(fileURLWithPath: bundlePath))
+        } catch {
+            return .failure(AutomationError(
+                code: .targetNotFound,
+                message: "Could not read a recording at that path.",
+                hint: "Use the path `snitt record stop` printed."))
+        }
+
+        do {
+            let duration = try await CompositionBuilder.mediaDuration(of: bundle)
+            // Sampling ran to completion here, so an empty result means the
+            // movie HAS no audio tracks rather than that they are still
+            // loading — the distinction `AudioEvidence` exists for.
+            let sampled = try await WaveformSampler.sample(movieAt: bundle.captureURL)
+            let audio: AudioEvidence = sampled.isEmpty ? .silentByConstruction : .sampled(sampled)
+            let filmstrip = try await FilmstripSampler.sample(
+                movieAt: bundle.captureURL,
+                // Four per second rather than the editor's few-hundred cap: the
+                // detector can only resolve dead air as finely as the picture is
+                // sampled, and here there is no scrolling strip to keep light.
+                maxFrames: max(120, Int(duration * 4)),
+                height: 48)
+            let events = (try? EventLog.read(from: bundle).events) ?? []
+            let transcript = try? Transcript.read(from: bundle)
+
+            var edl = try Self.readEDL(for: bundle)
+            let kept = KeptRanges.compute(duration: duration, cuts: edl.cuts.map(\.range))
+            let found = AutoDeepTrim.deadSpans(
+                duration: duration, audio: audio,
+                frames: FrameActivity.from(filmstrip),
+                transcript: transcript, events: events, criteria: criteria)
+            // Already-removed material is not proposed again, so re-running is
+            // idempotent rather than stacking folds onto footage that is gone.
+            let fresh = found.filter { span in
+                kept.contains { $0.start < span.end && span.start < $0.end }
+            }
+
+            if !fresh.isEmpty {
+                edl.cuts.append(contentsOf: fresh.map { Cut(range: $0) })
+                try edl.write(to: bundle)
+            }
+            let remaining = KeptRanges.compute(duration: duration, cuts: edl.cuts.map(\.range))
+                .reduce(0) { $0 + ($1.end - $1.start) }
+            return .autoTrimmed(AutoTrimSummary(
+                spans: fresh.count,
+                seconds: fresh.reduce(0) { $0 + ($1.end - $1.start) },
+                totalCuts: edl.cuts.count,
+                remainingSeconds: remaining))
+        } catch {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "Could not trim this recording.",
                 hint: String(describing: error)))
         }
     }
