@@ -57,12 +57,12 @@ enum SyntheticFrameContent {
 ///   requested time, and where dropping those tolerances is therefore
 ///   something a test can actually detect rather than something that quietly
 ///   changes nothing.
-func writeSyntheticMovie(to url: URL, seconds: Double,
-                         size: CGSize = CGSize(width: 320, height: 240),
-                         fps: Int32 = 30,
-                         maxKeyFrameInterval: Int32? = nil,
-                         audioTrackCount: Int = 0,
-                         content: SyntheticFrameContent = .flat) async throws {
+private func encodeSyntheticMovie(to url: URL, seconds: Double,
+                                  size: CGSize,
+                                  fps: Int32,
+                                  maxKeyFrameInterval: Int32?,
+                                  audioTrackCount: Int,
+                                  content: SyntheticFrameContent) async throws {
     nonisolated(unsafe) let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
 
     var videoOutputSettings: [String: Any] = [
@@ -318,4 +318,87 @@ private final class OnceFlag: @unchecked Sendable {
         fired = true
         body()
     }
+}
+
+
+// MARK: - Fixture cache
+
+/// Encodes each distinct fixture ONCE, then copies it.
+///
+/// Measured on 2026-09-09: a test that writes a movie costs ~0.106s, against
+/// ~0.003s for one that does not — a ~35x gap, and with `writeSyntheticMovie`
+/// at 40 call sites it accounted for most of `SnittAppTests`' runtime. Almost
+/// every caller wants *a valid movie with these properties*, not *a uniquely
+/// encoded one*, so encoding per test bought nothing.
+///
+/// **Callers still get their own file.** The cache copies rather than sharing a
+/// URL, so a test that mutates, truncates or deletes its `capture.mov` — several
+/// do, deliberately, to exercise damaged bundles — cannot corrupt the fixture
+/// every other test is about to use. Copying a ~50KB file is microseconds
+/// against ~100ms of H.264 encoding.
+///
+/// An actor, and `inFlight` as well as `masters`: Swift Testing runs tests
+/// concurrently, so without the in-flight map the first N callers for the same
+/// key would each start their own encode and race to install it, which is the
+/// cost this exists to remove.
+private actor MovieFixtureCache {
+    static let shared = MovieFixtureCache()
+
+    private var masters: [String: URL] = [:]
+    private var inFlight: [String: Task<URL, Error>] = [:]
+
+    private lazy var root: URL = {
+        let dir = FileManager.default.temporaryDirectory
+            .appending(path: "snitt-movie-fixtures-\(ProcessInfo.processInfo.processIdentifier)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
+    func master(key: String, encode: @Sendable @escaping (URL) async throws -> Void) async throws -> URL {
+        if let existing = masters[key] { return existing }
+        if let running = inFlight[key] { return try await running.value }
+
+        let destination = root.appending(path: "\(abs(key.hashValue)).mov")
+        let task = Task<URL, Error> {
+            try await encode(destination)
+            return destination
+        }
+        inFlight[key] = task
+        defer { inFlight[key] = nil }
+
+        let url = try await task.value
+        masters[key] = url
+        return url
+    }
+}
+
+/// Writes a tiny real `.mov` at `url`.
+///
+/// Signature-compatible with the uncached original on purpose: the caching is
+/// an implementation detail, so no call site changed and none can forget to opt
+/// in. `encodeSyntheticMovie` above is the real encoder and still runs once per
+/// distinct set of parameters.
+func writeSyntheticMovie(to url: URL, seconds: Double,
+                         size: CGSize = CGSize(width: 320, height: 240),
+                         fps: Int32 = 30,
+                         maxKeyFrameInterval: Int32? = nil,
+                         audioTrackCount: Int = 0,
+                         content: SyntheticFrameContent = .flat) async throws {
+    // Every parameter that changes a byte of output belongs in the key. A key
+    // that omitted one would hand back a fixture with the wrong properties —
+    // silently, and only for the second caller onwards, which is the worst
+    // shape of test bug.
+    let key = "\(seconds)|\(size.width)x\(size.height)|\(fps)|"
+        + "\(maxKeyFrameInterval.map(String.init) ?? "nil")|\(audioTrackCount)|\(content)"
+
+    let master = try await MovieFixtureCache.shared.master(key: key) { destination in
+        try await encodeSyntheticMovie(to: destination, seconds: seconds, size: size,
+                                       fps: fps, maxKeyFrameInterval: maxKeyFrameInterval,
+                                       audioTrackCount: audioTrackCount, content: content)
+    }
+
+    if FileManager.default.fileExists(atPath: url.path) {
+        try FileManager.default.removeItem(at: url)
+    }
+    try FileManager.default.copyItem(at: master, to: url)
 }
