@@ -468,3 +468,92 @@ thousand tests and contention rose. Left ALONE deliberately: widening 0.90 on a
 single observation would erase a decision derived from ~30 measured runs, and
 the honest fix is to re-derive the distribution, not to nudge the number until
 it stops failing.
+
+### 2026-09-09 (a second batch of editor defects, all reported by use)
+
+Five observations from the product owner in one session, all from actually
+driving the editor rather than from reading code. Four were fixed the same day
+(D82, D85, D87, D88); four more were recorded as queued enhancements and
+deliberately not built (D83, D84, D86, D89).
+
+**The pattern worth naming: three of the four defects were invisible to a green
+suite because each was about a SEQUENCE, not a value.**
+
+- A dragged marker reverted until the timeline was clicked again. `events` was
+  correct the whole time; a cache read during the synchronous re-render was not.
+  Every test asserting "the marker moved" passed.
+- Crop applied on mouse-up, so there was no adjustable state to be wrong about.
+  The geometry was right; the interaction had no second step.
+- Adjusting gain reset the playhead. The gain reached the mix, the mix reached
+  the export, `edit.json` was correct. What was wrong was that a volume change
+  rebuilt the whole composition and `replaceCurrentItem` threw the position
+  away.
+
+None of these is a wrong number. They are wrong *orders* and wrong *lifetimes*,
+which is the class a value-asserting test cannot see. What caught them was
+someone using the thing.
+
+**A test that passed against both implementations.** Writing D82, I justified
+the atomic chapter edit with undo — "two registrations means one ⌘Z restores
+half the edit" — and wrote a test to prove it. The test passed against the
+implementation it was supposed to reject. `UndoManager.groupsByEvent` is on by
+default and collapses registrations made in one run-loop pass, so both versions
+undo identically. The honest reasons survived (two writes of `events.json`; a
+published frame carrying the new time with the old name) and
+`oneEditPublishesOnce` discriminates. **Rule: when a mutation test passes, check
+it fails against the mutant before believing the claim in the comment.** The
+mutation step is what caught this; the reasoning did not.
+
+**A trap found while fixing D88.** Applying an audio mix in place, a nil mix
+must be ASSIGNED, not skipped. `CompositionBuilder.audioMix(for:edl:)` returns
+nil for "nothing to express", and reading that as "nothing to do" leaves the
+previous mix installed — so un-muting a track would leave it silent forever,
+with an EDL saying it is fine and a slider reading 1.0.
+
+### 2026-09-09 (CI is blocked on billing, not on code)
+
+After four PRs merged green, the fifth's jobs failed in 2-7 seconds with **zero
+steps recorded**. That shape — no steps, instant failure, every job — is a
+runner that never started, not a check that failed. The run annotation says it
+outright: *"The job was not started because recent account payments have failed
+or your spending limit needs to be increased."*
+
+macOS minutes bill at 10x on a private repo and this session ran five PRs
+through them.
+
+**Worth remembering: a job with zero steps is an infrastructure failure.** Read
+the run annotations (`gh api repos/OWNER/REPO/check-runs/ID/annotations`) before
+looking at the diff. The job logs themselves had already expired to
+`BlobNotFound`, which sends you looking at the code for a cause that was never
+there.
+
+The substitute, when CI cannot run: CI's checks are all reproducible locally —
+the hygiene steps are greps, and the test step is a filter. Running them by hand
+on the merge candidate is honest evidence, but it is a local machine, not a
+clean `macos-26` runner.
+
+**Also corrected here:** the entry above says CI runs 475 tests. It runs 492 as
+of 2026-09-09.
+
+### 2026-09-09 (Dependabot's three major action bumps)
+
+`actions/checkout` 4→7, `actions/cache` 4→6, `actions/upload-artifact` 4→7 —
+all merged. The majors they cross are almost entirely Node 24 runtime moves and
+ESM migrations, which matter only for self-hosted runners (this repo has none).
+The two substantive changes, neither of which bites here:
+
+- checkout v7 blocks fork checkout for `pull_request_target` and
+  `workflow_run`. This workflow triggers on `push` and `pull_request` only.
+- upload-artifact v7 adds an opt-in `archive: false` for direct single-file
+  uploads. It defaults to true, so `name`/`path` behave as on v4.
+
+**A friction worth writing down:** merging a PR that touches
+`.github/workflows/` needs the `workflow` OAuth scope. `gh` had `repo` but not
+`workflow`, and the merge was refused by the API with a message that reads like
+a permissions bug rather than a missing scope. Fix is
+`gh auth refresh -h github.com -s workflow` — and `-h` is required when it is
+not attached to a tty.
+
+Expect one cold cache on the first run after the `cache` major: bumping it
+changes the internal cache version, so the existing `spm-*` entries will not
+restore.
