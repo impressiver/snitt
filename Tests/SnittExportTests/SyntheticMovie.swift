@@ -114,12 +114,12 @@ enum SyntheticAudioContent {
     case tone
 }
 
-func writeSyntheticMovie(to url: URL, seconds: Double,
-                         size: CGSize = CGSize(width: 320, height: 240),
-                         fps: Int32 = 30,
-                         audioTrackCount: Int = 0,
-                         content: SyntheticFrameContent = .flat,
-                         audioContent: SyntheticAudioContent = .silent) async throws {
+private func encodeSyntheticMovie(to url: URL, seconds: Double,
+                                  size: CGSize,
+                                  fps: Int32,
+                                  audioTrackCount: Int,
+                                  content: SyntheticFrameContent,
+                                  audioContent: SyntheticAudioContent) async throws {
     nonisolated(unsafe) let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
 
     nonisolated(unsafe) let videoInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
@@ -503,4 +503,69 @@ private func makeAudioSampleBuffer(formatDescription: CMAudioFormatDescription,
         sampleBufferOut: &sampleBuffer
     )
     return sampleBuffer
+}
+
+
+// MARK: - Fixture cache
+
+/// Encodes each distinct fixture ONCE, then copies it. See
+/// `Tests/SnittAppTests/SyntheticMovie.swift` for the full rationale and the
+/// measurements — this is the sibling copy, kept in step by convention like the
+/// rest of this file.
+///
+/// This target benefits differently from `SnittAppTests`: encoding a movie IS
+/// the subject here rather than a prerequisite, so several suites deliberately
+/// vary size, duration and audio content and will miss the cache. That is
+/// correct — a miss costs exactly what it cost before.
+private actor MovieFixtureCache {
+    static let shared = MovieFixtureCache()
+
+    private var masters: [String: URL] = [:]
+    private var inFlight: [String: Task<URL, Error>] = [:]
+
+    private lazy var root: URL = {
+        let dir = FileManager.default.temporaryDirectory
+            .appending(path: "snitt-export-fixtures-\(ProcessInfo.processInfo.processIdentifier)")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
+    func master(key: String, encode: @Sendable @escaping (URL) async throws -> Void) async throws -> URL {
+        if let existing = masters[key] { return existing }
+        if let running = inFlight[key] { return try await running.value }
+
+        let destination = root.appending(path: "\(abs(key.hashValue)).mov")
+        let task = Task<URL, Error> {
+            try await encode(destination)
+            return destination
+        }
+        inFlight[key] = task
+        defer { inFlight[key] = nil }
+
+        let url = try await task.value
+        masters[key] = url
+        return url
+    }
+}
+
+/// Signature-compatible with the uncached original, so no call site changed.
+func writeSyntheticMovie(to url: URL, seconds: Double,
+                         size: CGSize = CGSize(width: 320, height: 240),
+                         fps: Int32 = 30,
+                         audioTrackCount: Int = 0,
+                         content: SyntheticFrameContent = .flat,
+                         audioContent: SyntheticAudioContent = .silent) async throws {
+    let key = "\(seconds)|\(size.width)x\(size.height)|\(fps)|"
+        + "\(audioTrackCount)|\(content)|\(audioContent)"
+
+    let master = try await MovieFixtureCache.shared.master(key: key) { destination in
+        try await encodeSyntheticMovie(to: destination, seconds: seconds, size: size,
+                                       fps: fps, audioTrackCount: audioTrackCount,
+                                       content: content, audioContent: audioContent)
+    }
+
+    if FileManager.default.fileExists(atPath: url.path) {
+        try FileManager.default.removeItem(at: url)
+    }
+    try FileManager.default.copyItem(at: master, to: url)
 }

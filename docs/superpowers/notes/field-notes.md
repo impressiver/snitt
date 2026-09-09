@@ -599,3 +599,44 @@ strictly better — that failure is loud, points at a culprit, and lets the othe
 the queue in `RecordingCoordinatorTests.swift:47` are the same unbounded
 `withCheckedContinuation` shape. `EditorWindowTestGate` guards far more tests
 than the Sparkle gate does, so it is the bigger exposure of the two.
+
+### 2026-09-09 (why the suite is slow — and why the obvious fix was only worth 10%)
+
+**The "214 tests take ≥60s" figure is an artifact, not a finding.** Swift Testing
+schedules every test concurrently and reports wall-clock from SCHEDULING, so a
+test's number is mostly time spent queued. The proof is arithmetic: in an
+isolated run the slowest single test took **56.817s** and the entire run took
+**56.817s**. A test cannot outlast the run containing it. `TimelineViewTests`
+settles it independently — 25 tests in **0.076s** alone, yet 14 of them report
+≥60s in the full run.
+
+**Where the wall clock actually goes.** The suite uses **0.59 cores of 10**
+(35.8s CPU across 60.4s wall), so it is waiting, not computing. Sampling
+mid-run: `WindowServer` 44% (real `NSWindow`s), `OSLogService` 44.7%,
+`VTEncoderXPCService` 18.7% (real H.264 encode). The work is out of process,
+which is exactly why in-process CPU looks idle.
+
+**Explicit sleeps are NOT the cause** — 3.8s across 16 call sites, against ~60s
+of runtime. Worth checking before believing it.
+
+**Logging is not the lever it looks like.** `OS_ACTIVITY_MODE=disable` saved
+~10% (58.7s → 52.7s) and **broke 3 tests** that genuinely assert on log readback
+(S8). Not safely removable.
+
+**The fixture cache: predicted 3-4x, delivered 10%.** `writeSyntheticMovie` had
+40 call sites each encoding a fresh `.mov`; caching by parameters and copying
+took the full suite from ~102s to ~87-93s. Per-suite it ranges from **-54%**
+(`CutFoldTests`, fixture-dominated) to **-1%** (`AutomationHostTests`, which
+waits on IPC instead). I predicted the suite would drop to 15-20s. It did not,
+and the reason is instructive: the encode was already happening out-of-process
+and overlapping with other work, so removing it recovered far less than its
+nominal cost. **Nominal cost is not wall-clock cost when the work is
+concurrent** — measure the total, not the part.
+
+**The real remaining lever is cross-target interference, and it is bigger than
+everything above.** SnittAppTests alone is 52.4s. SnittExportTests alone is
+8.8s. Together with the other five targets the full suite is ~87-93s — roughly
+**30 seconds that belong to neither target**, spent contending for the
+MainActor, the WindowServer and the video encoder. No amount of fixture caching
+touches that; it is a consequence of running one process with 38 of 62 app-test
+files on `@MainActor`, 28 `.serialized` suites, and three global gates.
