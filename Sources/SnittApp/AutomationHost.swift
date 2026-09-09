@@ -924,21 +924,44 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     }
 
     private func reportInput(sessionID: String, kind: String,
-                             x: Double, y: Double, label: String?) async -> AutomationResponse {
+                             x: Double?, y: Double?, label: String?) async -> AutomationResponse {
         if let refusal = policy().evaluate(StartOptions(bundleIdentifier: "probe")) {
             return .failure(refusal)
         }
-        // Only pointer kinds. A reported KEYSTROKE would let a caller write
-        // typed input into a recording it did not observe, which is a claim
-        // about a person rather than about itself — and §5.6 governs rendering
-        // keystrokes precisely because they are the dangerous ones.
-        guard let eventKind = EventKind(rawValue: kind), eventKind == .click || eventKind == .cursor
+        // A reported keystroke carries NO TEXT, and that restriction is the
+        // whole reason it is allowed at all. The danger this originally
+        // excluded is a caller writing typed input into a recording it did not
+        // observe — a claim about what a person typed, which §5.6 governs
+        // precisely because keystroke CONTENT is the dangerous part. A
+        // content-free beat makes no such claim: it says "I typed at this
+        // instant", which is exactly the assertion `cursor` was already
+        // trusted to make, at the same level of trust and with the same
+        // `reported` provenance.
+        //
+        // It exists because an agent driving a terminal has no other way to
+        // mark its work: `autoTrimRange` finds the bookends from input events,
+        // and typing produced none.
+        guard let eventKind = EventKind(rawValue: kind),
+              eventKind == .click || eventKind == .cursor || eventKind == .keystroke
         else {
             return .failure(AutomationError(
                 code: .internalError,
-                message: "kind must be \"click\" or \"cursor\".",
-                hint: "Only pointer events can be reported. Narration belongs on a "
-                    + "marker, and keystrokes cannot be reported at all."))
+                message: "kind must be \"click\", \"cursor\" or \"keystroke\".",
+                hint: "Narration belongs on a marker."))
+        }
+        if eventKind == .keystroke, label != nil {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "A reported keystroke cannot carry a label.",
+                hint: "Report WHEN you typed, not what. Saying what was typed is a "
+                    + "claim about content Snitt never saw, which is what \u{00A7}5.6 governs. "
+                    + "Use a marker if the moment needs a name."))
+        }
+        if eventKind != .keystroke, x == nil || y == nil {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "\(kind) needs x and y as fractions of the window.",
+                hint: "Only a keystroke has no position."))
         }
         switch await coordinator.reportInputForAgent(sessionID: sessionID, kind: eventKind,
                                                      x: x, y: y, label: label) {
@@ -1154,7 +1177,7 @@ private actor NullCoordinator: AgentRecordingControlling {
 
     func pauseStateForAgent() async -> (paused: Bool, pausedSeconds: Double)? { nil }
 
-    func reportInputForAgent(sessionID: String, kind: EventKind, x: Double, y: Double,
+    func reportInputForAgent(sessionID: String, kind: EventKind, x: Double?, y: Double?,
                              label: String?) async -> AgentMarkResult {
         .notRecording
     }

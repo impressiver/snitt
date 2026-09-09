@@ -242,11 +242,20 @@ public enum MCPBridge {
                     "properties": [
                         "sessionId": ["type": "string"],
                         "kind": ["type": "string",
-                                 "description": "\"click\" or \"cursor\" (a move with no click)."],
+                                 "enum": ["click", "cursor", "keystroke"],
+                                 "description": "\"click\", \"cursor\" (a move with no "
+                                     + "click), or \"keystroke\" (you typed something). "
+                                     + "A keystroke needs no x/y and MUST NOT carry a "
+                                     + "label: report WHEN you typed, never what. It is "
+                                     + "what lets snitt_trim's autoTrim find the bookends "
+                                     + "of a session you drove from a terminal."],
                         "x": ["type": "number", "description": "0-1 across the window"],
                         "y": ["type": "number", "description": "0-1 down the window"],
                     ],
-                    "required": ["sessionId", "kind", "x", "y"],
+                    // x/y are required for the pointer kinds and checked in the
+                    // handler, not here: JSON Schema cannot express "required
+                    // unless kind is keystroke" in a form every client honours.
+                    "required": ["sessionId", "kind"],
                 ]),
             ToolDefinition(
                 name: "snitt_screenshot",
@@ -562,11 +571,22 @@ public enum MCPBridge {
             guard let kind = arguments["kind"] as? String else {
                 return .failure(MCPBridgeError("snitt_report_input requires kind"))
             }
+            // A keystroke happens at no particular place, so it alone may omit
+            // x and y. Every pointer kind still requires them — a click with
+            // no position is a click Snitt cannot draw or reason about.
+            let isKeystroke = kind == "keystroke"
+            if isKeystroke, arguments["label"] != nil {
+                return .failure(MCPBridgeError(
+                    "A reported keystroke cannot carry a label. Report WHEN you typed, "
+                  + "not what — saying what was typed is a claim about content Snitt "
+                  + "never saw. Use snitt_add_marker if the moment needs a name."))
+            }
             var point: [String: Double] = [:]
             for key in ["x", "y"] {
                 switch numericValue(arguments[key], parameter: key) {
                 case .success(let value):
                     guard let value else {
+                        if isKeystroke { continue }
                         return .failure(MCPBridgeError(
                             "snitt_report_input requires x and y as fractions of the window"))
                     }
@@ -575,7 +595,7 @@ public enum MCPBridge {
                 }
             }
             return .success(.reportInput(sessionID: session, kind: kind,
-                                         x: point["x"]!, y: point["y"]!,
+                                         x: point["x"], y: point["y"],
                                          label: arguments["label"] as? String))
 
         case "snitt_screenshot":

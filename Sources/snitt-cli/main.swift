@@ -79,6 +79,7 @@ snitt — record a window and hand back a .snitt bundle
         [--mic] [--no-system-audio]        parsed, not yet applied (M3)
   snitt record stop <session-id>         stop; prints the bundle path
   snitt record mark <session-id> [--label <text>]   drop a marker
+  snitt record keystroke <session>        report that you typed (no text)
   snitt record click|cursor <session> <x> <y>
                                           report input the OS never saw
   snitt record screenshot <session> [--label "..."]

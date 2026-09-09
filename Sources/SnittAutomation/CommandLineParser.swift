@@ -36,7 +36,8 @@ public enum ParsedCommand: Equatable {
     case recordResume(sessionID: String)
     case recordScreenshot(sessionID: String, label: String?)
     /// Report an input event the OS never saw. `x`/`y` are window fractions.
-    case recordInput(sessionID: String, kind: String, x: Double, y: Double)
+    /// `x`/`y` are nil for a `keystroke`, which happens at no particular place.
+    case recordInput(sessionID: String, kind: String, x: Double?, y: Double?)
     case export(bundlePath: String, format: String, outputPath: String,
                 scale: Double, chapters: Bool, subtitles: Bool, maxSizeBytes: Int?)
     /// `outputPath` here is still the RAW string typed on the command line —
@@ -88,6 +89,17 @@ public enum CommandLineParser {
                       + "window, e.g. `snitt record click S1 0.5 0.32`"))
                 }
                 return .success(.recordInput(sessionID: args[0], kind: sub, x: x, y: y))
+            case "keystroke":
+                // No coordinates, and no text. Typing happens at no particular
+                // place, and WHAT was typed is a claim about content Snitt
+                // never saw — the restriction that makes reporting it
+                // acceptable at all.
+                guard let session = args.first else {
+                    return .failure(ParseFailure(
+                        "`record keystroke` needs a session id, e.g. "
+                      + "`snitt record keystroke S1`. It takes no position and no text."))
+                }
+                return .success(.recordInput(sessionID: session, kind: sub, x: nil, y: nil))
 
             case "screenshot":
                 guard let session = args.first else {

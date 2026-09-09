@@ -110,9 +110,9 @@ actor FakeCoordinator: AgentRecordingControlling {
 
     func setScreenshotResult(_ result: AgentScreenshotResult) { screenshotResult = result }
 
-    private(set) var reportedInput: [(kind: EventKind, x: Double, y: Double)] = []
+    private(set) var reportedInput: [(kind: EventKind, x: Double?, y: Double?)] = []
 
-    func reportInputForAgent(sessionID: String, kind: EventKind, x: Double, y: Double,
+    func reportInputForAgent(sessionID: String, kind: EventKind, x: Double?, y: Double?,
                              label: String?) async -> AgentMarkResult {
         guard activeSession != nil else { return .notRecording }
         guard activeSession == sessionID else { return .notCurrentSession }
@@ -1279,16 +1279,36 @@ struct ReportedInputAutomationTests {
         #expect(reported.x == 0.25 && reported.y == 0.75)
     }
 
-    @Test("A reported KEYSTROKE is refused")
-    func keystrokesCannotBeReported() async throws {
-        // Reporting a click is a claim about what the caller itself did.
-        // Reporting a keystroke would be a claim about what a PERSON typed,
-        // written into a recording that never observed it — and §5.6 governs
-        // rendering keystrokes precisely because they are the dangerous ones.
+    @Test("A reported keystroke is a beat, with no position")
+    func keystrokesAreReportedAsBeats() async throws {
+        // Amended (D72, 2026-09-08). Keystrokes used to be refused outright:
+        // reporting one "would be a claim about what a PERSON typed, written
+        // into a recording that never observed it". That reasoning is about
+        // CONTENT, and the amendment keeps it — see below. What it no longer
+        // blocks is the TIMING, which is all `autoTrimRange` reads and the only
+        // signal an agent driving a terminal can offer.
+        let (coordinator, host, session) = await startedHost()
+        _ = await host.handle(
+            .reportInput(sessionID: session, kind: "keystroke", x: nil, y: nil, label: nil))
+        let reported = try #require(await coordinator.reportedInput.first)
+        #expect(reported.kind == .keystroke)
+        // Nil, not zero: zero is the top-left corner of the window, and a
+        // keystroke happened at no corner.
+        #expect(reported.x == nil && reported.y == nil)
+    }
+
+    @Test("A reported keystroke carrying text is still refused")
+    func keystrokeContentIsStillRefused() async throws {
+        // The half of the original rule that survives, and the reason the
+        // other half could be relaxed: a beat says "I typed at this instant",
+        // which is the claim `cursor` was already trusted to make. Text would
+        // say WHAT was typed — a claim about content Snitt never saw, which is
+        // what §5.6 governs.
         let (coordinator, host, session) = await startedHost()
         guard case .failure = await host.handle(
-            .reportInput(sessionID: session, kind: "keystroke", x: 0.5, y: 0.5, label: nil))
-        else { Issue.record("a keystroke was accepted"); return }
+            .reportInput(sessionID: session, kind: "keystroke",
+                         x: nil, y: nil, label: "sudo rm -rf /"))
+        else { Issue.record("a keystroke with text was accepted"); return }
         #expect(await coordinator.reportedInput.isEmpty)
     }
 

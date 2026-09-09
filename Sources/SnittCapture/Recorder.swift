@@ -333,11 +333,15 @@ public actor Recorder {
     /// Coordinates are clamped rather than rejected. A click one pixel outside
     /// the window is a rounding difference between the caller's idea of the
     /// window and Snitt's, not a lie worth refusing; a click at 5.0 would be.
-    public func reportInput(kind: EventKind, x: Double, y: Double,
+    public func reportInput(kind: EventKind, x: Double?, y: Double?,
                             label: String?) async -> Double {
         let offset = await currentOffset()
+        // Optional, because a reported KEYSTROKE has no position — it is a
+        // beat, not a place. `LoggedEvent.x`/`y` were already optional for
+        // exactly the kinds that have no coordinates.
         await eventLog.add(at: offset, kind: kind, label: label,
-                           x: min(max(x, 0), 1), y: min(max(y, 0), 1),
+                           x: x.map { min(max($0, 0), 1) },
+                           y: y.map { min(max($0, 0), 1) },
                            source: .reported)
         return offset
     }
