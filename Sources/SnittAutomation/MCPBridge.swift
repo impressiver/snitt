@@ -351,6 +351,61 @@ public enum MCPBridge {
                     "required": ["bundlePath"],
                 ]),
             ToolDefinition(
+                name: "snitt_auto_deep_trim",
+                description: "Remove the spans where nothing happened — no sound, no "
+                           + "movement on screen, no input, no marker, nothing being "
+                           + "said. Non-destructive: it appends cuts to the edit "
+                           + "decision list and never touches capture.mov, so the "
+                           + "result is reversible and safe to run before deciding. "
+                           + "Unlike snitt_trim's autoTrim, this WORKS ON RECORDINGS "
+                           + "YOU MADE: it needs no input events, because it reads the "
+                           + "picture and the audio instead. Running it twice is safe — "
+                           + "the second run proposes nothing already cut. Use it before "
+                           + "snitt_export to hand someone a demo without the minutes "
+                           + "spent waiting for a page to load.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "bundlePath": [
+                            "type": "string",
+                            "description": "Path printed by snitt_stop_recording",
+                        ],
+                        "preset": [
+                            "type": "string",
+                            "enum": DeepTrimPreset.allCases.map(\.rawValue),
+                            "description": "How much footage survives. conservative keeps "
+                                + "the most and only removes long, unambiguous gaps; "
+                                + "aggressive keeps the least. Defaults to default. Any "
+                                + "of the settings below override one part of it.",
+                        ],
+                        "minSpan": [
+                            "type": "number",
+                            "description": "Shortest gap worth removing, in seconds.",
+                        ],
+                        "audioSilence": [
+                            "type": "number",
+                            "description": "Audio at or below this fraction of the "
+                                + "track's own typical level counts as silence.",
+                        ],
+                        "frameStillness": [
+                            "type": "number",
+                            "description": "Frame-to-frame change at or below this "
+                                + "counts as a still picture (0-1).",
+                        ],
+                        "inputPadding": [
+                            "type": "number",
+                            "description": "Seconds kept either side of a click, "
+                                + "keystroke or marker.",
+                        ],
+                        "readingTime": [
+                            "type": "number",
+                            "description": "Seconds a spoken word stays protected after "
+                                + "it finishes, so captions are not cut mid-read.",
+                        ],
+                    ],
+                    "required": ["bundlePath"],
+                ]),
+            ToolDefinition(
                 name: "snitt_export",
                 description: "Render the trimmed recording to a movie file and return a "
                            + "manifest — duration, dimensions, byte size, chapters — that "
@@ -560,6 +615,48 @@ public enum MCPBridge {
             return .success(.crop(bundlePath: path,
                                   rect: CropRect(x: rect["x"]!, y: rect["y"]!,
                                                  width: rect["width"]!, height: rect["height"]!)))
+
+        case "snitt_auto_deep_trim":
+            guard let path = arguments["bundlePath"] as? String else {
+                return .failure(MCPBridgeError("snitt_auto_deep_trim requires bundlePath"))
+            }
+            var criteria = DeepTrimCriteria.preset(.default)
+            if let raw = arguments["preset"] {
+                guard let name = raw as? String, let preset = DeepTrimPreset(rawValue: name) else {
+                    return .failure(MCPBridgeError(
+                        "snitt_auto_deep_trim preset must be one of: "
+                      + DeepTrimPreset.allCases.map(\.rawValue).joined(separator: ", ")))
+                }
+                criteria = .preset(preset)
+            }
+            // Each setting overrides one part of the preset rather than
+            // replacing it, matching the CLI: an agent asking for "aggressive
+            // but keep two seconds around clicks" should not have to restate
+            // the other four.
+            let overrides: [(String, (inout DeepTrimCriteria, Double) -> Void)] = [
+                ("minSpan", { $0.minimumSpan = $1 }),
+                ("audioSilence", { $0.audioSilenceFraction = Float($1) }),
+                ("frameStillness", { $0.frameStillnessThreshold = $1 }),
+                ("inputPadding", { $0.inputPadding = $1 }),
+                ("readingTime", { $0.subtitleReadingTime = $1 }),
+            ]
+            for (key, apply) in overrides {
+                switch numericValue(arguments[key], parameter: key) {
+                case .failure(let error): return .failure(error)
+                case .success(let value):
+                    guard let value else { continue }
+                    // Negative seconds and negative thresholds are nonsense
+                    // that would silently widen or disable a criterion.
+                    guard value >= 0 else {
+                        return .failure(MCPBridgeError(
+                            "snitt_auto_deep_trim \(key) must be zero or greater"))
+                    }
+                    apply(&criteria, value)
+                }
+            }
+            return .success(.autoDeepTrim(
+                bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory),
+                criteria: criteria))
 
         case "snitt_trim":
             guard let path = arguments["bundlePath"] as? String else {
