@@ -114,9 +114,10 @@ public struct AutomationRequest: Codable, Sendable {
         case resumeRecording(sessionID: String)
         case screenshot(sessionID: String, label: String?)
         /// An input event the OS never saw, reported by whoever caused it
-        /// (M5e follow-on). `x`/`y` are fractions of the recorded window.
+        /// (M5e follow-on). `x`/`y` are fractions of the recorded window, and
+        /// are nil for a `keystroke`, which happens at no particular place.
         case reportInput(sessionID: String, kind: String,
-                         x: Double, y: Double, label: String?)
+                         x: Double?, y: Double?, label: String?)
         /// D57's automatic trim. Carries the resolved criteria rather than a
         /// preset name, so the CLI's per-criterion flags and its `--preset`
         /// arrive here as the same thing and the app has one code path.

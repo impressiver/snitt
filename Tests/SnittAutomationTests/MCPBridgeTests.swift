@@ -41,6 +41,11 @@ func everyToolMaps() {
             json = #"{"bundlePath": "/tmp/x.snitt", "reset": true}"#
         case "snitt_trim":
             json = #"{"bundlePath": "/tmp/x.snitt", "autoTrim": true}"#
+        case "snitt_auto_deep_trim":
+            // Deliberately the MINIMAL call: everything but the path is
+            // optional, and if that ever stops being true this is where it
+            // shows up.
+            json = #"{"bundlePath": "/tmp/x.snitt"}"#
         case "snitt_export":
             json = #"{"bundlePath": "/tmp/x.snitt", "format": "mp4", "outputPath": "/tmp/demo.mp4"}"#
         case "snitt_diagnostics_export":
@@ -61,6 +66,7 @@ func toolNamesAreStable() {
     #expect(names == ["snitt_list_targets", "snitt_start_recording",
                       "snitt_stop_recording", "snitt_status", "snitt_add_marker",
                       "snitt_inspect", "snitt_trim", "snitt_crop", "snitt_export",
+                      "snitt_auto_deep_trim",
                       "snitt_pause_recording", "snitt_resume_recording",
                       "snitt_screenshot", "snitt_report_input",
                       "snitt_diagnostics_export"])

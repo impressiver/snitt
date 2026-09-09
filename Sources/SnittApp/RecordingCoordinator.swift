@@ -89,7 +89,7 @@ public protocol AgentRecordingControlling: Sendable {
     func pauseStateForAgent() async -> (paused: Bool, pausedSeconds: Double)?
     func screenshotForAgent(sessionID: String, label: String?) async -> AgentScreenshotResult
     func reportInputForAgent(sessionID: String, kind: EventKind,
-                             x: Double, y: Double, label: String?) async -> AgentMarkResult
+                             x: Double?, y: Double?, label: String?) async -> AgentMarkResult
 }
 
 /// The outcome of an agent's screenshot request.
@@ -350,7 +350,7 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     /// only annotate the session it started, or it could write input into a
     /// person's recording.
     public func reportInputForAgent(sessionID: String, kind: EventKind,
-                                    x: Double, y: Double,
+                                    x: Double?, y: Double?,
                                     label: String?) async -> AgentMarkResult {
         guard let recorder = active, agentSessionID != nil else { return .notRecording }
         guard agentSessionID == sessionID else { return .notCurrentSession }
