@@ -525,7 +525,9 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             }
 
             if !fresh.isEmpty {
-                edl.cuts.append(contentsOf: fresh.map { Cut(range: $0) })
+                edl.cuts.append(contentsOf: fresh.map {
+                Cut(range: $0, label: FoldLabel.describe(span: $0, markers: events))
+            })
                 try edl.write(to: bundle)
             }
             let remaining = KeptRanges.compute(duration: duration, cuts: edl.cuts.map(\.range))

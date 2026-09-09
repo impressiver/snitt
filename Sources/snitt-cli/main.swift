@@ -95,9 +95,6 @@ snitt — record a window and hand back a .snitt bundle
         [--input-padding S] [--reading-time S]
                                          a preset sets all five; each flag
                                           overrides one of them
-  snitt export <bundle> --format mp4|gif --out <path>
-        [--scale F] [--chapters] [--subtitles] [--clicks] [--max-size N]
-                                         --clicks draws reported clicks
   snitt estimate <bundle> [--scale F]    duration, size and an upper bound on
                                           bytes, without doing the export
   snitt inspect <bundle>                 metadata as JSON, no GUI
@@ -106,9 +103,12 @@ snitt — record a window and hand back a .snitt bundle
                                           input events; refused on recordings
                                           with none
   snitt export <bundle> --format mp4|gif --out <path>   render a movie
-        [--scale <factor>] [--chapters] [--max-size 10MB]
+        [--resolution 1080p|720p|540p|480p|2160p|source]
+        [--scale <factor>] [--chapters] [--subtitles] [--clicks]
+        [--max-size 10MB]
                                           scale pixels; write a .vtt from markers;
-                                          walk down quality to hit a byte budget
+                                          draw the clicks you reported; walk down
+                                          quality to hit a byte budget
                                           (gif has no audio track)
   snitt diagnostics export --out <path>  write a support bundle (logs, versions,
                                           permission states, recent sessions) as JSON

@@ -347,6 +347,34 @@ public final class TimelineView: NSView {
     /// dividing by it.
     /// The band's drawn span for an expanded cut, from the geometry that
     /// reserved the space.
+    /// Centre a fold's label in its band, when it fits.
+    ///
+    /// Silently draws nothing when the band is too narrow rather than
+    /// truncating to an ellipsis: at that width the text would be a smear that
+    /// costs the band's colour — which does still say "something was removed
+    /// here" — for no information.
+    private func drawFoldLabel(_ label: String?, in rect: NSRect) {
+        guard let label, !label.isEmpty, rect.width > 40 else { return }
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 10, weight: .medium),
+            .foregroundColor: Palette.playhead,
+            // A shadow, not a backing box: the band is already a colour, and a
+            // second rectangle inside it reads as a separate element.
+            .shadow: {
+                let shadow = NSShadow()
+                shadow.shadowColor = NSColor(srgbRed: 0, green: 0, blue: 0, alpha: 0.85)
+                shadow.shadowBlurRadius = 2
+                shadow.shadowOffset = .zero
+                return shadow
+            }(),
+        ]
+        let text = NSAttributedString(string: label, attributes: attributes)
+        let size = text.size()
+        guard size.width <= rect.width - 8 else { return }
+        text.draw(at: NSPoint(x: rect.midX - size.width / 2,
+                              y: rect.midY - size.height / 2))
+    }
+
     private func expansionSpan(for cut: Cut) -> (x: Double, width: Double)? {
         geometry.expansionSpan(atOutput: timebase.foldPosition(for: cut))
     }
@@ -983,6 +1011,13 @@ public final class TimelineView: NSView {
                 NSColor.systemRed.withAlphaComponent(0.35).setFill()
                 NSBezierPath(rect: NSRect(x: span.x, y: 0, width: span.width,
                                           height: bounds.height)).fill()
+                // The fold's own words, drawn in the space expanding it
+                // reserved. Only here: a COLLAPSED fold is two pixels wide and
+                // has nowhere to put them, and expanding one is the gesture
+                // that says "tell me what was here".
+                drawFoldLabel(cut.label, in: NSRect(x: span.x, y: 0,
+                                                    width: span.width,
+                                                    height: bounds.height))
             } else {
                 NSColor.systemRed.setFill()
                 NSBezierPath(rect: NSRect(x: foldX - 1, y: 0, width: 2,
