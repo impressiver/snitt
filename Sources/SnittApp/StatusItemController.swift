@@ -20,6 +20,37 @@ public enum RecordingState: Equatable, Sendable {
     case stopping
 }
 
+public extension RecordingState {
+    /// Seconds of FOOTAGE captured so far — wall clock minus any time spent
+    /// paused.
+    ///
+    /// Lives on the state rather than in either surface that shows it. The
+    /// menu-bar item and the recording HUD both display an elapsed time, and
+    /// two implementations of this arithmetic would be two clocks wearing one
+    /// name: the menu bar says 0:42, the HUD says 0:51, and neither is
+    /// obviously the wrong one. Same discipline as the settings surfaces
+    /// reading one `UserDefaults` rather than each keeping their own.
+    ///
+    /// The paused case subtracts deliberately: a counter that kept climbing
+    /// while nothing was being filmed would say the recording is fine when it
+    /// is frozen.
+    func footageSeconds(at now: Date) -> Double {
+        switch self {
+        case .idle: return 0
+        case .recording(let startedAt): return max(0, now.timeIntervalSince(startedAt))
+        case .paused(let startedAt, let pausedSeconds):
+            return max(0, now.timeIntervalSince(startedAt) - pausedSeconds)
+        case .stopping: return 0
+        }
+    }
+
+    /// `0:42`, and the one format both surfaces use.
+    static func clock(_ seconds: Double) -> String {
+        let whole = Int(max(0, seconds))
+        return String(format: "%d:%02d", whole / 60, whole % 60)
+    }
+}
+
 public struct StatusItemPresentation: Equatable {
     public var symbolName: String
     public var title: String
@@ -52,21 +83,16 @@ final class StatusItemController: NSObject {
             return StatusItemPresentation(symbolName: "record.circle",
                                           title: "",
                                           isStopEnabled: false)
-        case .recording(let startedAt):
-            let elapsed = Int(now.timeIntervalSince(startedAt))
-            let text = String(format: "%d:%02d", elapsed / 60, elapsed % 60)
+        case .recording:
             return StatusItemPresentation(symbolName: "stop.circle.fill",
-                                          title: text,
+                                          title: RecordingState.clock(state.footageSeconds(at: now)),
                                           isStopEnabled: true)
-        case .paused(let startedAt, let pausedSeconds):
-            // The FOOTAGE, not the wall clock — the counter should not keep
-            // climbing while nothing is being filmed, or a glance says the
-            // recording is fine when it is frozen. The word "Paused" carries
+        case .paused:
+            // The FOOTAGE, not the wall clock — see `footageSeconds(at:)`,
+            // which both this and the HUD now read. The word "Paused" carries
             // the state; a filled circle would read as still recording.
-            let footage = Int(max(0, now.timeIntervalSince(startedAt) - pausedSeconds))
             return StatusItemPresentation(symbolName: "pause.circle.fill",
-                                          title: String(format: "Paused %d:%02d",
-                                                        footage / 60, footage % 60),
+                                          title: "Paused " + RecordingState.clock(state.footageSeconds(at: now)),
                                           isStopEnabled: true)
         case .stopping:
             return StatusItemPresentation(symbolName: "stop.circle",

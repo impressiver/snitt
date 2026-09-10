@@ -320,6 +320,24 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         return .marked(await recorder.mark(label: nil))
     }
 
+    /// Pauses or resumes whatever is recording, for the person at the machine.
+    ///
+    /// Deliberately NOT session-scoped, unlike `setPausedForAgent`. D53 names
+    /// "a human at the machine as the only fallback when an agent forgets to
+    /// resume" — a fallback that checks whether the human owns the session is
+    /// not a fallback. The menu bar already shows an agent's paused recording
+    /// distinctly for exactly this reason; this is the control that goes with
+    /// the indicator.
+    ///
+    /// Returns false when nothing is recording, so a caller can leave the UI
+    /// alone rather than guessing at a state it did not change.
+    @discardableResult
+    public func setPaused(_ paused: Bool) async -> Bool {
+        guard let recorder = active else { return false }
+        if paused { await recorder.pause() } else { await recorder.resume() }
+        return true
+    }
+
     /// Takes a screenshot of the agent's own session (M5e, D53).
     ///
     /// Ownership is checked exactly as pause and mark check it: an agent may
