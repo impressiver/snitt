@@ -65,3 +65,18 @@ eddsa_priv*
 # build that only exists on the maintainer's machine.
 Snitt-*.zip
 Snitt-*.dmg
+
+# The appcast is the same kind of thing, and was tracked by accident rather
+# than by decision — committed twice, incidentally, by releases that happened
+# to notice it had changed. It is an OUTPUT of that signed build: it carries
+# the EdDSA signature of the zip and the release URL, so a committed copy is
+# stale the moment the next release is cut, and the copy Sparkle actually
+# reads is the RELEASE ASSET (SUFeedURL points at
+# releases/latest/download/appcast.xml), never this file. The feed is
+# single-item, so nothing is lost by not keeping the history here — every
+# past version's appcast is still attached to its own release.
+#
+# It also had a bite: tracked, it was left modified in the working tree after
+# every release, and release.sh refuses a dirty tree — so cutting 0.3.0
+# silently armed the NEXT release to fail preflight.
+appcast.xml

@@ -70,7 +70,8 @@ private func runScript(_ arguments: [String],
 private func makeStubs(gitBranch: String = "main",
                        gitDirty: Bool = false,
                        tagExists: Bool = false,
-                       releaseExists: Bool = false) throws -> URL {
+                       releaseExists: Bool = false,
+                       notaryCredentialWorks: Bool = true) throws -> URL {
     let dir = FileManager.default.temporaryDirectory
         .appending(path: "snitt-release-stubs-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -102,6 +103,18 @@ private func makeStubs(gitBranch: String = "main",
     // are about release.sh's checks, not about a real keychain.
     try write("security", """
         echo '  1) ABC "Developer ID Application: test"'
+        """)
+    // `notarize.sh --check-credentials` PROVES the credential by calling
+    // `notarytool history`. Stubbed so the suite needs no network and no real
+    // profile — and so a test can make the probe fail on demand.
+    try write("xcrun", """
+        if [ "$1" = "--find" ]; then echo "/usr/bin/true"; exit 0; fi
+        if [ "$1" = "notarytool" ] && [ "$2" = "history" ]; then
+          \(notaryCredentialWorks
+            ? "echo 'Successfully received submission history.'; exit 0"
+            : "echo 'Error: No Keychain password item found for profile' >&2; exit 1")
+        fi
+        exit 0
         """)
     return dir
 }
@@ -265,6 +278,45 @@ struct ReleaseScriptTests {
                                extraPath: stubs.path)
         #expect(result.status == 0, "\(result.output)")
         #expect(result.output.contains("keychain profile 'snitt'"))
+    }
+
+    @Test("A credential that does not authenticate stops the release before the build")
+    func brokenCredentialIsCaughtInPreflight() throws {
+        // `NOTARY_PROFILE=typo` used to pass preflight: the check only asked
+        // whether the variable was non-empty, so a misremembered profile name
+        // sailed through and failed at submission — after the universal
+        // build. That is the same failure preflight exists to move earlier,
+        // arriving through the other door.
+        //
+        // `notarize.sh --check-credentials` now proves the credential with
+        // `notarytool history`, so this asserts the probe's verdict is
+        // actually load-bearing rather than logged and ignored.
+        let stubs = try makeStubs(notaryCredentialWorks: false)
+        defer { try? FileManager.default.removeItem(at: stubs) }
+        let result = runScript([declaredVersion(), "--dry-run"],
+                               env: ["SNITT_SIGN_IDENTITY": "Developer ID Application: test",
+                                     "NOTARY_PROFILE": "typo"],
+                               extraPath: stubs.path)
+        #expect(result.status != 0)
+        #expect(result.stderr.contains("did not work"))
+        #expect(!result.output.contains("1. Build"),
+                "a credential that cannot authenticate was allowed to build")
+    }
+
+    @Test("A working credential is reported as verified, not merely named")
+    func workingCredentialIsProven() throws {
+        // The other half. A probe whose result was discarded would let the
+        // test above pass only if it also broke this one — and a preflight
+        // that reported "verified" without probing is the thing being
+        // replaced.
+        let stubs = try makeStubs()
+        defer { try? FileManager.default.removeItem(at: stubs) }
+        let result = runScript([declaredVersion(), "--dry-run"],
+                               env: ["SNITT_SIGN_IDENTITY": "Developer ID Application: test",
+                                     "NOTARY_PROFILE": "snitt"],
+                               extraPath: stubs.path)
+        #expect(result.status == 0, "\(result.output)")
+        #expect(result.output.contains("verified"))
     }
 
     @Test("A dirty tree, a feature branch, or a used tag each stop the release")

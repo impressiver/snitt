@@ -57,3 +57,4 @@ ReleaseScriptTests :: Scripts/release.sh :: elif [ "$size" -eq 0 ]; then :: elif
 ReleaseScriptTests :: Scripts/notarize.sh :: if [ ! -f "$NOTARY_KEY_VALUE" ]; then :: if false; then
 ReleaseScriptTests :: Scripts/release.sh :: if ! ./Scripts/signing-identity.sh >/dev/null; then :: if false; then
 ReleaseScriptTests :: Scripts/release.sh :: if ! notary_line="$(./Scripts/notarize.sh --check-credentials)"; then :: if false; then
+ReleaseScriptTests :: Scripts/notarize.sh :: if ! probe="$(xcrun notarytool history "${NOTARIZE_ARGS[@]}" 2>&1)"; then :: if false; then
