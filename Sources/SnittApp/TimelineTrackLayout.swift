@@ -89,17 +89,20 @@ enum TimelineTrackLayout {
         let stackTop = markerHeight + foldHeight
         let remaining = max(0, bounds.height - stackTop - transcriptHeight)
         // The budget's constants, not a second copy of them. This read
-        // `remaining * 0.6` while `TimelineLaneBudget.videoShareOfSurplus`
-        // went 0.6 -> 0.3 -> 0.15 across three commits — so the type that was
-        // tuned and tested was not the type that DREW, and two rounds of
-        // "halve the filmstrip" changed nothing on screen. `bandsMatchThePlan`
-        // is the test that stops the two drifting again.
-        let videoFloor = TimelineLaneBudget.minimumVideoHeight
-        let audioFloor = TimelineLaneBudget.minimumTargetHeight * Double(audioTracks.count)
-        let surplus = max(0, remaining - videoFloor - audioFloor)
-        let videoHeight = audioTracks.isEmpty
-            ? remaining
-            : videoFloor + surplus * TimelineLaneBudget.videoShareOfSurplus
+        // `remaining * 0.6` while the budget was tuned across three commits —
+        // so the type that was tested was not the type that DREW, and two
+        // rounds of "halve the filmstrip" changed nothing on screen.
+        // `bandsMatchThePlan` is the test that stops the two drifting again.
+        //
+        // Audio takes its preferred height and the filmstrip absorbs the rest,
+        // matching `TimelineLaneBudget.distribute` exactly.
+        let audioHeight = audioTracks.isEmpty ? 0
+            : min(TimelineLaneBudget.preferredAudioHeight,
+                  max(TimelineLaneBudget.minimumTargetHeight,
+                      (remaining - TimelineLaneBudget.minimumVideoHeight)
+                          / Double(audioTracks.count)))
+        let videoHeight = max(TimelineLaneBudget.minimumVideoHeight,
+                              remaining - audioHeight * Double(audioTracks.count))
         let video = CGRect(x: 0, y: stackTop, width: bounds.width, height: videoHeight)
         let audioTotal = max(0, remaining - videoHeight)
         guard !audioTracks.isEmpty else { return (marker, fold, video, [], transcript) }

@@ -1313,6 +1313,20 @@ struct EditorContentView: View {
         )
     }
 
+    /// What the timeline needs for THIS recording, capped by the window.
+    ///
+    /// Computed from the lanes this recording actually has rather than always
+    /// claiming the window share — a recording with no transcript and no cuts
+    /// needs two fewer lanes, and taking the height anyway would stretch the
+    /// remaining ones to fill it.
+    private var timelineHeight: Double {
+        TimelineLaneBudget.timelineHeight(
+            forWindowHeight: windowHeight,
+            audioTracks: TimelineTrackLayout.audioTracks(in: state.audioTracks),
+            hasTranscript: state.transcript != nil,
+            hasFolds: !state.edl.cuts.isEmpty)
+    }
+
     /// The window's content height, measured once and read by the timeline.
     @State private var windowHeight: Double = 731
 
@@ -1417,8 +1431,7 @@ struct EditorContentView: View {
             HStack(spacing: 0) {
                 TimelineGutter(
                     plan: TimelineLaneBudget.plan(
-                        availableHeight: TimelineLaneBudget
-                            .timelineHeight(forWindowHeight: windowHeight),
+                        availableHeight: timelineHeight,
                         audioTracks: TimelineTrackLayout.audioTracks(in: state.audioTracks),
                         hasTranscript: state.transcript != nil),
                     trackStates: state.audioTracks,
@@ -1427,8 +1440,7 @@ struct EditorContentView: View {
                 TimelineViewRepresentable(state: state, playhead: playhead,
                                           onEditMarker: { editingMarkerID = $0 })
             }
-            .frame(height: TimelineLaneBudget
-                .timelineHeight(forWindowHeight: windowHeight))
+            .frame(height: timelineHeight)
         }
         .onReceive(Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()) { _ in
             // 20Hz, raised from 10 when the playhead stopped being decoration.

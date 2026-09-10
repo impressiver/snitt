@@ -13,16 +13,19 @@ import Foundation
 struct TimelineLaneBudgetTests {
     private let both = ["microphone", "systemAudio"]
 
-    @Test("The timeline is bounded by the window, so the picture stops being the only thing that shrinks")
-    func heightScalesWithTheWindow() {
-        // The defect this replaces: a fixed 120pt frame made the picture the
-        // only flexible dimension, so on a short window the recording — the
-        // thing meant to be largest — gave up every pixel and the timeline
-        // gave up none.
-        let tall = TimelineLaneBudget.timelineHeight(forWindowHeight: 900)
-        let short = TimelineLaneBudget.timelineHeight(forWindowHeight: 600)
-        #expect(tall > short, "the timeline did not scale with the window")
-        #expect(tall == 900 * TimelineLaneBudget.maximumWindowShare)
+    @Test("A small window shrinks the timeline, not the picture alone")
+    func boundBitesDownward() {
+        // This replaces a test asserting the timeline GREW with the window,
+        // which was the behaviour that made the waveforms enormous. The bound
+        // still matters, in the direction it was written for: when the window
+        // cannot afford what the lanes want, the timeline gives way rather
+        // than pushing the picture out.
+        let cramped = TimelineLaneBudget.timelineHeight(
+            forWindowHeight: 300, audioTracks: both, hasTranscript: true)
+        let roomy = TimelineLaneBudget.timelineHeight(
+            forWindowHeight: 900, audioTracks: both, hasTranscript: true)
+        #expect(cramped < roomy, "a cramped window did not shrink the timeline")
+        #expect(cramped <= 300 * TimelineLaneBudget.maximumWindowShare + 0.001)
     }
 
     @Test("The timeline never grows past its share of the window")
@@ -74,12 +77,13 @@ struct TimelineLaneBudgetTests {
 
     @Test("The filmstrip's share is half the audio bands', not more")
     func filmstripNoLongerDominates() {
-        // The point of the change, asserted as a relationship rather than as a
-        // number: the filmstrip used to take 60% of the surplus against
-        // audio's 40%, and now takes less than either band gets. A test
-        // pinning only the constant would pass if the distribution stopped
-        // using it.
-        let plan = TimelineLaneBudget.plan(availableHeight: 400, audioTracks: both)
+        // Asserted as a relationship rather than a number: whatever the
+        // preferred heights are, a filmstrip band is shorter than a waveform
+        // band. A test pinning the constants would pass if the distribution
+        // stopped using them.
+        let natural = TimelineLaneBudget.naturalHeight(audioTracks: both,
+                                                       hasTranscript: false, hasFolds: false)
+        let plan = TimelineLaneBudget.plan(availableHeight: natural, audioTracks: both)
         let video = try! #require(plan.height(of: .video))
         let audio = try! #require(plan.height(of: .audio("microphone")))
         #expect(video < audio, "the filmstrip is \(video)pt against a \(audio)pt waveform")
@@ -124,27 +128,55 @@ struct TimelineLaneBudgetTests {
         }
     }
 
-    @Test("Surplus is split by the configured share, not by a number in this test")
-    func surplusMatchesTheConfiguredRatio() {
-        // Derived from the constants rather than pinned. This test has been
-        // hand-edited three times as the filmstrip's share was tuned (0.6 ->
-        // 0.3 -> 0.15), and a test you must edit every time the value changes
-        // is not testing the value — it is restating it. What it asserts now
-        // is the RELATIONSHIP: whatever the share is, video and audio divide
-        // the surplus by it and nothing is lost between them.
-        let height: Double = 400
-        let plan = TimelineLaneBudget.plan(availableHeight: height, audioTracks: both)
-        let video = try! #require(plan.height(of: .video))
-        let audio = try! #require(plan.height(of: .audio("microphone")))
+    @Test("Lanes take what they NEED; the timeline sizes to them")
+    func lanesTakeTheirPreferredHeights() {
+        // Replaces a surplus-split test. The old model gave the timeline a
+        // fixed 40% of the window and let lanes stretch to fill it, so halving
+        // the filmstrip handed the height to the WAVEFORMS — ~101pt each —
+        // rather than back to the picture. Lanes now take a preferred height
+        // and the timeline sizes to the total.
+        let natural = TimelineLaneBudget.naturalHeight(
+            audioTracks: both, hasTranscript: true, hasFolds: false)
+        let plan = TimelineLaneBudget.plan(availableHeight: natural, audioTracks: both,
+                                           hasTranscript: true)
+        #expect(abs(try! #require(plan.height(of: .audio("microphone")))
+                    - TimelineLaneBudget.preferredAudioHeight) < 0.001)
+        #expect(abs(try! #require(plan.height(of: .video))
+                    - TimelineLaneBudget.preferredVideoHeight) < 0.001)
+    }
 
-        let floor = TimelineLaneBudget.minimumVideoHeight
-        let audioFloor = TimelineLaneBudget.minimumTargetHeight * 2
-        let surplus = height - TimelineLaneBudget.minimumTargetHeight - floor - audioFloor
-        let share = TimelineLaneBudget.videoShareOfSurplus
+    @Test("A tall window does not inflate the lanes")
+    func extraWindowGoesToThePicture() {
+        // The behaviour the product owner reported as "audio lanes way too
+        // tall". More window must mean a bigger PICTURE, not fatter waveforms
+        // — bounding the timeline is pointless if the lanes expand to consume
+        // whatever the bound allows.
+        let short = TimelineLaneBudget.timelineHeight(
+            forWindowHeight: 700, audioTracks: both, hasTranscript: true)
+        let tall = TimelineLaneBudget.timelineHeight(
+            forWindowHeight: 1600, audioTracks: both, hasTranscript: true)
+        #expect(abs(short - tall) < 0.001, "the timeline grew with the window")
+    }
 
-        #expect(abs(video - (floor + surplus * share)) < 0.001)
-        #expect(abs(audio - (TimelineLaneBudget.minimumTargetHeight
-                             + (surplus * (1 - share)) / 2)) < 0.001)
+    @Test("A cramped window still caps the timeline at its share")
+    func smallWindowStillCaps() {
+        // The bound has to keep working in the direction it was written for:
+        // on a short window the lanes cannot have everything they want.
+        let height = TimelineLaneBudget.timelineHeight(
+            forWindowHeight: 400, audioTracks: both, hasTranscript: true)
+        #expect(height <= 400 * TimelineLaneBudget.maximumWindowShare + 0.001)
+        #expect(height >= TimelineLaneBudget.minimumTimelineHeight)
+    }
+
+    @Test("A recording with fewer lanes gets a shorter timeline")
+    func fewerLanesMeansMorePicture() {
+        // No transcript and no cuts is two fewer lanes. Claiming the height
+        // anyway would stretch the rest to fill it, which is the bug.
+        let full = TimelineLaneBudget.naturalHeight(audioTracks: both,
+                                                    hasTranscript: true, hasFolds: true)
+        let spare = TimelineLaneBudget.naturalHeight(audioTracks: both,
+                                                     hasTranscript: false, hasFolds: false)
+        #expect(spare < full)
     }
 
     @Test("A recording with one audio source is not merged into a composite")
