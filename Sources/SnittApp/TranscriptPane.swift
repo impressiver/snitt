@@ -72,13 +72,21 @@ struct TranscriptPane: View {
     private func transcriptBody(_ transcript: Transcript) -> some View {
         let cutIDs = state.cutWordIDs
         let currentID = state.currentWordID(atOutputSeconds: playhead)
+        // Broken into lines at the speaker's own pauses. The recognizer emits
+        // one undifferentiated stream; a screencast narration is not one, and
+        // reading is the interface this pane exists for.
+        let paragraphs = TranscriptParagraphs.split(transcript.words)
         ScrollViewReader { proxy in
             ScrollView {
-                WrappingLayout(spacing: 3) {
-                    ForEach(transcript.words) { word in
-                        wordView(word, isCut: cutIDs.contains(word.id),
-                                 isCurrent: word.id == currentID)
-                            .id(word.id)
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(paragraphs) { paragraph in
+                        WrappingLayout(spacing: 3) {
+                            ForEach(paragraph.words) { word in
+                                wordView(word, isCut: cutIDs.contains(word.id),
+                                         isCurrent: word.id == currentID)
+                                    .id(word.id)
+                            }
+                        }
                     }
                 }
                 .padding(8)

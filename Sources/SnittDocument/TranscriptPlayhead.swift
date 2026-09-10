@@ -35,6 +35,41 @@ public enum TranscriptPlayhead {
         guard !words.isEmpty else { return nil }
         guard let source = TimeRangeMapping.sourceTime(ofTrimmedTime: outputSeconds,
                                                        keptRanges: keptRanges) else { return nil }
-        return words.first { source >= $0.start && source < $0.end }?.id
+        // The LAST word whose start the playhead has reached, not the first
+        // one it falls inside. Inside the tolerance window two contiguous
+        // words both match — the one ending there and the one starting there
+        // — and the later one is the one being asked about. `first` returns
+        // the earlier, which IS the defect this tolerance exists to fix, so
+        // adding the tolerance without changing the search fixes nothing.
+        //
+        // Both this and the previous `first` assume `words` is in ascending
+        // start order, which is what the recognizer emits and what
+        // `correctWord` preserves (it rewrites text, never timing).
+        guard let index = words.lastIndex(where: { source >= $0.start - clockTolerance })
+        else { return nil }
+        return source < words[index].end ? words[index].id : nil
     }
+
+    /// How far before a word's start still counts as being inside it.
+    ///
+    /// This comparison is between two numbers measured on different clocks,
+    /// and only one of them is exact. `PreviewController.seek` builds its
+    /// target as `CMTime(seconds:preferredTimescale: 600)`, so the instant
+    /// the player reports back afterwards is the requested one rounded to the
+    /// nearest 1/600 s — up to 1/1200 s BEFORE what was asked for. Clicking a
+    /// word seeks to `word.start` and then asks this function which word that
+    /// is; when the rounding goes down, `source >= word.start` is false by a
+    /// fraction of a millisecond and the answer is the PREVIOUS word, whose
+    /// span ends exactly where this one begins. Whether it rounds down is
+    /// decided by the fractional part of each word's start time, which is why
+    /// this read as "sometimes it highlights the word before it" rather than
+    /// as a consistent off-by-one.
+    ///
+    /// One full tick — twice the largest error it has to absorb, and no more.
+    /// Bigger is not safer here: the tolerance also lights the next word early
+    /// during playback, and at the pane's 20Hz poll a 10ms tolerance would put
+    /// the highlight a word ahead of the audio on one sample in five. At
+    /// 1/600 s it is 36x shorter than the shortest word this recognizer has
+    /// produced (0.06 s, "the").
+    public static let clockTolerance = 1.0 / 600.0
 }
