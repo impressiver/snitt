@@ -19,7 +19,7 @@ public enum AppVersion {
     /// The value baked into the binary, and the single source
     /// `Scripts/make-app.sh` reads when writing `CFBundleShortVersionString`.
     /// Bump this and the plist follows; there is nowhere else to edit.
-    public static let fallback = "0.2.0"
+    public static let fallback = "0.3.0"
 
     public static var current: String {
         // No bundle under `swift test` or in `snitt-cli`. An empty string
