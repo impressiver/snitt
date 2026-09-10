@@ -25,6 +25,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let log = SnittLog.logger(.automation, target: "SnittApp")
 
     private let statusItem = StatusItemController()
+    /// The floating recording HUD (§4.11). Lazy: constructing an `NSPanel`
+    /// at delegate-init time runs before `applicationDidFinishLaunching` and
+    /// before any screen geometry is worth asking about.
+    private lazy var recordingHUD: RecordingHUDPanel = makeRecordingHUD()
+    /// When the current recording began, kept so resuming can rebuild a
+    /// `.recording` state rather than inventing a new start time.
+    private var recordingStartedAt: Date?
     /// Owns both real hotkey registrations (D55) — see `HotkeyRegistrar`'s
     /// own doc comment for why persistence and re-registration must move
     /// together. Optional for the same reason `coordinator` below is: real
@@ -194,7 +201,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let outcome = await coordinator.toggle(suppressFocus: suppress)
             switch outcome {
             case .started(_, let usedCache):
-                statusItem.update(.recording(startedAt: Date()))
+                recordingStartedAt = Date()
+                setRecordingState(.recording(startedAt: recordingStartedAt ?? Date()))
                 // A human recording supersedes any agent session the registry
                 // still remembers — see AutomationHost.stop().
                 await automationHost?.clearAgentSession()
@@ -202,7 +210,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // explain it at its first actual occurrence — not on the picker path.
                 if usedCache { ConsentExplainer.showIfNeeded() }
             case .stopped(let url, let copied):
-                statusItem.update(.idle)
+                recordingStartedAt = nil
+                setRecordingState(.idle)
                 // This press may have been the kill switch ending an AGENT
                 // recording. Clearing the registry here is what stops a later
                 // `record stop <id>` from believing that session is still live.
@@ -212,9 +221,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                          + "not be copied to the clipboard.")
                 }
             case .cancelled:
-                statusItem.update(.idle)
+                recordingStartedAt = nil
+                setRecordingState(.idle)
             case .failed(let message, _):
-                statusItem.update(.idle)
+                recordingStartedAt = nil
+                setRecordingState(.idle)
                 // A press that stopped an agent recording but failed to
                 // FINALIZE it still ended that recording — `stopRecording()`
                 // clears `active` before it can throw. Without this the
@@ -296,6 +307,54 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.messageText = message
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    /// The single place a recording state reaches the UI.
+    ///
+    /// Both indicators — the menu-bar item and the HUD — are updated here and
+    /// nowhere else. Two call sites is how they end up disagreeing: the menu
+    /// bar says Paused while the HUD says Recording, and neither is obviously
+    /// the stale one.
+    func setRecordingState(_ state: RecordingState) {
+        statusItem.update(state)
+        recordingHUD.update(state: state)
+    }
+
+    private func makeRecordingHUD() -> RecordingHUDPanel {
+        // The HUD names the keys the user actually has bound, read from the
+        // same `HotkeySettings` the recorder buttons in Settings write to.
+        // Pause has no hotkey yet, so it names none rather than pointing at a
+        // key that does nothing.
+        let settings = HotkeySettings.load()
+        let hud = RecordingHUDPanel(shortcuts: .init(
+            mark: settings[.marker].displayString,
+            pause: nil,
+            stop: settings[.record].displayString))
+        hud.onMark = { [weak self] in
+            Task { @MainActor in
+                guard let coordinator = self?.coordinator else { return }
+                _ = await coordinator.markCurrentRecording(label: nil)
+            }
+        }
+        hud.onTogglePause = { [weak self] in
+            Task { @MainActor in
+                guard let self, let coordinator = self.coordinator,
+                      let startedAt = self.recordingStartedAt else { return }
+                // The state is read back off the indicator rather than kept a
+                // second time here, so the button always toggles what the user
+                // can actually see.
+                if case .paused = self.statusItem.state {
+                    if await coordinator.setPaused(false) {
+                        self.setRecordingState(.recording(startedAt: startedAt))
+                    }
+                } else if await coordinator.setPaused(true) {
+                    self.setRecordingState(.paused(startedAt: startedAt, pausedSeconds: 0))
+                }
+            }
+        }
+        // The same path as the menu-bar kill switch, never a second stop.
+        hud.onStop = { [weak self] in self?.statusItem.onClick?() }
+        return hud
     }
 
     private func notify(_ message: String) {
