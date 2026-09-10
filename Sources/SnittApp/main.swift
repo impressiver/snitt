@@ -449,6 +449,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// pressed with no document open has nothing to export, and Snitt's
     /// menu items generally reflect this by staying live rather than
     /// managing per-item enabled state (see `Close`, `Undo`/`Redo` above).
+    /// Playback actions, all resolved the same way `exportDocument` is: the
+    /// editor is not in the responder chain, so these land on the app delegate
+    /// and are forwarded to whichever editor owns the key window.
+    ///
+    /// Silent when no editor is focused. These are bound to BARE keys — Space,
+    /// Home, ⌥arrows — so a press with the Settings window frontmost, or no
+    /// window at all, must do nothing rather than reach for a document that
+    /// is not there.
+    private var focusedEditor: EditorWindowController? {
+        EditorWindowController.openEditors.first { $0.window == NSApp.keyWindow }
+    }
+
+    @objc func togglePlayback(_ sender: Any?) { focusedEditor?.togglePlayback() }
+    @objc func rewindToStart(_ sender: Any?) { focusedEditor?.rewindToStart() }
+    @objc func goToPreviousMark(_ sender: Any?) { focusedEditor?.goToPreviousMark() }
+    @objc func goToNextMark(_ sender: Any?) { focusedEditor?.goToNextMark() }
+
+    /// Help ▸ Keyboard Shortcuts, rendered from the registry that installed
+    /// the keys — so it cannot describe a binding that does not exist.
+    @objc func showKeyboardShortcuts(_ sender: Any?) {
+        AppDelegate.presentMessage(KeyboardShortcutRegistry.helpText)
+    }
+
     @objc func exportDocument(_ sender: Any?) {
         guard let editor = EditorWindowController.openEditors.first(where: {
             $0.window == NSApp.keyWindow

@@ -73,7 +73,15 @@ struct PlanClaimsTests {
         // that asserted a property adjacent to the one that mattered.
         let spec = try String(contentsOfFile: Self.specPath, encoding: .utf8)
         let names = Self.declaredAbsent(in: spec)
-        #expect(names.count >= 4, "found \(names.count) absence markers; the syntax has drifted")
+        // The floor moves DOWN as markers are legitimately retired — a symbol
+        // that ships stops being absent, and the entry says so instead of the
+        // marker vanishing quietly. That is the guard doing its job, not
+        // failing: `KeyboardShortcutRegistry` retired on 2026-09-10 and this
+        // went 4 → 3. It must never reach zero, which is the vacuous case this
+        // test exists to catch.
+        #expect(names.count >= 3, "found \(names.count) absence markers; the syntax has drifted")
+        #expect(!names.contains("KeyboardShortcutRegistry"),
+                "a retired marker came back; the type ships and the spec should say so")
     }
 
     @Test("Nothing the plan calls unbuilt is already built")

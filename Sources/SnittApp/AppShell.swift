@@ -47,6 +47,10 @@ enum AppShell {
         main.addItem(appMenuItem())
         main.addItem(fileMenuItem())
         main.addItem(editMenuItem())
+        // Built by `KeyboardShortcutRegistry` rather than here, so a binding
+        // lives in exactly one place — see that type for why a hand-written
+        // help dialog beside a hand-written menu is a drift waiting to happen.
+        main.addItem(KeyboardShortcutRegistry.playbackMenuItem())
         main.addItem(windowMenuItem())
         main.addItem(helpMenuItem())
         return main
@@ -182,7 +186,14 @@ enum AppShell {
 
     private static func helpMenuItem() -> NSMenuItem {
         let item = NSMenuItem(title: "Help", action: nil, keyEquivalent: "")
-        item.submenu = NSMenu(title: "Help")
+        let menu = NSMenu(title: "Help")
+        // Rendered from the same array that installed the keys. The dialog
+        // cannot describe a binding that does not exist, and a binding cannot
+        // exist undocumented.
+        menu.addItem(NSMenuItem(title: "Keyboard Shortcuts",
+                                action: #selector(AppDelegate.showKeyboardShortcuts(_:)),
+                                keyEquivalent: ""))
+        item.submenu = menu
         return item
     }
 }
