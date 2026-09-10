@@ -217,21 +217,15 @@ struct MarkerPane: View {
     ///
     /// Returns nil for anything it cannot read, so the caller keeps the old
     /// time rather than moving a chapter to zero.
-    static func parseTimestamp(_ text: String) -> Double? {
-        let trimmed = text.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return nil }
-        let parts = trimmed.split(separator: ":", omittingEmptySubsequences: false)
-        guard parts.count <= 3 else { return nil }
-        var seconds = 0.0
-        for part in parts {
-            // Each segment past the first must be a whole, non-negative number
-            // of minutes or seconds; "1:-3" and "1:2.5.6" are typos, not times.
-            guard let value = Double(part), value >= 0, value.isFinite else { return nil }
-            if parts.count > 1 && part != parts.first && value >= 60 { return nil }
-            seconds = seconds * 60 + value
-        }
-        return seconds
-    }
+    /// Delegates to `Timecode.parse`, which is the same job done once.
+    ///
+    /// This carried its own implementation until the transport's time field
+    /// needed one and a SECOND parser was written rather than this one found.
+    /// Two readings of "1:30" that could disagree is exactly the duplication
+    /// this project keeps removing elsewhere; `Timecode` is the stricter of
+    /// the two (it refuses a fraction on a non-final component, which this
+    /// accepted as a time) and the one with tests.
+    static func parseTimestamp(_ text: String) -> Double? { Timecode.parse(text) }
 
     /// `m:ss`, or `h:mm:ss` once a recording is long enough to need it.
     static func timestamp(_ seconds: Double) -> String {

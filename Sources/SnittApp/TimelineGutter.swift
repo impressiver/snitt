@@ -7,29 +7,30 @@
 import SwiftUI
 import SnittDocument
 
-/// The lane labels down the left of the timeline, with a gain meter on each
-/// audio track.
+/// A narrow strip down the left of the timeline carrying one gain meter per
+/// audio lane.
 ///
-/// SwiftUI beside the timeline rather than drawn inside it, for the reason the
-/// marker editor is a sheet: `TimelineView` is a raw `NSView` whose x-axis is
-/// time, and carving a gutter out of it would shift every geometry calculation
-/// that maps a second to a pixel. Laying the gutter out from the SAME
-/// `TimelineLanePlan` the timeline spends keeps the rows aligned without the
-/// two views having to agree about anything else.
+/// 30pt, and no lane labels. An earlier version was 78pt wide with a caption
+/// on every row, which spent a tenth of the timeline's width on words that
+/// repeat what the lanes already look like — a waveform does not need to be
+/// captioned "Mic".
+///
+/// Laid out from the SAME `TimelineLanePlan` the timeline spends, so a meter
+/// is exactly as tall as the band it controls and sits exactly beside it. It
+/// lives outside `TimelineView` because that view's x-axis IS time: carving a
+/// strip out of it would shift every second-to-pixel calculation there.
 struct TimelineGutter: View {
     let plan: TimelineLanePlan
     let trackStates: [TrackState]
     let onGain: (String, Double) -> Void
     let onMute: (String, Bool) -> Void
 
-    static let width: Double = 78
+    static let width: Double = 30
 
     var body: some View {
         VStack(spacing: 0) {
             ForEach(Array(plan.lanes.enumerated()), id: \.offset) { _, lane in
-                row(for: lane)
-                    .frame(height: lane.height)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                row(for: lane).frame(height: lane.height)
             }
         }
         .frame(width: Self.width)
@@ -39,14 +40,6 @@ struct TimelineGutter: View {
     @ViewBuilder
     private func row(for lane: TimelineLanePlan.Lane) -> some View {
         switch lane.lane {
-        case .marks: label("Marks")
-        case .video: label("Video")
-        case .transcript: label("Words")
-        case .audioComposite:
-            // A composite band is two sources in one lane, so there is no
-            // single gain to offer — adjusting it would silently move only one
-            // of them. The label says what happened instead.
-            label("Audio ×\(trackStates.count)")
         case .audio(let track):
             if let state = trackStates.first(where: { $0.track == track }) {
                 GainMeterView(
@@ -56,28 +49,25 @@ struct TimelineGutter: View {
                     onGain: { onGain(track, $0) },
                     onToggleMute: { onMute(track, !state.muted) })
             } else {
-                label(TransportBar.name(of: track))
+                Color.clear
             }
+        // A composite band is two sources in one lane, so there is no single
+        // gain to offer — a meter there would silently move only one of them.
+        case .marks, .video, .transcript, .audioComposite:
+            Color.clear
         }
-    }
-
-    private func label(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: 9, weight: .medium))
-            .textCase(.uppercase)
-            .kerning(0.6)
-            .foregroundStyle(.secondary)
-            .padding(.leading, 8)
     }
 }
 
-/// A digital VU ladder that also sets the gain.
+/// A vertical digital VU ladder that also sets the gain.
+///
+/// Vertical because the lane is: it stands beside the waveform it controls, at
+/// the same height, and reads the way every mixer meter does — quiet at the
+/// bottom, hot at the top. The first version was horizontal, which made it a
+/// bar that happened to sit near a track rather than a meter belonging to one.
 ///
 /// Read AND write in one control, because they are one thing: the level you
-/// are looking at is the level you are adjusting, and a separate slider
-/// somewhere else makes you check two places to answer one question. This
-/// replaces a popover that had lost the gain slider entirely and offered only
-/// mute — a regression rather than a relocation.
+/// are looking at is the level you are adjusting.
 struct GainMeterView: View {
     let title: String
     let gain: Double
@@ -88,56 +78,39 @@ struct GainMeterView: View {
     private var lit: Int { muted ? 0 : GainMeter.litSegments(forGain: gain) }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            HStack(spacing: 4) {
-                Button(action: onToggleMute) {
-                    Image(systemName: muted ? "speaker.slash.fill" : "speaker.wave.2.fill")
-                        .font(.system(size: 9))
-                }
-                .buttonStyle(.borderless)
-                .help(muted ? "Unmute \(title)" : "Mute \(title)")
-                Text(title)
-                    .font(.system(size: 9, weight: .medium))
-                    .lineLimit(1)
-                    .foregroundStyle(.secondary)
-            }
-            ladder
-            Text(muted ? "Muted" : GainMeter.label(forGain: gain))
-                .font(.system(size: 9, design: .monospaced))
-                .foregroundStyle(muted ? .tertiary : .secondary)
-        }
-        .padding(.leading, 8)
-        .padding(.trailing, 4)
-        .help("Drag the ladder to set \(title)'s gain")
-    }
-
-    /// Segments, not a continuous bar: the point of a digital VU is that you
-    /// can count where you are and return to it, which a smooth fill cannot
-    /// give you.
-    private var ladder: some View {
         GeometryReader { geometry in
-            HStack(spacing: 1.5) {
-                ForEach(0..<GainMeter.segmentCount, id: \.self) { index in
+            VStack(spacing: 1) {
+                // Top segment is the loudest, so the ladder is built in
+                // reverse — `VStack` lays out downward and a meter reads
+                // upward.
+                ForEach((0..<GainMeter.segmentCount).reversed(), id: \.self) { index in
                     RoundedRectangle(cornerRadius: 1)
                         .fill(colour(for: index))
                 }
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0).onChanged { value in
-                    guard geometry.size.width > 0 else { return }
-                    onGain(GainMeter.gain(
-                        forFraction: value.location.x / geometry.size.width))
+                    guard geometry.size.height > 0 else { return }
+                    // Inverted: dragging UP raises the gain, which is the only
+                    // direction a vertical meter can mean.
+                    let fraction = 1 - (value.location.y / geometry.size.height)
+                    onGain(GainMeter.gain(forFraction: fraction))
                 })
+            .onTapGesture(count: 2) { onToggleMute() }
         }
-        .frame(height: 8)
+        .help(muted
+              ? "\(title) is muted — double-click to unmute"
+              : "\(title): \(GainMeter.label(forGain: gain)) — drag to adjust, double-click to mute")
     }
 
     private func colour(for index: Int) -> Color {
-        guard index < lit else { return Color.secondary.opacity(0.18) }
-        // Hot above unity, because that is where amplification — and therefore
+        guard index < lit else { return Color.secondary.opacity(0.16) }
+        // Hot at and above unity, because that is where amplification — and so
         // clipping — begins, which is the one thing a meter exists to warn
-        // about. Below it the ladder is quiet on purpose.
+        // about.
         return GainMeter.isHot(segment: index)
             ? EditorChromePalette.currentHighlight
             : Color.accentColor.opacity(0.85)

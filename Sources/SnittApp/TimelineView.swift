@@ -418,7 +418,7 @@ public final class TimelineView: NSView {
     /// The fold lane's y-range, or nil when the view is too short for one.
     private var foldLaneRange: ClosedRange<Double>? {
         let bands = TimelineTrackLayout.bands(in: bounds, markerHeight: markerTrackHeight,
-                                              audioTracks: [])
+                                              audioTracks: [], hasFolds: !cuts.isEmpty)
         guard bands.fold.height > 0 else { return nil }
         return bands.fold.minY...bands.fold.maxY
     }
@@ -533,7 +533,8 @@ public final class TimelineView: NSView {
     /// exactly as folds are gated to theirs.
     func phraseHit(at point: NSPoint) -> TranscriptPhrase? {
         let bands = TimelineTrackLayout.bands(in: bounds, markerHeight: markerTrackHeight,
-                                              audioTracks: [], hasTranscript: !phrases.isEmpty)
+                                              audioTracks: [], hasTranscript: !phrases.isEmpty,
+                                              hasFolds: !cuts.isEmpty)
         guard bands.transcript.height > 0, bands.transcript.contains(point) else { return nil }
         return phrases.first { phrase in
             let start = geometry.x(atOutput: OutputTime(phrase.start))
@@ -1174,7 +1175,8 @@ public final class TimelineView: NSView {
         let bands = TimelineTrackLayout.bands(in: bounds,
                                               markerHeight: markerTrackHeight,
                                               audioTracks: tracks,
-                                              hasTranscript: !phrases.isEmpty)
+                                              hasTranscript: !phrases.isEmpty,
+                                              hasFolds: !cuts.isEmpty)
         if bands.transcript.height > 0 { drawPhrases(in: bands.transcript) }
         Palette.markerLane.setFill()
         NSBezierPath(rect: bands.marker).fill()
