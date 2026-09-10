@@ -60,6 +60,49 @@ struct EditorWindowGeometryTests {
         #expect(rect.height == 420)
     }
 
+    @Test("The window states a minimum, derived from its parts")
+    func minimumContentSizeIsDerived() {
+        // A stated minimum that nothing enforces is not a minimum, and one
+        // written as a magic number drifts the moment a part changes. This is
+        // the assertion that keeps it derived: change the rail's width or the
+        // timeline's floor and the minimum follows, or this fails.
+        // Tolerance, not `==`, matching every other geometry assertion in this
+        // file. `#expect(a == b)` on these operands hits ambiguous `==`
+        // overload resolution — a bare `1.0 == 1.0` inside `#expect` does not
+        // even compile here — so an equality that looks exact is not reliably
+        // the comparison you wrote.
+        let minimum = EditorWindowController.minimumContentSize
+        let expectedWidth = EditorWindowController.chaptersRailWidth
+                          + EditorWindowController.minimumPlayerSize.width
+        let expectedHeight = EditorWindowController.minimumPlayerSize.height
+                           + TimelineLaneBudget.minimumTimelineHeight
+                           + EditorWindowController.editorChromeHeight
+        #expect(abs(minimum.width - expectedWidth) < 0.001)
+        #expect(abs(minimum.height - expectedHeight) < 0.001)
+    }
+
+    @Test("At the minimum size the picture still gets more room than the timeline")
+    func thePictureStaysLargestAtTheFloor() {
+        // The product owner's directive, checked at the point where it is
+        // hardest to honour. If the timeline out-grows the picture at the
+        // smallest allowed window, the layout has inverted its own priority
+        // exactly where a user is most likely to notice.
+        let minimum = EditorWindowController.minimumContentSize
+        let timeline = TimelineLaneBudget.timelineHeight(forWindowHeight: minimum.height)
+        #expect(timeline < EditorWindowController.minimumPlayerSize.height,
+                "timeline \(timeline)pt vs picture \(EditorWindowController.minimumPlayerSize.height)pt")
+    }
+
+    @Test("The opening window is comfortably larger than the minimum")
+    func openingSizeClearsTheMinimum() {
+        // 75% of a 1600x975 screen. If the default opening size were at or
+        // below the floor, every window would open already collapsed.
+        let rect = EditorWindowController.openingContentRect(on: screen)
+        let minimum = EditorWindowController.minimumContentSize
+        #expect(rect.width > minimum.width)
+        #expect(rect.height > minimum.height)
+    }
+
     @Test("A degenerate screen falls back rather than producing a zero-size window")
     func degenerateScreenFallsBack() {
         // A zero-width screen would otherwise yield a zero-width window: a

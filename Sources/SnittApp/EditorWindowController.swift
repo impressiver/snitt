@@ -1221,7 +1221,19 @@ struct EditorContentView: View {
         )
     }
 
+    /// The window's content height, measured once and read by the timeline.
+    @State private var windowHeight: Double = 731
+
     var body: some View {
+        GeometryReader { geometry in
+            content
+                .onChange(of: geometry.size.height, initial: true) { _, height in
+                    windowHeight = height
+                }
+        }
+    }
+
+    private var content: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 0) {
             // The chapter index, always present rather than conditional on
@@ -1258,14 +1270,24 @@ struct EditorContentView: View {
             // track Task 5 left behind. The taller frame (56, was 40) gives
             // the marker lane room to be a real click/drag target rather
             // than a sliver; see `TimelineView`'s own `markerTrackHeight`.
+            // Proportional, not a fixed 120. A fixed frame made the PICTURE
+            // the only thing that could shrink, so on a short window the
+            // recording gave up every pixel and the timeline gave up none —
+            // the opposite of what this editor is for. `TimelineLaneBudget`
+            // owns the arithmetic and the collapse order; this just gives it
+            // the window it has to spend.
+            // Proportional, not a fixed 120. A fixed frame made the PICTURE
+            // the only thing that could shrink, so on a short window the
+            // recording gave up every pixel and the timeline gave up none —
+            // the opposite of what this editor is for. `TimelineLaneBudget`
+            // owns the arithmetic and the collapse order; `windowHeight` is
+            // measured once around the whole body, because a `GeometryReader`
+            // wrapped around the timeline alone would measure the slot the
+            // timeline was already given and pin it there forever.
             TimelineViewRepresentable(state: state, playhead: playhead,
                                       onEditMarker: { editingMarkerID = $0 })
-                // 120, was 56. The filmstrip and the two waveforms need real
-                // vertical room: at 56 the video band was ~25px, which is
-                // smaller than a thumbnail is useful at, and each audio band
-                // was ~8px — enough to show a band exists, not enough to read
-                // where the sound is.
-                .frame(height: 120)
+                .frame(height: TimelineLaneBudget
+                    .timelineHeight(forWindowHeight: windowHeight))
             // One row per audio source, matching the bands the timeline draws
             // above. Placed here rather than inside `TimelineView` because
             // that is a raw NSView with no room to grow controls without
@@ -1550,6 +1572,29 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// `NSScreen.main` is nil there. A nil or empty screen falls back to the
     /// old fixed size rather than guessing, keeping headless behaviour
     /// unchanged instead of inventing a geometry nobody can see.
+    /// The smallest the editor's content may get.
+    ///
+    /// Stated and tested rather than left to whatever the subviews happen to
+    /// tolerate. Below this the timeline starts eating the picture — the one
+    /// thing that is supposed to be largest — and "what breaks first" becomes
+    /// a guess instead of an assertion.
+    ///
+    /// Derived from the parts, so changing a part moves the minimum with it:
+    /// the chapters rail plus the player's own `minWidth` across, and the
+    /// player's `minHeight` plus the smallest usable timeline plus the
+    /// transport and control rows down.
+    static let chaptersRailWidth: Double = 260
+    static let minimumPlayerSize = NSSize(width: 480, height: 270)
+    /// Transport row, audio controls and the button row beneath the timeline.
+    static let editorChromeHeight: Double = 96
+
+    static var minimumContentSize: NSSize {
+        NSSize(width: chaptersRailWidth + minimumPlayerSize.width,
+               height: minimumPlayerSize.height
+                     + TimelineLaneBudget.minimumTimelineHeight
+                     + editorChromeHeight)
+    }
+
     static func openingContentRect(on visibleFrame: NSRect?,
                                    scale: Double = 0.75) -> NSRect {
         guard let visibleFrame, visibleFrame.width > 0, visibleFrame.height > 0 else {
@@ -1599,6 +1644,10 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
             backing: .buffered,
             defer: false)
         window.title = title
+        // Enforced by the window itself, not merely documented: a layout with
+        // a stated minimum that nothing stops you dragging past has no
+        // minimum.
+        window.contentMinSize = Self.minimumContentSize
         window.contentView = hosting
         // We hold `window` for the controller's lifetime (the `window`
         // property below), so the default release-on-close would fight that
