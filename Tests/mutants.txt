@@ -54,3 +54,6 @@ FoldAppearanceTests :: Sources/SnittApp/FoldPalette.swift :: case .expandedSelec
 ReleaseScriptTests :: Scripts/release.sh :: printf '%s\n' "$ZIP" "$APPCAST" "$DMG" :: printf '%s\n' "$ZIP" "$APPCAST"
 ReleaseScriptTests :: Scripts/release.sh :: if [ "$declared" != "$VERSION" ]; then :: if false; then
 ReleaseScriptTests :: Scripts/release.sh :: elif [ "$size" -eq 0 ]; then :: elif false; then
+ReleaseScriptTests :: Scripts/notarize.sh :: if [ ! -f "$NOTARY_KEY_VALUE" ]; then :: if false; then
+ReleaseScriptTests :: Scripts/release.sh :: if ! ./Scripts/signing-identity.sh >/dev/null; then :: if false; then
+ReleaseScriptTests :: Scripts/release.sh :: if ! notary_line="$(./Scripts/notarize.sh --check-credentials)"; then :: if false; then

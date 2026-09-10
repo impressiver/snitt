@@ -18,6 +18,15 @@
 # than let Apple's notary service produce a more opaque rejection later.
 #
 # Usage: Scripts/notarize.sh <path-to-app>|<path-to-dmg>
+#        Scripts/notarize.sh --check-credentials
+#
+# `--check-credentials` resolves credentials exactly as a real run would and
+# exits — no artifact, no network, no submission. It exists so a release can
+# fail on a missing credential in its first second rather than after a
+# universal build (which is what happened on the 0.3.0 attempt). It is the
+# SAME code path, deliberately: a second copy of "what counts as a valid
+# credential" living in the release script is how the two drift, and the
+# drift is invisible until a release stops at step 3.
 #
 # Accepts either the .app bundle or the .dmg installer built from it, because
 # each needs its OWN notarization ticket. Notarizing the app does not notarize
@@ -50,6 +59,7 @@ set -euo pipefail
 
 usage() {
   echo "usage: $(basename "$0") <path-to-app>|<path-to-dmg>" >&2
+  echo "       $(basename "$0") --check-credentials" >&2
   echo "" >&2
   echo "credentials (first found wins):" >&2
   echo "  NOTARY_PROFILE                              notarytool keychain profile name" >&2
@@ -67,6 +77,15 @@ usage() {
 # neither one "covers" the empty-string case by itself. Do not read this as
 # license to drop the `-z` check below — that check is the only thing
 # actually distinguishing an empty argument from a real path.
+CHECK_CREDENTIALS_ONLY=0
+if [ "${1-}" = "--check-credentials" ]; then
+  CHECK_CREDENTIALS_ONLY=1
+  shift
+  # A placeholder that never reaches a filesystem check: the credential
+  # block below runs, and this mode exits before anything touches $APP.
+  set -- "--check-credentials"
+fi
+
 if [ $# -lt 1 ]; then
   echo "error: missing required argument: <path-to-app>|<path-to-dmg>" >&2
   usage
@@ -81,16 +100,24 @@ if [ -z "$APP" ]; then
   exit 1
 fi
 
-if [ ! -e "$APP" ]; then
-  echo "error: no such file or directory: $APP" >&2
-  exit 1
+# The artifact checks below are about an artifact, and --check-credentials
+# has none. Guarded rather than reordered: the credential resolution has to
+# stay where a real run reaches it, so that this mode and a real run cannot
+# resolve differently.
+if [ "$CHECK_CREDENTIALS_ONLY" -eq 0 ]; then
+  if [ ! -e "$APP" ]; then
+    echo "error: no such file or directory: $APP" >&2
+    exit 1
+  fi
 fi
 
 # Which of the two things this is decides how it gets submitted and how it
 # gets assessed afterwards. Detected from the artifact itself, never from a
 # flag: a caller who passes the wrong flag would get a run that succeeds at
 # every step and produces something Gatekeeper rejects.
-if [ -d "$APP" ] && [ -f "$APP/Contents/Info.plist" ]; then
+if [ "$CHECK_CREDENTIALS_ONLY" -eq 1 ]; then
+  KIND=app
+elif [ -d "$APP" ] && [ -f "$APP/Contents/Info.plist" ]; then
   KIND=app
 elif [ -f "$APP" ] && [ "${APP##*.}" = "dmg" ]; then
   KIND=dmg
@@ -133,7 +160,8 @@ else
   CODESIGN_VERIFY=(--verify --strict)
   SIGN_HINT="sign it first — see ./Scripts/make-dmg.sh, which signs the image when SNITT_SIGN_IDENTITY is set"
 fi
-if ! codesign "${CODESIGN_VERIFY[@]}" "$APP" >/dev/null 2>&1; then
+if [ "$CHECK_CREDENTIALS_ONLY" -eq 0 ] \
+   && ! codesign "${CODESIGN_VERIFY[@]}" "$APP" >/dev/null 2>&1; then
   echo "error: $APP is not validly signed (codesign ${CODESIGN_VERIFY[*]} failed)" >&2
   echo "$SIGN_HINT" >&2
   exit 1
@@ -168,6 +196,16 @@ else
   fi
 
   NOTARIZE_ARGS=(--key "$NOTARY_KEY_VALUE" --key-id "$NOTARY_KEY_ID_VALUE" --issuer "$NOTARY_ISSUER_VALUE")
+fi
+
+if [ "$CHECK_CREDENTIALS_ONLY" -eq 1 ]; then
+  # Names the credential, never its value — this prints into a release log.
+  if [ -n "$NOTARY_PROFILE_VALUE" ]; then
+    echo "notarization credentials: keychain profile '$NOTARY_PROFILE_VALUE'"
+  else
+    echo "notarization credentials: API key $NOTARY_KEY_ID_VALUE"
+  fi
+  exit 0
 fi
 
 # ditto, not zip: this is Apple's own recommended way to zip an .app for
