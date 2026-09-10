@@ -38,3 +38,8 @@ TimelineScrollTests :: Sources/SnittApp/TimelineView.swift :: scrollOffsetSecond
 # Pane widths — a first run must get the designed default, not the minimum.
 PaneWidthsTests :: Sources/SnittApp/PaneWidths.swift :: defaults.object(forKey: markersKey) as? Double ?? defaultMarkers :: defaults.double(forKey: markersKey)
 PaneWidthsTests :: Sources/SnittApp/PaneWidths.swift :: self.markers = Self.clampMarkers(markers) :: self.markers = markers
+
+# Export sheet — a wrong filename or a swallowed second Export are both silent.
+ExportSheetTests :: Sources/SnittApp/ExportSheet.swift :: destination = destination.deletingPathExtension() :: destination = destination.deletingLastPathComponent().appending(path: destination.lastPathComponent)
+ExportSheetTests :: Sources/SnittApp/EditorWindowController.swift :: func requestExport() { exportRequestToken += 1 } :: func requestExport() { exportRequestToken = 1 }
+ExportSheetTests :: Sources/SnittApp/EditorWindowController.swift :: let folder = bundleURL.deletingLastPathComponent() :: let folder = bundleURL
