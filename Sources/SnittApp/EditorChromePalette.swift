@@ -52,6 +52,14 @@ enum EditorChromePalette {
         appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .black : .white
     }
 
+    /// The timeline panel's own ground, so the gutter beside it matches the
+    /// instrument rather than the chrome. Pinned dark like the lanes — this is
+    /// the surface the well's rule was changed AWAY from, deliberately, and
+    /// the two are separate decisions now.
+    static var timelineSurface: Color {
+        Color(nsColor: NSColor(srgbRed: 0.13, green: 0.13, blue: 0.13, alpha: 1))
+    }
+
     /// The rule where appearance-following chrome meets a pinned-dark media
     /// surface. Drawn on the chrome's side, so it reads as the panel's own
     /// edge rather than as a stray line on the video.

@@ -1371,7 +1371,6 @@ struct EditorContentView: View {
                 currentTime: RecordingState.clock(playhead),
                 totalTime: RecordingState.clock(state.displayState(playhead: playhead).duration),
                 currentMark: state.currentMarkLabel,
-                audioTracks: state.audioTracks,
                 zoomFraction: Binding(
                     get: { state.timelineView?.zoomFraction ?? 0 },
                     set: { state.timelineView?.setZoomFraction($0) }),
@@ -1383,18 +1382,32 @@ struct EditorContentView: View {
                 onSeekToTime: { text in
                     if let seconds = Timecode.parse(text) { state.seek(toOutput: seconds) }
                 },
-                onCut: { state.cutSelection() },
-                onGain: { state.setGain(track: $0, gain: $1) },
-                onMute: { state.setMuted(track: $0, muted: $1) })
+                onCut: { state.cutSelection() })
 
             // `TimelineLaneBudget` owns the arithmetic and the collapse order;
             // `windowHeight` is measured once around the whole body, because a
             // `GeometryReader` wrapped around the timeline alone would measure
             // the slot the timeline was already given and pin it there.
-            TimelineViewRepresentable(state: state, playhead: playhead,
-                                      onEditMarker: { editingMarkerID = $0 })
-                .frame(height: TimelineLaneBudget
-                    .timelineHeight(forWindowHeight: windowHeight))
+            // The gutter is laid out from the SAME plan the timeline spends,
+            // so the rows line up without the two views agreeing about
+            // anything else. It lives beside the timeline rather than inside
+            // it because `TimelineView`'s x-axis IS time — carving a gutter
+            // out of it would shift every second-to-pixel calculation there.
+            HStack(spacing: 0) {
+                TimelineGutter(
+                    plan: TimelineLaneBudget.plan(
+                        availableHeight: TimelineLaneBudget
+                            .timelineHeight(forWindowHeight: windowHeight),
+                        audioTracks: TimelineTrackLayout.audioTracks(in: state.audioTracks),
+                        hasTranscript: state.transcript != nil),
+                    trackStates: state.audioTracks,
+                    onGain: { state.setGain(track: $0, gain: $1) },
+                    onMute: { state.setMuted(track: $0, muted: $1) })
+                TimelineViewRepresentable(state: state, playhead: playhead,
+                                          onEditMarker: { editingMarkerID = $0 })
+            }
+            .frame(height: TimelineLaneBudget
+                .timelineHeight(forWindowHeight: windowHeight))
         }
         .onReceive(Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()) { _ in
             // 20Hz, raised from 10 when the playhead stopped being decoration.
