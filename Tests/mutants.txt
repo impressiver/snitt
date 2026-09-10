@@ -30,3 +30,11 @@ FoldSelectionTests :: Sources/SnittApp/EditorWindowController.swift :: selectedF
 
 # Gain meter — a meter that lies about unity is worse than no meter.
 GainMeterTests :: Sources/SnittApp/GainMeter.swift :: public static let minimumDecibels: Double = -24 :: public static let minimumDecibels: Double = -12
+
+# Scrolling — a viewport that runs off its own axis renders empty space.
+TimelineScrollTests :: Sources/SnittDocument/TimelineGeometry.swift :: visibleOffset: min(max(offset, 0), maximumScrollOffset) :: visibleOffset: offset
+TimelineScrollTests :: Sources/SnittApp/TimelineView.swift :: scrollOffsetSeconds = nil :: ()
+
+# Pane widths — a first run must get the designed default, not the minimum.
+PaneWidthsTests :: Sources/SnittApp/PaneWidths.swift :: defaults.object(forKey: markersKey) as? Double ?? defaultMarkers :: defaults.double(forKey: markersKey)
+PaneWidthsTests :: Sources/SnittApp/PaneWidths.swift :: self.markers = Self.clampMarkers(markers) :: self.markers = markers

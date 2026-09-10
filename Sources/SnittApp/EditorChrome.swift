@@ -118,6 +118,10 @@ struct TransportBar: View {
     let totalTime: String
     let currentMark: String?
     @Binding var zoomFraction: Double
+    let isScrollable: Bool
+    let visibleFraction: Double
+    let scrollFraction: Double
+    let onScroll: (Double) -> Void
     let canCut: Bool
     let onRewind: () -> Void
     let onPreviousMark: () -> Void
@@ -145,6 +149,7 @@ struct TransportBar: View {
                     .help(currentMark)
             }
             Spacer(minLength: 8)
+            scrollBar
             Button("Cut", systemImage: "scissors", action: onCut)
                 .labelStyle(.iconOnly)
                 .disabled(!canCut)
@@ -217,6 +222,36 @@ struct TransportBar: View {
         case "microphone": return "Microphone"
         case "systemAudio": return "System audio"
         default: return track
+        }
+    }
+
+    /// A scrollbar, shown only when there is something off screen.
+    ///
+    /// A thumb that always filled its track would say "there is nothing to
+    /// scroll to" in the same shape as "you are at the start of something
+    /// long", so the control is absent at 1x rather than inert.
+    @ViewBuilder
+    private var scrollBar: some View {
+        if isScrollable {
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.quaternary)
+                    Capsule()
+                        .fill(.secondary)
+                        .frame(width: max(24, geometry.size.width * visibleFraction))
+                        .offset(x: (geometry.size.width
+                                    - max(24, geometry.size.width * visibleFraction))
+                                   * scrollFraction)
+                }
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0).onChanged { value in
+                        guard geometry.size.width > 0 else { return }
+                        onScroll(value.location.x / geometry.size.width)
+                    })
+            }
+            .frame(width: 120, height: 6)
+            .help("Drag to scroll the timeline")
         }
     }
 

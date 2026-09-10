@@ -262,6 +262,38 @@ public struct TimelineGeometry: Equatable, Sendable {
     /// non-degenerate geometry's own `pixelsPerSecond` is always strictly
     /// positive (see `init`), so `factor <= 0` already drives
     /// `newPixelsPerSecond <= 0` without a separate check for it.
+    /// How far the viewport can be scrolled, in seconds. Zero when the whole
+    /// timeline already fits, which is the case the scroll affordance must
+    /// hide rather than draw as a full-width thumb nobody can move.
+    public var maximumScrollOffset: Double {
+        guard !isDegenerate, pixelsPerSecond > 0 else { return 0 }
+        return max(0, duration + expandedSeconds - width / pixelsPerSecond)
+    }
+
+    /// Where the viewport currently starts.
+    public var scrollOffset: Double { visibleOffset }
+
+    /// The share of the whole timeline currently on screen, 0...1. What a
+    /// scroll indicator's thumb is as wide as.
+    public var visibleFraction: Double {
+        let total = duration + expandedSeconds
+        guard total > 0, pixelsPerSecond > 0 else { return 1 }
+        return min(1, (width / pixelsPerSecond) / total)
+    }
+
+    /// The same geometry with the viewport moved.
+    ///
+    /// Clamped by exactly the arithmetic `zoomed(by:anchoredAt:)` uses, so a
+    /// scroll cannot reach a position a zoom could not — two different limits
+    /// for one axis is how content ends up scrollable into empty space.
+    public func scrolled(to offset: Double) -> TimelineGeometry {
+        guard !isDegenerate, pixelsPerSecond > 0 else { return self }
+        return TimelineGeometry(width: width, duration: duration, timebase: timebase,
+                                pixelsPerSecond: pixelsPerSecond,
+                                visibleOffset: min(max(offset, 0), maximumScrollOffset),
+                                expansions: expansions)
+    }
+
     public func zoomed(by factor: Double, anchoredAt anchor: OutputTime) -> TimelineGeometry {
         guard !isDegenerate else { return self }
         let newPixelsPerSecond = pixelsPerSecond * factor

@@ -161,6 +161,14 @@ public final class TimelineView: NSView {
     /// visual centre instead of a stale pixel offset (see `geometry`'s own
     /// doc comment).
     private var zoomAnchorOutput: Double = 0
+    /// Where the viewport has been scrolled to, or nil to let the zoom anchor
+    /// decide.
+    ///
+    /// Nil after a zoom on purpose: `zoomed(by:anchoredAt:)` positions the
+    /// viewport to keep the anchor under the same pixel, and overriding that
+    /// with a stale scroll position would make zooming jump somewhere else.
+    /// A deliberate scroll then takes over until the next zoom.
+    private var scrollOffsetSeconds: Double?
 
     private static let minZoomFactor: Double = 1
     private static let maxZoomFactor: Double = 200
@@ -347,9 +355,36 @@ public final class TimelineView: NSView {
         // the fresh, unzoomed geometry — see `geometry`'s own doc comment
         // for why this recomputes from the anchor every time rather than
         // trying to carry a raw offset across a resize or a landed cut.
-        geometry = zoomFactor > Self.minZoomFactor
+        let zoomed = zoomFactor > Self.minZoomFactor
             ? base.zoomed(by: zoomFactor, anchoredAt: OutputTime(zoomAnchorOutput)) : base
+        geometry = scrollOffsetSeconds.map { zoomed.scrolled(to: $0) } ?? zoomed
     }
+
+    // MARK: - Scrolling
+
+    public func scroll(bySeconds delta: Double) {
+        scrollOffsetSeconds = geometry.scrollOffset + delta
+        rebuildGeometry()
+        needsDisplay = true
+    }
+
+    /// For a scrollbar: 0 is the start, 1 is as far as it goes.
+    public var scrollFraction: Double {
+        let maximum = geometry.maximumScrollOffset
+        guard maximum > 0 else { return 0 }
+        return min(1, max(0, geometry.scrollOffset / maximum))
+    }
+
+    public func setScrollFraction(_ fraction: Double) {
+        scrollOffsetSeconds = min(max(fraction, 0), 1) * geometry.maximumScrollOffset
+        rebuildGeometry()
+        needsDisplay = true
+    }
+
+    /// Whether there is anything off screen to scroll to.
+    public var isScrollable: Bool { geometry.maximumScrollOffset > 0 }
+    /// The share of the timeline on screen — a scroll thumb's width.
+    public var visibleFraction: Double { geometry.visibleFraction }
 
     /// The pixel width an EXPANDED fold draws at: `cut`'s own SOURCE length,
     /// converted at the OUTPUT timeline's own pixels-per-second
@@ -731,6 +766,10 @@ public final class TimelineView: NSView {
     private func setZoom(_ factor: Double, anchoredAtOutput anchor: Double) {
         zoomFactor = min(max(factor, Self.minZoomFactor), Self.maxZoomFactor)
         zoomAnchorOutput = anchor
+        // Hand the viewport back to the anchor: zooming should keep what you
+        // were looking at under the cursor, not restore where you had
+        // previously scrolled to.
+        scrollOffsetSeconds = nil
         rebuildGeometry()
         needsDisplay = true
     }
@@ -772,6 +811,19 @@ public final class TimelineView: NSView {
     /// caller with no cursor position at all, which a scroll event always
     /// has.
     public override func scrollWheel(with event: NSEvent) {
+        // Horizontal PANS, vertical ZOOMS. Vertical was already the zoom
+        // gesture, so the free axis is the one a two-finger swipe sideways
+        // means on a timeline anyway.
+        //
+        // Panning is what zoom was missing: the ± buttons anchor on the
+        // playhead, so past 1x the only way to see elsewhere was to move the
+        // playhead there — scrubbing blind to find the thing you had zoomed
+        // in to look at.
+        if abs(event.scrollingDeltaX) > abs(event.scrollingDeltaY) {
+            guard geometry.maximumScrollOffset > 0, geometry.pixelsPerSecond > 0 else { return }
+            scroll(bySeconds: -Double(event.scrollingDeltaX) / geometry.pixelsPerSecond)
+            return
+        }
         guard event.scrollingDeltaY != 0 else { return }
         let point = convert(event.locationInWindow, from: nil)
         let anchor = geometry.outputTime(atX: point.x).seconds

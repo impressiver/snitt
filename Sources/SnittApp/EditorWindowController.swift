@@ -1321,6 +1321,14 @@ struct EditorContentView: View {
     /// what is asserted elsewhere is that the transcript persists and edits,
     /// not which panes a window happens to be showing.
     @State private var showTranscript = false
+    /// Pane widths, loaded once and written back when a drag ENDS.
+    ///
+    /// Not on every frame of the drag: `UserDefaults` writes during a
+    /// continuous gesture are dozens of writes for one decision, and a
+    /// half-dragged width is not a width anybody chose.
+    @State private var paneWidths = PaneWidths.load()
+    /// The width being dragged, before it is committed.
+    @State private var dragStartWidth: Double?
 
     private var controller: PreviewController { state.controller }
 
@@ -1407,8 +1415,15 @@ struct EditorContentView: View {
                 // would hide the affordance exactly when it is needed.
                 MarkerPane(state: state, playhead: playhead,
                            onEditMarker: { editingMarkerID = $0 })
-                    .frame(width: EditorWindowController.chaptersRailWidth)
-                Divider()
+                    .frame(width: paneWidths.markers)
+                ResizableDivider(direction: 1) { delta in
+                    let base = dragStartWidth ?? paneWidths.markers
+                    if dragStartWidth == nil { dragStartWidth = base }
+                    paneWidths.markers = PaneWidths.clampMarkers(base + delta)
+                } onCommit: {
+                    dragStartWidth = nil
+                    paneWidths.save()
+                }
                 PlayerLayerView(player: controller.player)
                     .frame(minWidth: EditorWindowController.minimumPlayerSize.width,
                            minHeight: EditorWindowController.minimumPlayerSize.height)
@@ -1425,9 +1440,18 @@ struct EditorContentView: View {
                 // A reflowing split, not an overlay: the pane takes width from
                 // the picture and the rail rather than covering the recording.
                 if showTranscript, state.transcriptionStatus != .none {
-                    Divider()
+                    // `direction: -1` — this pane is to the RIGHT of its
+                    // divider, so dragging right makes it narrower.
+                    ResizableDivider(direction: -1) { delta in
+                        let base = dragStartWidth ?? paneWidths.transcript
+                        if dragStartWidth == nil { dragStartWidth = base }
+                        paneWidths.transcript = PaneWidths.clampTranscript(base + delta)
+                    } onCommit: {
+                        dragStartWidth = nil
+                        paneWidths.save()
+                    }
                     TranscriptPane(state: state, playhead: playhead)
-                        .frame(minWidth: 340)
+                        .frame(width: paneWidths.transcript)
                 }
             }
 
@@ -1445,6 +1469,10 @@ struct EditorContentView: View {
                 zoomFraction: Binding(
                     get: { state.timelineView?.zoomFraction ?? 0 },
                     set: { state.timelineView?.setZoomFraction($0) }),
+                isScrollable: state.timelineView?.isScrollable ?? false,
+                visibleFraction: state.timelineView?.visibleFraction ?? 1,
+                scrollFraction: state.timelineView?.scrollFraction ?? 0,
+                onScroll: { state.timelineView?.setScrollFraction($0) },
                 canCut: state.selection != nil,
                 onRewind: { state.rewind() },
                 onPreviousMark: { state.goToPreviousMark() },
