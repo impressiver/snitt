@@ -61,13 +61,19 @@ enum TimelineTrackLayout {
     static func bands(in bounds: CGRect,
                       markerHeight: Double,
                       audioTracks: [String],
-                      hasTranscript: Bool = false) -> (marker: CGRect, fold: CGRect, video: CGRect, audio: [(track: String, rect: CGRect)], transcript: CGRect) {
+                      hasTranscript: Bool = false,
+                      hasFolds: Bool = true) -> (marker: CGRect, fold: CGRect, video: CGRect, audio: [(track: String, rect: CGRect)], transcript: CGRect) {
         let marker = CGRect(x: 0, y: 0, width: bounds.width, height: markerHeight)
         // The fold lane only earns its 24pt when there is room left for a
         // usable video band underneath; on a very short view the filmstrip is
         // protected and folds fall back to their full-height line alone.
-        let foldHeight = bounds.height - markerHeight - foldLaneHeight
-            >= TimelineLaneBudget.minimumVideoHeight ? foldLaneHeight : 0
+        // Only when there ARE folds. An always-allocated fold lane put an
+        // empty 24pt band between the marker lane and the filmstrip on every
+        // recording with no cuts in it — which reads as a margin, because that
+        // is exactly what it was.
+        let foldHeight = hasFolds
+            && bounds.height - markerHeight - foldLaneHeight
+                >= TimelineLaneBudget.minimumVideoHeight ? foldLaneHeight : 0
         let fold = CGRect(x: 0, y: markerHeight, width: bounds.width, height: foldHeight)
         // Claimed off the bottom before anything below the fixed lanes divides
         // what is left, so adding it never silently shrinks the filmstrip past
@@ -82,8 +88,20 @@ enum TimelineTrackLayout {
         // that arithmetic read as if it used the caller's value.
         let stackTop = markerHeight + foldHeight
         let remaining = max(0, bounds.height - stackTop - transcriptHeight)
-        let video = CGRect(x: 0, y: stackTop, width: bounds.width, height: remaining * 0.6)
-        let audioTotal = remaining * 0.4
+        // The budget's constants, not a second copy of them. This read
+        // `remaining * 0.6` while `TimelineLaneBudget.videoShareOfSurplus`
+        // went 0.6 -> 0.3 -> 0.15 across three commits — so the type that was
+        // tuned and tested was not the type that DREW, and two rounds of
+        // "halve the filmstrip" changed nothing on screen. `bandsMatchThePlan`
+        // is the test that stops the two drifting again.
+        let videoFloor = TimelineLaneBudget.minimumVideoHeight
+        let audioFloor = TimelineLaneBudget.minimumTargetHeight * Double(audioTracks.count)
+        let surplus = max(0, remaining - videoFloor - audioFloor)
+        let videoHeight = audioTracks.isEmpty
+            ? remaining
+            : videoFloor + surplus * TimelineLaneBudget.videoShareOfSurplus
+        let video = CGRect(x: 0, y: stackTop, width: bounds.width, height: videoHeight)
+        let audioTotal = max(0, remaining - videoHeight)
         guard !audioTracks.isEmpty else { return (marker, fold, video, [], transcript) }
 
         let each = audioTotal / Double(audioTracks.count)

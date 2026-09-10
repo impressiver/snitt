@@ -1429,10 +1429,18 @@ struct EditorContentView: View {
             playhead = seconds.isFinite ? seconds : 0
         }
         .sheet(item: editingMarkerBinding) { marker in
-            MarkerEditSheet(label: marker.label ?? "", transcript: marker.transcript ?? "") { label, transcript in
+            MarkerEditSheet(label: marker.label ?? "",
+                            transcript: marker.transcript ?? "",
+                            timeText: MarkerPane.timestamp(marker.timeSeconds)) { label, transcript, timeText in
                 state.updateMarker(id: marker.id,
                                    label: label.isEmpty ? nil : label,
                                    transcript: transcript.isEmpty ? nil : transcript)
+                // Time goes through `applyChapterEdit`, which already owned
+                // the move-a-mark path for the chapter panel. Routing the
+                // sheet through the same call keeps one implementation of
+                // "what happens when a mark's time changes" rather than a
+                // second that has to remember to re-sort and re-save.
+                state.applyChapterEdit(id: marker.id, timeText: timeText, label: label)
                 editingMarkerID = nil
             } onCancel: {
                 editingMarkerID = nil
@@ -1502,14 +1510,39 @@ private struct AudioTrackControls: View {
 private struct MarkerEditSheet: View {
     @State var label: String
     @State var transcript: String
-    let onSave: (String, String) -> Void
+    /// The mark's own time, editable.
+    ///
+    /// `applyChapterEdit(id:timeText:label:)` has accepted a typed time since
+    /// the chapter panel was built — the sheet simply never offered a field
+    /// for it, so the only way to move a mark was to drag it on the timeline,
+    /// which is imprecise by construction. Typing is how you place a mark on
+    /// a word.
+    @State var timeText: String
+    let onSave: (String, String, String) -> Void
     let onCancel: () -> Void
+
+    /// Nil while the text is not a time, which is what disables Save and
+    /// colours the field — an unparseable time silently leaving the old one in
+    /// place would look like the edit was accepted.
+    private var parsedTime: Double? { Timecode.parse(timeText) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Edit Marker").font(.headline)
             TextField("Label", text: $label)
                 .textFieldStyle(.roundedBorder)
+            HStack(spacing: 8) {
+                Text("Time").font(.caption).foregroundStyle(.secondary)
+                TextField("0:00", text: $timeText)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+                    .frame(width: 90)
+                if parsedTime == nil {
+                    Label("Not a time", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
             Text("Transcript").font(.caption).foregroundStyle(.secondary)
             TextEditor(text: $transcript)
                 .frame(minHeight: 80)
@@ -1517,8 +1550,9 @@ private struct MarkerEditSheet: View {
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { onCancel() }
-                Button("Save") { onSave(label, transcript) }
+                Button("Save") { onSave(label, transcript, timeText) }
                     .keyboardShortcut(.defaultAction)
+                    .disabled(parsedTime == nil)
             }
         }
         .padding(20)

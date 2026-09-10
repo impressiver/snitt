@@ -60,6 +60,53 @@ struct TimelineTrackLayoutTests {
         #expect(abs(one.audio[0].rect.maxY - bounds.maxY) < 0.001)
     }
 
+    @Test("What is DRAWN matches what is PLANNED")
+    func bandsMatchThePlan() {
+        // The bug this exists to prevent, and it shipped: `bands` — the code
+        // that draws — carried its own `remaining * 0.6` while
+        // `TimelineLaneBudget.videoShareOfSurplus` was tuned 0.6 -> 0.3 ->
+        // 0.15 across three commits. The type that was tested was not the type
+        // that rendered, so two rounds of "halve the filmstrip" changed
+        // nothing on screen and every test still passed.
+        //
+        // Asserted as agreement between the two rather than against a number,
+        // because a number here would have to be edited in step with the
+        // constant and would therefore never catch this.
+        let height: Double = 300
+        let tracks = ["microphone", "systemAudio"]
+        let drawn = TimelineTrackLayout.bands(
+            in: CGRect(x: 0, y: 0, width: 800, height: height),
+            markerHeight: TimelineLaneBudget.minimumTargetHeight,
+            audioTracks: tracks, hasTranscript: false, hasFolds: false)
+        let planned = TimelineLaneBudget.plan(
+            availableHeight: height, audioTracks: tracks, hasTranscript: false)
+
+        #expect(abs(drawn.video.height - (planned.height(of: .video) ?? 0)) < 0.001,
+                "the drawn filmstrip does not match the planned one")
+        for track in tracks {
+            let drawnHeight = drawn.audio.first { $0.track == track }?.rect.height ?? 0
+            #expect(abs(drawnHeight - (planned.height(of: .audio(track)) ?? 0)) < 0.001,
+                    "a drawn audio band does not match the planned one")
+        }
+    }
+
+    @Test("A recording with no cuts gets no fold lane, and so no gap")
+    func noFoldsNoFoldLane() {
+        // An always-allocated fold lane put an empty 24pt band between the
+        // marker lane and the filmstrip on every recording with no cuts —
+        // which reads as a margin, because that is what it was.
+        let bounds = CGRect(x: 0, y: 0, width: 800, height: 300)
+        let without = TimelineTrackLayout.bands(in: bounds, markerHeight: 24,
+                                                audioTracks: ["microphone"], hasFolds: false)
+        #expect(abs(without.fold.height) < 0.001)
+        #expect(abs(without.marker.maxY - without.video.minY) < 0.001,
+                "a gap survived between the marker lane and the filmstrip")
+
+        let with = TimelineTrackLayout.bands(in: bounds, markerHeight: 24,
+                                             audioTracks: ["microphone"], hasFolds: true)
+        #expect(with.fold.height > 0, "a recording WITH cuts lost its fold lane")
+    }
+
     @Test("Bands tile the view with no gap and no overflow")
     func bandsTileTheView() {
         let bands = TimelineTrackLayout.bands(in: bounds, markerHeight: markerHeight,
