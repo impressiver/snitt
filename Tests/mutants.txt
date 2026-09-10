@@ -1,0 +1,32 @@
+# Mutation spec — see Scripts/mutate.sh.
+#
+# These are the invariants whose failure would be silent: geometry that
+# renders wrong rather than crashing, gates that swallow gestures, wording
+# that misleads. Each line names a plausible WRONG implementation; a
+# surviving line means the suite would not notice it.
+#
+# <test-filter> :: <file> :: <find> :: <replace>
+
+# §4.11 — the recording HUD must never take focus.
+RecordingHUDPanelTests :: Sources/SnittApp/RecordingHUDPanel.swift :: override var canBecomeKey: Bool { false } :: override var canBecomeKey: Bool { true }
+RecordingHUDPanelTests :: Sources/SnittApp/RecordingHUDPanel.swift :: isReleasedWhenClosed = false :: isReleasedWhenClosed = true
+
+# Timeline hit-testing — the class that produced two shipped regressions.
+GestureMatrixTests :: Sources/SnittApp/TimelineView.swift :: guard let cut = foldHit(atX: point.x) else { return nil } :: guard let cut = foldHit(at: point) else { return nil }
+GestureMatrixTests :: Sources/SnittApp/TimelineView.swift :: if let range = foldLaneRange, !range.contains(point.y) { return nil } ::
+
+# Lane geometry — wrong sizes render, they do not throw.
+TimelineLaneBudgetTests :: Sources/SnittApp/TimelineLaneBudget.swift :: public static let minimumTargetHeight: Double = 24 :: public static let minimumTargetHeight: Double = 10
+TimelineTrackLayoutTests :: Sources/SnittApp/TimelineTrackLayout.swift :: let stackTop = markerHeight + foldHeight :: let stackTop = markerHeight
+
+# Export wording — a ceiling presented as an estimate is wrong every time.
+ExportPreflightTests :: Sources/SnittApp/ExportPreflight.swift :: "at most %.1f MB" :: "≈ %.1f MB"
+ExportPreflightTests :: Sources/SnittApp/ExportPreflight.swift :: / 1_000_000 :: / 1_048_576
+
+# Delete means two different edits; conflating them destroys work.
+# Anchors are LITERAL single-line text — a `\n` here matches two characters,
+# not a newline, which is why the first version of this line silently SKIPped.
+FoldSelectionTests :: Sources/SnittApp/EditorWindowController.swift :: selectedFoldID = id :: selectedFoldID = nil
+
+# Gain meter — a meter that lies about unity is worse than no meter.
+GainMeterTests :: Sources/SnittApp/GainMeter.swift :: public static let minimumDecibels: Double = -24 :: public static let minimumDecibels: Double = -12

@@ -18,16 +18,39 @@ import Testing
 /// type is never consulted). No window server involved: the view under test
 /// is never attached to a real `NSWindow`.
 extension NSEvent {
-    static func synthetic(at point: NSPoint, in view: NSView) -> NSEvent {
-        NSEvent.mouseEvent(
+    /// A mouse event at a point in the VIEW's own coordinates.
+    ///
+    /// The `in view:` parameter used to be ignored: `point` was handed to
+    /// `NSEvent.mouseEvent(location:)`, which is WINDOW coordinates, and every
+    /// caller then read it back through `convert(_:from: nil)`. On a flipped
+    /// view — which `TimelineView` is — that inverts: passing y=36 into a
+    /// 160pt-tall view made the view see y=124.
+    ///
+    /// It went unnoticed for a long time because the two oldest fixtures are
+    /// 40pt tall and click at y=20, which is its own mirror image. The moment
+    /// a test used a realistic height and an off-centre y, it silently tested
+    /// a different lane than it named — and at least one test passed only
+    /// because the inverted point happened to land somewhere with no marker in
+    /// it. Three separate hit-testing bugs were investigated through this
+    /// before the cause was found.
+    ///
+    /// Converting here rather than at every call site is the point: a rule
+    /// that every author must remember is a rule that gets forgotten, and this
+    /// one had no symptom until the geometry stopped being symmetric.
+    static func synthetic(at point: NSPoint, in view: NSView,
+                          clickCount: Int = 1) -> NSEvent {
+        let location = view.isFlipped
+            ? NSPoint(x: point.x, y: view.bounds.height - point.y)
+            : point
+        return NSEvent.mouseEvent(
             with: .leftMouseDown,
-            location: point,
+            location: location,
             modifierFlags: [],
             timestamp: ProcessInfo.processInfo.systemUptime,
             windowNumber: 0,
             context: nil,
             eventNumber: 0,
-            clickCount: 1,
+            clickCount: clickCount,
             pressure: 1.0)!
     }
 
