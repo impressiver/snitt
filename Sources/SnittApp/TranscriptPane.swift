@@ -219,7 +219,10 @@ struct TranscriptPane: View {
     /// the same colour.
     private func background(isSelected: Bool, isCurrent: Bool) -> Color {
         if isSelected { return Color.accentColor.opacity(0.3) }
-        if isCurrent { return Color.yellow.opacity(0.35) }
+        if isCurrent {
+            return EditorChromePalette.currentHighlight
+                .opacity(EditorChromePalette.currentHighlightOpacity)
+        }
         return .clear
     }
 

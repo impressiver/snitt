@@ -1329,6 +1329,11 @@ struct EditorContentView: View {
             // measured once around the whole body, because a `GeometryReader`
             // wrapped around the timeline alone would measure the slot the
             // timeline was already given and pin it there forever.
+            // The seam is deliberate. Appearance-following chrome meets a
+            // pinned-dark timeline here, and with no edge treatment a light
+            // rail against a dark instrument is exactly the "two apps stapled
+            // together" look this work started from.
+            Divider().overlay(EditorChromePalette.mediaEdge)
             TimelineViewRepresentable(state: state, playhead: playhead,
                                       onEditMarker: { editingMarkerID = $0 })
                 .frame(height: TimelineLaneBudget

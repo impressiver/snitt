@@ -33,6 +33,11 @@ public final class PlayerLayerBackedView: NSView {
     public override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
+        // Stated, not inherited. With no background the well took the window's
+        // — near-white under a light appearance, behind a picture. Every
+        // player on the platform keeps this dark for the same reason the
+        // timeline does: the content is what should carry the colour.
+        layer?.backgroundColor = EditorChromePalette.mediaWell.cgColor
         playerLayer.videoGravity = .resizeAspect
         layer = playerLayer
     }
