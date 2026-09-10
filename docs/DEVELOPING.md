@@ -23,12 +23,25 @@ Nothing else. No Homebrew packages, no linter to install, no `pod install`.
 
 ```sh
 swift build            # the libraries and executables
-swift test             # the full suite, ~90s, ~1000 tests
+./Scripts/run-tests.sh  # the full gate, ~63s, 1152 tests — prefer this
 ```
 
 Both work from a clean checkout with no configuration.
 
 ### Read the summary line, not the exit status
+
+**Prefer `./Scripts/run-tests.sh` over a bare `swift test`.** It does two
+things by hand that are easy to forget:
+
+- **It splits the run.** `SnittExportTests` costs 8.4s alone but adds ~34s when
+  run beside `SnittAppTests` — both are AVFoundation-heavy and they contend.
+  Measured: one invocation 88s, two invocations 63s, identical 1152 tests.
+  Adding the other five targets to the app pass is free, so the split is one
+  cut, not a general partitioning.
+- **It checks the summary line and reconciles the totals**, so a crashed bundle
+  or a mistyped filter fails the gate instead of passing quietly. A filter that
+  matches nothing reports `Test run with 0 tests ... passed`; the totals not
+  adding up to the package's test count is what catches that.
 
 **`swift test` exits 0 when the test bundle segfaults.** It prints
 `signal code 11` inline and then no summary at all. This has bitten this
