@@ -1490,3 +1490,44 @@ public final class TimelineView: NSView {
         NSBezierPath(rect: NSRect(x: playheadX - 1, y: 0, width: 2, height: bounds.height)).fill()
     }
 }
+
+#if DEBUG
+// The timeline is where every "correct model, no pixels" defect in this
+// project has landed: the filmstrip that never shrank, the fold selection the
+// view was never told about, the lane heights that were tuned in a budget the
+// renderer did not read. All of them were arithmetic-clean and visibly wrong.
+//
+// Four previews, chosen as the states that hide bugs from each other: a
+// comfortable window, the floor, a selected fold, and a selected fold left
+// collapsed.
+#Preview("Timeline — comfortable") {
+    PreviewFixtures.timeline(size: NSSize(width: 900, height: 200))
+}
+
+#Preview("Timeline — at the floor") {
+    // Where the lane budget starts collapsing. A stack that looks correct at
+    // 200pt and overlaps here has failed the constraint the budget exists for.
+    PreviewFixtures.timeline(
+        size: NSSize(width: 900,
+                     height: TimelineLaneBudget.minimumTimelineHeight))
+}
+
+#Preview("Timeline — cut expanded and selected") {
+    // Both cuts open. The long one shows the band and its edge bars; the
+    // 0.4s one shows what the band degenerates to at this zoom, which is the
+    // case a single-cut fixture never reveals.
+    PreviewFixtures.timeline(
+        size: NSSize(width: 900, height: 200),
+        selectedFold: PreviewFixtures.cuts[0].id,
+        expanded: Set(PreviewFixtures.cuts.map(\.id)))
+}
+
+#Preview("Timeline — cut selected but collapsed") {
+    // What a single click in the fold lane leaves behind, and the state
+    // Delete acts on. The selected line must be distinguishable from its
+    // unselected neighbour — that is the entire content of this preview.
+    PreviewFixtures.timeline(
+        size: NSSize(width: 900, height: 200),
+        selectedFold: PreviewFixtures.cuts[0].id)
+}
+#endif

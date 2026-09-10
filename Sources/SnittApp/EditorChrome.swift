@@ -270,3 +270,64 @@ struct TransportBar: View {
         .help("Zoom the timeline")
     }
 }
+
+#if DEBUG
+// The two bars the product owner rejected in their first form — "the timeline
+// controls are in the wrong place and are unstyled", "transcript, crop, etc
+// buttons in the wrong place and unstyled". Previewed at a fixed width,
+// because both are horizontal layouts whose failure mode is crowding.
+#Preview("Toolbar") {
+    @Previewable @State var cropping = false
+    @Previewable @State var transcript = true
+    VStack(spacing: 0) {
+        EditorToolbar(title: "Standup 2026-09-10", subtitle: "42s · 1512 × 982",
+                      croppingActive: $cropping, showTranscript: $transcript,
+                      hasTranscript: true, canApplyCrop: false, hasCrop: false,
+                      trimCaption: "Auto-trim removed 5.9s",
+                      onAutoTrim: { _ in }, onApplyCrop: {}, onResetCrop: {},
+                      onExport: {})
+        Divider()
+    }
+    .frame(width: 900)
+}
+
+#Preview("Toolbar — cropping, no transcript") {
+    // The other half of the state space: a crop in progress, and a recording
+    // that has never been transcribed, which is what disables the toggle.
+    @Previewable @State var cropping = true
+    @Previewable @State var transcript = false
+    EditorToolbar(title: "Untitled recording", subtitle: "8s · 2560 × 1440",
+                  croppingActive: $cropping, showTranscript: $transcript,
+                  hasTranscript: false, canApplyCrop: true, hasCrop: true,
+                  trimCaption: nil,
+                  onAutoTrim: { _ in }, onApplyCrop: {}, onResetCrop: {},
+                  onExport: {})
+        .frame(width: 900)
+}
+
+#Preview("Transport — zoomed and scrollable") {
+    // Zoomed in far enough that the scrollbar appears, which is the state the
+    // scroll affordance was added for and the one a default preview hides.
+    @Previewable @State var zoom = 0.62
+    TransportBar(isPlaying: false, hasMarks: true,
+                 currentTime: "00:19.50", totalTime: "00:36.10",
+                 currentMark: "The bug", zoomFraction: $zoom,
+                 isScrollable: true, visibleFraction: 0.35, scrollFraction: 0.4,
+                 onScroll: { _ in }, canCut: true,
+                 onRewind: {}, onPreviousMark: {}, onTogglePlay: {},
+                 onNextMark: {}, onSeekToTime: { _ in }, onCut: {})
+        .frame(width: 900)
+}
+
+#Preview("Transport — playing, whole timeline visible") {
+    @Previewable @State var zoom = 0.0
+    TransportBar(isPlaying: true, hasMarks: false,
+                 currentTime: "00:04.00", totalTime: "00:36.10",
+                 currentMark: nil, zoomFraction: $zoom,
+                 isScrollable: false, visibleFraction: 1, scrollFraction: 0,
+                 onScroll: { _ in }, canCut: false,
+                 onRewind: {}, onPreviousMark: {}, onTogglePlay: {},
+                 onNextMark: {}, onSeekToTime: { _ in }, onCut: {})
+        .frame(width: 900)
+}
+#endif

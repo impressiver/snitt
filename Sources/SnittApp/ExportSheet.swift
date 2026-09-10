@@ -208,3 +208,36 @@ struct ExportSheet: View {
         .padding(.vertical, 14)
     }
 }
+
+#if DEBUG
+// Three previews rather than one: the measured state is what someone sees
+// almost always, the measuring state is what they see first, and the failed
+// measurement is the one nobody looks at until it ships wrong.
+#Preview("Export — measured") {
+    @Previewable @State var request = ExportRequest(
+        destination: URL(fileURLWithPath: "/Users/somebody/Desktop/Standup.mp4"))
+    ExportSheet(title: "Standup 2026-09-10", options: PreviewFixtures.exportOptions,
+                isMeasuring: false, request: $request,
+                onCancel: {}, onExport: {}, onChooseFolder: {})
+}
+
+#Preview("Export — measuring") {
+    @Previewable @State var request = ExportRequest(
+        destination: URL(fileURLWithPath: "/Users/somebody/Desktop/Standup.mp4"))
+    ExportSheet(title: "Standup 2026-09-10", options: [],
+                isMeasuring: true, request: $request,
+                onCancel: {}, onExport: {}, onChooseFolder: {})
+}
+
+#Preview("Export — GIF, estimates disclaimed") {
+    @Previewable @State var request: ExportRequest = {
+        var request = ExportRequest(
+            destination: URL(fileURLWithPath: "/Users/somebody/Desktop/Standup.mp4"))
+        request.setFormat("gif")
+        return request
+    }()
+    ExportSheet(title: "Standup 2026-09-10", options: PreviewFixtures.exportOptions,
+                isMeasuring: false, request: $request,
+                onCancel: {}, onExport: {}, onChooseFolder: {})
+}
+#endif
