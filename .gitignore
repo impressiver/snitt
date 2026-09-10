@@ -58,3 +58,10 @@ eddsa_priv*
 # Snitt writes there — copying one here is how you inspect it. Finder also
 # refuses to copy into /tmp, which is why this lives in the repo.
 /tmp/
+
+# Release artifacts. The runbook builds both in the repo root: the ZIP is
+# Sparkle's update enclosure, the DMG is the download for someone who has no
+# copy yet. Neither belongs in git — they are outputs of a signed, notarized
+# build that only exists on the maintainer's machine.
+Snitt-*.zip
+Snitt-*.dmg
