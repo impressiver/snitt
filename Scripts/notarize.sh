@@ -17,7 +17,15 @@
 # it. If the bundle isn't validly signed, this refuses to proceed rather
 # than let Apple's notary service produce a more opaque rejection later.
 #
-# Usage: Scripts/notarize.sh <path-to-app>
+# Usage: Scripts/notarize.sh <path-to-app>|<path-to-dmg>
+#
+# Accepts either the .app bundle or the .dmg installer built from it, because
+# each needs its OWN notarization ticket. Notarizing the app does not notarize
+# a DMG that later contains it — Gatekeeper assesses the downloaded .dmg on its
+# own, quarantined from the browser, before the user ever reaches the app. The
+# app is submitted as a ditto zip (a bundle is a directory; notarytool takes a
+# file); a DMG is already a file and is submitted as itself.
+#
 #
 # CREDENTIALS (in this precedence order — the first one found wins):
 #   1. NOTARY_PROFILE   Name of a notarytool keychain profile, created once
@@ -41,7 +49,7 @@
 set -euo pipefail
 
 usage() {
-  echo "usage: $(basename "$0") <path-to-app>" >&2
+  echo "usage: $(basename "$0") <path-to-app>|<path-to-dmg>" >&2
   echo "" >&2
   echo "credentials (first found wins):" >&2
   echo "  NOTARY_PROFILE                              notarytool keychain profile name" >&2
@@ -60,7 +68,7 @@ usage() {
 # license to drop the `-z` check below — that check is the only thing
 # actually distinguishing an empty argument from a real path.
 if [ $# -lt 1 ]; then
-  echo "error: missing required argument: <path-to-app>" >&2
+  echo "error: missing required argument: <path-to-app>|<path-to-dmg>" >&2
   usage
   exit 1
 fi
@@ -68,7 +76,7 @@ fi
 APP="${1-}"
 
 if [ -z "$APP" ]; then
-  echo "error: <path-to-app> must not be empty" >&2
+  echo "error: <path-to-app>|<path-to-dmg> must not be empty" >&2
   usage
   exit 1
 fi
@@ -78,8 +86,16 @@ if [ ! -e "$APP" ]; then
   exit 1
 fi
 
-if [ ! -d "$APP" ] || [ ! -f "$APP/Contents/Info.plist" ]; then
-  echo "error: $APP does not look like an app bundle (missing Contents/Info.plist)" >&2
+# Which of the two things this is decides how it gets submitted and how it
+# gets assessed afterwards. Detected from the artifact itself, never from a
+# flag: a caller who passes the wrong flag would get a run that succeeds at
+# every step and produces something Gatekeeper rejects.
+if [ -d "$APP" ] && [ -f "$APP/Contents/Info.plist" ]; then
+  KIND=app
+elif [ -f "$APP" ] && [ "${APP##*.}" = "dmg" ]; then
+  KIND=dmg
+else
+  echo "error: $APP does not look like an app bundle (missing Contents/Info.plist), and is not a .dmg" >&2
   exit 1
 fi
 
@@ -108,9 +124,18 @@ fi
 # Refuse an unsigned or invalidly-signed bundle up front. notarytool would
 # eventually reject this too, but only after a network round-trip, and with
 # a message about the submission rather than about the actual cause.
-if ! codesign --verify --deep --strict "$APP" >/dev/null 2>&1; then
-  echo "error: $APP is not validly signed (codesign --verify --deep --strict failed)" >&2
-  echo "sign it first — see ./Scripts/make-app.sh — before notarizing" >&2
+# `--deep` for a bundle, which has nested code to walk; a DMG has none, so
+# --deep would be a no-op that only obscures which check actually ran.
+if [ "$KIND" = app ]; then
+  CODESIGN_VERIFY=(--verify --deep --strict)
+  SIGN_HINT="sign it first — see ./Scripts/make-app.sh — before notarizing"
+else
+  CODESIGN_VERIFY=(--verify --strict)
+  SIGN_HINT="sign it first — see ./Scripts/make-dmg.sh, which signs the image when SNITT_SIGN_IDENTITY is set"
+fi
+if ! codesign "${CODESIGN_VERIFY[@]}" "$APP" >/dev/null 2>&1; then
+  echo "error: $APP is not validly signed (codesign ${CODESIGN_VERIFY[*]} failed)" >&2
+  echo "$SIGN_HINT" >&2
   exit 1
 fi
 
@@ -155,13 +180,18 @@ cleanup() {
 }
 trap cleanup EXIT
 
-ZIP="$ZIP_DIR/$(basename "$APP" .app).zip"
-
-echo "==> Zipping $APP for submission..."
-ditto -c -k --keepParent "$APP" "$ZIP"
+if [ "$KIND" = app ]; then
+  SUBMISSION="$ZIP_DIR/$(basename "$APP" .app).zip"
+  echo "==> Zipping $APP for submission..."
+  ditto -c -k --keepParent "$APP" "$SUBMISSION"
+else
+  # Already a single file. Zipping it would submit an archive OF a disk image
+  # rather than the disk image, and the ticket would staple to nothing.
+  SUBMISSION="$APP"
+fi
 
 echo "==> Submitting to Apple's notary service (this can take several minutes)..."
-if ! xcrun notarytool submit "$ZIP" "${NOTARIZE_ARGS[@]}" --wait; then
+if ! xcrun notarytool submit "$SUBMISSION" "${NOTARIZE_ARGS[@]}" --wait; then
   echo "error: xcrun notarytool submit failed — see output above" >&2
   exit 1
 fi
@@ -186,8 +216,18 @@ if ! xcrun stapler staple "$APP"; then
   exit 1
 fi
 
+# `--type execute` asks "may this run"; a disk image is not executed, it is
+# opened, and assessing one as executable reports rejected on an image that is
+# perfectly good. `--context context:primary-signature` is what makes the
+# open-assessment read the DMG's own signature rather than looking for a
+# quarantine origin the freshly-built file does not have yet.
+if [ "$KIND" = app ]; then
+  SPCTL_ARGS=(--assess --type execute -vv)
+else
+  SPCTL_ARGS=(--assess --type open --context context:primary-signature -vv)
+fi
 echo "==> Verifying with spctl (the same check Gatekeeper performs)..."
-if ! spctl --assess --type execute -vv "$APP"; then
+if ! spctl "${SPCTL_ARGS[@]}" "$APP"; then
   echo "error: spctl --assess failed after stapling — $APP will not be trusted on a clean machine" >&2
   exit 1
 fi
