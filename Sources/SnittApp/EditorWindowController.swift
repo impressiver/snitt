@@ -53,7 +53,7 @@ final class EditorTimelineState: ObservableObject {
     var documentSubtitle: String {
         let marks = controller.jumpPoints.count
         let folds = edl.cuts.count
-        let markWord = marks == 1 ? "chapter" : "chapters"
+        let markWord = marks == 1 ? "marker" : "markers"
         let foldWord = folds == 1 ? "fold" : "folds"
         return "\(marks) \(markWord) · \(folds) \(foldWord)"
     }
@@ -384,6 +384,21 @@ final class EditorTimelineState: ObservableObject {
     /// re-cutting it on collapse) — that WOULD change `outputDuration` and
     /// briefly make playback stop skipping the span, exactly the leak Task
     /// 5's first trap exists to catch.
+    /// Reveal a fold and select what it removed.
+    ///
+    /// EXPAND, not toggle: the gesture says "show me this", and a double-click
+    /// that collapsed an already-open fold would hide the thing being asked
+    /// about. Selecting alongside is what makes the segment actionable — you
+    /// can see the removed span AND act on it, rather than only look.
+    ///
+    /// The selection is the cut's SOURCE range, which is the clock `Selection`
+    /// and every edit built from it already use.
+    func expandAndSelect(foldID id: UUID) {
+        guard let cut = edl.cuts.first(where: { $0.id == id }) else { return }
+        expandedCutIDs.insert(id)
+        onSelect(Selection(range: cut.range))
+    }
+
     func toggleExpansion(of id: UUID) {
         if expandedCutIDs.contains(id) {
             expandedCutIDs.remove(id)
@@ -1194,6 +1209,12 @@ struct TimelineViewRepresentable: NSViewRepresentable {
         view.onScrub = { [weak state] in state?.onScrub($0) }
         view.onSelect = { [weak state] in state?.onSelect($0) }
         view.onToggleExpansion = { [weak state] in state?.toggleExpansion(of: $0) }
+        view.onExpandAndSelectFold = { [weak state] in state?.expandAndSelect(foldID: $0) }
+        // Straight to `addMarker(atOutput:)`, which already does the
+        // output-to-source conversion. A `createMarker` wrapper was written
+        // here first and deleted — that is the fourth duplicate this session
+        // that existed because the existing one was not looked for.
+        view.onCreateMarker = { [weak state] in state?.addMarker(atOutput: $0) }
         view.onRemoveCut = { [weak state] in state?.removeCut(id: $0) }
         // D50/D56 (M5f Task 6): a marker drag reports the OUTPUT time it was
         // dropped at, converted back to SOURCE time by `moveMarker` itself

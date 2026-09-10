@@ -82,6 +82,16 @@ public final class TimelineView: NSView {
     /// production; see `EditorContentView`).
     public var onEditMarker: (UUID) -> Void = { _ in }
 
+    /// Double-click in the marker lane where there is no marker: make one
+    /// here. Creating a mark after the fact previously meant the chapter
+    /// panel's "+" and then typing a time, which is three steps to say
+    /// "this moment".
+    public var onCreateMarker: (Double) -> Void = { _ in }
+
+    /// Double-click a fold: reveal what it removed AND select it, so the
+    /// segment can be acted on rather than merely looked at.
+    public var onExpandAndSelectFold: (UUID) -> Void = { _ in }
+
     /// Pixels of mouse wobble a click may exhibit before it counts as a
     /// deliberate selection rather than jitter. This is a PIXEL constant
     /// deliberately: a hand wobbles by roughly the same number of pixels on
@@ -873,6 +883,30 @@ public final class TimelineView: NSView {
         // those run before scrub: a chip is a small target and a click that
         // scrubbed instead would land the playhead near the phrase rather than
         // at it, which is the whole difference the lane offers.
+        // Double-click first: it is the only gesture that reads the fold's
+        // FULL-HEIGHT line rather than the fold lane.
+        //
+        // The line is drawn `height: bounds.height` on purpose — one collapse
+        // across the synchronised stack — but single-click hits are y-gated to
+        // the fold lane, because an ungated single click swallows scrubs meant
+        // for the lanes below. That left the line visible everywhere and
+        // clickable in one strip, which is the regression this restores: a
+        // DOUBLE click is unambiguous, since nothing else on the timeline
+        // uses one outside the marker lane.
+        if event.clickCount == 2 {
+            if let cut = foldHit(atX: point.x) {
+                onExpandAndSelectFold(cut.id)
+                return
+            }
+            if point.y <= markerTrackHeight {
+                if let marker = markerHit(at: point) {
+                    onEditMarker(marker.id)
+                } else {
+                    onCreateMarker(geometry.outputTime(atX: point.x).seconds)
+                }
+                return
+            }
+        }
         if handlePhraseClick(at: point) { return }
         if let cut = foldHit(at: point) {
             activeFoldClick = cut.id
