@@ -330,6 +330,7 @@ struct EditorPersistenceTests {
             let controller = try await DocumentOpener.open(bundleURL: url)
             defer { controller.close() }
 
+            NoModalAlerts.silence()
             let delegate = AppDelegate()
             var replies: [Bool] = []
             delegate.replyToTerminate = { replies.append($0) }

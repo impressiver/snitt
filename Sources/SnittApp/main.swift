@@ -271,12 +271,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { await coordinator.markCurrentRecording(label: nil) }
     }
 
-    private func notify(_ message: String) {
+    /// How a plain informational message reaches the person at the screen.
+    ///
+    /// A seam, and a load-bearing one. The default raises a real
+    /// `NSAlert.runModal()`, which blocks the main thread until somebody
+    /// clicks OK. A TEST that reaches this path does not merely hang itself —
+    /// it hangs the entire run, because a modal run loop starves the MainActor
+    /// every other test needs, **including any watchdog meant to catch a hang**.
+    /// The bounded test gates added the same day are useless against it for
+    /// exactly that reason: their polling loop never gets scheduled either.
+    ///
+    /// That is not hypothetical. `DockReopenTests` calls the real
+    /// `applicationShouldHandleReopen`, and its "most recent document" comes
+    /// from `NSDocumentController.recentDocumentURLs` — machine-global state
+    /// that two other suites clear in their own `defer`s. Lose that race and
+    /// the reopen path finds no recents, raises this alert, and the run stops
+    /// dead with no output. Observed 2026-09-09, on screen.
+    ///
+    /// So tests replace this. Not to observe the message — to make raising a
+    /// modal impossible rather than unlikely.
+    @MainActor static var presentMessage: (String) -> Void = { message in
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = message
         alert.addButton(withTitle: "OK")
         alert.runModal()
+    }
+
+    private func notify(_ message: String) {
+        AppDelegate.presentMessage(message)
     }
 
     /// A hotkey combination another app already owns must say so (D55) —
