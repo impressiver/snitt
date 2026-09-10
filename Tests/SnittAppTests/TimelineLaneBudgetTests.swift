@@ -124,20 +124,27 @@ struct TimelineLaneBudgetTests {
         }
     }
 
-    @Test("Surplus is split 30/70, the filmstrip's share halved")
+    @Test("Surplus is split by the configured share, not by a number in this test")
     func surplusMatchesTheConfiguredRatio() {
-        // Halved from D56's 0.6 on product-owner direction. The freed share
-        // goes to AUDIO, not back to the window: the budget bounds the
-        // timeline against the picture, and handing height back inside the
-        // timeline would leave a gap rather than a taller waveform.
-        let plan = TimelineLaneBudget.plan(availableHeight: 300, audioTracks: both)
+        // Derived from the constants rather than pinned. This test has been
+        // hand-edited three times as the filmstrip's share was tuned (0.6 ->
+        // 0.3 -> 0.15), and a test you must edit every time the value changes
+        // is not testing the value — it is restating it. What it asserts now
+        // is the RELATIONSHIP: whatever the share is, video and audio divide
+        // the surplus by it and nothing is lost between them.
+        let height: Double = 400
+        let plan = TimelineLaneBudget.plan(availableHeight: height, audioTracks: both)
         let video = try! #require(plan.height(of: .video))
         let audio = try! #require(plan.height(of: .audio("microphone")))
-        let surplus: Double = 300 - 24 - 18 - 48
-        let expectedVideo: Double = 18 + surplus * 0.3
-        let expectedAudio: Double = 24 + (surplus * 0.7) / 2
-        #expect(abs(video - expectedVideo) < 0.001)
-        #expect(abs(audio - expectedAudio) < 0.001)
+
+        let floor = TimelineLaneBudget.minimumVideoHeight
+        let audioFloor = TimelineLaneBudget.minimumTargetHeight * 2
+        let surplus = height - TimelineLaneBudget.minimumTargetHeight - floor - audioFloor
+        let share = TimelineLaneBudget.videoShareOfSurplus
+
+        #expect(abs(video - (floor + surplus * share)) < 0.001)
+        #expect(abs(audio - (TimelineLaneBudget.minimumTargetHeight
+                             + (surplus * (1 - share)) / 2)) < 0.001)
     }
 
     @Test("A recording with one audio source is not merged into a composite")

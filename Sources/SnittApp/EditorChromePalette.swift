@@ -30,12 +30,27 @@ import SwiftUI
 /// from.
 enum EditorChromePalette {
 
-    /// The media well behind the picture. Fixed in both appearances.
+    /// The ground behind the picture: **white on light, black on dark**.
     ///
-    /// Not black: a true black well makes letterboxing invisible, so a 16:9
-    /// recording in a 16:10 window looks like a mis-sized picture rather than
-    /// a correctly-fitted one. Near-black keeps the frame's edge readable.
-    static let mediaWell = NSColor(srgbRed: 0.09, green: 0.09, blue: 0.10, alpha: 1)
+    /// This REVERSES the earlier decision that pinned it dark in both
+    /// appearances (product-owner direction, 2026-09-10), and the tests that
+    /// enforced that are updated rather than deleted — they now assert the new
+    /// rule, so the reversal is recorded in the same place the old rule was.
+    ///
+    /// The previous argument was `TimelineView`'s: a media surface should not
+    /// follow the appearance because the content on it should carry the
+    /// colour. That still holds for the TIMELINE, whose content is waveforms
+    /// and thumbnails drawn in a tuned palette. It holds less well for the
+    /// well, whose content is somebody else's screen recording — usually of a
+    /// light UI, which a black surround frames as a hole rather than as a
+    /// mount.
+    ///
+    /// Pure black and pure white, not near-black: the point is a neutral
+    /// ground that disappears, and an off-white that reads as grey against a
+    /// white recording is the thing being avoided.
+    static let mediaWell = NSColor(name: "mediaWell") { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .black : .white
+    }
 
     /// The rule where appearance-following chrome meets a pinned-dark media
     /// surface. Drawn on the chrome's side, so it reads as the panel's own

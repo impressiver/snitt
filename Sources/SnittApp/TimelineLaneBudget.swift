@@ -64,25 +64,25 @@ public enum TimelineLaneBudget {
 
     /// The filmstrip's floor.
     ///
-    /// Halved from 36 on product-owner direction (2026-09-10). Worth recording
-    /// the tension rather than quietly resolving it: the commit that set the
-    /// timeline to 120pt argued a ~25px video band was "smaller than a
-    /// thumbnail is useful at", and this floor is now below that. The
-    /// filmstrip becomes a strip of colour and motion — enough to see WHERE
-    /// the picture changes, not enough to read WHAT it changed to. That is a
-    /// legitimate trade once the transcript lane carries the "what", and it is
-    /// the reverse of the trade made when the filmstrip was the only content
-    /// lane there was.
-    public static let minimumVideoHeight: Double = 18
+    /// Halved twice on product-owner direction: 36 -> 18 -> 9 (2026-09-10).
+    /// On a 731pt window the band goes 121pt -> 70pt -> ~36pt.
+    ///
+    /// The filmstrip is now unambiguously a RIBBON, not a row of thumbnails:
+    /// it shows WHERE the picture changes and carries no detail about what it
+    /// changed to. That is a coherent position — the transcript lane carries
+    /// the "what" now, and it did not exist when the filmstrip was sized — but
+    /// it is the opposite of the argument that set the timeline to 120pt, and
+    /// the next reader should know the reversal was deliberate, not drift.
+    public static let minimumVideoHeight: Double = 9
 
     /// The share of surplus the video band takes.
     ///
-    /// 0.3, halved from D56's 0.6 on product-owner direction (2026-09-10). The
-    /// freed share goes to audio rather than shrinking the timeline: the
-    /// budget's job is to bound the timeline against the PICTURE, and handing
-    /// height back inside the timeline would leave a gap rather than a taller
+    /// 0.15 — D56's 0.6, halved twice on product-owner direction. The freed
+    /// share goes to audio rather than shrinking the timeline: the budget's
+    /// job is to bound the timeline against the PICTURE, and handing height
+    /// back inside the timeline would leave a gap rather than a taller
     /// waveform.
-    public static let videoShareOfSurplus: Double = 0.3
+    public static let videoShareOfSurplus: Double = 0.15
 
     /// The transcript lane's height, and the one place it is written down.
     ///

@@ -94,7 +94,12 @@ struct FoldLaneTests {
         // a decoration.
         let tall = TimelineTrackLayout.bands(in: NSRect(x: 0, y: 0, width: width, height: tallEnough),
                                              markerHeight: 24, audioTracks: ["microphone"])
-        let short = TimelineTrackLayout.bands(in: NSRect(x: 0, y: 0, width: width, height: 60),
+        // Genuinely short, derived rather than guessed: the lane fits only
+        // while marks + folds + the video floor still do. This constant has
+        // moved twice as the floor was tuned, so it is computed now.
+        let tooShort = 24 + TimelineTrackLayout.foldLaneHeight
+                     + TimelineLaneBudget.minimumVideoHeight - 1
+        let short = TimelineTrackLayout.bands(in: NSRect(x: 0, y: 0, width: width, height: tooShort),
                                               markerHeight: 24, audioTracks: ["microphone"])
         #expect(abs(tall.fold.height - TimelineTrackLayout.foldLaneHeight) < 0.001)
         #expect(abs(short.fold.height) < 0.001)
