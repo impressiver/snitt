@@ -33,10 +33,23 @@ struct FilmstripSamplerTests {
         let strip = try await FilmstripSampler.sample(movieAt: url, maxFrames: 6, height: 32)
         #expect(strip.frames.count >= 3, "expected several thumbnails, got \(strip.frames.count)")
 
-        let first = try #require(meanLuma(strip.frames.first))
-        let last = try #require(meanLuma(strip.frames.last))
-        #expect(abs(first - last) > 5,
-                "every thumbnail is the same frame — luma \(first) vs \(last)")
+        // Across ALL the thumbnails, not first-versus-last.
+        //
+        // `.ramp` fills a frame with `20 + (index * 7) % 200` — a SAWTOOTH,
+        // not a ramp — so luma is not injective in time, and "two different
+        // moments" does not imply "two different lumas". In a 90-frame movie
+        // exactly two indices land within 5 of frame 0: 29 and 86. Frame 86
+        // reads 22 against frame 0's 20, and a run whose last sample resolved
+        // to 86 instead of 89 failed this test with a difference of 2.0119 —
+        // in the full gate, passing in isolation, which is the signature this
+        // suite has been misread as load flakiness for before.
+        //
+        // The spread over every sampled frame cannot wrap onto itself the way
+        // one pair can, and it still fails for the reason this test exists: a
+        // sampler that returned one frame N times gives a spread of zero.
+        let lumas = try strip.frames.map { try #require(meanLuma($0)) }
+        let spread = try #require(lumas.max()) - #require(lumas.min())
+        #expect(spread > 5, "every thumbnail is the same frame — lumas \(lumas)")
     }
 
     @Test("The frame count is capped rather than growing with duration")

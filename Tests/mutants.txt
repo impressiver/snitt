@@ -58,3 +58,7 @@ ReleaseScriptTests :: Scripts/notarize.sh :: if [ ! -f "$NOTARY_KEY_VALUE" ]; th
 ReleaseScriptTests :: Scripts/release.sh :: if ! ./Scripts/signing-identity.sh >/dev/null; then :: if false; then
 ReleaseScriptTests :: Scripts/release.sh :: if ! notary_line="$(./Scripts/notarize.sh --check-credentials)"; then :: if false; then
 ReleaseScriptTests :: Scripts/notarize.sh :: if ! probe="$(xcrun notarytool history "${NOTARIZE_ARGS[@]}" 2>&1)"; then :: if false; then
+
+# The filmstrip must show DIFFERENT moments — a sampler returning one frame
+# N times draws a plausible strip and passes every structural check.
+FilmstripSamplerTests :: Sources/SnittExport/FilmstripSampler.swift :: let time = CMTime(seconds: Double(index) * interval + interval / 2, :: let time = CMTime(seconds: 0 * interval + interval / 2,
