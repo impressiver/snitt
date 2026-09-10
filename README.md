@@ -8,7 +8,7 @@ from a script. Transcription runs on your Mac and the recording never leaves it.
 *Snitt* is Swedish and Norwegian for **cut** — as in a film edit, or a
 cross-section.
 
-> **Status: early.** v0.1.0 is signed, notarized and shipping, and it is used
+> **Status: early.** v0.2.0 is signed, notarized and shipping, and it is used
 > daily by the person who writes it. Interfaces still move. If you find a defect
 > the honest place to look for what is already known is
 > [`docs/superpowers/notes/field-notes.md`](docs/superpowers/notes/field-notes.md).
