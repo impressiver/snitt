@@ -150,3 +150,30 @@ struct CropDragOverlay: View {
                         height: rect.height / video.height)
     }
 }
+
+#if DEBUG
+// The handles are the whole control, and their size is a WCAG 2.5.8 claim
+// (24pt minimum). Previewed over a stand-in picture rather than a blank pane,
+// because a handle that vanishes against content is still a handle nobody can
+// grab.
+#Preview("Crop overlay") {
+    @Previewable @State var box = CropRect(x: 0.12, y: 0.18, width: 0.62, height: 0.55)
+    ZStack {
+        LinearGradient(colors: [.blue.opacity(0.35), .purple.opacity(0.35)],
+                       startPoint: .topLeading, endPoint: .bottomTrailing)
+        CropDragOverlay(videoSize: CGSize(width: 1512, height: 982), box: $box)
+    }
+    .frame(width: 640, height: 420)
+}
+
+#Preview("Crop overlay — full frame") {
+    // The starting state, where all four handles sit on the picture's own
+    // edges and are easiest to lose.
+    @Previewable @State var box = CropRect(x: 0, y: 0, width: 1, height: 1)
+    ZStack {
+        Color.gray.opacity(0.4)
+        CropDragOverlay(videoSize: CGSize(width: 1512, height: 982), box: $box)
+    }
+    .frame(width: 640, height: 420)
+}
+#endif

@@ -59,8 +59,28 @@ final class EditorTimelineState: ObservableObject {
     }
     /// Raised by the toolbar's Export button, handled by the controller that
     /// owns the save panel. The state does not present windows.
-    var onRequestExport: (() -> Void)?
-    func requestExport() { onRequestExport?() }
+    /// Raised by the toolbar button AND by File ▸ Export…, so both open the
+    /// same sheet rather than the menu keeping a save panel of its own.
+    /// Bumped to ask the editor view to raise the export sheet.
+    ///
+    /// A counter rather than a `Bool` the view sets back to false: resetting a
+    /// published flag from inside `onChange` is a write during a view update,
+    /// and a flag that stays true swallows the second request. Neither is a
+    /// problem a counter has.
+    @Published private(set) var exportRequestToken = 0
+    func requestExport() { exportRequestToken += 1 }
+
+    /// Wired by the controller, which owns the bundle and the alerts. The
+    /// state raises the intent; it does not present windows or write files.
+    var onExport: ((ExportRequest) -> Void)?
+    var exportOptionsProvider: (() async -> [ExportOption])?
+
+    /// Where an export defaults to: beside the recording, named after it.
+    ///
+    /// Set by the controller, which is the only thing that knows the bundle it
+    /// opened — the same reason `documentTitle` is.
+    var defaultExportURL: URL = URL(fileURLWithPath: NSTemporaryDirectory())
+        .appending(path: "export.mp4")
 
     /// Which folds are currently expanded, by `Cut.id` (D56, M5f Task 5).
     ///
@@ -230,6 +250,12 @@ final class EditorTimelineState: ObservableObject {
         let selection: Selection?
         /// See `expandedCutIDs`'s own doc comment.
         let expandedCutIDs: Set<UUID>
+        /// Which cut is selected, so the timeline can DRAW the selection it
+        /// has been tracking since M5f. Without this the state was complete
+        /// and invisible: `selectFold` also sets `selection`, but a cut's
+        /// source range is exactly the ground that cut removed, so neither
+        /// end maps onto the output axis and the blue rectangle is skipped.
+        let selectedFoldID: UUID?
         /// Which audio sources exist and whether each is muted. The timeline
         /// draws one band per source, so muting has a visible effect — until
         /// now `TrackState.muted` changed the export and nothing on screen.
@@ -263,6 +289,7 @@ final class EditorTimelineState: ObservableObject {
                     playhead: outputPlayhead,
                     selection: selection,
                     expandedCutIDs: expandedCutIDs,
+                    selectedFoldID: selectedFoldID,
                     trackStates: edl.trackStates,
                     waveforms: waveforms,
                     filmstrip: filmstrip)
@@ -1262,21 +1289,18 @@ struct TimelineViewRepresentable: NSViewRepresentable {
     }
 
     /// Deliberately a one-line delegation to `state.displayState(playhead:)`
-    /// — the axis-mapping logic that matters lives there, where it is
+    /// and `TimelineView.apply(_:)` — the axis-mapping logic that matters
+    /// lives in the first and the field-by-field fan-out in the second, both
     /// testable without AppKit or SwiftUI's runtime; this stays the thin,
     /// untestable seam.
+    ///
+    /// It used to do the fan-out itself, ten arguments long. That is what
+    /// made adding `selectedFoldID` to `DisplayState` and forgetting it here
+    /// a silent, invisible failure — and a mutant that blanked it survived a
+    /// test suite that reached every layer except this one.
     func updateNSView(_ nsView: TimelineView, context: Context) {
         state.timelineView = nsView   // also set in makeNSView; see there
-        let display = state.displayState(playhead: playhead)
-        nsView.update(duration: display.duration,
-                     cuts: display.cuts,
-                     markerPoints: display.markerPoints,
-                     playhead: display.playhead,
-                     selection: display.selection,
-                     expandedCutIDs: display.expandedCutIDs,
-                     trackStates: display.trackStates,
-                     waveforms: display.waveforms,
-                     filmstrip: display.filmstrip)
+        nsView.apply(state.displayState(playhead: playhead))
         // Phrases, not words: `WordLaneTiers` measured that word chips need
         // 0.6pt each on a ten-minute recording against the 40pt they need to
         // be clickable. Grouped through the SAME pause rule the reading pane
@@ -1329,6 +1353,24 @@ struct EditorContentView: View {
     @State private var paneWidths = PaneWidths.load()
     /// The width being dragged, before it is committed.
     @State private var dragStartWidth: Double?
+    /// The export sheet's live request, and the measured menu behind it.
+    @State private var showingExport = false
+    @State private var exportRequest = ExportRequest(
+        destination: URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "export.mp4"))
+    @State private var exportOptions: [ExportOption] = []
+    @State private var measuringExport = false
+
+    /// A folder chooser, not a save panel: the filename is already decided
+    /// from the recording's own name, and only the folder is worth asking
+    /// about.
+    static func chooseFolder(startingAt url: URL) -> URL? {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = url.deletingLastPathComponent()
+        return panel.runModal() == .OK ? panel.url : nil
+    }
 
     private var controller: PreviewController { state.controller }
 
@@ -1524,6 +1566,43 @@ struct EditorContentView: View {
             // needs a ten-minute recording to answer, and is in field-notes.
             let seconds = controller.player.currentTime().seconds
             playhead = seconds.isFinite ? seconds : 0
+        }
+        // Raised by the toolbar button and by File ▸ Export… alike — the
+        // menu no longer keeps a save panel of its own.
+        .onChange(of: state.exportRequestToken) { _, _ in
+            exportRequest = ExportRequest(destination: state.defaultExportURL)
+            exportOptions = []
+            measuringExport = true
+            showingExport = true
+            Task { @MainActor in
+                let measured = await state.exportOptionsProvider?() ?? []
+                exportOptions = measured
+                measuringExport = false
+                // Only if nothing has been picked in the meantime: measuring
+                // builds a whole composition, and a choice made while it ran
+                // must not be overwritten by its result.
+                if exportRequest.resolution == .source, let first = measured.first {
+                    exportRequest.resolution = first.resolution
+                }
+            }
+        }
+        .sheet(isPresented: $showingExport) {
+            ExportSheet(
+                title: state.documentTitle,
+                options: exportOptions,
+                isMeasuring: measuringExport,
+                request: $exportRequest,
+                onCancel: { showingExport = false },
+                onExport: {
+                    state.onExport?(exportRequest)
+                    showingExport = false
+                },
+                onChooseFolder: {
+                    guard let folder = EditorContentView
+                        .chooseFolder(startingAt: exportRequest.destination) else { return }
+                    exportRequest.destination = folder
+                        .appending(path: exportRequest.destination.lastPathComponent)
+                })
         }
         .sheet(item: editingMarkerBinding) { marker in
             MarkerEditSheet(label: marker.label ?? "",
@@ -1766,7 +1845,20 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
                      + editorChromeHeight)
     }
 
-    static func openingContentRect(on visibleFrame: NSRect?,
+/// Where Export lands unless someone changes it: beside the recording,
+    /// named after it, as an `.mp4`.
+    ///
+    /// Beside rather than in Movies or Downloads because a `.snitt` bundle
+    /// already lives where its owner put it, and the export belongs with the
+    /// thing it was made from. Static and pure so the naming is testable
+    /// without opening a document.
+    static func defaultExportURL(forBundle bundleURL: URL) -> URL {
+        let folder = bundleURL.deletingLastPathComponent()
+        let name = bundleURL.deletingPathExtension().lastPathComponent
+        return folder.appending(path: name).appendingPathExtension("mp4")
+    }
+
+        static func openingContentRect(on visibleFrame: NSRect?,
                                    scale: Double = 0.75) -> NSRect {
         guard let visibleFrame, visibleFrame.width > 0, visibleFrame.height > 0 else {
             return NSRect(x: 0, y: 0, width: 640, height: 420)
@@ -1816,6 +1908,7 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
             defer: false)
         window.title = title
         state.documentTitle = title
+        state.defaultExportURL = Self.defaultExportURL(forBundle: bundleURL)
         // Enforced by the window itself, not merely documented: a layout with
         // a stated minimum that nothing stops you dragging past has no
         // minimum.
@@ -1840,9 +1933,9 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         window.animationBehavior = .none
         self.window = window
         super.init()
-        // Wired here rather than beside `documentTitle` above: it captures
-        // `self`, which does not exist until `super.init` has run.
-        state.onRequestExport = { [weak self] in self?.presentExportPanel() }
+        // After `super.init`, because both capture `self`.
+        state.onExport = { [weak self] in self?.performExport($0) }
+        state.exportOptionsProvider = { [weak self] in await self?.exportOptions() ?? [] }
         window.delegate = self
         // Set only now that `window` exists — this window's `undoManager`
         // (lazily created by AppKit on first access) is what Task 1's Edit
@@ -1948,8 +2041,8 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// action that does nothing". It is also what keeps the Delete key from
     /// swallowing an ordinary Backspace anywhere else in the app: the item
     /// is enabled only while THIS is true for the key window's editor, so a
-    /// Backspace typed into, say, the export panel's filename field — a
-    /// different window, or this editor's own window with nothing
+    /// Backspace typed into a text field — the marker inspector's title or
+    /// time, a different window, or this editor's own window with nothing
     /// selected — falls through to normal text editing instead.
     var hasTimelineSelection: Bool { state.selection != nil }
 
@@ -1975,18 +2068,6 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
 
     // MARK: - Export (Task 8)
 
-    /// File ▸ Export…, wired via `AppDelegate.exportDocument(_:)`.
-    ///
-    /// Opens an `NSSavePanel` and, on a chosen destination, runs the SAME
-    /// export path `AutomationHost.export` already uses (`MovieExporter`
-    /// over `CompositionBuilder`) against `state.edl` — the exact EDL the
-    /// preview is currently showing, not a re-read of `edit.json` from
-    /// disk. Task 7's autosave means those normally agree, but reading the
-    /// in-memory value is what keeps them agreeing even for the instant
-    /// between a trim and its `applyAndSave` write landing, and it is what
-    /// §9 ("preview and export share one builder") actually asks for:
-    /// this is the EDL the on-screen preview was built from, not a second,
-    /// separately-sourced one that merely usually matches it.
     /// Playback commands, forwarded from the app delegate's menu actions.
     ///
     /// Thin wrappers rather than exposing `state`: the delegate needs four
@@ -2000,44 +2081,33 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// themselves rather than looking live and doing nothing.
     public var hasMarks: Bool { !state.controller.jumpPoints.isEmpty }
 
+    /// File ▸ Export… — the same sheet the toolbar opens.
+    ///
+    /// The save panel this used to raise is gone. It carried the resolution
+    /// menu in its accessory slot, which worked and read as an afterthought:
+    /// the sizes were there and nothing about the panel said they mattered.
     public func presentExportPanel() {
-        let panel = NSSavePanel()
-        if let mp4 = UTType(filenameExtension: "mp4") {
-            panel.allowedContentTypes = [mp4]
-        }
-        panel.nameFieldStringValue = bundleURL.deletingPathExtension().lastPathComponent
+        state.requestExport()
+    }
 
-        // The resolution menu lives in the save panel rather than in a sheet
-        // before it: choosing a size and choosing a destination are one
-        // decision, and two dialogs to answer it is one more than the job
-        // needs.
-        let picker = ExportResolutionPicker()
-        panel.accessoryView = picker
-
-        // Presented FIRST, populated after. Building the composition to
-        // measure it takes real time, and a save panel that appears a second
-        // late reads as a missed click. Until the numbers land the picker says
-        // so and the export falls back to `.source` — which is exactly what
-        // this app did before the menu existed, so an impatient Export is
-        // never a surprise.
-        Task { @MainActor [weak self, weak picker] in
-            guard let self else { return }
-            let options = await self.exportOptions()
-            picker?.populate(with: options)
-        }
-
-        panel.beginSheetModal(for: window) { [weak self, weak picker] response in
-            guard let self, response == .OK, let destination = panel.url else { return }
-            let resolution = picker?.selectedResolution ?? .source
-            Task { @MainActor in
-                do {
-                    try await self.performExport(to: destination,
-                                                 pasteboard: .general,
-                                                 resolution: resolution)
-                    self.presentExportSuccess()
-                } catch {
-                    self.presentExportFailure(error)
-                }
+    /// Runs an export the sheet has configured, reporting the outcome in an
+    /// alert. The sheet has already dismissed itself by the time this runs.
+    ///
+    /// Exports against `state.edl` — the exact EDL the preview is currently
+    /// showing, not a re-read of `edit.json` from disk. Autosave means those
+    /// normally agree, but reading the in-memory value is what keeps them
+    /// agreeing even for the instant between a trim and its `applyAndSave`
+    /// write landing, and it is what §9 ("preview and export share one
+    /// builder") actually asks for: this is the EDL the on-screen preview was
+    /// built from, not a second, separately-sourced one that merely usually
+    /// matches it.
+    func performExport(_ request: ExportRequest) {
+        Task { @MainActor in
+            do {
+                try await performExport(request, pasteboard: .general)
+                self.presentExportSuccess()
+            } catch {
+                self.presentExportFailure(error)
             }
         }
     }
@@ -2074,13 +2144,20 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// `SnittBundle` of its own: `PreviewController`'s is `private` (R1 —
     /// the write belongs with the owner), and `bundleURL` is already this
     /// type's own normalized identity for exactly this document.
-    private func performExport(to destination: URL,
-                               pasteboard: NSPasteboard,
-                               resolution: ExportResolution = .source) async throws {
+    ///
+    /// Takes the whole `ExportRequest` rather than the three fields the
+    /// sheet happens to set today. The alternative — a parameter per field —
+    /// is how the test seam and the real path drift: adding `clicks` to one
+    /// and not the other compiles, and the seam then proves something the
+    /// app never does.
+    private func performExport(_ request: ExportRequest,
+                               pasteboard: NSPasteboard) async throws {
         let bundle = try SnittBundle(opening: bundleURL)
-        _ = try await MovieExporter.export(bundle: bundle, edl: state.edl, scale: 1.0,
-                                           to: destination, resolution: resolution)
-        if !ClipboardDestination.copy(fileURL: destination, to: pasteboard) {
+        _ = try await MovieExporter.export(
+            bundle: bundle, edl: state.edl, scale: 1.0,
+            to: request.destination, format: request.format,
+            resolution: request.resolution, clicks: request.drawClicks)
+        if !ClipboardDestination.copy(fileURL: request.destination, to: pasteboard) {
             // The export itself succeeded — the file the user asked for
             // exists at `destination` — so this is not surfaced as an
             // export failure. It IS logged: a copy that silently didn't
@@ -2106,8 +2183,8 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// "localizedDescription names only fixed sidecar filenames", which is
     /// true on the open paths (`manifest.json`, `edit.json`, `events.jsonl`,
     /// `capture.mov`) and FALSE here (whole-branch review F6): the export
-    /// destination is chosen by the user in an `NSSavePanel` and can be
-    /// anywhere, so a Cocoa write failure names a folder of theirs in a
+    /// destination is chosen by the user in the export sheet's folder
+    /// chooser and can be anywhere, so a Cocoa write failure names a folder of theirs in a
     /// field `snitt diagnostics export` collects verbatim.
     /// `UpdaterController` already marks this field `.private` for the same
     /// reason; this matches it rather than adding a third convention.
@@ -2125,15 +2202,17 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
 
     // MARK: - Testing seam
 
-    /// Drives an export exactly as `presentExportPanel()`'s save-panel
-    /// callback would, without a real `NSSavePanel` or the success/failure
-    /// `NSAlert` (both require a live window server this test target
-    /// cannot assume). `pasteboard` defaults to `.general` for parity with
-    /// the real path but is overridable so a test can assert against a
-    /// throwaway pasteboard instead of the machine's real clipboard.
+    /// Drives an export exactly as the export sheet's Export button would,
+    /// without the sheet or the success/failure `NSAlert` (both require a
+    /// live window server this test target cannot assume). `pasteboard`
+    /// defaults to `.general` for parity with the real path but is
+    /// overridable so a test can assert against a throwaway pasteboard
+    /// instead of the machine's real clipboard.
     func exportForTesting(to url: URL, pasteboard: NSPasteboard = .general,
                           resolution: ExportResolution = .source) async throws {
-        try await performExport(to: url, pasteboard: pasteboard, resolution: resolution)
+        var request = ExportRequest(destination: url)
+        request.resolution = resolution
+        try await performExport(request, pasteboard: pasteboard)
     }
 
     /// Closes every editor `EditorWindowController` currently thinks is

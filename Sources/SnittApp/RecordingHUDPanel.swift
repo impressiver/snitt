@@ -270,3 +270,46 @@ final class RecordingHUDView: NSView {
     }
     var dotIsHollowForTesting: Bool { (dot.layer?.borderWidth ?? 0) > 0 }
 }
+
+#if DEBUG
+/// A HUD view in a given recording state, laid out and ready to look at.
+///
+/// Built from `RecordingHUDModel.presentation(for:now:)` rather than from a
+/// hand-written `RecordingHUDPresentation`: the model decides what the HUD
+/// says, and a preview that made up its own strings would show a HUD this app
+/// can never actually display.
+@MainActor
+private func previewHUD(_ state: RecordingState, secondsIn: Double) -> NSView {
+    let view = RecordingHUDView(shortcuts: .init(mark: "⌥⌘M", pause: nil,
+                                                 stop: "⌥⌘R"))
+    // A fixed instant, not `Date()`: a preview that redraws with a different
+    // clock every time cannot be compared with the last time you looked at it.
+    let started = Date(timeIntervalSince1970: 1_770_000_000)
+    view.apply(RecordingHUDModel.presentation(
+        for: state, now: started.addingTimeInterval(secondsIn)))
+    view.frame = NSRect(x: 0, y: 0, width: 300, height: 44)
+    view.layoutSubtreeIfNeeded()
+    return view
+}
+
+private let previewHUDStart = Date(timeIntervalSince1970: 1_770_000_000)
+
+// §5.3's obligation is that a person can tell recording from paused AT A
+// GLANCE — a filled dot versus a hollow ring, not two shades of grey. That is
+// a claim about what something looks like, so these two previews are where it
+// is actually checkable.
+#Preview("HUD — recording") {
+    previewHUD(.recording(startedAt: previewHUDStart), secondsIn: 95)
+}
+
+#Preview("HUD — paused") {
+    previewHUD(.paused(startedAt: previewHUDStart, pausedSeconds: 12),
+               secondsIn: 95)
+}
+
+#Preview("HUD — stopping") {
+    // Every control disabled while the file is being finalised. The state
+    // nobody designs for and everybody sees.
+    previewHUD(.stopping, secondsIn: 95)
+}
+#endif

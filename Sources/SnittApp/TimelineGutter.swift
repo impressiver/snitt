@@ -116,3 +116,52 @@ struct GainMeterView: View {
             : Color.accentColor.opacity(0.85)
     }
 }
+
+#if DEBUG
+// The VU ladders, previewed against the lane heights they have to line up
+// with. "The vu meters should line up with the audio tracks they control,
+// same height as the audio track" is a geometric claim, and this is where it
+// is checkable without a recording open.
+#Preview("Gutter — two tracks") {
+    TimelineGutter(
+        plan: TimelineLaneBudget.plan(availableHeight: 180,
+                                      audioTracks: PreviewFixtures.audioTracks,
+                                      hasTranscript: true),
+        trackStates: PreviewFixtures.trackStates,
+        onGain: { _, _ in }, onMute: { _, _ in })
+        .frame(width: 30, height: 180)
+        .background(EditorChromePalette.timelineSurface)
+}
+
+#Preview("Gutter — squeezed to the floor") {
+    // The height at which the plan starts collapsing lanes. A gutter that
+    // looks right at a comfortable size and overflows here is the bug this
+    // preview exists to show.
+    TimelineGutter(
+        plan: TimelineLaneBudget.plan(availableHeight: TimelineLaneBudget.minimumTimelineHeight,
+                                      audioTracks: PreviewFixtures.audioTracks,
+                                      hasTranscript: true),
+        trackStates: PreviewFixtures.trackStates,
+        onGain: { _, _ in }, onMute: { _, _ in })
+        .frame(width: 30, height: TimelineLaneBudget.minimumTimelineHeight)
+        .background(EditorChromePalette.timelineSurface)
+}
+
+#Preview("Gain meter — boosted, unity, cut, muted") {
+    // Four ladders side by side, because the segment count is the whole
+    // control and one ladder alone gives nothing to read it against.
+    HStack(spacing: 8) {
+        GainMeterView(title: "Mic", gain: 2.0, muted: false,
+                      onGain: { _ in }, onToggleMute: {})
+        GainMeterView(title: "Mic", gain: 1.0, muted: false,
+                      onGain: { _ in }, onToggleMute: {})
+        GainMeterView(title: "Sys", gain: 0.35, muted: false,
+                      onGain: { _ in }, onToggleMute: {})
+        GainMeterView(title: "Sys", gain: 1.0, muted: true,
+                      onGain: { _ in }, onToggleMute: {})
+    }
+    .frame(height: 70)
+    .padding(12)
+    .background(EditorChromePalette.timelineSurface)
+}
+#endif

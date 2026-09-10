@@ -113,14 +113,6 @@ struct ExportPreflightTests {
         #expect(ExportPreflight.ceiling(bytes: -1) == "at most 0.0 MB")
     }
 
-    @Test("The menu title carries the label, the pixels and the ceiling")
-    func menuTitleIsSelfContained() {
-        // A popup item that says only "720p" makes the user open the menu to
-        // compare, which is the thing this feature exists to stop.
-        let option = ExportOption(resolution: .hd720p, width: 1280, height: 831,
-                                  maxBytes: 24_000_000)
-        #expect(option.menuTitle == "720p — 1280 × 831, at most 24.0 MB")
-    }
 
     @Test("The default selection preserves what the app did before this menu")
     func defaultIsSource() {

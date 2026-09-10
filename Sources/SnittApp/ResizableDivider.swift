@@ -40,3 +40,19 @@ struct ResizableDivider: View {
                     .onEnded { _ in onCommit() })
     }
 }
+
+#if DEBUG
+// Both directions, against real surfaces: the divider's whole job is to be
+// findable without being loud, and it can only be judged beside the panes it
+// separates.
+#Preview("Divider") {
+    HStack(spacing: 0) {
+        Color.gray.opacity(0.12).frame(width: 160)
+        ResizableDivider(direction: 1, onDrag: { _ in }, onCommit: {})
+        Color.gray.opacity(0.04).frame(width: 260)
+        ResizableDivider(direction: -1, onDrag: { _ in }, onCommit: {})
+        Color.gray.opacity(0.12).frame(width: 160)
+    }
+    .frame(height: 240)
+}
+#endif

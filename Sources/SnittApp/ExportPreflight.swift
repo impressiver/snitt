@@ -24,19 +24,13 @@ public struct ExportOption: Equatable, Sendable {
 
     public var pixels: String { "\(width) × \(height)" }
     public var ceiling: String { ExportPreflight.ceiling(bytes: maxBytes) }
-
-    /// What the popup shows: the label first, because that is what the user is
-    /// choosing between, then the two facts that let them choose.
-    public var menuTitle: String {
-        "\(resolution.rawValue) — \(pixels), \(ceiling)"
-    }
 }
 
 /// Turning `ExportEstimator`'s answers into a menu a person can pick from.
 ///
 /// Pure, and separate from the panel that shows it, for the reason every other
 /// model in this project is: the interesting decisions here are arithmetic and
-/// wording, and neither needs an `NSSavePanel` to be wrong.
+/// wording, and neither needs a sheet to be wrong.
 public enum ExportPreflight {
 
     /// The resolutions actually worth offering, largest first.
