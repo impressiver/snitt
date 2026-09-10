@@ -710,6 +710,25 @@ public final class TimelineView: NSView {
     /// since there is no cursor position to anchor on instead.
     public func zoomIn() { setZoom(zoomFactor * 2, anchoredAtOutput: playhead) }
 
+    /// The zoom, for a continuous control.
+    ///
+    /// The ±  buttons were the only affordance, and doubling per press means
+    /// crossing the useful range takes six clicks in one direction and six
+    /// back. A slider is the control this always wanted; these expose the
+    /// value it binds to, on a LOG scale, because zoom is multiplicative and a
+    /// linear slider would spend most of its travel at the far end.
+    public var zoomFraction: Double {
+        let span = log2(Self.maxZoomFactor / Self.minZoomFactor)
+        guard span > 0 else { return 0 }
+        return log2(zoomFactor / Self.minZoomFactor) / span
+    }
+
+    public func setZoomFraction(_ fraction: Double) {
+        let span = log2(Self.maxZoomFactor / Self.minZoomFactor)
+        let factor = Self.minZoomFactor * pow(2, min(max(fraction, 0), 1) * span)
+        setZoom(factor, anchoredAtOutput: playhead)
+    }
+
     /// The inverse of `zoomIn()`, same anchor rule.
     public func zoomOut() { setZoom(zoomFactor / 2, anchoredAtOutput: playhead) }
 

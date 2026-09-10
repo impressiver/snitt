@@ -46,6 +46,21 @@ final class EditorTimelineState: ObservableObject {
     /// on it and `TimelineViewRepresentable` can feed it back down to the
     /// view for drawing.
     @Published var selection: Selection?
+    /// What the toolbar names this document, and how many editable things are
+    /// in it. Set by the controller, which is the only thing that knows the
+    /// bundle it opened.
+    var documentTitle: String = ""
+    var documentSubtitle: String {
+        let marks = controller.jumpPoints.count
+        let folds = edl.cuts.count
+        let markWord = marks == 1 ? "chapter" : "chapters"
+        let foldWord = folds == 1 ? "fold" : "folds"
+        return "\(marks) \(markWord) · \(folds) \(foldWord)"
+    }
+    /// Raised by the toolbar's Export button, handled by the controller that
+    /// owns the save panel. The state does not present windows.
+    var onRequestExport: (() -> Void)?
+    func requestExport() { onRequestExport?() }
 
     /// Which folds are currently expanded, by `Cut.id` (D56, M5f Task 5).
     ///
@@ -1291,184 +1306,95 @@ struct EditorContentView: View {
 
     private var content: some View {
         VStack(spacing: 0) {
-            HStack(alignment: .top, spacing: 0) {
-            // The chapter index, always present rather than conditional on
-            // there being markers: it is now the only way to CREATE one
-            // outside of recording, so hiding it when the list is empty would
-            // hide the affordance exactly when it is needed.
-            MarkerPane(state: state, playhead: playhead,
-                       onEditMarker: { editingMarkerID = $0 })
-                // 260, not 220: this replaced the full-width jump list at the
-                // bottom of the window, and real marker labels are whole
-                // descriptive sentences rather than the short names the
-                // narrow column assumed.
-                .frame(width: 260)
+            // Document actions. Separated from the transport by WHAT THEY ACT
+            // ON — these change the recording, the transport bar below changes
+            // where you are in it. Everything used to sit in one row at the
+            // bottom, which made a control's position say nothing about what
+            // it did.
+            EditorToolbar(
+                title: state.documentTitle,
+                subtitle: state.documentSubtitle,
+                croppingActive: $croppingActive,
+                showTranscript: $showTranscript,
+                hasTranscript: state.transcriptionStatus != .none,
+                canApplyCrop: cropBox != .full,
+                hasCrop: state.edl.crop != nil,
+                trimCaption: state.lastTrimOutcome.map(Self.trimCaption),
+                onAutoTrim: { state.autoDeepTrim(preset: $0) },
+                onApplyCrop: {
+                    state.applyCrop(cropBox)
+                    croppingActive = false
+                },
+                onResetCrop: { state.resetCrop() },
+                onExport: { state.requestExport() })
             Divider()
-            PlayerLayerView(player: controller.player)
-                .frame(minWidth: 480, minHeight: 270)
-                .overlay {
-                    // Only while cropping: an always-live drag layer would
-                    // swallow clicks meant for the player.
-                    if croppingActive {
-                        CropDragOverlay(videoSize: controller.player.currentItem?.presentationSize
-                                                   ?? CGSize(width: 16, height: 9),
-                                        box: $cropBox)
-                    }
-                }
-            // A reflowing split, not an overlay: the pane takes width from
-            // the picture and the rail rather than covering the recording —
-            // the Mail-reading-pane idiom, and the opposite of a drawer drawn
-            // on top of the hero content you are trying to cut.
-            //
-            // Behind a toggle, and default OFF. It used to appear the moment a
-            // transcript existed, permanently costing the picture a quarter of
-            // the window from the point a recording became most worth
-            // watching. 340, not 250: at 250 a line held about five words,
-            // which is narrower than anyone reads prose in — and reading is
-            // what D62 says this pane is for.
-            if showTranscript, state.transcriptionStatus != .none {
+
+            HStack(alignment: .top, spacing: 0) {
+                // The chapter index, always present rather than conditional on
+                // there being markers: it is the only way to CREATE one
+                // outside of recording, so hiding it when the list is empty
+                // would hide the affordance exactly when it is needed.
+                MarkerPane(state: state, playhead: playhead,
+                           onEditMarker: { editingMarkerID = $0 })
+                    .frame(width: EditorWindowController.chaptersRailWidth)
                 Divider()
-                TranscriptPane(state: state, playhead: playhead)
-                    .frame(minWidth: 340)
+                PlayerLayerView(player: controller.player)
+                    .frame(minWidth: EditorWindowController.minimumPlayerSize.width,
+                           minHeight: EditorWindowController.minimumPlayerSize.height)
+                    .overlay {
+                        // Only while cropping: an always-live drag layer would
+                        // swallow clicks meant for the player.
+                        if croppingActive {
+                            CropDragOverlay(
+                                videoSize: controller.player.currentItem?.presentationSize
+                                    ?? CGSize(width: 16, height: 9),
+                                box: $cropBox)
+                        }
+                    }
+                // A reflowing split, not an overlay: the pane takes width from
+                // the picture and the rail rather than covering the recording.
+                if showTranscript, state.transcriptionStatus != .none {
+                    Divider()
+                    TranscriptPane(state: state, playhead: playhead)
+                        .frame(minWidth: 340)
+                }
             }
-            }
-            // D56 (M5f Task 6): three stacked tracks — a thin marker lane
-            // above, video, then audio — replacing the single undifferentiated
-            // track Task 5 left behind. The taller frame (56, was 40) gives
-            // the marker lane room to be a real click/drag target rather
-            // than a sliver; see `TimelineView`'s own `markerTrackHeight`.
-            // Proportional, not a fixed 120. A fixed frame made the PICTURE
-            // the only thing that could shrink, so on a short window the
-            // recording gave up every pixel and the timeline gave up none —
-            // the opposite of what this editor is for. `TimelineLaneBudget`
-            // owns the arithmetic and the collapse order; this just gives it
-            // the window it has to spend.
-            // Proportional, not a fixed 120. A fixed frame made the PICTURE
-            // the only thing that could shrink, so on a short window the
-            // recording gave up every pixel and the timeline gave up none —
-            // the opposite of what this editor is for. `TimelineLaneBudget`
-            // owns the arithmetic and the collapse order; `windowHeight` is
-            // measured once around the whole body, because a `GeometryReader`
-            // wrapped around the timeline alone would measure the slot the
-            // timeline was already given and pin it there forever.
+
             // The seam is deliberate. Appearance-following chrome meets a
             // pinned-dark timeline here, and with no edge treatment a light
-            // rail against a dark instrument is exactly the "two apps stapled
+            // rail against a dark instrument is the "two apps stapled
             // together" look this work started from.
             Divider().overlay(EditorChromePalette.mediaEdge)
+            TransportBar(
+                isPlaying: isPlaying,
+                hasMarks: !state.controller.jumpPoints.isEmpty,
+                currentTime: RecordingState.clock(playhead),
+                totalTime: RecordingState.clock(state.displayState(playhead: playhead).duration),
+                currentMark: state.currentMarkLabel,
+                audioTracks: state.audioTracks,
+                zoomFraction: Binding(
+                    get: { state.timelineView?.zoomFraction ?? 0 },
+                    set: { state.timelineView?.setZoomFraction($0) }),
+                canCut: state.selection != nil,
+                onRewind: { state.rewind() },
+                onPreviousMark: { state.goToPreviousMark() },
+                onTogglePlay: { state.togglePlayback() },
+                onNextMark: { state.goToNextMark() },
+                onSeekToTime: { text in
+                    if let seconds = Timecode.parse(text) { state.seek(toOutput: seconds) }
+                },
+                onCut: { state.cutSelection() },
+                onGain: { state.setGain(track: $0, gain: $1) },
+                onMute: { state.setMuted(track: $0, muted: $1) })
+
+            // `TimelineLaneBudget` owns the arithmetic and the collapse order;
+            // `windowHeight` is measured once around the whole body, because a
+            // `GeometryReader` wrapped around the timeline alone would measure
+            // the slot the timeline was already given and pin it there.
             TimelineViewRepresentable(state: state, playhead: playhead,
                                       onEditMarker: { editingMarkerID = $0 })
                 .frame(height: TimelineLaneBudget
                     .timelineHeight(forWindowHeight: windowHeight))
-            // One row per audio source, matching the bands the timeline draws
-            // above. Placed here rather than inside `TimelineView` because
-            // that is a raw NSView with no room to grow controls without
-            // competing with the waveform for the same few pixels — the same
-            // reasoning that put the marker editor in a sheet.
-            if !state.audioTracks.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    ForEach(state.audioTracks, id: \.track) { track in
-                        AudioTrackControls(
-                            state: track,
-                            onGain: { state.setGain(track: track.track, gain: $0) },
-                            onMute: { state.setMuted(track: track.track, muted: $0) })
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.top, 4)
-            }
-            HStack(spacing: 12) {
-                // One transport cluster, in the order the playhead moves:
-                // back to start, previous mark, play/pause, next mark. Play
-                // and Pause were two buttons, so one of them was always a
-                // no-op — pressing Play while playing did nothing, which is
-                // indistinguishable from a broken button.
-                Button("⇤") { state.rewind() }
-                    .help("Back to start — \(KeyboardShortcutRegistry.shortcutDisplay(titled: "Back to Start"))")
-                Button("⚑◀") { state.goToPreviousMark() }
-                    .help("Previous mark — \(KeyboardShortcutRegistry.shortcutDisplay(titled: "Previous Mark"))")
-                    .disabled(state.controller.jumpPoints.isEmpty)
-                Button(isPlaying ? "Pause" : "Play") { state.togglePlayback() }
-                    .help("Play or pause — \(KeyboardShortcutRegistry.shortcutDisplay(titled: "Play / Pause"))")
-                Button("⚑▶") { state.goToNextMark() }
-                    .help("Next mark — \(KeyboardShortcutRegistry.shortcutDisplay(titled: "Next Mark"))")
-                    .disabled(state.controller.jumpPoints.isEmpty)
-                // The agent-authored label, on screen, without opening the
-                // chapters list — and at no cost in vertical space, which is
-                // what the marks lane could not afford.
-                if let label = state.currentMarkLabel {
-                    Text("⚑ \(label)")
-                        .font(.caption)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: 220, alignment: .leading)
-                        .help(label)
-                }
-                // D56 (M5f Task 4): the only place a selection becomes a
-                // cut. Disabled with nothing selected — dragging alone no
-                // longer cuts anything; this button is the deliberate
-                // decision that does.
-                Button("Cut") { state.cutSelection() }
-                    .disabled(state.selection == nil)
-                Divider().frame(height: 16)
-                if state.transcriptionStatus != .none {
-                    Toggle("Transcript", isOn: $showTranscript)
-                        .toggleStyle(.button)
-                        .help("Show the transcript beside the picture for reading and "
-                            + "phrase-level editing")
-                }
-                Button(croppingActive ? "Cancel Crop" : "Crop") {
-                    // Entering starts from the whole picture rather than from
-                    // the last proposal: the preview already SHOWS the current
-                    // crop (`applyCrop` composes), so the full frame is the
-                    // "no further crop" identity, and a leftover box from a
-                    // cancelled attempt would silently re-propose itself.
-                    if !croppingActive { cropBox = .full }
-                    croppingActive.toggle()
-                }
-                if croppingActive {
-                    Button("Apply Crop") {
-                        state.applyCrop(cropBox)
-                        croppingActive = false
-                    }
-                    // Applying the whole frame composes to a no-op. Disabling
-                    // says "adjust the box first" instead of leaving a button
-                    // that appears to do nothing.
-                    .disabled(cropBox == .full)
-                }
-                Button("Reset Crop") { state.resetCrop() }
-                    .disabled(state.edl.crop == nil)
-                Divider().frame(height: 16)
-                // D57's three presets, named for how much footage SURVIVES
-                // rather than for how hard the trim tries.
-                Menu("Auto-Trim") {
-                    Button("Conservative") { state.autoDeepTrim(preset: .conservative) }
-                    Button("Default") { state.autoDeepTrim(preset: .default) }
-                    Button("Aggressive") { state.autoDeepTrim(preset: .aggressive) }
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                .help("Cut the spans where nothing happens")
-                if let outcome = state.lastTrimOutcome {
-                    // Said out loud, because a button that silently does
-                    // nothing is indistinguishable from a broken one — and
-                    // "nothing to cut" and "not loaded yet" are different
-                    // answers that would otherwise look identical.
-                    Text(Self.trimCaption(outcome))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                // The affordance the zoom feature never had. `TrimGesture`'s
-                // own comment names the density problem these solve: at
-                // ~0.75s/pixel on a ten-minute recording a deliberate short cut
-                // is silently swallowed.
-                Button("−") { state.timelineView?.zoomOut() }
-                    .help("Zoom the timeline out")
-                Button("+") { state.timelineView?.zoomIn() }
-                    .help("Zoom the timeline in")
-            }
-            .padding(8)
         }
         .onReceive(Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()) { _ in
             // 20Hz, raised from 10 when the playhead stopped being decoration.
@@ -1745,6 +1671,7 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
             backing: .buffered,
             defer: false)
         window.title = title
+        state.documentTitle = title
         // Enforced by the window itself, not merely documented: a layout with
         // a stated minimum that nothing stops you dragging past has no
         // minimum.
@@ -1769,6 +1696,9 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         window.animationBehavior = .none
         self.window = window
         super.init()
+        // Wired here rather than beside `documentTitle` above: it captures
+        // `self`, which does not exist until `super.init` has run.
+        state.onRequestExport = { [weak self] in self?.presentExportPanel() }
         window.delegate = self
         // Set only now that `window` exists — this window's `undoManager`
         // (lazily created by AppKit on first access) is what Task 1's Edit
