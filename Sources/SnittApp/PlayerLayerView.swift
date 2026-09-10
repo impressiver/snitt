@@ -33,15 +33,27 @@ public final class PlayerLayerBackedView: NSView {
     public override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        // Stated, not inherited. With no background the well took the window's
-        // — near-white under a light appearance, behind a picture. Every
-        // player on the platform keeps this dark for the same reason the
-        // timeline does: the content is what should carry the colour.
-        layer?.backgroundColor = EditorChromePalette.mediaWell.cgColor
+        applyWellColour()
         playerLayer.videoGravity = .resizeAspect
         layer = playerLayer
     }
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not used") }
+
+    /// A `CGColor` is a resolved value, not a dynamic one, so a layer
+    /// background does NOT follow the appearance the way a view's would. This
+    /// is the hook that re-resolves it — without it the well keeps whichever
+    /// theme was active when the window opened, and switching appearance
+    /// leaves a black surround on a light desktop.
+    public override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        applyWellColour()
+    }
+
+    private func applyWellColour() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            layer?.backgroundColor = EditorChromePalette.mediaWell.cgColor
+        }
+    }
 }

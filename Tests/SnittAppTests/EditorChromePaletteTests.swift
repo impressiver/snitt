@@ -33,33 +33,43 @@ struct EditorChromePaletteTests {
              + 0.114 * Double(c.blueComponent)
     }
 
-    @Test("The media well is dark under a LIGHT system appearance")
-    func wellStaysDarkInLightMode() {
-        // The defect this fixes: `PlayerLayerView` set no background, so the
-        // well took the window's — near-white under a light theme, behind a
-        // picture. Asserting under `.aqua` specifically, because that is the
-        // appearance where an unstated background goes wrong and the one a
-        // developer on a dark Mac never sees.
+    @Test("The media well is WHITE under a light appearance")
+    func wellIsWhiteInLightMode() {
+        // Reverses this suite's earlier assertion that the well stayed dark in
+        // both. Updated rather than deleted: the old rule was recorded here,
+        // so the new one belongs here too, and a reader comparing the two sees
+        // a decision changed rather than a test quietly removed.
         let light = luminance(resolved(EditorChromePalette.mediaWell, under: .aqua))
-        #expect(light < 0.2, "the media well is \(light) under a light appearance")
+        #expect(light > 0.95, "the well is \(light) under a light appearance")
     }
 
-    @Test("The media well is the same colour in both appearances")
-    func wellDoesNotFollowTheAppearance() {
-        // Same assertion `TimelinePaletteTests` makes about the timeline. A
-        // colour that changes between the two is a semantic one that slipped
-        // back in.
+    @Test("The media well is BLACK under a dark appearance")
+    func wellIsBlackInDarkMode() {
+        let dark = luminance(resolved(EditorChromePalette.mediaWell, under: .darkAqua))
+        #expect(dark < 0.05, "the well is \(dark) under a dark appearance")
+    }
+
+    @Test("The media well DOES follow the appearance")
+    func wellFollowsTheAppearance() {
+        // The exact inverse of what this file asserted before, and the reason
+        // `PlayerLayerView` needs `viewDidChangeEffectiveAppearance`: a layer
+        // background is a resolved `CGColor`, so nothing re-resolves it on a
+        // theme change unless something asks.
         let light = luminance(resolved(EditorChromePalette.mediaWell, under: .aqua))
         let dark = luminance(resolved(EditorChromePalette.mediaWell, under: .darkAqua))
-        #expect(abs(light - dark) < 0.01)
+        #expect(abs(light - dark) > 0.9, "the well did not change with the appearance")
     }
 
-    @Test("The well is not pure black, so letterboxing stays visible")
-    func wellIsNotPureBlack() {
-        // A true black well makes the picture's edge invisible, so a 16:9
-        // recording in a 16:10 window reads as a mis-sized picture rather than
-        // a correctly fitted one.
-        #expect(luminance(EditorChromePalette.mediaWell) > 0.02)
+    @Test("The timeline still does NOT follow the appearance")
+    func timelineIsUnaffectedByTheWellChange() {
+        // The well's rule changed; the timeline's did not, and the two are
+        // easy to conflate now they disagree. `TimelinePaletteTests` owns this
+        // properly — this is the guard that a later "make the media surfaces
+        // consistent" pass does not sweep the timeline along with the well.
+        let light = luminance(resolved(TimelineView.Palette.background, under: .aqua))
+        let dark = luminance(resolved(TimelineView.Palette.background, under: .darkAqua))
+        #expect(abs(light - dark) < 0.01)
+        #expect(light < 0.3, "the timeline surface stopped being dark")
     }
 
     @Test("The current-playhead highlight carries contrast on a LIGHT ground")

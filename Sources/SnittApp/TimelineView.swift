@@ -479,9 +479,17 @@ public final class TimelineView: NSView {
         // stripe competing with the waveforms above them — and silence, which
         // is most of a lane at any real zoom, shows as nothing rather than as
         // an empty box.
+        // 11pt and centred. At 9pt, left-aligned against a chip edge, the
+        // phrases were unreadable — which made the lane decoration rather than
+        // a thing you navigate by, and navigating by what was said is the
+        // entire reason it exists.
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        style.lineBreakMode = .byTruncatingTail
         let attributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 9),
-            .foregroundColor: Palette.playhead.withAlphaComponent(0.75),
+            .font: NSFont.systemFont(ofSize: 11),
+            .foregroundColor: Palette.playhead.withAlphaComponent(0.85),
+            .paragraphStyle: style,
         ]
         for phrase in phrases {
             let startX = geometry.x(atOutput: OutputTime(phrase.start))
@@ -492,9 +500,18 @@ public final class TimelineView: NSView {
             guard chip.maxX > 0, chip.minX < bounds.width else { continue }
             Palette.markerLane.setFill()
             NSBezierPath(roundedRect: chip, xRadius: 3, yRadius: 3).fill()
-            let text = TranscriptPhrases.displayText(phrase, widthPoints: Double(width))
+            let text = TranscriptPhrases.displayText(phrase, widthPoints: Double(width),
+                                                     pointsPerCharacter: 7.5)
             guard !text.isEmpty else { continue }
-            (text as NSString).draw(in: chip.insetBy(dx: 3, dy: 1), withAttributes: attributes)
+            // Centred on BOTH axes. `draw(in:)` puts text at the rect's top,
+            // so a chip taller than its line leaves the words riding the upper
+            // edge rather than sitting in the pill.
+            let measured = (text as NSString).size(withAttributes: attributes)
+            let textRect = NSRect(x: chip.minX + 2,
+                                  y: chip.midY - measured.height / 2,
+                                  width: max(0, chip.width - 4),
+                                  height: measured.height)
+            (text as NSString).draw(in: textRect, withAttributes: attributes)
         }
     }
 
