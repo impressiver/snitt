@@ -56,7 +56,52 @@ to you afterwards. The only offline signal is the absence of that "Downloaded
 ticket" line. Stapling an app bundle rewrites `Contents/CodeResources` in place
 and adds no new file, which is why nothing visible appears in the bundle.
 
+## Cutting a release
+
+```sh
+SNITT_SIGN_IDENTITY="Developer ID Application: impressiver LLC (TEGDRM8W7U)" \
+  ./Scripts/release.sh <version>
+```
+
+`Scripts/release.sh` runs every step below in order and then checks what
+actually landed. Prefer it to running the steps by hand.
+
+**Why it exists.** The steps below used to end in a paragraph asking a
+person to remember to upload three files. That step is the one with no
+failure mode: a release missing its DMG looks exactly like a release, and
+the person who finds out is somebody arriving at the Releases page with no
+copy of Snitt installed and nothing to click. v0.1.0 shipped that way —
+run `./Scripts/release.sh --verify 0.1.0` to watch it fail.
+
+The script keeps **one list** of required assets, used both to upload and
+to verify. A fourth artifact added there is enrolled in the check
+automatically; two lists is how one gets added to the upload and never to
+the check.
+
+Other modes, none of which need credentials or touch anything:
+
+```sh
+./Scripts/release.sh --verify 0.2.0     # check a past release's assets
+./Scripts/release.sh --assets 0.3.0     # print the required asset names
+./Scripts/release.sh 0.3.0 --dry-run    # print every command, run none
+./Scripts/release.sh 0.3.0 --resume-from 7   # after a diagnosed failure
+```
+
+It refuses, before spending a network round trip, to: release a version
+that disagrees with `AppVersion.fallback`; release without
+`SNITT_SIGN_IDENTITY`; release from a dirty tree or a non-default branch;
+re-use an existing tag; or publish with any required asset missing or
+zero-length.
+
+`Tests/SnittAppTests/ReleaseScriptTests.swift` pins those refusals and,
+more importantly, pins that the upload list and the verification list are
+the same list.
+
 ## The path, in order
+
+Bump `AppVersion.fallback` in `Sources/SnittDocument/AppVersion.swift`
+first — everything below reads the version from there, and step 0 of the
+script refuses if the argument disagrees with it.
 
 1. **Build, with the real Developer ID.**
 

@@ -49,3 +49,8 @@ ExportSheetTests :: Sources/SnittApp/EditorWindowController.swift :: let folder 
 FoldAppearanceTests :: Sources/SnittApp/TimelineView.swift :: selectedFoldID: display.selectedFoldID, :: selectedFoldID: nil,
 FoldAppearanceTests :: Sources/SnittApp/FoldPalette.swift :: appearance == .collapsedSelected ? 4 : 2 :: 2
 FoldAppearanceTests :: Sources/SnittApp/FoldPalette.swift :: case .expandedSelected: base.withAlphaComponent(0.55) :: case .expandedSelected: base.withAlphaComponent(0.35)
+
+# Releases — a missing DMG looks exactly like a release.
+ReleaseScriptTests :: Scripts/release.sh :: printf '%s\n' "$ZIP" "$APPCAST" "$DMG" :: printf '%s\n' "$ZIP" "$APPCAST"
+ReleaseScriptTests :: Scripts/release.sh :: if [ "$declared" != "$VERSION" ]; then :: if false; then
+ReleaseScriptTests :: Scripts/release.sh :: elif [ "$size" -eq 0 ]; then :: elif false; then
