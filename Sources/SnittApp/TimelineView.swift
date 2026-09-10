@@ -408,7 +408,20 @@ public final class TimelineView: NSView {
     /// most 40% of the view's own height so a very short view (a test
     /// double a handful of pixels tall) never gives the marker lane MORE
     /// room than the video/audio tracks it sits above.
-    private var markerTrackHeight: Double { min(14.0, bounds.height * 0.4) }
+    /// 24, not 14. Markers are DRAGGABLE, and WCAG 2.5.8 AA sets 24x24 as the
+    /// enforceable minimum for a target — the lane shipped below it, which is
+    /// a defect in the app rather than in any redesign. The proportional cap
+    /// stays so a very short view still gets a lane rather than one taller
+    /// than itself.
+    private var markerTrackHeight: Double { min(24.0, bounds.height * 0.4) }
+
+    /// The fold lane's y-range, or nil when the view is too short for one.
+    private var foldLaneRange: ClosedRange<Double>? {
+        let bands = TimelineTrackLayout.bands(in: bounds, markerHeight: markerTrackHeight,
+                                              audioTracks: [])
+        guard bands.fold.height > 0 else { return nil }
+        return bands.fold.minY...bands.fold.maxY
+    }
 
     /// The marker whose glyph `point` lands on/near, or `nil`. Gated to the
     /// MARKER LANE's own y-range (`markerTrackHeight` down from the top,
@@ -437,6 +450,35 @@ public final class TimelineView: NSView {
     /// (`mouseDown`, `menu(for:)`) — see this type's own doc comment and
     /// `foldHitMarginPixels` for why a fold needs its own dedicated hit-test
     /// rather than falling through to the track's.
+    /// Y-gated, like `markerHit(at:)` and for the same reason.
+    ///
+    /// This used to take only an x and match anywhere in the view, because a
+    /// fold's line is drawn full height on purpose — one collapse across the
+    /// whole synchronised stack. That was survivable while the stack was
+    /// marks/video/audio and the marker lane carried its own y-gate. It stops
+    /// being survivable as lanes are added below Video: an ungated full-height
+    /// hit swallows clicks meant for each of them, three times over.
+    ///
+    /// When the view is too short for a fold lane there is no gate to apply
+    /// and the old full-height behaviour stands, so a cramped timeline keeps
+    /// its folds reachable rather than losing them silently.
+    private func foldHit(at point: NSPoint) -> Cut? {
+        if let range = foldLaneRange, !range.contains(point.y) { return nil }
+        return foldHit(atX: point.x)
+    }
+
+    /// Test seam for the y-gate, in VIEW coordinates.
+    ///
+    /// Driving this through a synthetic `NSEvent` would test AppKit's
+    /// window-to-view conversion on a view that has no window — and at the
+    /// 40pt height every existing fold test uses, a click at y=20 is
+    /// flip-symmetric, so such a test cannot tell a correct conversion from an
+    /// inverted one. The gate is a y-range check; this asserts the y-range
+    /// check.
+    func foldHitForTesting(at point: NSPoint) -> Cut? { foldHit(at: point) }
+    var foldLaneRangeForTesting: ClosedRange<Double>? { foldLaneRange }
+    var markerTrackHeightForTesting: Double { markerTrackHeight }
+
     private func foldHit(atX x: Double) -> Cut? {
         // A degenerate geometry (zero width, or zero OUTPUT duration —
         // everything cut away) has no real fold positions: `geometry.x
@@ -667,7 +709,7 @@ public final class TimelineView: NSView {
         // runs. A fold click never begins a gesture and never scrubs — see
         // `activeFoldClick`'s doc comment for why `mouseDragged`/`mouseUp`
         // also need to know this happened.
-        if let cut = foldHit(atX: point.x) {
+        if let cut = foldHit(at: point) {
             activeFoldClick = cut.id
             onToggleExpansion(cut.id)
             needsDisplay = true
@@ -796,7 +838,7 @@ public final class TimelineView: NSView {
     /// right-click agree on exactly what counts as "on a fold".
     public override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
-        guard let cut = foldHit(atX: point.x) else { return nil }
+        guard let cut = foldHit(at: point) else { return nil }
         let menu = NSMenu()
         let item = NSMenuItem(title: "Remove Cut",
                               action: #selector(handleRemoveCutMenuItem(_:)),

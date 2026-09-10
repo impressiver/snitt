@@ -35,14 +35,36 @@ enum TimelineTrackLayout {
     /// Returns `nil` band entries for audio sources the recording lacks rather
     /// than shrinking the others, so a mic-less recording gives its whole audio
     /// allowance to system audio instead of leaving a dead strip.
+    /// The fold lane's height — a 24pt strip under the marker lane.
+    ///
+    /// Folds used to have no lane at all: `foldHit(atX:)` took no y and
+    /// matched anywhere in the view, because a fold's line is drawn full
+    /// height on purpose. That worked while the stack was marks/video/audio,
+    /// and stops working the moment more lanes exist below Video — an ungated
+    /// full-height hit swallows clicks aimed at every one of them, which is
+    /// the same collision the marker lane already needed a y-gate to survive.
+    ///
+    /// 24pt: WCAG 2.5.8's enforceable target floor, matching the marker lane.
+    static let foldLaneHeight: Double = 24
+
     static func bands(in bounds: CGRect,
                       markerHeight: Double,
-                      audioTracks: [String]) -> (marker: CGRect, video: CGRect, audio: [(track: String, rect: CGRect)]) {
+                      audioTracks: [String]) -> (marker: CGRect, fold: CGRect, video: CGRect, audio: [(track: String, rect: CGRect)]) {
         let marker = CGRect(x: 0, y: 0, width: bounds.width, height: markerHeight)
-        let remaining = max(0, bounds.height - markerHeight)
-        let video = CGRect(x: 0, y: markerHeight, width: bounds.width, height: remaining * 0.6)
+        // The fold lane only earns its 24pt when there is room left for a
+        // usable video band underneath; on a very short view the filmstrip is
+        // protected and folds fall back to their full-height line alone.
+        let foldHeight = bounds.height - markerHeight - foldLaneHeight
+            >= TimelineLaneBudget.minimumVideoHeight ? foldLaneHeight : 0
+        let fold = CGRect(x: 0, y: markerHeight, width: bounds.width, height: foldHeight)
+        // Named rather than shadowing `markerHeight`: everything below the
+        // two fixed lanes divides what is left, and a rebound parameter makes
+        // that arithmetic read as if it used the caller's value.
+        let stackTop = markerHeight + foldHeight
+        let remaining = max(0, bounds.height - stackTop)
+        let video = CGRect(x: 0, y: stackTop, width: bounds.width, height: remaining * 0.6)
         let audioTotal = remaining * 0.4
-        guard !audioTracks.isEmpty else { return (marker, video, []) }
+        guard !audioTracks.isEmpty else { return (marker, fold, video, []) }
 
         let each = audioTotal / Double(audioTracks.count)
         let audio = audioTracks.enumerated().map { index, track in
@@ -50,6 +72,6 @@ enum TimelineTrackLayout {
              rect: CGRect(x: 0, y: video.maxY + Double(index) * each,
                           width: bounds.width, height: each))
         }
-        return (marker, video, audio)
+        return (marker, fold, video, audio)
     }
 }
