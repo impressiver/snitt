@@ -92,6 +92,9 @@ public final class TimelineView: NSView {
     /// segment can be acted on rather than merely looked at.
     public var onExpandAndSelectFold: (UUID) -> Void = { _ in }
 
+    /// A fold was clicked: highlight the span it removed.
+    public var onSelectFold: (UUID) -> Void = { _ in }
+
     /// Pixels of mouse wobble a click may exhibit before it counts as a
     /// deliberate selection rather than jitter. This is a PIXEL constant
     /// deliberately: a hand wobbles by roughly the same number of pixels on
@@ -910,6 +913,10 @@ public final class TimelineView: NSView {
         if handlePhraseClick(at: point) { return }
         if let cut = foldHit(at: point) {
             activeFoldClick = cut.id
+            // Selecting as well as toggling: a fold you have just opened is a
+            // segment you are deciding about, and it should be the thing
+            // Delete acts on without a second gesture to say so.
+            onSelectFold(cut.id)
             onToggleExpansion(cut.id)
             needsDisplay = true
             return
@@ -1036,8 +1043,23 @@ public final class TimelineView: NSView {
     /// `foldHit(atX:)` — the same hit-test `mouseDown` uses — so left- and
     /// right-click agree on exactly what counts as "on a fold".
     public override func menu(for event: NSEvent) -> NSMenu? {
-        let point = convert(event.locationInWindow, from: nil)
-        guard let cut = foldHit(at: point) else { return nil }
+        contextMenu(at: convert(event.locationInWindow, from: nil))
+    }
+
+    /// The context menu for a point in VIEW coordinates.
+    ///
+    /// Split out for the same reason `handlePhraseClick` was: a synthetic
+    /// `NSEvent` on a windowless view exercises AppKit's window-to-view
+    /// conversion, not this logic, so a test driving `menu(for:)` cannot tell
+    /// a gated hit from an ungated one. A mutant that re-gated this survived
+    /// exactly that way.
+    func contextMenu(at point: NSPoint) -> NSMenu? {
+        // `foldHit(atX:)`, ungated. The fold's line is drawn full height on
+        // purpose, and a right-click is unambiguous — nothing else on the
+        // timeline claims one. Gating this to the fold lane was collateral
+        // damage from stopping ungated LEFT clicks swallowing scrubs, and it
+        // silently removed Remove Cut everywhere except one 24pt strip.
+        guard let cut = foldHit(atX: point.x) else { return nil }
         let menu = NSMenu()
         let item = NSMenuItem(title: "Remove Cut",
                               action: #selector(handleRemoveCutMenuItem(_:)),
