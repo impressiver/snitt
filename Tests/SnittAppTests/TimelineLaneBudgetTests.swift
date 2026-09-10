@@ -128,6 +128,49 @@ struct TimelineLaneBudgetTests {
                 "a dead strip was left where audio would have been")
     }
 
+    @Test("With room, the transcript lane joins the stack")
+    func transcriptLaneAppearsWhenItFits() {
+        let plan = TimelineLaneBudget.plan(availableHeight: 220, audioTracks: both,
+                                           hasTranscript: true)
+        #expect(plan.lanes.map(\.lane).contains(.transcript))
+        #expect(abs(try! #require(plan.height(of: .transcript))
+                    - TimelineLaneBudget.minimumTargetHeight) < 0.001)
+    }
+
+    @Test("The transcript lane is the FIRST thing to go")
+    func transcriptHidesBeforeAudioMerges() {
+        // The collapse order three reviewers reached independently. At a
+        // height where both audio bands still fit separately, the transcript
+        // must be what yields — merging audio first would trade a signal the
+        // waveform cannot replace for one the reading pane already shows at
+        // any window size.
+        let plan = TimelineLaneBudget.plan(availableHeight: 110, audioTracks: both,
+                                           hasTranscript: true)
+        #expect(!plan.lanes.map(\.lane).contains(.transcript))
+        #expect(plan.lanes.map(\.lane) == [.marks, .video,
+                                           .audio("microphone"), .audio("systemAudio")])
+    }
+
+    @Test("A recording with no transcript is never given an empty lane for one")
+    func noTranscriptMeansNoLane() {
+        let plan = TimelineLaneBudget.plan(availableHeight: 300, audioTracks: both,
+                                           hasTranscript: false)
+        #expect(!plan.lanes.map(\.lane).contains(.transcript))
+    }
+
+    @Test("The transcript lane is fixed height, not proportional")
+    func transcriptDoesNotGrowWithTheWindow() {
+        // A phrase chip is text. Text does not get more legible with more
+        // height the way a waveform gets more readable, so surplus belongs to
+        // the bands that can use it.
+        let small = TimelineLaneBudget.plan(availableHeight: 220, audioTracks: both,
+                                            hasTranscript: true)
+        let large = TimelineLaneBudget.plan(availableHeight: 500, audioTracks: both,
+                                            hasTranscript: true)
+        #expect(abs(try! #require(small.height(of: .transcript))
+                    - (try! #require(large.height(of: .transcript)))) < 0.001)
+    }
+
     @Test("Anything collapsed is reported, so it can be offered back")
     func collapseIsAlwaysReported() {
         // A lane that vanishes on a window resize with no record of it is
