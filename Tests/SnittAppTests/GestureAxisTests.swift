@@ -58,13 +58,6 @@ struct GestureAxisTests {
         return view
     }
 
-    /// `NSEvent` locations are WINDOW coordinates (bottom-up) while
-    /// `TimelineView.isFlipped` is true, and `mouseDown`'s own
-    /// `convert(_:from:)` flips between them even with no window attached.
-    /// Same helper, same reason, as `TrackLayoutTimelineViewTests`.
-    private func windowY(forViewY viewY: Double, height: Double) -> CGFloat {
-        CGFloat(height - viewY)
-    }
 
     // MARK: - C2: the defect the fixed-source axis was adopted to prevent
 
@@ -91,7 +84,7 @@ struct GestureAxisTests {
             selected = nil
             view.mouseDown(with: .synthetic(at: NSPoint(x: 240, y: 20), in: view))
             view.mouseDragged(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
-            view.mouseUp(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
+            view.mouseUp(with: .synthetic(at: NSPoint(x: 400, y: 40), in: view))
             return try #require(selected)
         }
 
@@ -129,8 +122,10 @@ struct GestureAxisTests {
         var scrubbed: Double?
         view.onScrub = { scrubbed = $0 }
 
-        view.mouseDown(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
-        view.mouseUp(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
+        // Below the marker lane, which is 24pt now — y=20 was chosen when
+            // it was 14 and would land INSIDE the lane today.
+            view.mouseDown(with: .synthetic(at: NSPoint(x: 400, y: 40), in: view))
+        view.mouseUp(with: .synthetic(at: NSPoint(x: 400, y: 40), in: view))
 
         let source = try #require(scrubbed)
         #expect(abs(source - 6.0) < 0.01)
@@ -175,7 +170,9 @@ struct GestureAxisTests {
         var selected: Selection?
         view.onSelect = { selected = $0 }
 
-        view.mouseDown(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
+        // Below the marker lane, which is 24pt now — y=20 was chosen when
+            // it was 14 and would land INSIDE the lane today.
+            view.mouseDown(with: .synthetic(at: NSPoint(x: 400, y: 40), in: view))
         view.mouseDragged(with: .synthetic(at: NSPoint(x: 600, y: 20), in: view))
         view.mouseUp(with: .synthetic(at: NSPoint(x: 600, y: 20), in: view))
 
@@ -322,15 +319,17 @@ struct GestureAxisTests {
 
             // Drawing axis: drag the marker from x=0 to x=400 in its own
             // lane and read back the OUTPUT time the view believes x=400 is.
-            let laneY = windowY(forViewY: 5, height: height)
+            let laneY = CGFloat(5)
             view.mouseDown(with: .synthetic(at: NSPoint(x: 0, y: laneY), in: view))
             view.mouseDragged(with: .synthetic(at: NSPoint(x: 400, y: laneY), in: view))
             view.mouseUp(with: .synthetic(at: NSPoint(x: 400, y: laneY), in: view))
             let output = try #require(movedToOutput, "no marker move at zoom step \(zoomSteps)")
 
             // Gesture axis: click the SAME pixel on the track below.
-            view.mouseDown(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
-            view.mouseUp(with: .synthetic(at: NSPoint(x: 400, y: 20), in: view))
+            // Below the marker lane, which is 24pt now — y=20 was chosen when
+            // it was 14 and would land INSIDE the lane today.
+            view.mouseDown(with: .synthetic(at: NSPoint(x: 400, y: 40), in: view))
+            view.mouseUp(with: .synthetic(at: NSPoint(x: 400, y: 40), in: view))
             let source = try #require(scrubbed, "no scrub at zoom step \(zoomSteps)")
 
             let expected = try #require(timebase.sourceTime(forOutput: OutputTime(output))?.seconds)

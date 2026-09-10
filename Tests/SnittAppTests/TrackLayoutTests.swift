@@ -35,22 +35,13 @@ import Testing
 
 @MainActor
 struct TrackLayoutTimelineViewTests {
-    /// `NSEvent.synthetic(at:in:)` builds an event whose `locationInWindow`
-    /// this test names directly — but `TimelineView.isFlipped == true`
-    /// (drawing top-down) while `NSEvent` locations are WINDOW coordinates
-    /// (bottom-up), and `mouseDown`'s own `convert(_:from:)` flips between
-    /// the two even with no real window attached (confirmed empirically:
-    /// `view.convert(NSPoint(x: 0, y: 5), from: nil)` on a flipped, unhosted
-    /// view of height 56 returns y = 51, not 5). Every existing test in this
-    /// target (`TimelineViewTests`, `CutFoldTests`) is x-only and never had
-    /// to care; the marker lane is the first thing in this view whose hit
-    /// test depends on an exact y, so this helper makes the flip a single,
-    /// named place rather than a silent off-by-`height` in every call site.
-    /// Pass the y you want `TimelineView` to actually SEE post-conversion;
-    /// this returns the raw window-space y that produces it.
-    private func windowY(forViewY viewY: Double, height: Double) -> CGFloat {
-        CGFloat(height - viewY)
-    }
+    // The window/view flip this file used to compensate for by hand now lives
+    // in `NSEvent.synthetic(at:in:)`, which converts once for every caller.
+    // The knowledge was correct here and absent everywhere else, so every
+    // other mouse test in this target was silently clicking `height - y` — a
+    // fact with no symptom while the fixtures were 40pt tall and clicked at
+    // y=20, which is its own mirror image. These call sites now pass the y
+    // they mean.
 
     @Test("A click on a marker in its lane fires onEditMarker, not onScrub or onSelect")
     func clickOnMarkerFiresOnEditMarker() {
@@ -63,7 +54,7 @@ struct TrackLayoutTimelineViewTests {
         let markerX = CGFloat(geometry.x(atOutput: OutputTime(10.0)))
         // Comfortably inside the marker lane (capped at 14px on this
         // 56px-tall view).
-        let y = windowY(forViewY: 5, height: height)
+        let y: CGFloat = 5
 
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         view.update(duration: duration, cuts: [], markerPoints: [marker], playhead: 0)
@@ -100,7 +91,7 @@ struct TrackLayoutTimelineViewTests {
         let geometry = TimelineGeometry(
             width: width, timebase: Timebase(sourceDuration: duration, edl: EditDecisionList()))
         let markerX = CGFloat(geometry.x(atOutput: OutputTime(10.0)))
-        let y = windowY(forViewY: 5, height: height)
+        let y: CGFloat = 5
 
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         view.update(duration: duration, cuts: [], markerPoints: [marker], playhead: 0)
@@ -134,7 +125,7 @@ struct TrackLayoutTimelineViewTests {
         // squarely in the video/audio tracks, at the SAME x a marker sits
         // above. Task 5's Trap 2 for folds, one track over: a marker
         // hit-test with no y-gate would swallow this click too.
-        let y = windowY(forViewY: 30, height: height)
+        let y: CGFloat = 30
 
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         view.update(duration: duration, cuts: [], markerPoints: [marker], playhead: 0)
@@ -159,7 +150,7 @@ struct TrackLayoutTimelineViewTests {
         let geometry = TimelineGeometry(
             width: width, timebase: Timebase(sourceDuration: duration, edl: EditDecisionList()))
         let markerX = geometry.x(atOutput: OutputTime(10.0))
-        let y = windowY(forViewY: 5, height: height)
+        let y: CGFloat = 5
 
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: height))
         view.update(duration: duration, cuts: [], markerPoints: [marker], playhead: 0)

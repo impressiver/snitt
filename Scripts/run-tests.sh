@@ -16,6 +16,12 @@
 #    shell sees success. Only the "Test run with N tests ... passed" line is
 #    trustworthy, so this greps for it and fails when it is missing. That trap
 #    has bitten this project before and a green exit status is exactly how.
+# 3. It does NOT run the mutation pass. `Scripts/mutate.sh Tests/mutants.txt`
+#    is a separate, slower gate for a different question: this script asks
+#    "does anything fail", mutation asks "would anything fail if the code
+#    were wrong". Roughly half the survivors found in this project were dead
+#    code rather than missing tests, and neither shows up in a green run.
+#    Run it before merging a change to geometry, hit-testing or wording.
 #
 set -euo pipefail
 

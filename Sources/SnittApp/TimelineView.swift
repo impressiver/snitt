@@ -901,12 +901,14 @@ public final class TimelineView: NSView {
                 onExpandAndSelectFold(cut.id)
                 return
             }
-            if point.y <= markerTrackHeight {
-                if let marker = markerHit(at: point) {
-                    onEditMarker(marker.id)
-                } else {
-                    onCreateMarker(geometry.outputTime(atX: point.x).seconds)
-                }
+            // Empty marker lane only. A double-click ON a marker never
+            // reaches here: `mouseDown`'s marker branch runs first and
+            // resolves to edit-or-move on `mouseUp`, which already opens the
+            // editor. An arm for it here was written and deleted — it was
+            // unreachable, and a sweep of every x in the lane finding no hit
+            // is what showed it.
+            if point.y <= markerTrackHeight, markerHit(at: point) == nil {
+                onCreateMarker(geometry.outputTime(atX: point.x).seconds)
                 return
             }
         }
