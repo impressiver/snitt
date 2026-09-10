@@ -1238,6 +1238,10 @@ struct EditorContentView: View {
     /// the picture keeps a placed box where the user put it when the window
     /// resizes under it.
     @State private var cropBox: CropRect = .full
+    /// Whether the reading transcript is open. UI-only, like `croppingActive`:
+    /// what is asserted elsewhere is that the transcript persists and edits,
+    /// not which panes a window happens to be showing.
+    @State private var showTranscript = false
 
     private var controller: PreviewController { state.controller }
 
@@ -1304,10 +1308,21 @@ struct EditorContentView: View {
                                         box: $cropBox)
                     }
                 }
-            if state.transcriptionStatus != .none {
+            // A reflowing split, not an overlay: the pane takes width from
+            // the picture and the rail rather than covering the recording —
+            // the Mail-reading-pane idiom, and the opposite of a drawer drawn
+            // on top of the hero content you are trying to cut.
+            //
+            // Behind a toggle, and default OFF. It used to appear the moment a
+            // transcript existed, permanently costing the picture a quarter of
+            // the window from the point a recording became most worth
+            // watching. 340, not 250: at 250 a line held about five words,
+            // which is narrower than anyone reads prose in — and reading is
+            // what D62 says this pane is for.
+            if showTranscript, state.transcriptionStatus != .none {
                 Divider()
                 TranscriptPane(state: state, playhead: playhead)
-                    .frame(width: 250)
+                    .frame(minWidth: 340)
             }
             }
             // D56 (M5f Task 6): three stacked tracks — a thin marker lane
@@ -1389,6 +1404,12 @@ struct EditorContentView: View {
                 Button("Cut") { state.cutSelection() }
                     .disabled(state.selection == nil)
                 Divider().frame(height: 16)
+                if state.transcriptionStatus != .none {
+                    Toggle("Transcript", isOn: $showTranscript)
+                        .toggleStyle(.button)
+                        .help("Show the transcript beside the picture for reading and "
+                            + "phrase-level editing")
+                }
                 Button(croppingActive ? "Cancel Crop" : "Crop") {
                     // Entering starts from the whole picture rather than from
                     // the last proposal: the preview already SHOWS the current
