@@ -42,20 +42,82 @@ func stoppedReportsCopyResult() {
 }
 
 /// A resolver that blocks until released, so a toggle can be held mid-transition.
+///
+/// Unlike `SparkleTestGate`/`EditorWindowTestGate` this is a FIXTURE, not a
+/// serialization gate — blocking is the behaviour under test, and the test
+/// itself calls `open()`. It is bounded anyway, for a narrow but real reason:
+/// `#expect` records an issue without throwing, so a failed assertion still
+/// reaches `open()` — but if anything between the `async let` and `open()`
+/// throws (a cancelled `Task.sleep`, say), `open()` is skipped, and the
+/// implicit await of that `async let` at scope exit would block forever,
+/// because `withCheckedContinuation` does not observe cancellation.
+///
+/// Bounded, that becomes a failed test with a message. Unbounded, it is the
+/// silent whole-run hang this project spent an afternoon diagnosing.
 actor Gate {
+    struct Timeout: Error, CustomStringConvertible {
+        var description: String { "Gate.wait() was never released — the test that opened it did not reach open()" }
+    }
+
     private var isOpen = false
-    private var waiters: [CheckedContinuation<Void, Never>] = []
 
-    func wait() async {
-        if isOpen { return }
-        await withCheckedContinuation { waiters.append($0) }
+    /// Polls instead of parking on a continuation, so the deadline is
+    /// observable at all; a `CheckedContinuation` cannot be abandoned.
+    func wait(timeout: TimeInterval = 60) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !isOpen {
+            if Date() >= deadline { throw Timeout() }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
     }
 
-    func open() {
-        isOpen = true
-        for waiter in waiters { waiter.resume() }
-        waiters.removeAll()
+    func open() { isOpen = true }
+}
+
+@Test("A Gate nobody opens fails its waiter rather than blocking forever")
+func anUnopenedGateTimesOut() async throws {
+    // Without this the bound is untested: a mutation removing the deadline
+    // leaves every other test in this file green, because the happy path
+    // always calls `open()`. The path that matters is the one where a throw
+    // between the `async let` and `open()` skips it — then the implicit await
+    // at scope exit would block forever on a continuation that cannot observe
+    // cancellation.
+    // Raced against an INDEPENDENT deadline rather than trusting `wait`'s own.
+    // A first version simply awaited `wait(timeout: 0.2)` and asserted it
+    // threw — which detected a missing deadline by HANGING for ten minutes,
+    // reproducing in the test the exact failure this whole change removes. A
+    // test for a timeout must not depend on that timeout working.
+    let gate = Gate()
+    let outcome: Bool? = await withTaskGroup(of: Bool?.self) { group in
+        group.addTask {
+            do { try await gate.wait(timeout: 0.2); return false }
+            // Only a real Timeout counts. Cancellation from `cancelAll` below
+            // also surfaces as a throw, and treating that as success would let
+            // this pass against a gate that never times out at all.
+            catch is Gate.Timeout { return true }
+            catch { return false }
+        }
+        group.addTask {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            return nil
+        }
+        let first = await group.next() ?? nil
+        group.cancelAll()
+        return first
     }
+
+    #expect(outcome == true, outcome == nil
+            ? "gate.wait() never returned within 3s — its deadline is not enforced"
+            : "gate.wait() succeeded on a gate nobody opened")
+}
+
+@Test("An opened Gate lets its waiter straight through")
+func anOpenedGatePasses() async throws {
+    // The control. Without it the test above passes against a `wait()` that
+    // ALWAYS throws, which would break the fixture's actual purpose.
+    let gate = Gate()
+    await gate.open()
+    try await gate.wait(timeout: 1.0)
 }
 
 final class SlowResolver: TargetResolver, @unchecked Sendable {
@@ -63,7 +125,7 @@ final class SlowResolver: TargetResolver, @unchecked Sendable {
     init(gate: Gate) { self.gate = gate }
 
     func resolve() async throws -> ResolvedTarget {
-        await gate.wait()
+        try await gate.wait()
         // Never actually produces a target — the test only needs the suspension.
         throw TargetResolutionError.cancelled
     }
