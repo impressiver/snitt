@@ -117,7 +117,6 @@ struct TransportBar: View {
     let currentTime: String
     let totalTime: String
     let currentMark: String?
-    let audioTracks: [TrackState]
     @Binding var zoomFraction: Double
     let canCut: Bool
     let onRewind: () -> Void
@@ -126,8 +125,6 @@ struct TransportBar: View {
     let onNextMark: () -> Void
     let onSeekToTime: (String) -> Void
     let onCut: () -> Void
-    let onGain: (String, Double) -> Void
-    let onMute: (String, Bool) -> Void
 
     @State private var timeText = ""
     @FocusState private var timeFocused: Bool
@@ -152,7 +149,6 @@ struct TransportBar: View {
                 .labelStyle(.iconOnly)
                 .disabled(!canCut)
                 .help("Cut the selected range — Delete")
-            if !audioTracks.isEmpty { audioPopover }
             zoomSlider
         }
         .buttonStyle(.borderless)
@@ -214,26 +210,6 @@ struct TransportBar: View {
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(.tertiary)
         }
-    }
-
-    /// Gain and mute live behind one control rather than as a stack of
-    /// unstyled rows under the timeline, where they competed with the lanes
-    /// for attention and got a permanent slice of height for something touched
-    /// once a session.
-    private var audioPopover: some View {
-        Menu {
-            ForEach(audioTracks, id: \.track) { track in
-                Toggle("Mute \(Self.name(of: track.track))", isOn: Binding(
-                    get: { track.muted },
-                    set: { onMute(track.track, $0) }))
-            }
-        } label: {
-            Label("Audio", systemImage: "speaker.wave.2.fill")
-                .labelStyle(.iconOnly)
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .help("Mute or adjust the recorded audio sources")
     }
 
     static func name(of track: String) -> String {
