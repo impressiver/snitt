@@ -175,7 +175,10 @@ struct MarkerPane: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isCurrent ? Color.yellow.opacity(0.25) : Color.clear)
+        .background(isCurrent
+                    ? EditorChromePalette.currentHighlight
+                        .opacity(EditorChromePalette.currentHighlightOpacity)
+                    : Color.clear)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { beginRename(chapter) }
         .onTapGesture { state.seek(toOutput: chapter.outputTime) }
