@@ -54,7 +54,9 @@ struct TimelineLaneBudgetTests {
         // The collapse order three reviewers reached independently. Dropping a
         // source outright while there is room for a composite loses a whole
         // signal to save 24pt.
-        let plan = TimelineLaneBudget.plan(availableHeight: 90, audioTracks: both)
+        // Separate bands need marks 24 + video 18 + 24 each = 90; a composite
+        // needs 66. 80 sits between, which is what squeezes.
+        let plan = TimelineLaneBudget.plan(availableHeight: 80, audioTracks: both)
         #expect(plan.lanes.map(\.lane) == [.marks, .video, .audioComposite])
         #expect(plan.collapsed == both, "a merge that does not report itself cannot be undone")
     }
@@ -64,9 +66,35 @@ struct TimelineLaneBudgetTests {
         // The spine. You can navigate a recording by pictures with no
         // waveform; the reverse is not true. An implementation that dropped
         // video first would pass every other test here.
-        let plan = TimelineLaneBudget.plan(availableHeight: 62, audioTracks: both)
+        // Below a composite's 66pt, only marks and the filmstrip survive.
+        let plan = TimelineLaneBudget.plan(availableHeight: 50, audioTracks: both)
         #expect(plan.lanes.map(\.lane) == [.marks, .video])
         #expect(plan.collapsed == both)
+    }
+
+    @Test("The filmstrip's share is half the audio bands', not more")
+    func filmstripNoLongerDominates() {
+        // The point of the change, asserted as a relationship rather than as a
+        // number: the filmstrip used to take 60% of the surplus against
+        // audio's 40%, and now takes less than either band gets. A test
+        // pinning only the constant would pass if the distribution stopped
+        // using it.
+        let plan = TimelineLaneBudget.plan(availableHeight: 400, audioTracks: both)
+        let video = try! #require(plan.height(of: .video))
+        let audio = try! #require(plan.height(of: .audio("microphone")))
+        #expect(video < audio, "the filmstrip is \(video)pt against a \(audio)pt waveform")
+    }
+
+    @Test("The transcript lane is taller than the target floor, not equal to it")
+    func transcriptLaneClearsTheFloor() {
+        // Raised 25% above 24. Worth its own assertion because 24 is also the
+        // WCAG target minimum, and a lane that merely EQUALS the floor is one
+        // refactor away from dropping below it.
+        let plan = TimelineLaneBudget.plan(availableHeight: 260, audioTracks: both,
+                                           hasTranscript: true)
+        let transcript = try! #require(plan.height(of: .transcript))
+        #expect(transcript > TimelineLaneBudget.minimumTargetHeight)
+        #expect(abs(transcript - 30) < 0.001)
     }
 
     @Test("Every lane clears the 24pt target floor")
@@ -96,16 +124,18 @@ struct TimelineLaneBudgetTests {
         }
     }
 
-    @Test("Surplus is split 60/40, the same ratio the shipped bands use")
-    func surplusMatchesTheShippedRatio() {
-        // Two ratios for one layout is how bands start disagreeing about who
-        // grows. This is D56's split, kept rather than re-chosen.
+    @Test("Surplus is split 30/70, the filmstrip's share halved")
+    func surplusMatchesTheConfiguredRatio() {
+        // Halved from D56's 0.6 on product-owner direction. The freed share
+        // goes to AUDIO, not back to the window: the budget bounds the
+        // timeline against the picture, and handing height back inside the
+        // timeline would leave a gap rather than a taller waveform.
         let plan = TimelineLaneBudget.plan(availableHeight: 300, audioTracks: both)
         let video = try! #require(plan.height(of: .video))
         let audio = try! #require(plan.height(of: .audio("microphone")))
-        let surplus: Double = 300 - 24 - 36 - 48
-        let expectedVideo: Double = 36 + surplus * 0.6
-        let expectedAudio: Double = 24 + (surplus * 0.4) / 2
+        let surplus: Double = 300 - 24 - 18 - 48
+        let expectedVideo: Double = 18 + surplus * 0.3
+        let expectedAudio: Double = 24 + (surplus * 0.7) / 2
         #expect(abs(video - expectedVideo) < 0.001)
         #expect(abs(audio - expectedAudio) < 0.001)
     }
@@ -134,7 +164,7 @@ struct TimelineLaneBudgetTests {
                                            hasTranscript: true)
         #expect(plan.lanes.map(\.lane).contains(.transcript))
         #expect(abs(try! #require(plan.height(of: .transcript))
-                    - TimelineLaneBudget.minimumTargetHeight) < 0.001)
+                    - TimelineLaneBudget.transcriptLaneHeight) < 0.001)
     }
 
     @Test("The transcript lane is the FIRST thing to go")

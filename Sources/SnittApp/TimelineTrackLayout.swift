@@ -54,7 +54,9 @@ enum TimelineTrackLayout {
     /// to the bands that can use it. At the bottom because it reads
     /// left-to-right like the prose it comes from, and burying it between two
     /// waveforms would make it one more band to scan past.
-    static let transcriptLaneHeight: Double = 24
+    /// One value, defined in the budget, so the lane that is PLANNED and the
+    /// lane that is DRAWN cannot be different heights.
+    static var transcriptLaneHeight: Double { TimelineLaneBudget.transcriptLaneHeight }
 
     static func bands(in bounds: CGRect,
                       markerHeight: Double,

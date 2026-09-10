@@ -64,10 +64,16 @@ struct TimelineTrackLayoutTests {
     func bandsTileTheView() {
         let bands = TimelineTrackLayout.bands(in: bounds, markerHeight: markerHeight,
                                               audioTracks: ["microphone", "systemAudio"])
+        // The fold lane now sits between marks and video, and it appears in
+        // views this test's height did not previously reach — lowering the
+        // video floor to 18 made room for it. Counted rather than skipped: a
+        // tiling test that ignored a real band would stop being a tiling test.
         #expect(bands.marker.minY == 0)
-        #expect(abs(bands.marker.maxY - bands.video.minY) < 0.001)
-        let total = bands.marker.height + bands.video.height
+        #expect(abs(bands.marker.maxY - bands.fold.minY) < 0.001)
+        #expect(abs(bands.fold.maxY - bands.video.minY) < 0.001)
+        let total = bands.marker.height + bands.fold.height + bands.video.height
                   + bands.audio.reduce(0) { $0 + $1.rect.height }
+                  + bands.transcript.height
         #expect(abs(total - bounds.height) < 0.001, "bands do not fill the view")
     }
 
