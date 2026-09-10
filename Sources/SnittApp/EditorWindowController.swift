@@ -289,6 +289,47 @@ final class EditorTimelineState: ObservableObject {
     /// cut, so there is nothing to resolve.
     func rewind() { Task { await controller.seek(toSeconds: 0) } }
 
+    /// One toggle, not two buttons.
+    ///
+    /// Play and Pause shipped as separate controls, which meant one of them
+    /// was always a no-op — press Play while playing and nothing happens, with
+    /// no way to tell that from a broken button.
+    func togglePlayback() {
+        if controller.player.rate == 0 { controller.play() } else { controller.pause() }
+    }
+
+    /// Steps to the previous or next mark (D84).
+    ///
+    /// Through `onScrub`'s sibling `seek(toOutput:)` rather than a seek of its
+    /// own: jump points are already OUTPUT time, and every other navigation
+    /// gesture in this editor lands the playhead the same way.
+    func goToPreviousMark() {
+        guard let point = MarkerNavigation.previous(before: currentOutputSeconds,
+                                                    in: controller.jumpPoints) else { return }
+        seek(toOutput: point.timeSeconds)
+    }
+
+    func goToNextMark() {
+        guard let point = MarkerNavigation.next(after: currentOutputSeconds,
+                                                in: controller.jumpPoints) else { return }
+        seek(toOutput: point.timeSeconds)
+    }
+
+    /// The mark the playhead is inside, for the transport's readout — the
+    /// agent-authored label, on screen, without opening the chapters list.
+    var currentMarkLabel: String? {
+        MarkerNavigation.current(at: currentOutputSeconds,
+                                 in: controller.jumpPoints)?.label
+    }
+
+    /// Where the playhead is, read from the player rather than cached: the
+    /// pane's own `playhead` is a 20Hz sample, and a keypress should act on
+    /// where the playhead actually is, not on where it was up to 50ms ago.
+    var currentOutputSeconds: Double {
+        let seconds = controller.player.currentTime().seconds
+        return seconds.isFinite ? seconds : 0
+    }
+
     /// `selection` arrives from the view already resolved (SOURCE time): a
     /// real drag becomes `Selection(range:)`, a plain click — or a drag too
     /// short to count — becomes `nil`. D56 (M5f Task 4): this only ever
@@ -1176,6 +1217,10 @@ struct EditorContentView: View {
 
     init(state: EditorTimelineState) { self.state = state }
     @State private var playhead: Double = 0
+    /// Re-derived from the player on every tick rather than stored: a cached
+    /// flag goes stale the moment playback ends at the last frame, leaving a
+    /// button labelled "Pause" over a stopped player.
+    private var isPlaying: Bool { state.controller.player.rate != 0 }
     /// Which marker the edit sheet is open for, if any (Task 6). UI-only,
     /// like `expandedCutIDs`'s spirit but one level further out: nothing
     /// tests WHICH marker is currently open in a sheet, only that
@@ -1306,9 +1351,32 @@ struct EditorContentView: View {
                 .padding(.top, 4)
             }
             HStack(spacing: 12) {
-                Button("Rewind") { state.rewind() }
-                Button("Play") { controller.play() }
-                Button("Pause") { controller.pause() }
+                // One transport cluster, in the order the playhead moves:
+                // back to start, previous mark, play/pause, next mark. Play
+                // and Pause were two buttons, so one of them was always a
+                // no-op — pressing Play while playing did nothing, which is
+                // indistinguishable from a broken button.
+                Button("⇤") { state.rewind() }
+                    .help("Back to start — \(KeyboardShortcutRegistry.shortcutDisplay(titled: "Back to Start"))")
+                Button("⚑◀") { state.goToPreviousMark() }
+                    .help("Previous mark — \(KeyboardShortcutRegistry.shortcutDisplay(titled: "Previous Mark"))")
+                    .disabled(state.controller.jumpPoints.isEmpty)
+                Button(isPlaying ? "Pause" : "Play") { state.togglePlayback() }
+                    .help("Play or pause — \(KeyboardShortcutRegistry.shortcutDisplay(titled: "Play / Pause"))")
+                Button("⚑▶") { state.goToNextMark() }
+                    .help("Next mark — \(KeyboardShortcutRegistry.shortcutDisplay(titled: "Next Mark"))")
+                    .disabled(state.controller.jumpPoints.isEmpty)
+                // The agent-authored label, on screen, without opening the
+                // chapters list — and at no cost in vertical space, which is
+                // what the marks lane could not afford.
+                if let label = state.currentMarkLabel {
+                    Text("⚑ \(label)")
+                        .font(.caption)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .frame(maxWidth: 220, alignment: .leading)
+                        .help(label)
+                }
                 // D56 (M5f Task 4): the only place a selection becomes a
                 // cut. Disabled with nothing selected — dragging alone no
                 // longer cuts anything; this button is the deliberate
@@ -1803,6 +1871,19 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// §9 ("preview and export share one builder") actually asks for:
     /// this is the EDL the on-screen preview was built from, not a second,
     /// separately-sourced one that merely usually matches it.
+    /// Playback commands, forwarded from the app delegate's menu actions.
+    ///
+    /// Thin wrappers rather than exposing `state`: the delegate needs four
+    /// verbs, not the whole editor model, and every other menu action here
+    /// reaches the document the same way.
+    public func togglePlayback() { state.togglePlayback() }
+    public func rewindToStart() { state.rewind() }
+    public func goToPreviousMark() { state.goToPreviousMark() }
+    public func goToNextMark() { state.goToNextMark() }
+    /// Whether there is a mark to step to, so the menu items can disable
+    /// themselves rather than looking live and doing nothing.
+    public var hasMarks: Bool { !state.controller.jumpPoints.isEmpty }
+
     public func presentExportPanel() {
         let panel = NSSavePanel()
         if let mp4 = UTType(filenameExtension: "mp4") {

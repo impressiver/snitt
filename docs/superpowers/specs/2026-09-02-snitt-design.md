@@ -975,7 +975,7 @@ spans, D86). D91 adds a mechanical guard; the habit is still the primary defence
    `keyEquivalentModifierMask = []` (`AppShell.swift:141-145`) and
    `AppDelegate`'s `NSMenuItemValidation` is what stops it swallowing the key
    app-wide (`main.swift:529-534`), which is exactly the "space is also a
-   character" trap D84 worried about, already solved once. `absent: KeyboardShortcutRegistry` (D91).
+   character" trap D84 worried about, already solved once. **SHIPPED 2026-09-10** — `KeyboardShortcutRegistry` installs the Playback menu and renders Help ▸ Keyboard Shortcuts from one array, and `MarkerNavigation` supplies prev/next. The `absent:` marker is retired rather than deleted quietly: D91's guard exists to make exactly this transition visible, and it failed on the commit that created the type.
 2. **D86's missing half — a Full Screen choice in the recording UI.** The capture
    is BUILT: `StartOptions.displayID` → `TargetReference.display(id:)` →
    `SCContentFilter(display:excludingWindows:)`, with the resolver erroring on a
