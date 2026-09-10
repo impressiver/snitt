@@ -467,6 +467,81 @@ public final class TimelineView: NSView {
         return foldHit(atX: point.x)
     }
 
+    /// One chip per phrase, positioned in OUTPUT time so a cut re-flows them.
+    ///
+    /// A chip narrower than a couple of points is drawn as a bare tick with no
+    /// text: `TranscriptPhrases.displayText` returns "" there rather than an
+    /// ellipsis, because an ellipsis alone occupies a chip, reads as text, and
+    /// carries none.
+    private func drawPhrases(in band: NSRect) {
+        Palette.audioBand.setFill()
+        NSBezierPath(rect: band).fill()
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: NSFont.systemFont(ofSize: 9),
+            .foregroundColor: Palette.playhead.withAlphaComponent(0.75),
+        ]
+        for phrase in phrases {
+            let startX = geometry.x(atOutput: OutputTime(phrase.start))
+            let endX = geometry.x(atOutput: OutputTime(phrase.end))
+            let width = max(2, endX - startX)
+            let chip = NSRect(x: startX, y: band.minY + 3, width: width - 1,
+                              height: band.height - 6)
+            guard chip.maxX > 0, chip.minX < bounds.width else { continue }
+            Palette.markerLane.setFill()
+            NSBezierPath(roundedRect: chip, xRadius: 3, yRadius: 3).fill()
+            let text = TranscriptPhrases.displayText(phrase, widthPoints: Double(width))
+            guard !text.isEmpty else { continue }
+            (text as NSString).draw(in: chip.insetBy(dx: 3, dy: 1), withAttributes: attributes)
+        }
+    }
+
+    /// Phrase chips for the transcript lane (D89).
+    ///
+    /// PHRASES, not words. `WordLaneTiers` measured what a word lane costs:
+    /// 0.6pt per word on a ten-minute recording, against the 40pt a chip needs
+    /// to be read or clicked — word chips are a deep-zoom feature. Phrases are
+    /// the tier that works at ordinary zoom, and a phrase is what someone
+    /// wants to jump to anyway.
+    private(set) var phrases: [TranscriptPhrase] = []
+
+    public func update(phrases newPhrases: [TranscriptPhrase]) {
+        phrases = newPhrases
+        needsDisplay = true
+    }
+
+    /// The phrase whose chip contains `point`, y-gated to the transcript lane
+    /// exactly as folds are gated to theirs.
+    func phraseHit(at point: NSPoint) -> TranscriptPhrase? {
+        let bands = TimelineTrackLayout.bands(in: bounds, markerHeight: markerTrackHeight,
+                                              audioTracks: [], hasTranscript: !phrases.isEmpty)
+        guard bands.transcript.height > 0, bands.transcript.contains(point) else { return nil }
+        return phrases.first { phrase in
+            let start = geometry.x(atOutput: OutputTime(phrase.start))
+            let end = geometry.x(atOutput: OutputTime(phrase.end))
+            return point.x >= start && point.x <= max(end, start + 2)
+        }
+    }
+
+    /// Seeks to a clicked phrase's START. Returns whether the click was one.
+    ///
+    /// Split out so `mouseDown` and the tests run the SAME code. A synthetic
+    /// `NSEvent` on a windowless view goes through AppKit's window-to-view
+    /// conversion, which is what made the fold gate untestable that way; this
+    /// is the same lesson applied without waiting to relearn it.
+    @discardableResult
+    private func handlePhraseClick(at point: NSPoint) -> Bool {
+        guard let phrase = phraseHit(at: point) else { return false }
+        // The phrase's start, not the click's x. Scrubbing lands the playhead
+        // NEAR the phrase, which is what the timeline already did before this
+        // lane existed — landing AT it is the whole difference.
+        onScrub(phrase.start)
+        return true
+    }
+
+    func phraseHitForTesting(at point: NSPoint) -> TranscriptPhrase? { phraseHit(at: point) }
+    @discardableResult
+    func handlePhraseClickForTesting(at point: NSPoint) -> Bool { handlePhraseClick(at: point) }
+
     /// Test seam for the y-gate, in VIEW coordinates.
     ///
     /// Driving this through a synthetic `NSEvent` would test AppKit's
@@ -754,6 +829,11 @@ public final class TimelineView: NSView {
         // runs. A fold click never begins a gesture and never scrubs — see
         // `activeFoldClick`'s doc comment for why `mouseDragged`/`mouseUp`
         // also need to know this happened.
+        // Before the fold check and before scrub, for the same reason both of
+        // those run before scrub: a chip is a small target and a click that
+        // scrubbed instead would land the playhead near the phrase rather than
+        // at it, which is the whole difference the lane offers.
+        if handlePhraseClick(at: point) { return }
         if let cut = foldHit(at: point) {
             activeFoldClick = cut.id
             onToggleExpansion(cut.id)
@@ -1054,7 +1134,9 @@ public final class TimelineView: NSView {
         let tracks = TimelineTrackLayout.audioTracks(in: trackStates)
         let bands = TimelineTrackLayout.bands(in: bounds,
                                               markerHeight: markerTrackHeight,
-                                              audioTracks: tracks)
+                                              audioTracks: tracks,
+                                              hasTranscript: !phrases.isEmpty)
+        if bands.transcript.height > 0 { drawPhrases(in: bands.transcript) }
         Palette.markerLane.setFill()
         NSBezierPath(rect: bands.marker).fill()
         Palette.videoBand.setFill()

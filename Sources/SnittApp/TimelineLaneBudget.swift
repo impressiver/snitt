@@ -16,6 +16,10 @@ public enum TimelineLane: Equatable, Sendable {
     /// Microphone and system audio drawn as a single band, when there is not
     /// room for both.
     case audioComposite
+    /// Phrase chips from the transcript (D89). First to go when space is
+    /// short — it is the most deferrable thing on the timeline, and the
+    /// reading pane says the same words at any window size.
+    case transcript
 }
 
 /// What the timeline shows at a given height, and what it had to give up.
@@ -96,9 +100,19 @@ public enum TimelineLaneBudget {
     /// and the filmstrip is protected last because it is the spine — you can
     /// navigate a recording by pictures with no waveform, and not the reverse.
     public static func plan(availableHeight: Double,
-                            audioTracks: [String]) -> TimelineLanePlan {
+                            audioTracks: [String],
+                            hasTranscript: Bool = false) -> TimelineLanePlan {
         let available = max(0, availableHeight)
         let marks = minimumTargetHeight
+        // The transcript lane is fixed rather than proportional: a phrase chip
+        // is text, and text does not get more legible with more height the way
+        // a waveform gets more readable. Extra room belongs to the bands that
+        // can use it.
+        let transcriptHeight = minimumTargetHeight
+        let transcript = hasTranscript
+            && available >= marks + minimumVideoHeight
+                + minimumTargetHeight * Double(max(1, audioTracks.count)) + transcriptHeight
+            ? transcriptHeight : 0
 
         // Attempts, roomiest first. The first that fits its own minimums wins,
         // which is what makes the collapse order a list rather than a pile of
@@ -108,10 +122,10 @@ public enum TimelineLaneBudget {
         let composite = marks + minimumVideoHeight + minimumTargetHeight
         let videoOnly = marks + minimumVideoHeight
 
-        if audioTracks.count > 0, available >= separate {
+        if audioTracks.count > 0, available >= separate + transcript {
             return distribute(available: available, marks: marks,
                               audio: audioTracks.map { TimelineLane.audio($0) },
-                              collapsed: [])
+                              transcript: transcript, collapsed: [])
         }
         // Only reachable with two or more sources. With one, `composite` and
         // `separate` are the same number — a single band either way — so the
@@ -121,21 +135,24 @@ public enum TimelineLaneBudget {
         // revealed the code below it was dead rather than the test being weak.
         if audioTracks.count > 1, available >= composite {
             return distribute(available: available, marks: marks,
-                              audio: [.audioComposite], collapsed: audioTracks)
+                              audio: [.audioComposite], transcript: 0,
+                              collapsed: audioTracks)
         }
         // Below every audio arrangement: the filmstrip keeps what is left.
         // `collapsed` names what went, so the UI can offer it back — a lane
         // that vanishes with no way to reach it is content lost to a window
         // resize, with no keyboard path to recover it.
         return distribute(available: max(available, videoOnly), marks: marks,
-                          audio: [], collapsed: audioTracks)
+                          audio: [], transcript: 0, collapsed: audioTracks)
     }
 
     private static func distribute(available: Double, marks: Double,
                                    audio: [TimelineLane],
+                                   transcript: Double,
                                    collapsed: [String]) -> TimelineLanePlan {
         let audioFloor = minimumTargetHeight * Double(audio.count)
-        let surplus = max(0, available - marks - minimumVideoHeight - audioFloor)
+        let surplus = max(0, available - marks - minimumVideoHeight
+                              - audioFloor - transcript)
         // With no audio band there is nobody to give audio's 40% to, and it
         // does NOT fall out — an earlier version of this comment claimed it
         // did, and left a 56pt dead strip under the filmstrip on a silent
@@ -150,6 +167,7 @@ public enum TimelineLaneBudget {
         var lanes: [TimelineLanePlan.Lane] = [.init(lane: .marks, height: marks),
                                               .init(lane: .video, height: videoHeight)]
         lanes.append(contentsOf: audio.map { .init(lane: $0, height: audioShare) })
+        if transcript > 0 { lanes.append(.init(lane: .transcript, height: transcript)) }
         return TimelineLanePlan(lanes: lanes, collapsed: collapsed)
     }
 }

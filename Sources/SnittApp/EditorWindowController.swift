@@ -1205,6 +1205,13 @@ struct TimelineViewRepresentable: NSViewRepresentable {
                      trackStates: display.trackStates,
                      waveforms: display.waveforms,
                      filmstrip: display.filmstrip)
+        // Phrases, not words: `WordLaneTiers` measured that word chips need
+        // 0.6pt each on a ten-minute recording against the 40pt they need to
+        // be clickable. Grouped through the SAME pause rule the reading pane
+        // uses, so a chip boundary always agrees with a paragraph break.
+        nsView.update(phrases: state.transcript.map {
+            TranscriptPhrases.phrases(from: $0.words)
+        } ?? [])
     }
 }
 

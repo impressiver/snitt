@@ -47,9 +47,19 @@ enum TimelineTrackLayout {
     /// 24pt: WCAG 2.5.8's enforceable target floor, matching the marker lane.
     static let foldLaneHeight: Double = 24
 
+    /// The transcript lane's height — fixed, and at the bottom.
+    ///
+    /// Fixed because a phrase chip is text: it does not get more legible with
+    /// more height the way a waveform gets more readable, so surplus belongs
+    /// to the bands that can use it. At the bottom because it reads
+    /// left-to-right like the prose it comes from, and burying it between two
+    /// waveforms would make it one more band to scan past.
+    static let transcriptLaneHeight: Double = 24
+
     static func bands(in bounds: CGRect,
                       markerHeight: Double,
-                      audioTracks: [String]) -> (marker: CGRect, fold: CGRect, video: CGRect, audio: [(track: String, rect: CGRect)]) {
+                      audioTracks: [String],
+                      hasTranscript: Bool = false) -> (marker: CGRect, fold: CGRect, video: CGRect, audio: [(track: String, rect: CGRect)], transcript: CGRect) {
         let marker = CGRect(x: 0, y: 0, width: bounds.width, height: markerHeight)
         // The fold lane only earns its 24pt when there is room left for a
         // usable video band underneath; on a very short view the filmstrip is
@@ -57,14 +67,22 @@ enum TimelineTrackLayout {
         let foldHeight = bounds.height - markerHeight - foldLaneHeight
             >= TimelineLaneBudget.minimumVideoHeight ? foldLaneHeight : 0
         let fold = CGRect(x: 0, y: markerHeight, width: bounds.width, height: foldHeight)
+        // Claimed off the bottom before anything below the fixed lanes divides
+        // what is left, so adding it never silently shrinks the filmstrip past
+        // its floor — the same protection the fold lane already has.
+        let transcriptHeight = hasTranscript
+            && bounds.height - markerHeight - foldHeight - transcriptLaneHeight
+                >= TimelineLaneBudget.minimumVideoHeight ? transcriptLaneHeight : 0
+        let transcript = CGRect(x: 0, y: bounds.height - transcriptHeight,
+                                width: bounds.width, height: transcriptHeight)
         // Named rather than shadowing `markerHeight`: everything below the
         // two fixed lanes divides what is left, and a rebound parameter makes
         // that arithmetic read as if it used the caller's value.
         let stackTop = markerHeight + foldHeight
-        let remaining = max(0, bounds.height - stackTop)
+        let remaining = max(0, bounds.height - stackTop - transcriptHeight)
         let video = CGRect(x: 0, y: stackTop, width: bounds.width, height: remaining * 0.6)
         let audioTotal = remaining * 0.4
-        guard !audioTracks.isEmpty else { return (marker, fold, video, []) }
+        guard !audioTracks.isEmpty else { return (marker, fold, video, [], transcript) }
 
         let each = audioTotal / Double(audioTracks.count)
         let audio = audioTracks.enumerated().map { index, track in
@@ -72,6 +90,6 @@ enum TimelineTrackLayout {
              rect: CGRect(x: 0, y: video.maxY + Double(index) * each,
                           width: bounds.width, height: each))
         }
-        return (marker, fold, video, audio)
+        return (marker, fold, video, audio, transcript)
     }
 }
