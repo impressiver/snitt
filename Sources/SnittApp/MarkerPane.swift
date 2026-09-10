@@ -69,7 +69,7 @@ struct MarkerPane: View {
 
     private func header(count: Int) -> some View {
         HStack(spacing: 6) {
-            Text("Chapters").font(.headline)
+            Text("Markers").font(.headline)
             Spacer()
             Button {
                 state.addMarker(atOutput: playhead)
@@ -77,7 +77,7 @@ struct MarkerPane: View {
                 Image(systemName: "plus")
             }
             .buttonStyle(.borderless)
-            .help("Add a chapter at the playhead")
+            .help("Add a marker at the playhead")
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
@@ -85,7 +85,7 @@ struct MarkerPane: View {
 
     private var empty: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("No chapters yet")
+            Text("No markers yet")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Text("Press + to mark the playhead, or press the marker key while recording.")
@@ -135,7 +135,7 @@ struct MarkerPane: View {
                         .font(.system(.caption, design: .monospaced))
                         .frame(width: 62)
                         .onSubmit { commit(chapter) }
-                    TextField("Chapter name", text: $editingText)
+                    TextField("Marker name", text: $editingText)
                         .textFieldStyle(.roundedBorder)
                         .focused($editingFocused)
                         .onSubmit { commit(chapter) }
