@@ -62,15 +62,35 @@ public enum TimelineLaneBudget {
     /// defect.
     public static let minimumTargetHeight: Double = 24
 
-    /// The filmstrip's floor. Lower and a thumbnail stops being a picture,
-    /// which is the one thing the video band exists to be.
-    public static let minimumVideoHeight: Double = 36
+    /// The filmstrip's floor.
+    ///
+    /// Halved from 36 on product-owner direction (2026-09-10). Worth recording
+    /// the tension rather than quietly resolving it: the commit that set the
+    /// timeline to 120pt argued a ~25px video band was "smaller than a
+    /// thumbnail is useful at", and this floor is now below that. The
+    /// filmstrip becomes a strip of colour and motion — enough to see WHERE
+    /// the picture changes, not enough to read WHAT it changed to. That is a
+    /// legitimate trade once the transcript lane carries the "what", and it is
+    /// the reverse of the trade made when the filmstrip was the only content
+    /// lane there was.
+    public static let minimumVideoHeight: Double = 18
 
-    /// The share of surplus the video band takes, matching the 60/40 split
-    /// `TimelineTrackLayout.bands` has used since D56. Kept rather than
-    /// re-chosen: two ratios for one layout is how the bands start disagreeing
-    /// about who grows.
-    public static let videoShareOfSurplus: Double = 0.6
+    /// The share of surplus the video band takes.
+    ///
+    /// 0.3, halved from D56's 0.6 on product-owner direction (2026-09-10). The
+    /// freed share goes to audio rather than shrinking the timeline: the
+    /// budget's job is to bound the timeline against the PICTURE, and handing
+    /// height back inside the timeline would leave a gap rather than a taller
+    /// waveform.
+    public static let videoShareOfSurplus: Double = 0.3
+
+    /// The transcript lane's height, and the one place it is written down.
+    ///
+    /// 30, up 25% from 24 on product-owner direction (2026-09-10). Comfortably
+    /// clear of WCAG 2.5.8's 24pt target floor, which a chip must meet anyway
+    /// to be clickable — increasing it was safe in a way decreasing it would
+    /// not have been.
+    public static let transcriptLaneHeight: Double = 30
 
     /// The tallest the timeline may be, as a share of the window.
     ///
@@ -108,7 +128,7 @@ public enum TimelineLaneBudget {
         // is text, and text does not get more legible with more height the way
         // a waveform gets more readable. Extra room belongs to the bands that
         // can use it.
-        let transcriptHeight = minimumTargetHeight
+        let transcriptHeight = transcriptLaneHeight
         let transcript = hasTranscript
             && available >= marks + minimumVideoHeight
                 + minimumTargetHeight * Double(max(1, audioTracks.count)) + transcriptHeight

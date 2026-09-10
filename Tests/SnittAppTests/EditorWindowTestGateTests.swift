@@ -81,7 +81,17 @@ struct EditorWindowTestGateTests {
         // Window tests queue behind this gate constantly and their reported
         // durations are dominated by that queueing, so a gate that punished
         // slowness would fail honest tests continuously.
-        try await EditorWindowTestGate.run("a slow but honest holder", timeout: 5.0) {
+        //
+        // 30s, raised from 5. Under a full-suite run this test queued behind
+        // `openingAndClosingDoesNotStamp()` — which opens a real editor window
+        // — and gave up at 5s, failing the gate intermittently while passing
+        // every time the suite was run in isolation. A test asserting "a slow
+        // holder is not penalised" that itself fails because a holder was slow
+        // is measuring the machine, not the gate. The number that matters is
+        // still bounded: a holder that never finishes fails here in 30s rather
+        // than hanging the run forever, which is the whole reason this bound
+        // exists.
+        try await EditorWindowTestGate.run("a slow but honest holder", timeout: 30.0) {
             try await Task.sleep(nanoseconds: 300_000_000)
         }
         #expect(EditorWindowTestGate.currentHolder == nil)

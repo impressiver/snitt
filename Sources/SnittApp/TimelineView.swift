@@ -474,8 +474,11 @@ public final class TimelineView: NSView {
     /// ellipsis, because an ellipsis alone occupies a chip, reads as text, and
     /// carries none.
     private func drawPhrases(in band: NSRect) {
-        Palette.audioBand.setFill()
-        NSBezierPath(rect: band).fill()
+        // No band fill. The lane's ground is the timeline's own, so the chips
+        // read as objects sitting on the timeline rather than as a fourth
+        // stripe competing with the waveforms above them — and silence, which
+        // is most of a lane at any real zoom, shows as nothing rather than as
+        // an empty box.
         let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: 9),
             .foregroundColor: Palette.playhead.withAlphaComponent(0.75),
