@@ -1760,16 +1760,58 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
             panel.allowedContentTypes = [mp4]
         }
         panel.nameFieldStringValue = bundleURL.deletingPathExtension().lastPathComponent
-        panel.beginSheetModal(for: window) { [weak self] response in
+
+        // The resolution menu lives in the save panel rather than in a sheet
+        // before it: choosing a size and choosing a destination are one
+        // decision, and two dialogs to answer it is one more than the job
+        // needs.
+        let picker = ExportResolutionPicker()
+        panel.accessoryView = picker
+
+        // Presented FIRST, populated after. Building the composition to
+        // measure it takes real time, and a save panel that appears a second
+        // late reads as a missed click. Until the numbers land the picker says
+        // so and the export falls back to `.source` — which is exactly what
+        // this app did before the menu existed, so an impatient Export is
+        // never a surprise.
+        Task { @MainActor [weak self, weak picker] in
+            guard let self else { return }
+            let options = await self.exportOptions()
+            picker?.populate(with: options)
+        }
+
+        panel.beginSheetModal(for: window) { [weak self, weak picker] response in
             guard let self, response == .OK, let destination = panel.url else { return }
+            let resolution = picker?.selectedResolution ?? .source
             Task { @MainActor in
                 do {
-                    try await self.performExport(to: destination, pasteboard: .general)
+                    try await self.performExport(to: destination,
+                                                 pasteboard: .general,
+                                                 resolution: resolution)
                     self.presentExportSuccess()
                 } catch {
                     self.presentExportFailure(error)
                 }
             }
+        }
+    }
+
+    /// The resolutions worth offering for this recording, or `[]` if they
+    /// could not be measured.
+    ///
+    /// Failure is silent by design and the only case where that is right in
+    /// this file: an estimate is an aid to choosing, so losing it costs the
+    /// menu and nothing else. Refusing to export because the preview of the
+    /// export could not be computed would trade a working feature for a
+    /// convenience.
+    func exportOptions() async -> [ExportOption] {
+        do {
+            let bundle = try SnittBundle(opening: bundleURL)
+            let estimates = try await ExportEstimator.menu(bundle: bundle, edl: state.edl)
+            return ExportPreflight.options(from: estimates)
+        } catch {
+            Self.log.error("Export estimate failed: \(error as NSError, privacy: .public)")
+            return []
         }
     }
 
@@ -1786,9 +1828,12 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// `SnittBundle` of its own: `PreviewController`'s is `private` (R1 —
     /// the write belongs with the owner), and `bundleURL` is already this
     /// type's own normalized identity for exactly this document.
-    private func performExport(to destination: URL, pasteboard: NSPasteboard) async throws {
+    private func performExport(to destination: URL,
+                               pasteboard: NSPasteboard,
+                               resolution: ExportResolution = .source) async throws {
         let bundle = try SnittBundle(opening: bundleURL)
-        _ = try await MovieExporter.export(bundle: bundle, edl: state.edl, scale: 1.0, to: destination)
+        _ = try await MovieExporter.export(bundle: bundle, edl: state.edl, scale: 1.0,
+                                           to: destination, resolution: resolution)
         if !ClipboardDestination.copy(fileURL: destination, to: pasteboard) {
             // The export itself succeeded — the file the user asked for
             // exists at `destination` — so this is not surfaced as an
@@ -1840,8 +1885,9 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// cannot assume). `pasteboard` defaults to `.general` for parity with
     /// the real path but is overridable so a test can assert against a
     /// throwaway pasteboard instead of the machine's real clipboard.
-    func exportForTesting(to url: URL, pasteboard: NSPasteboard = .general) async throws {
-        try await performExport(to: url, pasteboard: pasteboard)
+    func exportForTesting(to url: URL, pasteboard: NSPasteboard = .general,
+                          resolution: ExportResolution = .source) async throws {
+        try await performExport(to: url, pasteboard: pasteboard, resolution: resolution)
     }
 
     /// Closes every editor `EditorWindowController` currently thinks is
