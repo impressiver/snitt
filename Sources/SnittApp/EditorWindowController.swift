@@ -356,8 +356,43 @@ final class EditorTimelineState: ObservableObject {
     /// called `applyCut(range)` directly — a completed drag became a cut
     /// the instant the mouse came up, with no decision in between. That is
     /// the defect D56 names.
+    /// Which fold is highlighted, if the selection came from clicking one.
+    ///
+    /// A range selection and a selected FOLD look the same on screen — both
+    /// are a highlighted span — but Delete means opposite things for them: cut
+    /// this out, versus put this back. Keeping the distinction explicit is
+    /// what lets one key do both without guessing.
+    @Published private(set) var selectedFoldID: UUID?
+
     func onSelect(_ selection: Selection?) {
+        // Any ordinary selection clears the fold. Without this, dragging a new
+        // range after clicking a fold would leave Delete still meaning "remove
+        // that cut" while the highlight showed something else entirely.
+        selectedFoldID = nil
         self.selection = selection
+    }
+
+    /// Highlights the span a fold removed, so Delete can put it back.
+    func selectFold(id: UUID) {
+        guard let cut = edl.cuts.first(where: { $0.id == id }) else { return }
+        selection = Selection(range: cut.range)
+        selectedFoldID = id
+    }
+
+    /// What Delete does, and the only place that decides.
+    ///
+    /// A highlighted fold is a cut you are deciding about — Delete removes it.
+    /// A highlighted range is footage you are deciding about — Delete cuts it.
+    /// Same key, opposite edits, told apart by how the highlight was made
+    /// rather than by a second control.
+    func deleteSelection() {
+        if let id = selectedFoldID {
+            removeCut(id: id)
+            selectedFoldID = nil
+            selection = nil
+        } else {
+            cutSelection()
+        }
     }
 
     /// Cuts the current selection, if any — the one place a `Selection`
@@ -394,9 +429,9 @@ final class EditorTimelineState: ObservableObject {
     /// The selection is the cut's SOURCE range, which is the clock `Selection`
     /// and every edit built from it already use.
     func expandAndSelect(foldID id: UUID) {
-        guard let cut = edl.cuts.first(where: { $0.id == id }) else { return }
+        guard edl.cuts.contains(where: { $0.id == id }) else { return }
         expandedCutIDs.insert(id)
-        onSelect(Selection(range: cut.range))
+        selectFold(id: id)
     }
 
     func toggleExpansion(of id: UUID) {
@@ -1210,6 +1245,7 @@ struct TimelineViewRepresentable: NSViewRepresentable {
         view.onSelect = { [weak state] in state?.onSelect($0) }
         view.onToggleExpansion = { [weak state] in state?.toggleExpansion(of: $0) }
         view.onExpandAndSelectFold = { [weak state] in state?.expandAndSelect(foldID: $0) }
+        view.onSelectFold = { [weak state] in state?.selectFold(id: $0) }
         // Straight to `addMarker(atOutput:)`, which already does the
         // output-to-source conversion. A `createMarker` wrapper was written
         // here first and deleted — that is the fourth duplicate this session
@@ -1897,7 +1933,16 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// the exact same decision `EditorContentView`'s Cut button already
     /// makes, just reachable without a mouse.
     func cutTimelineSelection() {
-        state.cutSelection()
+        // Dispatches: `deleteSelection` decides whether Delete cuts a range or
+        // removes a fold. The menu item keeps one action and one key; what it
+        // MEANS follows the highlight.
+        state.deleteSelection()
+    }
+
+    /// What Edit ▸ Delete should be called right now, so the menu says which
+    /// of the two edits it will perform rather than always claiming one.
+    var deleteMenuTitle: String {
+        state.selectedFoldID != nil ? "Remove Cut" : "Cut Selection"
     }
 
     // MARK: - Export (Task 8)

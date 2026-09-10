@@ -639,6 +639,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         guard menuItem.action == #selector(cutTimelineSelection(_:)) else { return true }
+        // The title follows the highlight: one key, one item, two edits. A
+        // menu permanently reading "Cut Selection" while Delete would restore
+        // a fold describes the opposite of what it does.
+        if let editor = EditorWindowController.openEditors.first(where: {
+            $0.window == NSApp.keyWindow
+        }) {
+            menuItem.title = editor.deleteMenuTitle
+        }
         return EditorWindowController.openEditors.first(where: {
             $0.window == NSApp.keyWindow
         })?.hasTimelineSelection ?? false
