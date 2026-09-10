@@ -534,7 +534,20 @@ private actor MovieFixtureCache {
         if let existing = masters[key] { return existing }
         if let running = inFlight[key] { return try await running.value }
 
-        let destination = root.appending(path: "\(abs(key.hashValue)).mov")
+        // The key itself, sanitised — NOT `key.hashValue`.
+        //
+        // Swift seeds `hashValue` per process, so two distinct keys collide
+        // under some seeds and not others. When they do, both fixtures write
+        // to one path while `masters` still hands each caller its own key's
+        // URL, and a test silently receives another test's movie. That is
+        // exactly what made `FilmstripSamplerTests.framesDiffer` fail in the
+        // full gate and pass in isolation, always with the same luma — a
+        // `.ramp` movie replaced by a flat one.
+        //
+        // A sanitised key is injective for every key this builds, so distinct
+        // fixtures cannot share a file.
+        let safe = key.map { $0.isLetter || $0.isNumber ? $0 : "_" }
+        let destination = root.appending(path: String(safe) + ".mov")
         let task = Task<URL, Error> {
             try await encode(destination)
             return destination

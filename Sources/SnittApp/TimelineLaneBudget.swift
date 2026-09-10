@@ -75,14 +75,20 @@ public enum TimelineLaneBudget {
     /// the next reader should know the reversal was deliberate, not drift.
     public static let minimumVideoHeight: Double = 9
 
-    /// The share of surplus the video band takes.
+    /// What each lane WANTS to be, when there is room.
     ///
-    /// 0.15 — D56's 0.6, halved twice on product-owner direction. The freed
-    /// share goes to audio rather than shrinking the timeline: the budget's
-    /// job is to bound the timeline against the PICTURE, and handing height
-    /// back inside the timeline would leave a gap rather than a taller
-    /// waveform.
-    public static let videoShareOfSurplus: Double = 0.15
+    /// Preferred heights, not shares of a surplus. The old model gave the
+    /// timeline a fixed 40% of the window and let the lanes stretch to fill
+    /// it — so halving the filmstrip did not give the height back to the
+    /// PICTURE, it handed it to the waveforms, which grew to ~101pt each. Two
+    /// hundred-point waveforms is worse than the tall filmstrip that was being
+    /// fixed.
+    ///
+    /// Lanes now take what they need and the timeline sizes to fit, capped by
+    /// the window share. Everything left over goes to the recording, which is
+    /// the whole point of bounding the timeline in the first place.
+    public static let preferredVideoHeight: Double = 36
+    public static let preferredAudioHeight: Double = 44
 
     /// The transcript lane's height, and the one place it is written down.
     ///
@@ -92,24 +98,43 @@ public enum TimelineLaneBudget {
     /// not have been.
     public static let transcriptLaneHeight: Double = 30
 
-    /// The tallest the timeline may be, as a share of the window.
-    ///
-    /// 40%, not 35%. The full stack — marks 24, video 36, two audio bands at
-    /// 24 — needs 108pt of lanes before any surplus, and a 731pt window (what
-    /// `openingContentRect` opens at on a 1600×975 screen) at 35% leaves about
-    /// 172pt after the transport row and ruler. That fits today, but the fold
-    /// and word lanes are queued and each costs 24pt more; 40% is the number
-    /// that still fits once they land, and going the other way later would
-    /// mean the timeline growing under the user.
+    /// The most of the window the timeline may take, however much it wants.
     public static let maximumWindowShare: Double = 0.40
 
     /// Never smaller than this, or the timeline stops being usable at all.
     public static let minimumTimelineHeight: Double
         = minimumTargetHeight + minimumVideoHeight + minimumTargetHeight
 
+    /// What the whole stack wants, given what this recording actually has.
+    public static func naturalHeight(audioTracks: [String],
+                                     hasTranscript: Bool,
+                                     hasFolds: Bool) -> Double {
+        minimumTargetHeight                                    // marks
+            + (hasFolds ? foldLaneHeight : 0)
+            + preferredVideoHeight
+            + preferredAudioHeight * Double(audioTracks.count)
+            + (hasTranscript ? transcriptLaneHeight : 0)
+    }
+
+    /// The fold lane's height, mirrored from `TimelineTrackLayout` so
+    /// `naturalHeight` can account for it without the two types importing each
+    /// other in a circle.
+    public static let foldLaneHeight: Double = 24
+
     /// What the timeline should be given, for a window of this height.
-    public static func timelineHeight(forWindowHeight window: Double) -> Double {
-        max(minimumTimelineHeight, window * maximumWindowShare)
+    ///
+    /// The SMALLER of what the lanes want and what the window allows — not
+    /// always the window share. A timeline that always took 40% grew its lanes
+    /// to fill it however little they needed, which is how halving the
+    /// filmstrip made the waveforms enormous instead of making the picture
+    /// bigger.
+    public static func timelineHeight(forWindowHeight window: Double,
+                                      audioTracks: [String] = ["microphone", "systemAudio"],
+                                      hasTranscript: Bool = false,
+                                      hasFolds: Bool = false) -> Double {
+        let wanted = naturalHeight(audioTracks: audioTracks,
+                                   hasTranscript: hasTranscript, hasFolds: hasFolds)
+        return max(minimumTimelineHeight, min(wanted, window * maximumWindowShare))
     }
 
     /// Which lanes fit in `availableHeight`, and how tall each is.
@@ -170,23 +195,24 @@ public enum TimelineLaneBudget {
                                    audio: [TimelineLane],
                                    transcript: Double,
                                    collapsed: [String]) -> TimelineLanePlan {
-        let audioFloor = minimumTargetHeight * Double(audio.count)
-        let surplus = max(0, available - marks - minimumVideoHeight
-                              - audioFloor - transcript)
-        // With no audio band there is nobody to give audio's 40% to, and it
-        // does NOT fall out — an earlier version of this comment claimed it
-        // did, and left a 56pt dead strip under the filmstrip on a silent
-        // recording. Caught by `noAudioMeansNoEmptyBand`, which is the whole
-        // reason that test asserts the video band's height rather than just
-        // the absence of an audio lane.
-        let videoShare = audio.isEmpty ? 1.0 : videoShareOfSurplus
-        let videoHeight = minimumVideoHeight + surplus * videoShare
-        let audioShare = audio.isEmpty
-            ? 0 : (audioFloor + surplus * (1 - videoShareOfSurplus)) / Double(audio.count)
+        // Preferred heights, and the filmstrip absorbs whatever is left over.
+        //
+        // No surplus split any more. `videoShareOfSurplus` is gone with it —
+        // a constant tuned three times across three commits, whose only job
+        // was deciding which lane got to grow when the timeline was bigger
+        // than the lanes needed. The timeline is no longer bigger than the
+        // lanes need: it sizes to them.
+        let audioHeight = min(preferredAudioHeight,
+                              audio.isEmpty ? 0
+                                  : max(minimumTargetHeight,
+                                        (available - marks - minimumVideoHeight - transcript)
+                                            / Double(audio.count)))
+        let used = marks + audioHeight * Double(audio.count) + transcript
+        let videoHeight = max(minimumVideoHeight, available - used)
 
         var lanes: [TimelineLanePlan.Lane] = [.init(lane: .marks, height: marks),
                                               .init(lane: .video, height: videoHeight)]
-        lanes.append(contentsOf: audio.map { .init(lane: $0, height: audioShare) })
+        lanes.append(contentsOf: audio.map { .init(lane: $0, height: audioHeight) })
         if transcript > 0 { lanes.append(.init(lane: .transcript, height: transcript)) }
         return TimelineLanePlan(lanes: lanes, collapsed: collapsed)
     }
