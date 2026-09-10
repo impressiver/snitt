@@ -189,6 +189,18 @@ if [ "$declared" != "$VERSION" ]; then
 fi
 echo "  version    $VERSION (matches $VERSION_SOURCE)"
 
+# Two different questions, answered in two different places on purpose.
+#
+# "Does a release require an explicit Developer ID?" is release policy, and
+# it lives here: without SNITT_SIGN_IDENTITY, make-app.sh signs with the
+# local self-signed identity and builds native-only, both of which produce an
+# app that runs perfectly on this machine and is rejected everywhere else.
+#
+# "Is that a real identity?" is not this script's question. Scripts/signing-
+# identity.sh already resolves it, refuses an empty override, and prints the
+# keychain's actual contents on a miss. Calling it here means a typo in the
+# identity name fails now rather than after the build — and means there is
+# still only ONE definition of a valid identity.
 if [ -z "${SNITT_SIGN_IDENTITY:-}" ]; then
   echo "error: SNITT_SIGN_IDENTITY is not set." >&2
   echo "       Without it make-app.sh signs with the local self-signed" >&2
@@ -196,7 +208,41 @@ if [ -z "${SNITT_SIGN_IDENTITY:-}" ]; then
   echo "       Run Scripts/signing-identity.sh to list what is installed." >&2
   exit 1
 fi
+if ! ./Scripts/signing-identity.sh >/dev/null; then
+  exit 1
+fi
 echo "  identity   $SNITT_SIGN_IDENTITY"
+
+# Notarization credentials, checked HERE rather than discovered at step 3.
+#
+# This check is here because it was missing: the 0.3.0 attempt spent a full
+# universal build, a deep codesign verify, and three minutes before
+# notarize.sh reported it had no credentials. A preflight that catches the
+# signing identity and not the notary credential fails at exactly the point
+# where failing is most expensive, which is the opposite of what it is for.
+#
+# Delegated, not reimplemented. notarize.sh already resolves the precedence
+# (a non-empty NOTARY_PROFILE wins; otherwise all three of the NOTARY_KEY
+# trio, with the missing ones named), and `--check-credentials` runs that
+# same code and exits before touching an artifact or the network. The first
+# version of this check was a copy of that logic living here, which had
+# already drifted — it tested the key file with `-r` where notarize.sh uses
+# `-f`. Two copies of "what counts as a valid credential" is how a release
+# passes preflight and fails at submission.
+if ! notary_line="$(./Scripts/notarize.sh --check-credentials)"; then
+  echo "" >&2
+  echo "  Create a keychain profile once (preferred — the secret then lives" >&2
+  echo "  in the keychain, not in a shell variable):" >&2
+  echo "" >&2
+  echo "    xcrun notarytool store-credentials snitt \\" >&2
+  echo "      --apple-id <apple-id> --team-id TEGDRM8W7U \\" >&2
+  echo "      --password <app-specific-password>" >&2
+  echo "" >&2
+  echo "  then re-run with NOTARY_PROFILE=snitt." >&2
+  exit 1
+fi
+echo "  ${notary_line/notarization credentials:/notary    }"
+
 
 branch="$(git rev-parse --abbrev-ref HEAD)"
 if [ "$branch" != "$DEFAULT_BRANCH" ]; then

@@ -97,6 +97,12 @@ private func makeStubs(gitBranch: String = "main",
         esac
         """)
     try write("lipo", "echo 'x86_64 arm64'")
+    // `Scripts/signing-identity.sh` greps this for the requested name. The
+    // stub reports the identity the tests ask for as installed — the tests
+    // are about release.sh's checks, not about a real keychain.
+    try write("security", """
+        echo '  1) ABC "Developer ID Application: test"'
+        """)
     return dir
 }
 
@@ -126,7 +132,8 @@ struct ReleaseScriptTests {
         defer { try? FileManager.default.removeItem(at: stubs) }
         let version = declaredVersion()
         let result = runScript([version, "--dry-run"],
-                               env: ["SNITT_SIGN_IDENTITY": "Developer ID Application: test"],
+                               env: ["SNITT_SIGN_IDENTITY": "Developer ID Application: test",
+                                     "NOTARY_PROFILE": "snitt"],
                                extraPath: stubs.path)
         #expect(result.status == 0, "\(result.output)")
 
@@ -170,6 +177,94 @@ struct ReleaseScriptTests {
         #expect(result.status != 0)
         #expect(result.stderr.contains("SNITT_SIGN_IDENTITY"))
         #expect(!result.output.contains("1. Build"))
+    }
+
+    @Test("Missing notarization credentials stop the release before the build")
+    func notaryCredentialsAreCheckedInPreflight() throws {
+        // The regression this test exists for: the 0.3.0 attempt spent a full
+        // universal build and a deep codesign verify before `notarize.sh`
+        // reported it had no credentials. A preflight that catches the signing
+        // identity and not the notary credential fails at exactly the point
+        // where failing is most expensive.
+        //
+        // So `!contains("1. Build")` is the assertion that matters here, not
+        // the exit status — the old script also exited non-zero, just three
+        // minutes later.
+        let stubs = try makeStubs()
+        defer { try? FileManager.default.removeItem(at: stubs) }
+        let result = runScript([declaredVersion(), "--dry-run"],
+                               env: ["SNITT_SIGN_IDENTITY": "Developer ID Application: test"],
+                               extraPath: stubs.path)
+        #expect(result.status != 0)
+        #expect(result.stderr.contains("NOTARY_PROFILE") || result.stderr.contains("NOTARY_KEY"))
+        #expect(!result.output.contains("1. Build"),
+                "preflight let the build run without notarization credentials")
+    }
+
+    @Test("A partial API-key credential is refused, naming what is missing")
+    func partialApiKeyIsRefused() throws {
+        // Two of three set is worse than none: it looks configured. This is
+        // the shape `notarize.sh` already refuses, moved to where it costs
+        // nothing.
+        let stubs = try makeStubs()
+        defer { try? FileManager.default.removeItem(at: stubs) }
+        let result = runScript([declaredVersion(), "--dry-run"],
+                               env: ["SNITT_SIGN_IDENTITY": "Developer ID Application: test",
+                                     "NOTARY_KEY": "/tmp/nonexistent.p8",
+                                     "NOTARY_KEY_ID": "ABCD1234"],
+                               extraPath: stubs.path)
+        #expect(result.status != 0)
+        #expect(result.stderr.contains("NOTARY_ISSUER"))
+        #expect(!result.output.contains("1. Build"))
+    }
+
+    @Test("An identity that is not in the keychain is refused before the build")
+    func unknownSigningIdentityIsRefused() throws {
+        // Delegated to `Scripts/signing-identity.sh`, which is the one place
+        // that decides what a valid identity is. Before this, release.sh only
+        // checked the variable was non-empty, so a typo'd identity name got
+        // caught by codesign — after the universal build.
+        let stubs = try makeStubs()
+        defer { try? FileManager.default.removeItem(at: stubs) }
+        let result = runScript([declaredVersion(), "--dry-run"],
+                               env: ["SNITT_SIGN_IDENTITY": "Developer ID Application: typo",
+                                     "NOTARY_PROFILE": "snitt"],
+                               extraPath: stubs.path)
+        #expect(result.status != 0)
+        #expect(!result.output.contains("1. Build"))
+    }
+
+    @Test("An API key whose file is gone is refused, not discovered later")
+    func unreadableKeyFileIsRefused() throws {
+        // The stale-credential case: a path that used to resolve. It fails
+        // identically to having no credential at all — after the build, from
+        // inside notarytool.
+        let stubs = try makeStubs()
+        defer { try? FileManager.default.removeItem(at: stubs) }
+        let result = runScript([declaredVersion(), "--dry-run"],
+                               env: ["SNITT_SIGN_IDENTITY": "Developer ID Application: test",
+                                     "NOTARY_KEY": "/tmp/definitely-not-here-\(UUID().uuidString).p8",
+                                     "NOTARY_KEY_ID": "ABCD1234",
+                                     "NOTARY_ISSUER": "11111111-2222-3333-4444-555555555555"],
+                               extraPath: stubs.path)
+        #expect(result.status != 0)
+        #expect(result.stderr.contains("does not point at a file"))
+        #expect(!result.output.contains("1. Build"))
+    }
+
+    @Test("A keychain profile alone is enough to proceed")
+    func keychainProfileSatisfiesPreflight() throws {
+        // The other half. A preflight that demanded the API-key trio
+        // unconditionally would block the credential path `notarize.sh`
+        // actually prefers.
+        let stubs = try makeStubs()
+        defer { try? FileManager.default.removeItem(at: stubs) }
+        let result = runScript([declaredVersion(), "--dry-run"],
+                               env: ["SNITT_SIGN_IDENTITY": "Developer ID Application: test",
+                                     "NOTARY_PROFILE": "snitt"],
+                               extraPath: stubs.path)
+        #expect(result.status == 0, "\(result.output)")
+        #expect(result.output.contains("keychain profile 'snitt'"))
     }
 
     @Test("A dirty tree, a feature branch, or a used tag each stop the release")
