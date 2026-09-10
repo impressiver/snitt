@@ -686,6 +686,51 @@ public final class TimelineView: NSView {
         }
     }
 
+    // MARK: - Accessibility
+
+    /// The timeline is a Core Graphics canvas, so everything drawn on it —
+    /// marks, folds, the playhead — is pixels, and pixels have no
+    /// accessibility. Nothing here was reachable by VoiceOver or by anyone not
+    /// using a pointer, including the marks, which are how you navigate a
+    /// Snitt recording.
+    ///
+    /// Exposed as a group of children rather than one blob of text so the
+    /// rotor can STEP between them, which is the interaction that matters:
+    /// a single label reciting every mark is a paragraph, not a timeline.
+    public override func isAccessibilityElement() -> Bool { true }
+    public override func accessibilityRole() -> NSAccessibility.Role? { .group }
+    public override func accessibilityLabel() -> String? { "Timeline" }
+
+    public override func accessibilityValue() -> Any? {
+        TimelineAccessibility.playheadValue(outputSeconds: playhead, duration: duration)
+    }
+
+    public override func accessibilityChildren() -> [Any]? {
+        accessibilityDescriptors().map { descriptor -> NSAccessibilityElement in
+            let element = NSAccessibilityElement()
+            element.setAccessibilityRole(descriptor.kind == .mark ? .button : .group)
+            element.setAccessibilityLabel(descriptor.label)
+            element.setAccessibilityParent(self)
+            // A frame is what lets VoiceOver's cursor sit on the right part of
+            // the view; without one every child reads at the view's origin.
+            let x = geometry.x(atOutput: OutputTime(descriptor.outputSeconds))
+            element.setAccessibilityFrameInParentSpace(
+                NSRect(x: x - 6, y: 0, width: 12, height: bounds.height))
+            return element
+        }
+    }
+
+    /// Split out so the wording and ordering can be asserted without the
+    /// accessibility runtime, which a unit test cannot interrogate.
+    func accessibilityDescriptors() -> [TimelineAccessibilityElement] {
+        TimelineAccessibility.elements(
+            marks: markerPoints,
+            folds: cuts.map {
+                FoldDescriptor(outputSeconds: geometry.timebase.foldPosition(for: $0).seconds,
+                               removedSeconds: $0.range.end - $0.range.start)
+            })
+    }
+
     // MARK: - Mouse handling
 
     public override func mouseDown(with event: NSEvent) {

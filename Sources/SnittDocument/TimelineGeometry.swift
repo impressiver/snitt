@@ -78,7 +78,10 @@ public struct TimelineGeometry: Equatable, Sendable {
     /// Expanded folds, ascending by `output`. Empty is the common case and
     /// costs nothing — every mapping below short-circuits on it.
     public let expansions: [Expansion]
-    private let timebase: Timebase
+    /// Readable so a caller can ask where a fold LANDS in output time. The
+    /// accessibility labels need that instant; `x(atFold:)` returns a pixel,
+    /// and a screen reader has no use for a pixel.
+    public let timebase: Timebase
 
     public init(width: Double, timebase: Timebase, expansions: [Expansion] = []) {
         self.width = width
