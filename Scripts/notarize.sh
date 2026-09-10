@@ -199,11 +199,40 @@ else
 fi
 
 if [ "$CHECK_CREDENTIALS_ONLY" -eq 1 ]; then
+  # PROVE it, don't just resolve it. Resolution alone answers "is a
+  # credential named here", which for the keychain-profile path is only "is
+  # NOTARY_PROFILE non-empty" — so `NOTARY_PROFILE=typo` passed this check
+  # and failed at submission, after a universal build. That is the exact
+  # failure this mode exists to move earlier, arriving through the other
+  # door.
+  #
+  # `notarytool history` is the cheapest call that exercises the credential
+  # end to end: about a second, no artifact, nothing submitted, and it fails
+  # loudly on a profile that does not exist or a key that is not accepted.
+  #
+  # Deliberately NOT in the shared resolution block above. A real
+  # notarization is about to talk to Apple anyway and does not need a probe
+  # first; putting it there would add a round trip to every submission and
+  # change behaviour for a path that is working.
+  if ! probe="$(xcrun notarytool history "${NOTARIZE_ARGS[@]}" 2>&1)"; then
+    echo "error: notarization credentials did not work." >&2
+    if [ -n "$NOTARY_PROFILE_VALUE" ]; then
+      echo "the keychain profile '$NOTARY_PROFILE_VALUE' is named but did not" >&2
+      echo "authenticate. Check the name against the profiles you have created" >&2
+      echo "with 'xcrun notarytool store-credentials'." >&2
+    else
+      echo "the API key $NOTARY_KEY_ID_VALUE did not authenticate." >&2
+    fi
+    # Apple's own message, which names the real cause far better than
+    # anything this script could infer. Last, so it does not bury the above.
+    printf '%s\n' "$probe" >&2
+    exit 1
+  fi
   # Names the credential, never its value — this prints into a release log.
   if [ -n "$NOTARY_PROFILE_VALUE" ]; then
-    echo "notarization credentials: keychain profile '$NOTARY_PROFILE_VALUE'"
+    echo "notarization credentials: keychain profile '$NOTARY_PROFILE_VALUE' (verified)"
   else
-    echo "notarization credentials: API key $NOTARY_KEY_ID_VALUE"
+    echo "notarization credentials: API key $NOTARY_KEY_ID_VALUE (verified)"
   fi
   exit 0
 fi
