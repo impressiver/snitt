@@ -250,6 +250,12 @@ final class EditorTimelineState: ObservableObject {
         let selection: Selection?
         /// See `expandedCutIDs`'s own doc comment.
         let expandedCutIDs: Set<UUID>
+        /// Which cut is selected, so the timeline can DRAW the selection it
+        /// has been tracking since M5f. Without this the state was complete
+        /// and invisible: `selectFold` also sets `selection`, but a cut's
+        /// source range is exactly the ground that cut removed, so neither
+        /// end maps onto the output axis and the blue rectangle is skipped.
+        let selectedFoldID: UUID?
         /// Which audio sources exist and whether each is muted. The timeline
         /// draws one band per source, so muting has a visible effect — until
         /// now `TrackState.muted` changed the export and nothing on screen.
@@ -283,6 +289,7 @@ final class EditorTimelineState: ObservableObject {
                     playhead: outputPlayhead,
                     selection: selection,
                     expandedCutIDs: expandedCutIDs,
+                    selectedFoldID: selectedFoldID,
                     trackStates: edl.trackStates,
                     waveforms: waveforms,
                     filmstrip: filmstrip)
@@ -1282,21 +1289,18 @@ struct TimelineViewRepresentable: NSViewRepresentable {
     }
 
     /// Deliberately a one-line delegation to `state.displayState(playhead:)`
-    /// — the axis-mapping logic that matters lives there, where it is
+    /// and `TimelineView.apply(_:)` — the axis-mapping logic that matters
+    /// lives in the first and the field-by-field fan-out in the second, both
     /// testable without AppKit or SwiftUI's runtime; this stays the thin,
     /// untestable seam.
+    ///
+    /// It used to do the fan-out itself, ten arguments long. That is what
+    /// made adding `selectedFoldID` to `DisplayState` and forgetting it here
+    /// a silent, invisible failure — and a mutant that blanked it survived a
+    /// test suite that reached every layer except this one.
     func updateNSView(_ nsView: TimelineView, context: Context) {
         state.timelineView = nsView   // also set in makeNSView; see there
-        let display = state.displayState(playhead: playhead)
-        nsView.update(duration: display.duration,
-                     cuts: display.cuts,
-                     markerPoints: display.markerPoints,
-                     playhead: display.playhead,
-                     selection: display.selection,
-                     expandedCutIDs: display.expandedCutIDs,
-                     trackStates: display.trackStates,
-                     waveforms: display.waveforms,
-                     filmstrip: display.filmstrip)
+        nsView.apply(state.displayState(playhead: playhead))
         // Phrases, not words: `WordLaneTiers` measured that word chips need
         // 0.6pt each on a ten-minute recording against the 40pt they need to
         // be clickable. Grouped through the SAME pause rule the reading pane

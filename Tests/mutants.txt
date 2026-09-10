@@ -43,3 +43,9 @@ PaneWidthsTests :: Sources/SnittApp/PaneWidths.swift :: self.markers = Self.clam
 ExportSheetTests :: Sources/SnittApp/ExportSheet.swift :: destination = destination.deletingPathExtension() :: destination = destination.deletingLastPathComponent().appending(path: destination.lastPathComponent)
 ExportSheetTests :: Sources/SnittApp/EditorWindowController.swift :: func requestExport() { exportRequestToken += 1 } :: func requestExport() { exportRequestToken = 1 }
 ExportSheetTests :: Sources/SnittApp/EditorWindowController.swift :: let folder = bundleURL.deletingLastPathComponent() :: let folder = bundleURL
+
+# Fold selection — the model tracked it correctly for a milestone while every
+# cut drew identically, and no model test could tell.
+FoldAppearanceTests :: Sources/SnittApp/TimelineView.swift :: selectedFoldID: display.selectedFoldID, :: selectedFoldID: nil,
+FoldAppearanceTests :: Sources/SnittApp/FoldPalette.swift :: appearance == .collapsedSelected ? 4 : 2 :: 2
+FoldAppearanceTests :: Sources/SnittApp/FoldPalette.swift :: case .expandedSelected: base.withAlphaComponent(0.55) :: case .expandedSelected: base.withAlphaComponent(0.35)

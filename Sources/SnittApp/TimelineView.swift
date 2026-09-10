@@ -205,6 +205,12 @@ public final class TimelineView: NSView {
     /// view never decides expansion on its own, only reports a click via
     /// `onToggleExpansion` and draws whatever the owner hands back.
     private var expandedCutIDs: Set<UUID> = []
+
+    /// Which cut is selected, mirrored from
+    /// `EditorTimelineState.selectedFoldID` exactly as `expandedCutIDs` is.
+    /// The view decides nothing about it — it draws it (`FoldPalette`) and
+    /// suppresses the ordinary selection rectangle while it is set.
+    private var selectedFoldID: UUID?
     /// Which audio sources this recording has, and whether each is muted —
     /// one band each in `draw`.
     private var trackStates: [TrackState] = []
@@ -300,9 +306,30 @@ public final class TimelineView: NSView {
     /// different clocks. `selection` defaults to `nil`, and `expandedCutIDs`
     /// to empty, for callers (existing tests among them) that don't drive
     /// them at all.
+    /// Show a `DisplayState`.
+    ///
+    /// The one place `DisplayState`'s fields are mapped onto this view's.
+    /// `updateNSView` used to spell the fan-out out itself, which meant a
+    /// field added to `DisplayState` and not passed here compiled, ran, and
+    /// drew the old thing forever — how fold selection stayed invisible for a
+    /// milestone.
+    func apply(_ display: EditorTimelineState.DisplayState) {
+        update(duration: display.duration,
+               cuts: display.cuts,
+               markerPoints: display.markerPoints,
+               playhead: display.playhead,
+               selection: display.selection,
+               expandedCutIDs: display.expandedCutIDs,
+               selectedFoldID: display.selectedFoldID,
+               trackStates: display.trackStates,
+               waveforms: display.waveforms,
+               filmstrip: display.filmstrip)
+    }
+
     public func update(duration: Double, cuts: [Cut], markerPoints: [JumpPoint],
                        playhead: Double, selection: Selection? = nil,
                        expandedCutIDs: Set<UUID> = [],
+                       selectedFoldID: UUID? = nil,
                        trackStates: [TrackState] = [],
                        waveforms: [WaveformSamples] = [],
                        filmstrip: FilmstripFrames? = nil) {
@@ -312,6 +339,7 @@ public final class TimelineView: NSView {
         self.playhead = playhead
         self.selection = selection
         self.expandedCutIDs = expandedCutIDs
+        self.selectedFoldID = selectedFoldID
         self.trackStates = trackStates
         self.waveforms = waveforms
         self.filmstrip = filmstrip
@@ -620,6 +648,16 @@ public final class TimelineView: NSView {
     /// inverted one. The gate is a y-range check; this asserts the y-range
     /// check.
     func foldHitForTesting(at point: NSPoint) -> Cut? { foldHit(at: point) }
+
+    /// How the view would draw `id` right now. The property that matters is
+    /// that this reflects what `update` was handed: the model tracked fold
+    /// selection correctly for a whole milestone while the view drew every
+    /// cut identically, and no test could tell, because every test asked the
+    /// model.
+    func foldAppearanceForTesting(_ id: UUID) -> FoldPalette.Appearance {
+        FoldPalette.appearance(expanded: expandedCutIDs.contains(id),
+                               selected: id == selectedFoldID)
+    }
     var foldLaneRangeForTesting: ClosedRange<Double>? { foldLaneRange }
     var markerTrackHeightForTesting: Double { markerTrackHeight }
 
@@ -1328,15 +1366,40 @@ public final class TimelineView: NSView {
         // everything after it.
         for cut in cuts {
             let foldX = geometry.x(atFold: cut)
+            let foldLook = FoldPalette.appearance(
+                expanded: expandedCutIDs.contains(cut.id),
+                selected: cut.id == selectedFoldID)
             if expandedCutIDs.contains(cut.id), let span = expansionSpan(for: cut) {
                 // Drawn in the space the AXIS reserved, not at `x(atFold:)`.
                 // That is the instant the cut collapsed to — after insertion,
                 // the band's trailing edge — so drawing from there put the band
                 // a full width too far right, over the content that follows,
                 // and left the reserved space blank.
-                NSColor.systemRed.withAlphaComponent(0.35).setFill()
-                NSBezierPath(rect: NSRect(x: span.x, y: 0, width: span.width,
-                                          height: bounds.height)).fill()
+                let band = NSRect(x: span.x, y: 0, width: span.width,
+                                  height: bounds.height)
+                FoldPalette.fill(foldLook).setFill()
+                NSBezierPath(rect: band).fill()
+                let border = FoldPalette.borderWidth(foldLook)
+                if border > 0 {
+                    // Two vertical edges, not a stroked rectangle. The band
+                    // already spans the full height, so the horizontal halves
+                    // of a rectangle border would draw along the very top and
+                    // bottom of the whole timeline and say nothing; the edges
+                    // are where the removed segment starts and ends, which is
+                    // the fact worth marking.
+                    //
+                    // Filled rather than stroked so a band narrower than two
+                    // borders degrades into a solid bar instead of a stroke
+                    // straddling its own edge — a sub-second cut at low zoom
+                    // is a fraction of a pixel wide, and `insetBy` on that
+                    // yields a negative-width rect.
+                    FoldPalette.base.setFill()
+                    NSBezierPath(rect: NSRect(x: band.minX, y: 0, width: border,
+                                              height: band.height)).fill()
+                    NSBezierPath(rect: NSRect(x: band.maxX - border, y: 0,
+                                              width: border,
+                                              height: band.height)).fill()
+                }
                 // The fold's own words, drawn in the space expanding it
                 // reserved. Only here: a COLLAPSED fold is two pixels wide and
                 // has nowhere to put them, and expanding one is the gesture
@@ -1345,8 +1408,10 @@ public final class TimelineView: NSView {
                                                     width: span.width,
                                                     height: bounds.height))
             } else {
-                NSColor.systemRed.setFill()
-                NSBezierPath(rect: NSRect(x: foldX - 1, y: 0, width: 2,
+                let width = FoldPalette.lineWidth(foldLook)
+                FoldPalette.fill(foldLook).setFill()
+                NSBezierPath(rect: NSRect(x: foldX - width / 2, y: 0,
+                                          width: width,
                                           height: bounds.height)).fill()
             }
         }
@@ -1370,7 +1435,14 @@ public final class TimelineView: NSView {
         let previewX = gesture.previewRange.map {
             (geometry.x(atOutput: OutputTime($0.start)), geometry.x(atOutput: OutputTime($0.end)))
         }
-        let selectionX = selection.flatMap { selection -> (Double, Double)? in
+        // A SELECTED FOLD is drawn by `FoldPalette` above, in red, and
+        // `selectFold` sets `selection` to the cut's source range alongside
+        // `selectedFoldID`. Drawing that range here too would be a second,
+        // blue highlight for the same thing — today it renders as nothing
+        // (both ends map into removed ground and the draw is skipped), which
+        // is luck rather than intent: a cut whose range happens to straddle
+        // kept footage would map, and paint a blue band over the red one.
+        let selectionX = selectedFoldID != nil ? nil : selection.flatMap { selection -> (Double, Double)? in
             guard let startX = geometry.x(atSource: SourceTime(selection.range.start)),
                   let endX = geometry.x(atSource: SourceTime(selection.range.end)) else { return nil }
             return (startX, endX)
