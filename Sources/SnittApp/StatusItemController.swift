@@ -189,7 +189,25 @@ final class StatusItemController: NSObject {
     /// detached, so left-click keeps invoking `onClick` (the kill switch).
     private func showContextMenu() {
         guard let statusItem, let button = statusItem.button else { return }
+        statusItem.menu = contextMenu()
+        button.performClick(nil)
+        statusItem.menu = nil
+    }
 
+    /// The menu itself, separated from showing it.
+    ///
+    /// Extracted so its STRUCTURE can be asserted. It was built inline inside
+    /// the presentation, which needs a live `NSStatusItem`, so nothing tested
+    /// it — an item could be removed, or a separator lost with it, and the
+    /// suite stayed green. Both happened: crash reporting was removed from
+    /// here and took the separator before Check for Updates… with it, leaving
+    /// the capture toggles running straight into the update actions.
+    ///
+    /// Deliberately does NOT touch `statusItem`. `NSStatusBar.system` is
+    /// process-global and a test that creates a real item has already caused
+    /// one unattributed failure in this suite; building a menu needs none of
+    /// it.
+    func contextMenu() -> NSMenu {
         let menu = NSMenu()
         let agentItem = NSMenuItem(title: "Allow agent recording",
                                    action: #selector(toggleAgentRecording),
@@ -243,6 +261,12 @@ final class StatusItemController: NSObject {
         // is the fast path — §4.11's whole point is that it stays short enough
         // to use without reading.
 
+        // Capture settings above, update actions below. The bleed warning
+        // stays on the capture side of this line: it is about the microphone
+        // toggle directly above it, and a separator between the two would read
+        // as it belonging to neither.
+        menu.addItem(.separator())
+
         // A manual check must always be available regardless of the
         // automatic-checks setting — the user clicking this IS the consent
         // §5 requires for an update check to happen at all.
@@ -273,9 +297,7 @@ final class StatusItemController: NSObject {
         quitItem.target = self
         menu.addItem(quitItem)
 
-        statusItem.menu = menu
-        button.performClick(nil)
-        statusItem.menu = nil
+        return menu
     }
 
     @objc private func quitSelected() {

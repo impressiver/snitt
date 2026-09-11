@@ -181,3 +181,12 @@ ShowClicksMenuTests :: Sources/SnittApp/KeyboardShortcutRegistry.swift :: action
 # was removed.
 SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: isOn: CrashReportSettings.load(defaults).enabled :: isOn: false
 SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: CrashReportSettings(enabled: sender.state == .on).save(to: defaults) :: let _ = sender
+
+# The status menu's grouping, and Show Clicks' binding.
+# Separators stop being emitted — the capture toggles run straight into the
+# update actions, which is what the crash-reports removal did by accident.
+StatusItemMenuTests :: Sources/SnittApp/StatusItemController.swift :: menu.addItem(.separator()) :: let _ = menu
+# Show Clicks loses its modifier mask and becomes plain Cmd-C, which is Copy.
+ShowClicksMenuTests :: Sources/SnittApp/KeyboardShortcutRegistry.swift :: entry.keyEquivalentModifierMask = shortcut.modifiers :: let _ = shortcut.modifiers
+# The grouping separator in the Playback menu is dropped.
+ShowClicksMenuTests :: Sources/SnittApp/KeyboardShortcutRegistry.swift :: if shortcut.startsGroup { menu.addItem(.separator()) } :: let _ = shortcut.startsGroup

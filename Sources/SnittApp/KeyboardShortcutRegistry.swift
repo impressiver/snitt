@@ -20,6 +20,14 @@ public struct KeyboardShortcut: Equatable, Sendable {
     /// Which menu it belongs under.
     public let menu: Menu
     public let selector: Selector
+    /// Draws a separator above this item.
+    ///
+    /// Here rather than in the menu builder so grouping stays a property of
+    /// the list — the same reason the bindings are. A builder that inserted
+    /// separators by position would have to be edited every time the list is
+    /// reordered, and would silently put the line in the wrong place if that
+    /// edit were missed.
+    public var startsGroup: Bool = false
 
     public enum Menu: String, CaseIterable, Sendable {
         case playback = "Playback"
@@ -61,6 +69,13 @@ public enum KeyboardShortcutRegistry {
         .init(title: "Next Mark", key: String(UnicodeScalar(NSRightArrowFunctionKey)!),
               modifiers: [.option], menu: .playback,
               selector: #selector(AppDelegate.goToNextMark(_:))),
+        // ⇧⌘C — C for clicks. Plain ⌘C is Copy and ⇧⌘C is unclaimed, both
+        // here and by the system. Grouped away from the four above because it
+        // changes what you SEE rather than where you are.
+        .init(title: showClicksTitle, key: "c",
+              modifiers: [.command, .shift], menu: .playback,
+              selector: #selector(AppDelegate.toggleShowClicks(_:)),
+              startsGroup: true),
     ]
 
     /// Builds the Playback menu from `shortcuts`, so an item cannot exist
@@ -70,22 +85,13 @@ public enum KeyboardShortcutRegistry {
                               action: nil, keyEquivalent: "")
         let menu = NSMenu(title: KeyboardShortcut.Menu.playback.rawValue)
         for shortcut in shortcuts where shortcut.menu == .playback {
+            if shortcut.startsGroup { menu.addItem(.separator()) }
             let entry = NSMenuItem(title: shortcut.title,
                                    action: shortcut.selector,
                                    keyEquivalent: shortcut.key)
             entry.keyEquivalentModifierMask = shortcut.modifiers
             menu.addItem(entry)
         }
-        // Appended outside the `shortcuts` loop because it is a different kind
-        // of thing: a persistent CHECKABLE state, not a key-triggered action.
-        // Forcing it into `shortcuts` would mean an entry with no key, which
-        // `helpText` would then render as a shortcut with a blank binding.
-        menu.addItem(.separator())
-        let clicks = NSMenuItem(title: showClicksTitle,
-                                action: #selector(AppDelegate.toggleShowClicks(_:)),
-                                keyEquivalent: "")
-        menu.addItem(clicks)
-
         item.submenu = menu
         return item
     }
