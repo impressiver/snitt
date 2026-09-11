@@ -57,7 +57,16 @@ The grammar (this is what makes it read as designed, not decorated):
    the final value.
 6. **New windows set `isReleasedWhenClosed = false`** (`WindowLifetimeTests`
    pins the existing two; pin any new one).
-7. **Colours are sRGB, never `NSColor(white:)`** (generic-gray colorspace trap,
+7. **Every change to what an edit gesture DOES must answer for undo.** The spec's
+   first draft said "undo" zero times while changing what a single click does (W11) and
+   adding a new ⌫-cut surface (W14). The app has a real `UndoManager` with registration
+   sites at `EditorWindowController.swift:491, 533, 551`. Two rules: a new or changed
+   edit registers undo the way its neighbours do, and **`UndoManager.groupsByEvent` is on
+   by default**, collapsing registrations made in one run-loop pass — rev 4 shipped a
+   test that passed against both the correct and the incorrect implementation for exactly
+   this reason, so a test claiming "one ⌘Z restores the whole edit" must be proven to
+   fail against the version that registers twice.
+8. **Colours are sRGB, never `NSColor(white:)`** (generic-gray colorspace trap,
    documented at `TimelineView.swift:1281`). The HUD renders the user's real
    shortcut bindings or nothing — never a hardcoded key that does nothing
    (PR #66's rule; `Shortcuts.pause` is genuinely nil today).
@@ -164,7 +173,7 @@ the exact surfaces whose content should carry the colour.
 |---|---|
 | Titlebar/toolbar row | height 38 · leading inset 78 (traffic lights) · h-padding 12 · control gap 10 · panel-toggle isolated by 1×16 separator + 8 gap at trailing edge |
 | Transport bar | padding 12h 6v · gap 9 · cluster pad 3 gap 2 · buttons 26×22, play 30×22 · radii: cluster 8, field 6, buttons 5 |
-| Timeline lanes | side padding 12 · lane gap 4 · ruler strip 14 · stack 24+36+26+26+22 + 4×4 = **150pt** · gutter column 56 (or current width if larger) · every draggable/clickable target ≥24pt (WCAG 2.5.8) |
+| Timeline lanes | side padding 12 · lane gap 4 · ruler strip 14 · stack, **from the shipped constants in `TimelineLaneBudget`** (`minimumTargetHeight` 24 marks · `preferredVideoHeight` 36 · `preferredAudioHeight` **44** each · `transcriptLaneHeight` **30**) = 24+36+44+44+30 = **178pt** after the fold lane is removed. The 26/26/22 figures in the rev-4 design document are aspirational and are **not** what the code uses — never do arithmetic against them · gutter column 56 (or current width if larger) · every draggable/clickable target ≥24pt (WCAG 2.5.8) |
 | Markers rail | width 260 (constant `chaptersRailWidth` — value kept) · row padding 6v 12h · current-bar 2.5 · header 11 semibold + trailing ghost "+" |
 | Export sheet | width 460 · header 20h 14v · body pad 20, section gap 16 · option rows 10h 7v · stat cards pad 12, gap 10, radius 8 · footer 16h 11v |
 | Settings | width 520 · content pad 20 · rows 13v, checkbox–text gap 11, checkbox top-aligned · hairline between rows |
@@ -204,17 +213,21 @@ All rows gate on `accessibilityDisplayShouldReduceMotion`; nothing runs on the
   | Tier | Fires at | Draws |
   |---|---|---|
   | Words | ≥ 40 pt/word | one chip per word at its start; pauses ≥1s are dashed duration chips, selectable and cuttable. 40 = rev 4's measured chip cost (13.85 pt/word × the 2.9× zoom its table demanded) |
-  | Phrases | 4 – 40 pt/word | one chip per pause-bounded phrase (gap ≥ 0.35s), first words + ellipsis; pauses survive every tier |
-  | Density | < 4 pt/word | 6pt strip, words-per-second as ink3→signal ramp |
+  | Phrases | 11.25 – 40 pt/word | one chip per pause-bounded phrase (gap ≥ 0.35s), first words + ellipsis; pauses survive every tier |
+  | Density | < 11.25 pt/word | 6pt strip, words-per-second as ink3→signal ramp |
 
   Rev 4's rows verbatim: 0.4min/65w → 13.85 pt/word → **phrases** at 1×;
   2.5min/400w → 2.25 → **density**; 10min/1500w → 0.60 → density;
   30min/4500w → 0.20 → density.
-- **The HUD's audio toggles are edit decisions, not capture switches.** The
-  capture layer records mic and system as separate tracks *precisely so either
-  can be muted later* (§4.5 pristine capture; `TrackKind`'s doc). No live mute
-  exists and none may be added. The toggle writes the take's initial
-  `TrackState.muted`; both tracks always capture; the gutter reverses it.
+- **HUD audio toggles are deferred until multi-point audio levels exist**
+  (product-owner ruling, 2026-09-10). The capture layer records mic and system as
+  separate tracks *precisely so either can be muted later* (§4.5 pristine capture;
+  `TrackKind`'s doc), and no live mute exists or may be added. That leaves only an
+  edit-flag control, which review confirmed is a privacy trap: it looks like it
+  stopped capture when it did not, and its whole-take boolean makes the natural
+  press-then-release gesture cancel itself. Mute is the degenerate case of
+  time-varying level, so the control waits for the general mechanism rather than
+  inventing a one-off. See W4 for the full reasoning and the reopen trigger.
 - **The transcript control is a panel toggle, not an action**: icon-only
   `sidebar.trailing` at the toolbar's trailing edge past a divider, accent wash
   18% while open — the standard inspector-toggle idiom.
@@ -243,13 +256,34 @@ No new windows, no new capabilities.
 ## 7. Fleet protocol — binds every work item
 
 - **Verification.** The gate is `./Scripts/run-tests.sh` — only its reconciled
-  summary counts; a bare `swift test` exit code is untrustworthy (segfaults exit
-  0). Add each item's mutants to `Tests/mutants.txt` and run
-  `./Scripts/mutate.sh Tests/mutants.txt`; every mutant must die. When one
-  survives, check whether the test asserts the property or something adjacent —
-  this project has logged 26 adjacent-property tests. After any visual change,
-  rebuild the app (`./Scripts/make-app.sh`) and look at it — tests passing is
-  not pixels changing, and `build/Snitt.app` is what the product owner runs.
+  summary counts; a bare `swift test` exit code is untrustworthy (segfaults exit 0).
+  After any visual change, rebuild the app (`./Scripts/make-app.sh`) and look at it —
+  tests passing is not pixels changing, and `build/Snitt.app` is what the product owner
+  runs. **Note what CI does and does not give you:** `.github/workflows/ci.yml` runs only
+  `SnittDocumentTests|SnittCaptureTests|SnittAutomationTests|SnittCLITests|SnittMCPTests`
+  — `SnittAppTests` is excluded by design (it hangs on a headless hosted runner), and
+  *every* guardrail suite this spec leans on lives there. There is no automated signal
+  for this work; the local gate and your own eyes are the whole of it.
+- **The mutation gate, and how it lies.** `Scripts/mutate.sh` parses each line as
+  **four** `::`-separated fields — `<test-filter> :: <file> :: <find> :: <replace>` —
+  and substitutes with a **literal** Python string replace. When the anchor is not found
+  it prints `SKIP` **and decrements the total**, so a file of malformed mutants reports
+  `0/0 mutants killed.` and exits 0: a clean pass that tested nothing, the same failure
+  shape as `swift test` exiting 0 on a segfault. Therefore:
+  1. Every mutant is four real fields. The `<find>` string must be a **unique literal**
+     that exists in the named file — never prose, never a parenthetical description.
+     Write the code first, then anchor the mutant to what you actually wrote.
+  2. **A `SKIP` counts as a FAILED mutant, not a pass.** Read the run's output, not just
+     its exit status, and confirm the numerator equals the number of mutants you added.
+  3. If an item deletes code another mutant anchors on, **replace that mutant in the same
+     PR.** Leaving it to SKIP silently shrinks the gate.
+  4. Run **only your own new lines** during the item (`Scripts/mutate.sh` accepts any
+     spec file — keep a scratch file of the item's mutants). The cumulative
+     `Tests/mutants.txt` is run **once, at W9**. Re-running the whole accumulated file on
+     every branch costs roughly 620 mutant-executions across the series instead of ~57,
+     each one a patch → filtered `swift test` → restore cycle.
+  When a mutant survives, check whether the test asserts the property or something
+  adjacent — this project has logged 26 adjacent-property tests.
 - **Colour discipline.** Every colour comes from `SnittPalette` (W1): one
   property per token, `NSColor` stored, `Color` derived, sRGB only, no re-typed
   literals at call sites, tests assert the property. Do not delete
@@ -259,13 +293,29 @@ No new windows, no new capabilities.
   start), the consent flow, the menu-bar menu's structure. Update
   `PreviewFixtures`-driven `#Preview`s alongside each surface touched — they are
   the visual regression net.
-- **Branching:** branch from `main` per item (`feat/rev5-w1-palette` …), one PR
-  per item, never commit to main. Baseline at time of writing: 1379 tests, 28
-  mutants — both drift; trust the reconciliation, not these numbers.
-- **Order:** W1 first; W10 any time (artwork only); W12 before or with W13;
-  W14 after W11; W9 last, after all others merge. Everything else is
-  parallel-safe after W1 but merges sequentially — expect rebases in
-  `Sources/SnittApp`.
+- **Branching — five PRs, not fourteen** (product-owner ruling, 2026-09-10). Since CI
+  gives this work zero signal either way, one-PR-per-item buys no extra verification
+  while paying branch, rebase, full-local-gate and rebuild-and-eyeball overhead fourteen
+  times. The work items stay as written — they are the units of *work and review*; the
+  PR is the unit of *integration*. Group them:
+
+  | PR | Contents | Why grouped |
+  |----|----------|-------------|
+  | **1** | W1 | the blocking foundation; nothing else can start |
+  | **2** | W2, W5, W6, W7, W8 | pure token substitution and copy, no logic change, little file overlap |
+  | **3** | W11, W12, W13, W14 | all four touch `TimelineView`/the gutter; separate branches would rebase against each other continuously. **W11's step 0 gates the whole PR** |
+  | **4** | W3 | the one genuine unknown (titlebar drag); isolated so a revert takes nothing else with it |
+  | **5** | W9 | the sweep, after everything has landed |
+  | **—** | W10 | artwork + `make-app-icon.sh` only; no `Sources/SnittApp` overlap, so it may land any time on its own branch |
+
+  Branch from `main` per PR (`feat/rev5-pr2-recolour` …), never commit to main. Within a
+  PR, commit per work item so a single item can still be reverted. Baseline at time of
+  writing: 1379 tests, 29 mutant lines — both drift; trust the reconciliation, not these
+  numbers.
+- **Order:** PR 1 → then PR 2 and PR 4 in either order → PR 3 (its internal order is
+  W11 → W12 → W13 → W14) → PR 5 last. W10 any time. **PR 4 (W3) runs alone: nothing else
+  merges while it is in flight**, because the titlebar change is the one item whose
+  fallback path is unknown until it is tried.
 
 ## 8. Work items
 
@@ -296,7 +346,10 @@ Migrations, all in this PR:
 
 - `TimelineView.swift:1288-1300` — `Palette.background/videoBand/audioBand/separator/playhead`
   become ink0/ink1/ink2/ink3/playheadInk; `waveform` becomes `SnittPalette.signal`
-  (muted keeps the 0.28-alpha derivation). Keep the local `Palette` enum as a
+  (muted keeps the 0.28-alpha derivation). **Two further tokens live in that enum and
+  must not survive as neutral greys inside a navy instrument:** `markerLane = grey(0.26)`
+  and `audioBandMuted = grey(0.155)`. Their ink-ramp targets are an open decision (§10) —
+  do not invent values. Keep the local `Palette` enum as a
   forwarding layer so 40+ call sites don't churn.
 - `FoldPalette.swift:29` — `base = NSColor.systemRed` → `SnittPalette.recordRed`;
   selected-border variant uses `redBright`. Alphas and widths (0.35/0.55, 4/2/2)
@@ -377,7 +430,7 @@ assertion, and eyeball the double-title regression in the built app.
 
 ### W4 — The HUD in ink *(after W1)*
 
-`RecordingHUDPanel.swift` — paint plus three behaviours. Never-key /
+`RecordingHUDPanel.swift` — paint plus two behaviours. Never-key /
 non-activating invariants and their tests are untouchable.
 
 Paint: per §4.3's HUD row. Dot recordRed (was systemRed); paused keeps the
@@ -400,22 +453,35 @@ Behaviours (each is a sequence — test the order):
   `(state, pointerNear, secondsIdle) → alpha`. Sequence test: pause *during* the
   fade → alpha restores (a paused HUD is reporting an abnormal state and must be
   fully visible).
-- **Audio source toggles** (new controls): two buttons after a 1px ink3 divider —
-  mic (`mic`/`mic.slash`) and system audio (`speaker.wave.2`/`speaker.slash`).
-  Active = playheadInk on ink2; muted = slateText with the slash carrying the
-  shape. ≥28pt targets. Semantics per §5: the toggle writes the take's initial
-  `TrackState.muted`; capture untouched. Plumb through `RecordingCoordinator`'s
-  pending state. A source not being captured at all (mic off in Settings)
-  renders disabled, not muted — different facts. Each flip posts an
-  accessibility announcement ("Microphone will be muted in this recording").
-  Sequence tests: toggle mic → pause → resume → stop: bundle's track state
-  muted AND both audio files exist with real duration (pristine capture
-  asserted). Toggle twice → stop: unmuted — the flag is state, not an event log.
+- **Audio source toggles — DEFERRED, do not build in this rev.** An earlier draft
+  put mic and system-audio toggles on the HUD. Review killed that design, and the
+  product owner's ruling is to **wait for multi-point audio levels** (2026-09-10).
+  The reasoning, recorded so this is not re-litigated from scratch: mute applies
+  **only in the export mix** (`CompositionBuilder.swift:244`,
+  `state.muted ? 0.0 : Float(state.gain)`) — capture never stops and both tracks
+  always reach disk — so a live control wearing `mic.slash` and announcing
+  "Microphone will be muted in this recording" tells a user their private aside was
+  protected when it was captured in full. And `TrackState` is **one boolean for the
+  whole take** (`CompositionBuilder.swift:218-244` resolves one state per track with
+  no time ranges), so pressing it twice to cover a moment nets out to unmuted for the
+  entire recording — discarding exactly the protection the user believed they had.
+  A real live mute is forbidden by §4.5 pristine capture, so the honest version needs
+  **time-varying audio state**, of which mute is the degenerate case. **Reopen when
+  multi-point audio levels land** — gain as an envelope over time rather than one
+  scalar per track. At that point the HUD control becomes a natural producer of level
+  points, no new document concept is invented for it alone, and the "press to protect,
+  press again to release" gesture means what it looks like. Until then the editor
+  gutter's double-click mute (`TimelineGutter.swift:26`) is the shipped answer: same
+  outcome, one step later, on plumbing that already exists and is already tested.
 
-Mutants: `dot :: SnittPalette.recordRed :: NSColor.systemRed` ·
-`fade :: 0.40 :: 1.0` · `breathe guard :: isPaused :: !isPaused` ·
-`mic toggle :: TrackState.muted = true :: false` · a capture-guard mutant killed
-by the both-files-exist assertion.
+Mutants (four-field, literal anchors — see §7):
+```
+RecordingHUDPanelTests :: Sources/SnittApp/RecordingHUDPanel.swift :: <the recordRed dot assignment, verbatim> :: NSColor.systemRed.cgColor
+RecordingHUDModelTests :: Sources/SnittApp/RecordingHUDModel.swift :: <the idle-fade alpha constant, verbatim> :: 1.0
+RecordingHUDModelTests :: Sources/SnittApp/RecordingHUDModel.swift :: <the breathe guard condition, verbatim> :: !isPaused
+```
+Anchor each `<…>` to the exact unique literal you wrote, and confirm the run reports
+them **killed**, never `SKIP`.
 
 ### W5 — Export sheet, promoted *(after W1 · small)*
 
@@ -430,9 +496,16 @@ GIF ceilings all stay. Changes:
   system accent at 9%.
 - Header gains the format glyph leading the title; Export stays
   `.borderedProminent` system accent.
-- Sequence test: change format MP4→GIF *while measuring* — the in-flight
-  estimate must not land on the GIF state (assert via the existing
-  token/provider seam, not sleeps).
+- Sequence test: **the race an earlier draft specified (switching format while
+  measuring) cannot occur.** `setFormat` is a synchronous local mutation;
+  `ExportEstimator.menu(bundle:edl:scale:)` takes no format parameter; the only
+  measurement fires on `state.exportRequestToken`, whose sole writer is `requestExport()`.
+  The estimate is computed once per sheet-open and is format-independent — GIF only greys
+  the same numbers. A mandated test that cannot fail manufactures false confidence, so it
+  is replaced by the real, currently unpinned race: **a stale measurement landing on a
+  resolution the user picked in the meantime.** The guard already exists at
+  `EditorWindowController.swift:1581-1586` (`if exportRequest.resolution == .source`) and
+  no test covers it. Pin it, through the existing token/provider seam, not sleeps.
 - Mutants: `estimatesApply :: format == "mp4" :: true` (existing, must still
   die) plus `measuring guard :: isMeasuring :: false` against the crossfade
   guard the implementation introduces.
@@ -515,9 +588,32 @@ Remove the y-gated fold lane from `TimelineView`; the full-height presentation
 (today's short-view fallback) becomes the only one, styled per §4.3. Every
 x-coordinate continues to come from the shared axis — restyle rectangles, never
 add, move, or re-derive a position. `GestureAxisTests` and
-`ExpandedFoldAxisTests` pass unmodified or the item is wrong.
+`ExpandedFoldAxisTests` pass unmodified or the item is wrong. **Those are not the suites
+at risk, though:** `Tests/SnittAppTests/GestureMatrixTests.swift` encodes the fold lane's
+gesture semantics, and two of its tests — `singleClickIsGatedToTheFoldLane` and
+`singleClickInFoldLaneToggles` — assert exactly the invariant this item removes. A green
+run from the axis suites proves nothing about this change.
 
-Steps:
+**Step 0 — write the collision test BEFORE any other change, and let it decide the
+item's shape.** This is a hard gate (product-owner ruling, 2026-09-10). The directive
+"cuts don't belong in their own lane" is about the **drawing**; deleting the y-gate
+silently converts it into a **gesture** change, because today right-click and
+double-click already reach a cut from every lane and only *single click* is gated —
+elsewhere single click means scrub, and after W14 it also means select a word chip.
+`TimelineView.swift:536` states the hazard outright: *"an ungated full-height hit
+swallows clicks meant for each of them, three times over."*
+
+The test: click at a cut's x with y inside **each** surviving lane (Marks, Filmstrip,
+Mic, System, Words) and assert the click resolves to **that lane's** own gesture, not
+`foldHit`. Write it, watch it fail against the ungated implementation, then make it pass.
+
+**If it cannot be made to pass without re-introducing some form of gate, this item's
+shape is wrong** — cuts then need an explicit hit *priority* rule (single click yields
+to the lane under the pointer; right-click and double-click keep reaching the cut from
+anywhere, as they already do), not a deletion. Discovering that costs an hour here and a
+re-litigated milestone later. Report which way it went before continuing.
+
+Steps (after step 0):
 
 - Delete the fold-lane branch and its y-gate; `foldHit(atX:)` is untouched.
   Collapsed cut: 3px seam, recordRed, ruler notch; selected adds 12% wash +
@@ -526,8 +622,14 @@ Steps:
   `FoldPalette`'s four-appearance structure absorbs the retuned values — it
   stays the single authority.
 - Draw order: seams and columns above lane content, below the playhead.
+- **Undo (§2.7):** whatever step 0 settles, if single click gains a new *edit* meaning
+  anywhere, that edit registers undo like its neighbours; selection alone does not.
 - `TimelineLaneBudget`: remove the fold lane's 24pt + gap; update the derived
-  arithmetic and its tests *by derivation* (stack becomes 150pt;
+  arithmetic and its tests *by derivation* (stack becomes **178pt** — `naturalHeight`
+  minus `foldLaneHeight`. The 150pt figure in an earlier draft was arithmetic on the
+  design document's aspirational lane heights, not on the shipped `preferredAudioHeight
+  = 44` / `transcriptLaneHeight = 30`. **Reaching a smaller stack by editing those two
+  constants is a behavioural change nobody has decided — not part of this item**;
   `minimumContentSizeIsDerived` follows automatically — if any assertion needs
   hand-nudging, the derivation is broken; stop and fix that).
 - Accessibility: fold elements in `TimelineAccessibility` keep their roles; only
@@ -535,9 +637,16 @@ Steps:
   `foldHit(atX:)` claims. New test: a11y frame == hit frame, per fold, both
   states.
 
-Mutants: `selected wash :: 0.32 :: 0.20` · `seam draw :: (full height) ::
-(lane-height 18)` (killed by the frame-equality test) · `budget :: (fold row
-removed) :: (fold row kept)` against the derived-minimum test.
+Mutants (four-field, literal anchors — see §7). Two existing entries in
+`Tests/mutants.txt` anchor on the code this item deletes and **must be replaced in the
+same PR, not left to SKIP**:
+```
+GestureMatrixTests :: Sources/SnittApp/TimelineView.swift :: if let range = foldLaneRange, !range.contains(point.y) { return nil } ::
+GestureMatrixTests :: Sources/SnittApp/TimelineView.swift :: guard let cut = foldHit(atX: point.x) else { return nil } :: guard let cut = foldHit(at: point) else { return nil }
+```
+Their replacements must pin whatever step 0 settles — the priority rule if one is added,
+or the new cross-lane contract if not — plus the selected-wash alpha and the lane-budget
+row, each anchored to the exact literal you wrote.
 
 ### W12 — The segmented waveform *(after W1 · before or with W13)*
 
@@ -546,25 +655,41 @@ clusters (signal; ×0.28 muted), silence as a 1px slateText 30% baseline.
 
 The classification is the whole item:
 
-- **One silence rule, two consumers.** Auto-trim already classifies
-  idle-vs-working spans. Extract its audio-silence decision into one shared pure
-  function (threshold + minimum-span hysteresis) consumed by both the trim
-  pipeline and the painter — never a second threshold in the view. If the
-  existing classifier blends audio with input-event evidence, extract only the
-  audio term and document the seam. Invariant, with a test: a span the painter
-  draws as silent is a span Auto-Trim would treat as silent, on a fixture with a
-  known silent middle.
-- Segment caps 1px rounded; spans shorter than 2px merge into their neighbour
-  (hysteresis, not per-pixel flicker). Same single pass over the peak columns as
-  today.
+- **There is nothing to extract — the shared kernel already exists.** An earlier draft
+  said "extract auto-trim's silence rule" as though one monolithic rule existed; review
+  found that `AutoDeepTrim.swift:155-157` already builds its per-track threshold out of
+  `SpeechChunker`'s primitives:
+  ```swift
+  max(SpeechChunker.absoluteSilenceFloor,
+      SpeechChunker.referenceLevel(of: track.peaks) * criteria.audioSilenceFraction)
+  ```
+  The painter uses **that same expression, per track** — same primitives, one threshold
+  per lane against that lane's own reference level (a mic and a system tap sit at
+  different levels, which is why the shipped code is per-track and the lane must be too).
+  **Write no new threshold and no new constant.**
+- **The invariant needs a named preset, because the parameters are preset-dependent.**
+  `DeepTrimCriteria` varies both numbers: conservative `0.04` / 3.0s minimum span,
+  default `0.08` / 1.5s, aggressive `0.16` / 0.8s. So "a span the painter draws silent is
+  a span Auto-Trim would cut" is **only true for one preset at a time**. The lane draws
+  the **default** preset (whose `0.08` is also `SpeechChunker.silenceFraction`, so the two
+  agree exactly there), and the minimum-span hysteresis comes from the same preset rather
+  than an invented value. Say so where a user can see it: running Aggressive cuts more
+  than the lane showed, and that is honest only if stated. The test asserts the invariant
+  **against the default preset**, on a fixture with a known silent middle.
+- Segment caps 1px rounded; spans shorter than the preset's minimum span merge into
+  their neighbour (hysteresis from `DeepTrimCriteria`, not an invented per-pixel rule),
+  and sub-2px spans collapse visually. Same single pass over the peak columns as today.
 - `PreviewFixtures`' LCG peaks gain a deliberate silent middle third so every
   preview shows bars, baseline, bars.
 
-Tests + mutants: segmentation is pure — test on arrays, not pixels
-(known-silent middle → one merged silent span; all-quiet → entirely baseline;
-all-hot → one span). Mutants: `threshold :: (shared value) :: 0` (the solid
-waveform sneaking back) · `hysteresis :: minSpan :: 0` ·
-`painter :: silent → baseline :: silent → bars`.
+Tests + mutants: segmentation is pure — test on arrays, not pixels (known-silent middle
+→ one merged silent span; all-quiet → entirely baseline; all-hot → one span), plus the
+cross-check that the painter's spans match `AutoDeepTrim`'s at the default preset.
+Mutants (four-field, literal anchors — see §7):
+```
+WaveformSegmentationTests :: Sources/SnittApp/TimelineView.swift :: <the threshold expression, verbatim> :: 0
+WaveformSegmentationTests :: Sources/SnittApp/TimelineView.swift :: <the minimum-span merge guard, verbatim> :: 0
+```
 
 ### W13 — The gain ladders, branded and on deck *(after W1 · small)*
 
@@ -583,25 +708,35 @@ is correct, tested, untouched. Paint and placement for its view in
 Mutants: `hot :: SnittPalette.recordRed :: SnittPalette.signal` ·
 `muted ladder :: 0.28 :: 1.0`. Assert against palette properties.
 
-### W14 — The words lane, at its honest tier *(after W1 and W11 · the largest item)*
+### W14 — The words lane, at its honest tier *(after W1 and W11 · view layer only)*
 
-Build the words lane per §5's tier table: a 22pt lane below System drawing
-whichever tier the arithmetic earns. Rev 4's deferral ruling — "prototype the
-zoom transitions against a real transcript" — is satisfied by the tier model:
-there is no wrong zoom because the tier follows the zoom.
+**The model already exists — do not rebuild it.** An earlier draft called this "the
+largest item" and specified building a pure tier function. Review found
+`Sources/SnittDocument/WordLaneTiers.swift` already on `main`, with
+`TranscriptPhrases.swift` for pause-bounded grouping and
+`Tests/SnittDocumentTests/WordLaneTiersTests.swift` already covering it — including
+monotonicity. This item is therefore **view-layer only**: draw a 22pt lane below System
+that renders whatever tier `WordLaneTiers.tier(wordCount:laneWidth:)` returns.
 
 Structure:
 
-- The tier decision is one pure function
-  `(laneWidthPoints, wordCount) → .words | .phrases | .density`, thresholds 40
-  and 4 pt/word (40 is rev 4's measured chip cost, not a taste call). Zoom feeds
-  it the zoomed width — no stored mode, no setting.
+- **Consume `WordLaneTiers`; add no second tier function under any name.** Its shipped
+  constants are `minimumChipWidth = 40`, `minimumPhraseWidth = 90`,
+  `wordsPerPhrase = 8`, so the real boundaries are **≥40 pt/word → words** and
+  **90 ÷ 8 = 11.25 pt/word → phrases**, below which density. §5's table states these.
+  An earlier draft said the phrases/density boundary was **4 pt/word**, a number nothing
+  in the codebase produces; every worked example in rev 4's table happens to fall outside
+  the 4–11.25 band, which is why the contradiction was invisible in the spec's own
+  evidence and would have surfaced only as a misclassified real transcript.
+  `WordLaneTiers.zoomNeeded` already reports how far to zoom to reach a target tier —
+  use it rather than recomputing. Zoom feeds the *lane width*; no stored mode, no
+  setting.
 - Every chip's x comes from the shared axis (`x(atOutput:)` of the word's
   start) — the lane survives expanded-fold reflow for free; a test asserts a
   word after an expanded cut sits at the axis's answer. **No second time→x
   mapping, under any name.**
-- Phrase grouping: pause-bounded (gap ≥ 0.35s); pauses ≥ 1s render as dashed
-  duration chips in every chip tier. Density: 6pt strip, words-per-second
+- Phrase grouping comes from `TranscriptPhrases`, not from a new rule here; pauses
+  ≥ 1s render as dashed duration chips in every chip tier. Density: 6pt strip, words-per-second
   bucketed per pixel column, ink3→signal ramp.
 - States reuse existing single sources: current word from
   `currentHighlightColor` + bold; cut words full-ink strikethrough on recordRed
@@ -613,14 +748,27 @@ Structure:
   one changes; the playhead tick is not one of them.
 - Collapse order unchanged: Words still hides first under height pressure, and
   the Show All Lanes escape hatch lists it.
+- **Accessibility: the chips are elements, not pixels.** Rev 4 committed to marks, folds
+  and the playhead becoming real accessibility elements so VoiceOver's rotor can step
+  between them; a canvas-drawn word lane inherits none of that by default. In the chip
+  tiers each chip is an element carrying its word and its time; in the density tier the
+  lane is one element describing where speech is, not thousands of unreachable buckets.
+  Selection and the ⌫ cut are reachable from the keyboard, matching the transcript pane's
+  existing gesture rather than inventing a second one.
+- **Undo (§2.7):** the chip ⌫ cut registers undo exactly as the transcript pane's cut
+  does — same path, one registration, and a test proven to fail against a double
+  registration.
 
-Tests + mutants: tier function against rev 4's table verbatim (the 2.5-min row
-yields .density — 2.25 sits under 4, exactly the boundary a test exists for; the
-0.4-min row yields .phrases at 1× and .words at 3×). Boundaries at 40.0 and 4.0
-exactly. Mutants: `tier :: 40 :: 0` (everything word chips — the lie rev 4
-refused to ship) · `phrase gap :: 0.35 :: 0` ·
-`cut chip ink :: (full label colour) :: 45% opacity` (re-creates the exact
-defect rev 4's accessibility pass fixed).
+Tests + mutants. The tier arithmetic is **already tested** in
+`WordLaneTiersTests` — do not duplicate it. What is untested is the **view**: that the
+lane renders the tier the model returns, that a chip after an expanded cut sits at the
+axis's x, and that cut words draw at **full ink** with strikethrough rather than reduced
+opacity (rev 4's accessibility finding, which is a test, not a preference).
+Mutants (four-field, literal anchors — see §7):
+```
+WordLaneViewTests :: Sources/SnittApp/TimelineView.swift :: <the tier switch's .words case, verbatim> :: case .phrases
+WordLaneViewTests :: Sources/SnittApp/TimelineView.swift :: <the cut-chip label colour, verbatim> :: .withAlphaComponent(0.45)
+```
 
 ### W9 — The polish sweep *(last — after all others merge)*
 
@@ -637,8 +785,16 @@ One pass, one PR, a checklist not a design:
 - **Focus**: with Full Keyboard Access on, walk toolbar → transport → timeline
   → rail; every stop visibly ringed on its actual ground (ink surfaces are the
   ones likely to swallow the ring).
-- **Help audit**: every control has `.help`, and every claimed shortcut resolves
-  through `KeyboardShortcutRegistry` (D84) so tooltips can't drift from keys.
+- **Help audit**: every control has `.help`, and every claimed shortcut resolves through
+  the system that actually owns it. **These are two disjoint systems, and conflating them
+  is dangerous:** editor and menu shortcuts resolve through `KeyboardShortcutRegistry`
+  (D84) — four entries, all `menu: .playback`, which require the app to be key. The HUD's
+  global recording shortcuts resolve through `HotkeySettings`/`HotkeyAction`, which has
+  exactly two cases, `.record` and `.marker`; `main.swift:323-332` builds the HUD's
+  `Shortcuts` straight from `HotkeySettings.load()`. **Pause names no shortcut because no
+  `.pause` `HotkeyAction` exists** — the structural reason behind §2's constraint #8. Do
+  **not** route HUD shortcuts through the menu registry: it requires the app to be key,
+  which is exactly what §4.11 forbids the HUD to be.
 - **Copy audit — "Markers" everywhere**: no user-facing string says "chapter"
   (verify the 9f642fb rename held, incl. menus, help strings, user-visible
   export metadata labels). Identifiers like `chaptersRailWidth` may stay.
@@ -655,12 +811,18 @@ replaced.
 
 ## 9. Still open, still honest
 
+- **HUD audio toggles** — deferred with a named trigger: **multi-point audio levels**.
+  When gain becomes an envelope over time rather than one scalar per track, the HUD
+  control becomes a natural producer of level points and the press-to-protect gesture
+  means what it looks like. Do not rebuild the one-off before then (W4).
 - **Whether the timeline ever follows the appearance** — deliberately deferred
   until the branded ink deck has lived inside a light window.
-- **The words lane at real scale** — thresholds derive from rev 4's
-  measurements, but the density ramp and phrase grouping have never been seen
-  against a ten-minute narrated transcript. W14 ships them; the first long
-  recording judges them.
+- **The words lane at real scale** — `WordLaneTiers` is built and tested, but its
+  density ramp and phrase grouping have never been *seen* against a ten-minute narrated
+  transcript. W14 draws them; the first long recording judges them.
+- **W11's step 0 may reshape W11.** If the cross-lane collision test cannot pass without
+  a gate, cuts need an explicit hit-priority rule rather than a deletion — a bigger change
+  than this item is scoped for, and one to bring back rather than improvise.
 - **W3's drag behaviour** — the one genuine unknown; fenced as its own PR with a
   named fallback.
 - **Whether a `.icon` document can enter the SwiftPM + `make-app.sh` bundle**
