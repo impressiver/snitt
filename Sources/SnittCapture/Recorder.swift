@@ -302,15 +302,44 @@ public actor Recorder {
     public func pause() async {
         guard !session.isPaused else { return }
         session.pause()
-        await eventLog.add(at: await currentOffset(), kind: .marker, label: "Paused")
+        let offset = await currentOffset()
+        pausedAtOffset = offset
+        await eventLog.add(at: offset, kind: .marker, label: "Paused")
     }
 
     /// Resumes a paused recording. Idempotent.
     public func resume() async {
         guard session.isPaused else { return }
         session.resume()
-        await eventLog.add(at: await currentOffset(), kind: .marker, label: "Resumed")
+        // THE SAME INSTANT THE PAUSE WAS STAMPED AT, deliberately.
+        //
+        // A pause occupies no footage — it is the absence of buffers — so the
+        // instant the recording stopped and the instant it started again are
+        // one point in the file. Anything else is two markers claiming a gap
+        // that the file does not contain.
+        //
+        // They used to disagree by the capture latency, and in a way that read
+        // as nonsense: `pause()` stamps from the host clock at the moment the
+        // request is made, while `resume()` resolved to the pause's MEDIA
+        // instant — `pausedSince - firstPresentationTime` — and ScreenCaptureKit
+        // delivers buffers carrying timestamps from the recent past. So Resumed
+        // landed ~170ms BEFORE the Paused that preceded it. A real recording
+        // shows the pair at 3.000 and 3.172, and again at 11.827 and 11.843.
+        //
+        // Reusing the pause's own offset makes the pair exact by construction
+        // rather than by two computations happening to agree.
+        let offset: Double
+        if let stamped = pausedAtOffset {
+            offset = stamped
+        } else {
+            offset = await currentOffset()
+        }
+        pausedAtOffset = nil
+        await eventLog.add(at: offset, kind: .marker, label: "Resumed")
     }
+
+    /// Where the current pause was stamped, so its resume can match it.
+    private var pausedAtOffset: Double?
 
     public var isPaused: Bool { session.isPaused }
 

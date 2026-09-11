@@ -59,7 +59,28 @@ public enum MarkerNavigation {
 
     /// The mark to jump back to from `time`, or nil if there is none.
     public static func previous(before time: Double, in points: [JumpPoint]) -> JumpPoint? {
-        ordered(points).last { $0.timeSeconds < time - settleSeconds }
+        // Measured from the mark you are ON, not from the playhead.
+        //
+        // This was `last { $0.timeSeconds < time - settleSeconds }`, which
+        // reads like the same idiom and is not: it makes the settle a blanket
+        // dead zone, so Previous could never reach ANY mark less than half a
+        // second back — including the one it had just arrived at, and
+        // including the other half of a pause/resume pair. Next uses a 0.01s
+        // epsilon, so Next worked and Back appeared stuck, which is exactly
+        // how it was reported.
+        //
+        // The idiom is about the CURRENT track: a little way in, Previous
+        // restarts it; at its very start, Previous goes back one. That is a
+        // question about the distance from the mark you are sitting on, and
+        // nothing to do with how close the one before it happens to be.
+        let ordered = ordered(points)
+        guard let index = ordered.lastIndex(where: { $0.timeSeconds <= time + epsilon })
+        else { return nil }
+        let current = ordered[index]
+        if time - current.timeSeconds > settleSeconds { return current }
+        // Back one — past every mark sharing this instant, so a pause and its
+        // resume count as one stop rather than two.
+        return ordered[..<index].last { $0.timeSeconds < current.timeSeconds - epsilon }
     }
 
     /// The next mark after `time`, or nil at the last one.

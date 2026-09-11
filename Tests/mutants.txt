@@ -131,3 +131,6 @@ RecordingHUDMotionTests :: Sources/SnittApp/RecordingHUDPanel.swift :: guard let
 FootageClockTests :: Sources/SnittCapture/PauseLedger.swift :: CMTimeGetSeconds(totalPausedIncludingOpenPause(now: now)) :: 0
 FootageDurationTests :: Sources/SnittCapture/Recorder.swift :: max(0, stoppedAt.timeIntervalSince(startedAt) - totalPaused) :: stoppedAt.timeIntervalSince(startedAt)
 FootageDurationTests :: Sources/SnittCapture/Recorder.swift :: max(0, stoppedAt.timeIntervalSince(startedAt) - totalPaused) :: stoppedAt.timeIntervalSince(startedAt) - totalPaused
+PauseResumePairTests :: Sources/SnittCapture/Recorder.swift :: if let stamped = pausedAtOffset { :: if false, let stamped = pausedAtOffset {
+MarkerPreviousTests :: Sources/SnittDocument/MarkerNavigation.swift :: if time - current.timeSeconds > settleSeconds { return current } :: if false { return current }
+MarkerPreviousTests :: Sources/SnittDocument/MarkerNavigation.swift :: return ordered[..<index].last { $0.timeSeconds < current.timeSeconds - epsilon } :: return ordered[..<index].last

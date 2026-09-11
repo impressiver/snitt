@@ -123,3 +123,47 @@ struct PauseResumeTests {
         #expect(!session.isPaused)
     }
 }
+
+/// A pause and its resume are one instant (2026-09-11).
+@Suite
+struct PauseResumePairTests {
+
+    @Test("Resume is stamped at the instant the pause was stamped")
+    func theyShareOneInstant() async throws {
+        // A pause occupies no footage — it is the absence of buffers — so the
+        // instant the recording stopped and the instant it started again are
+        // one point in the file. Two markers claiming a gap describe footage
+        // the file does not contain.
+        //
+        // They used to disagree by the capture latency, and backwards: `pause`
+        // stamps from the host clock at request time, while `resume` resolved
+        // to the pause's MEDIA instant, and ScreenCaptureKit delivers buffers
+        // carrying timestamps from the recent past. A real recording shows the
+        // pair at 3.000 and 3.172 — Resumed 172ms BEFORE the Paused it follows.
+        let bundleURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(SnittBundle.fileExtension)
+        defer { try? FileManager.default.removeItem(at: bundleURL) }
+        let recorder = try Recorder.forTesting(bundleURL: bundleURL,
+                                               videoSize: CGSize(width: 160, height: 120))
+        try await recorder.startForTesting()
+        for frame in 0..<10 {
+            recorder.feedForTesting(
+                makeVideoBuffer(at: Double(frame) / 30.0,
+                                size: CGSize(width: 160, height: 120)), .screen)
+        }
+
+        await recorder.pause()
+        // Real time passes while paused — which is the whole point: the wall
+        // moves and the file does not.
+        try await Task.sleep(nanoseconds: 150_000_000)
+        await recorder.resume()
+
+        let bundle = try await recorder.stop()
+        let events = try EventLog.read(from: bundle).events
+        let paused = try #require(events.first { $0.label == "Paused" })
+        let resumed = try #require(events.first { $0.label == "Resumed" })
+        #expect(paused.timeSeconds == resumed.timeSeconds,
+                "Paused at \(paused.timeSeconds), Resumed at \(resumed.timeSeconds)")
+    }
+}
