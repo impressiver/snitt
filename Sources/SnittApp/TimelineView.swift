@@ -1260,6 +1260,21 @@ public final class TimelineView: NSView {
     /// ever being re-read: the samples are the recording's, the axis is the
     /// edit's. A column with no source behind it (past the trimmed end) draws
     /// nothing rather than repeating the last value.
+    /// The waveform's bar rhythm: a bar every `waveformBarStride` points,
+    /// `waveformBarWidth` wide, leaving a point of ground between them.
+    ///
+    /// Drawn as discrete bars rather than as a filled shape, which is what the
+    /// design asks for and what every meter looks like — a solid orange mass
+    /// says "there is audio" and nothing else, while bars with air between
+    /// them read as samples and let the eye follow the envelope. The painter
+    /// filled every 1pt column, so at any real width the columns touched and
+    /// the lane became a silhouette.
+    ///
+    /// Nothing is lost by striding: each bar takes the LOUDEST peak in the
+    /// span it covers, so a transient between two bars still raises one.
+    static let waveformBarStride: Double = 3
+    static let waveformBarWidth: Double = 2
+
     /// The preset the waveform's silence is drawn against.
     ///
     /// It has to be A preset, not "silence" in the abstract: the threshold and
@@ -1333,30 +1348,49 @@ public final class TimelineView: NSView {
             }
         }
 
-        for (i, column) in columns.enumerated() {
-            if quiet[i] {
+        // One bar per stride, carrying the loudest peak it spans. Silence is
+        // still drawn per column, because a baseline is a continuous line and
+        // breaking it into dashes would read as very quiet audio — the exact
+        // confusion the baseline exists to remove.
+        var index = 0
+        while index < columns.count {
+            let stride = Int(Self.waveformBarStride)
+            let group = columns[index..<min(index + stride, columns.count)]
+            let quietGroup = quiet[index..<min(index + stride, quiet.count)]
+            defer { index += stride }
+            guard let first = group.first else { break }
+
+            if quietGroup.allSatisfy({ $0 }) {
                 // Silence is a line, not a short bar. A short bar reads as
                 // "quiet audio"; a baseline reads as "nothing here", which is
                 // the difference between a waveform and a preview of the edit.
                 baseline.setFill()
-                NSBezierPath(rect: NSRect(x: column.x, y: midY - 0.5,
-                                          width: 1, height: 1)).fill()
+                NSBezierPath(rect: NSRect(x: first.x, y: midY - 0.5,
+                                          width: Double(group.count),
+                                          height: 1)).fill()
                 continue
             }
-            (column.clipped ? clipping : normal).setFill()
+            // The loudest peak in the span, so striding hides no transient —
+            // averaging would, which is why this takes a max.
+            let loudest = group.filter { _ in true }.max { $0.peak < $1.peak } ?? first
+            let clipped = group.contains { $0.clipped }
+            (clipped ? clipping : normal).setFill()
             // Logarithmic, and gain-aware: the bar shows what will be
             // exported, not what was captured (`WaveformScale`).
             //
             // A floor of half a pixel so a quiet passage still reads as "there
             // is audio here" rather than as a gap in the track.
-            let height = max(0.5, WaveformScale.height(forPeak: column.peak, gain: gain) * halfHeight)
-            NSBezierPath(rect: NSRect(x: column.x, y: midY - height,
-                                      width: 1, height: height * 2)).fill()
-            // A clipped column is marked at the band's edges too, so it is
+            let height = max(0.5, WaveformScale.height(forPeak: loudest.peak, gain: gain) * halfHeight)
+            NSBezierPath(rect: NSRect(x: first.x, y: midY - height,
+                                      width: Self.waveformBarWidth,
+                                      height: height * 2)).fill()
+            // A clipped span is marked at the band's edges too, so it is
             // findable when the whole passage is loud and every bar is tall.
-            if column.clipped {
-                NSBezierPath(rect: NSRect(x: column.x, y: rect.minY, width: 1, height: 2)).fill()
-                NSBezierPath(rect: NSRect(x: column.x, y: rect.maxY - 2, width: 1, height: 2)).fill()
+            if clipped {
+                NSBezierPath(rect: NSRect(x: first.x, y: rect.minY,
+                                          width: Self.waveformBarWidth, height: 2)).fill()
+                NSBezierPath(rect: NSRect(x: first.x, y: rect.maxY - 2,
+                                          width: Self.waveformBarWidth, height: 2)).fill()
             }
         }
     }

@@ -120,3 +120,5 @@ SweptSurfaceTests :: Sources/SnittApp/RecordingHUDPanel.swift :: SnittPalette.in
 MarkerNavigationOriginTests :: Sources/SnittDocument/MarkerNavigation.swift :: if abs(live - pending) < jumpSettledSeconds { return (live, true) } :: if true { return (live, true) }
 MarkerNavigationOriginTests :: Sources/SnittDocument/MarkerNavigation.swift :: return (pending, false) :: return (live, false)
 SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: height: max(fitted.height, 1)) :: height: 620)
+WaveformBarsTests :: Sources/SnittApp/TimelineView.swift :: static let waveformBarWidth: Double = 2 :: static let waveformBarWidth: Double = 3
+SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: stack.setCustomSpacing(10, after: rule) :: stack.setCustomSpacing(2, after: rule)

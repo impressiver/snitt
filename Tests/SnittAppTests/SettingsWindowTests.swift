@@ -803,4 +803,72 @@ struct SettingsRowTests {
         #expect(abs(window.contentLayoutRect.height - needed) < 2,
                 "the window is \(window.contentLayoutRect.height) for \(needed) of rows, and the difference gets handed to whichever row will take it")
     }
+
+    @Test("Every rule has air on both sides, and more above it than below")
+    func rulesAreNotCramped() throws {
+        // Reported from the app: "the gaps/spacing is off around divider
+        // lines". The group headers and rules were added without their own
+        // spacing, so they inherited the stack's 2pt row gap and the rule sat
+        // almost touching the heading under it — a line that had fallen over
+        // rather than a division.
+        //
+        // Measured from the laid-out frames, because that is the only thing
+        // about appearance this host can check: it renders blank, but it lays
+        // out correctly, and the gaps ARE the defect.
+        let suiteName = "com.snitt.test.settingsrules.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            SettingsWindowController.resetForTesting()
+        }
+        SettingsWindowController.show(
+            updater: UpdaterController(settings: UpdateSettings.load(defaults)),
+            defaults: defaults, activate: false)
+        let stack = try #require(
+            SettingsWindowController.shared?.window.contentView as? NSStackView)
+        stack.layoutSubtreeIfNeeded()
+
+        let rows = stack.arrangedSubviews
+        let ruleIndexes = rows.indices.filter { rows[$0] is NSBox }
+        #expect(ruleIndexes.count == 2, "expected a rule per group, found \(ruleIndexes.count)")
+
+        for index in ruleIndexes {
+            // Top-down: arrangedSubviews[0] is highest, so the gap ABOVE a
+            // view is measured against the one before it in the array.
+            let above = rows[index - 1].frame.minY - rows[index].frame.maxY
+            let below = rows[index].frame.minY - rows[index + 1].frame.maxY
+            #expect(above >= 12, "only \(above)pt above a rule — it is crowding the row before it")
+            #expect(below >= 6, "only \(below)pt below a rule — it is crowding its own heading")
+            #expect(above > below,
+                    "a rule with \(above)pt above and \(below)pt below reads as belonging to the wrong group — a heading belongs to what follows it")
+        }
+    }
+
+    @Test("Nothing says 'Save recordings to' twice")
+    func theSaveGroupSaysItOnce() throws {
+        // The group header was added above a row that already carried its own
+        // caption, so the window shipped the phrase twice, one line apart.
+        let suiteName = "com.snitt.test.settingsdupe.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            SettingsWindowController.resetForTesting()
+        }
+        SettingsWindowController.show(
+            updater: UpdaterController(settings: UpdateSettings.load(defaults)),
+            defaults: defaults, activate: false)
+        let content = try #require(SettingsWindowController.shared?.window.contentView)
+        var labels: [String] = []
+        func collect(_ view: NSView) {
+            if let field = view as? NSTextField, !(field is NSSecureTextField) {
+                labels.append(field.stringValue)
+            }
+            view.subviews.forEach(collect)
+        }
+        collect(content)
+        let saying = labels.filter {
+            $0.contains(SettingsWindowController.outputDirectoryCaption)
+        }
+        #expect(saying.count == 1, "the window says it \(saying.count) times: \(saying)")
+    }
 }

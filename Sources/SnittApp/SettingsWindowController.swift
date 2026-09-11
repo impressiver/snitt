@@ -319,21 +319,44 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             stack.addArrangedSubview(row)
             stack.setCustomSpacing(14, after: row)
         }
+        // The last toggle needs more room than the gap between two toggles,
+        // because what follows it is a rule rather than another setting.
+        if let lastToggle = stack.arrangedSubviews.last {
+            stack.setCustomSpacing(20, after: lastToggle)
+        }
 
         // The two groups that are not toggles get headers and a rule, because
         // a hotkey recorder and a folder picker among five checkboxes read as
         // leftovers otherwise — which is what the screenshot showed.
-        stack.addArrangedSubview(separator())
-        stack.addArrangedSubview(groupHeader("Shortcuts"))
-        for action in [HotkeyAction.record, .marker] {
-            stack.addArrangedSubview(hotkeyRow(for: action))
-        }
-
-        stack.addArrangedSubview(separator())
-        stack.addArrangedSubview(groupHeader(Self.outputDirectoryCaption))
-        stack.addArrangedSubview(outputDirectoryRow())
+        addGroup(to: stack, titled: "Shortcuts",
+                 rows: [HotkeyAction.record, .marker].map(hotkeyRow(for:)))
+        addGroup(to: stack, titled: Self.outputDirectoryCaption,
+                 rows: [outputDirectoryRow()])
 
         return stack
+    }
+
+    /// A titled group, under a rule, with the air a rule needs on both sides.
+    ///
+    /// The spacing is the whole of this function. A separator inheriting the
+    /// stack's row spacing sits almost touching the heading under it and the
+    /// paragraph above it, which reads as a line that fell over rather than as
+    /// a division — the screenshot that prompted this showed exactly that.
+    private func addGroup(to stack: NSStackView, titled title: String, rows: [NSView]) {
+        let rule = separator()
+        stack.addArrangedSubview(rule)
+        stack.setCustomSpacing(10, after: rule)
+
+        let header = groupHeader(title)
+        stack.addArrangedSubview(header)
+        stack.setCustomSpacing(8, after: header)
+
+        for row in rows {
+            stack.addArrangedSubview(row)
+            stack.setCustomSpacing(6, after: row)
+        }
+        // Air before whatever comes next — another rule, or the window's edge.
+        if let last = rows.last { stack.setCustomSpacing(20, after: last) }
     }
 
     /// A hairline the full width of the content, so a group reads as a group.
@@ -489,8 +512,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         container.alignment = .leading
         container.spacing = 4
 
-        let caption = NSTextField(labelWithString: "\(Self.outputDirectoryCaption):")
-        container.addArrangedSubview(caption)
+        // No caption here: the group header above the row carries it now, and
+        // two labels reading "Save recordings to" one above the other is what
+        // the first version of this grouping shipped.
 
         let row = NSStackView()
         row.orientation = .horizontal
