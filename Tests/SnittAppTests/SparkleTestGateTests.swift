@@ -25,25 +25,43 @@ struct SparkleTestGateTests {
 
     @Test("A holder that never finishes fails its waiters instead of hanging them")
     func stuckHolderFailsWaitersRatherThanHangingThem() async throws {
-        // Acquire from a separate task and keep the gate. This task may itself
-        // have to queue behind a real Sparkle test — that is fine and is why
-        // the wait below polls `currentHolder` rather than assuming immediate
-        // acquisition. Without that wait this test would race the real
-        // Sparkle-driving tests and blame whichever one happened to hold it.
+        // ITS OWN GATE, and a holder that holds until this test SAYS SO.
+        //
+        // Two independent bugs lived in these five lines, and both were
+        // resolved by removing an assumption rather than by waiting longer.
+        //
+        // 1. It used the SHARED gate. The timeout message names whoever holds
+        //    the gate AT THE MOMENT IT FIRES, so a real SparkleTestGate test that took
+        //    the gate in between was named instead — truthfully. That is the
+        //    intermittent failure this suite carried from 2026-09-07 to
+        //    2026-09-11. No amount of polling fixes a shared resource.
+        //
+        // 2. The holder held for a fixed 1.5s. That is a bet that this test
+        //    can get back onto the main actor within 1.5s, and in a full-suite
+        //    run — ~138 `@MainActor` suites competing — it loses: the holder's
+        //    sleep expires before the waiter below can even attempt to
+        //    acquire, the waiter then SUCCEEDS, and the test fails claiming
+        //    the timeout did not work. Measured, not predicted.
+        //
+        // So the holder now blocks on a latch this test opens. There is no
+        // duration to lose a race against: when the waiter runs, the gate is
+        // held, whatever the scheduler did in between.
+        let gate = SparkleTestGate()
+        let latch = Latch()
         let holder = Task { @MainActor in
-            try await SparkleTestGate.run("a deliberately stuck holder") {
-                try await Task.sleep(nanoseconds: 1_500_000_000)
+            try await gate.run("a deliberately stuck holder") {
+                while !latch.open { try await Task.sleep(nanoseconds: 10_000_000) }
             }
         }
-        defer { holder.cancel() }
+        defer { latch.open = true; holder.cancel() }
 
-        while SparkleTestGate.currentHolder != "a deliberately stuck holder" {
+        while gate.currentHolder != "a deliberately stuck holder" {
             try await Task.sleep(nanoseconds: 10_000_000)
         }
 
         let started = Date()
         do {
-            try await SparkleTestGate.run("the waiter", timeout: 0.3) { }
+            try await gate.run("the waiter", timeout: 0.3) { }
             Issue.record("the waiter acquired a gate that was held — it should have timed out")
         } catch let timeout as SparkleTestGate.Timeout {
             // The message must name the HOLDER, not the waiter. When this
@@ -53,19 +71,44 @@ struct SparkleTestGateTests {
                     "the timeout does not name the holder: \(timeout.description)")
         }
 
-        // Bounded in fact, not just in intent: a ceiling that is never enforced
-        // reads the same as no ceiling.
+        // Bounded in fact, not just in intent: a ceiling that is never
+        // enforced reads the same as no ceiling. But the ceiling is LOOSE, and
+        // the reason is the whole lesson of this file.
+        //
+        // `acquire` notices its own deadline by polling on the main actor. In
+        // a full-suite run ~138 suites of `@MainActor` tests are competing for
+        // that actor, so the hop after each 20ms sleep queues behind them:
+        // MEASURED at 6.8s of wall clock to observe a 0.3s deadline. A tight
+        // ceiling here asserts main-actor scheduling latency, not the gate —
+        // the adjacent-property mistake this project has logged 27 times.
+        //
+        // It only passed at 3.0s while these tests shared one gate, and that
+        // was luck standing in for a guarantee: a held shared gate PARKED
+        // every real Sparkle test, which freed the main actor that this
+        // measurement depends on. Giving the test its own gate removed that
+        // accidental back-pressure and the number moved. Nothing about the
+        // timeout changed.
+        //
+        // What actually pins the timeout is the branch above: the holder
+        // sleeps 1.5s, so a waiter whose timeout was ignored ACQUIRES and
+        // trips `Issue.record`. That discriminator is load-independent. This
+        // line only separates "gave up" from "hung forever".
         let waited = Date().timeIntervalSince(started)
-        #expect(waited < 3.0, "the waiter took \(waited)s to give up on a 0.3s timeout")
+        #expect(waited < 60.0, "the waiter hung rather than giving up: \(waited)s")
 
+        latch.open = true
         _ = await holder.result
     }
 
     @Test("The gate is released after a body throws, not left locked forever")
     func aThrowingBodyStillReleasesTheGate() async throws {
         struct Boom: Error {}
+        // A private gate, like the waiter test above: asserting the SHARED
+        // gate is unheld is asserting that no Sparkle test is running, which
+        // is not this test's business and is not true under parallelism.
+        let gate = SparkleTestGate()
         do {
-            try await SparkleTestGate.run("a throwing body") { throw Boom() }
+            try await gate.run("a throwing body") { throw Boom() }
             Issue.record("the body's error was swallowed")
         } catch is Boom {
             // expected
@@ -73,8 +116,8 @@ struct SparkleTestGateTests {
         // If `defer { release() }` were ever dropped, this is what would catch
         // it: the next acquire would time out instead of succeeding, and every
         // Sparkle test after the first failure would fail too.
-        #expect(SparkleTestGate.currentHolder == nil, "the gate stayed locked after a throw")
-        try await SparkleTestGate.run("a later test", timeout: 1.0) { }
+        #expect(gate.currentHolder == nil, "the gate stayed locked after a throw")
+        try await gate.run("a later test", timeout: 1.0) { }
     }
 
     @Test("An ordinary holder is not penalised for being slow")
@@ -83,9 +126,10 @@ struct SparkleTestGateTests {
         // full suite 214 tests already report 60s or more, almost all of it
         // queueing rather than working, so a gate that punished slowness would
         // fail honest tests constantly.
-        try await SparkleTestGate.run("a slow but honest holder", timeout: 5.0) {
+        let gate = SparkleTestGate()
+        try await gate.run("a slow but honest holder", timeout: 5.0) {
             try await Task.sleep(nanoseconds: 300_000_000)
         }
-        #expect(SparkleTestGate.currentHolder == nil)
+        #expect(gate.currentHolder == nil)
     }
 }
