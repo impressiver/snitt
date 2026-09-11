@@ -558,7 +558,10 @@ public final class TimelineView: NSView {
         var perColumn = [Int](repeating: 0, count: max(1, Int(bounds.width)))
         for phrase in phrases {
             for word in phrase.words {
-                let x = Int(geometry.x(atOutput: OutputTime(word.start)))
+                // SOURCE time, mapped through the edit — see `drawPhraseChips`.
+                guard let position = geometry.x(atSource: SourceTime(word.start))
+                else { continue }
+                let x = Int(position)
                 guard x >= 0, x < perColumn.count else { continue }
                 perColumn[x] += 1
             }
@@ -594,8 +597,24 @@ public final class TimelineView: NSView {
             .paragraphStyle: style,
         ]
         for phrase in phrases {
-            let startX = geometry.x(atOutput: OutputTime(phrase.start))
-            let endX = geometry.x(atOutput: OutputTime(phrase.end))
+            // SOURCE time, mapped through the edit — NOT `x(atOutput:)`.
+            //
+            // A transcript's times are facts about the CAPTURE (see
+            // `TranscriptPhrase`), and this lane was handing them to the
+            // output axis as though they were already trimmed. With no cuts
+            // the two clocks agree and it looked right; with any cut the text
+            // slid away from the audio it belongs to, by the total length of
+            // everything removed before it. The waveform above has always
+            // mapped through `keptRanges`, so the two lanes disagreed about
+            // the same instant.
+            //
+            // `x(atSource:)` returns nil for an instant that was cut away —
+            // a phrase spoken inside a removed span has no position on the
+            // timeline, and drawing it at a clamped edge would put words under
+            // audio that never contained them.
+            guard let startX = geometry.x(atSource: SourceTime(phrase.start)),
+                  let endX = geometry.x(atSource: SourceTime(phrase.end))
+            else { continue }
             let width = max(2, endX - startX)
             let chip = NSRect(x: startX, y: band.minY + 3, width: width - 1,
                               height: band.height - 6)
@@ -638,8 +657,12 @@ public final class TimelineView: NSView {
                                               audioTracks: [], hasTranscript: !phrases.isEmpty)
         guard bands.transcript.height > 0, bands.transcript.contains(point) else { return nil }
         return phrases.first { phrase in
-            let start = geometry.x(atOutput: OutputTime(phrase.start))
-            let end = geometry.x(atOutput: OutputTime(phrase.end))
+            // The same mapping the chips are DRAWN with. Hit-testing on a
+            // different axis than the drawing is this view's oldest defect
+            // class, and it is the reason `GestureAxisTests` exists.
+            guard let start = geometry.x(atSource: SourceTime(phrase.start)),
+                  let end = geometry.x(atSource: SourceTime(phrase.end))
+            else { return false }
             return point.x >= start && point.x <= max(end, start + 2)
         }
     }

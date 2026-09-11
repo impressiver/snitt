@@ -115,3 +115,8 @@ TitlebarChromeTests :: Sources/SnittApp/EditorChrome.swift :: static let traffic
 PolishSweepTests :: Sources/SnittApp/StatusItemController.swift :: attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: size, :: attributes: [.font: NSFont.systemFont(ofSize: size,
 PolishSweepTests :: Sources/SnittApp/EditorChrome.swift :: return key.isEmpty ? label : "\(label) — \(key)" :: return label
 SweptSurfaceTests :: Sources/SnittApp/RecordingHUDPanel.swift :: SnittPalette.ink1.withAlphaComponent(0.94).cgColor :: NSColor.windowBackgroundColor.cgColor
+
+# --- fixes from use, 2026-09-11 ---
+MarkerNavigationOriginTests :: Sources/SnittDocument/MarkerNavigation.swift :: if abs(live - pending) < jumpSettledSeconds { return (live, true) } :: if true { return (live, true) }
+MarkerNavigationOriginTests :: Sources/SnittDocument/MarkerNavigation.swift :: return (pending, false) :: return (live, false)
+SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: height: max(fitted.height, 1)) :: height: 620)

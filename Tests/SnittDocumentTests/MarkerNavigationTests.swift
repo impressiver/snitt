@@ -106,3 +106,67 @@ struct MarkerNavigationTests {
         #expect(MarkerNavigation.current(at: 5, in: []) == nil)
     }
 }
+
+// Where navigation reasons FROM while a jump is in flight (2026-09-11).
+//
+// Reported from use: "the next marker advance only advances one marker and
+// gets stuck". The seek is asynchronous — `onScrub` hands it to a `Task` — so
+// the player's clock still reports the old position for a beat afterwards.
+// Pressing Next twice in that beat read the same position twice, found the
+// same "next" mark twice, and seeked to it again.
+@Suite
+struct MarkerNavigationOriginTests {
+
+    @Test("With no jump outstanding, the live clock is the origin")
+    func liveClockWhenNothingPending() {
+        let result = MarkerNavigation.origin(live: 4.0, pending: nil)
+        #expect(result.seconds == 4.0)
+        #expect(result.dropPending == false)
+    }
+
+    @Test("A jump in flight is the origin, not the position it left")
+    func pendingJumpWins() {
+        // The bug, in one assertion: the player still says 4.0 while a jump to
+        // 9.0 is in flight, and navigating from 4.0 finds the mark at 9.0
+        // again. Navigating from 9.0 finds the one after it.
+        let result = MarkerNavigation.origin(live: 4.0, pending: 9.0)
+        #expect(result.seconds == 9.0, "navigation reasoned from where it left, not where it is going")
+        #expect(result.dropPending == false, "the jump has not landed yet")
+    }
+
+    @Test("Once the player arrives, the live clock takes over again")
+    func arrivalReleasesThePendingJump() {
+        let result = MarkerNavigation.origin(live: 9.0, pending: 9.0)
+        #expect(result.seconds == 9.0)
+        #expect(result.dropPending, "the intention outlived its own arrival")
+    }
+
+    @Test("Close enough counts as arrived — the clock is sampled, not exact")
+    func nearlyArrivedCounts() {
+        let result = MarkerNavigation.origin(
+            live: 9.0 + MarkerNavigation.jumpSettledSeconds / 2, pending: 9.0)
+        #expect(result.dropPending)
+    }
+
+    @Test("Three presses reach the third mark, not the first one three times")
+    func repeatedPressesCompose() {
+        // The whole reported behaviour, end to end against the pure model:
+        // the clock never moves — the worst case, and what a fast triple-press
+        // actually looks like — and navigation still walks the list.
+        let marks = [1.0, 5.0, 9.0, 14.0].map {
+            JumpPoint(id: UUID(), timeSeconds: $0, label: "m", transcript: nil,
+                      isInsideCut: false)
+        }
+        var pending: Double?
+        var landed: [Double] = []
+        for _ in 0..<3 {
+            let origin = MarkerNavigation.origin(live: 0, pending: pending)
+            guard let next = MarkerNavigation.next(after: origin.seconds, in: marks)
+            else { break }
+            pending = next.timeSeconds
+            landed.append(next.timeSeconds)
+        }
+        #expect(landed == [1.0, 5.0, 9.0],
+                "three presses landed on \(landed) — it got stuck")
+    }
+}

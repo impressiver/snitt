@@ -774,4 +774,33 @@ struct SettingsRowTests {
         // into a column of two-word lines.
         #expect(SettingsWindowController.contentWidth >= 520)
     }
+
+    @Test("The window is the height of its rows, with no slack to stretch one")
+    func windowFitsItsContent() throws {
+        // The defect this pins, reported from the app: the window was a fixed
+        // 620pt while its rows needed 485, and `NSStackView` handed the spare
+        // 135 to the first row it could stretch — so "Allow agent recording"
+        // sat alone above a screenful of nothing and everything else bunched
+        // at the bottom.
+        //
+        // Asserting the window against its own content rather than against a
+        // number: rows will change, and a test naming a height would have to
+        // be edited every time, which is how the 620 got there.
+        let suiteName = "com.snitt.test.settingsfit.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            SettingsWindowController.resetForTesting()
+        }
+        SettingsWindowController.show(
+            updater: UpdaterController(settings: UpdateSettings.load(defaults)),
+            defaults: defaults, activate: false)
+        let window = try #require(SettingsWindowController.shared?.window)
+        let content = try #require(window.contentView)
+        content.layoutSubtreeIfNeeded()
+        let needed = content.fittingSize.height
+        #expect(needed > 100, "the content measured \(needed) — it did not lay out")
+        #expect(abs(window.contentLayoutRect.height - needed) < 2,
+                "the window is \(window.contentLayoutRect.height) for \(needed) of rows, and the difference gets handed to whichever row will take it")
+    }
 }

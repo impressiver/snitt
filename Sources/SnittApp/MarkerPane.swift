@@ -200,7 +200,15 @@ struct MarkerPane: View {
         // hover wash and the pointing cursor are the whole of the fix.
         .onHover { hovering in
             hoveredID = hovering ? chapter.id : (hoveredID == chapter.id ? nil : hoveredID)
-            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+            // Guarded the same way `ResizableDivider` is: `push()`/`pop()` is
+            // a stack, and a row that scrolls away or is deleted under the
+            // pointer never reports the exit that would balance its push.
+            // `hoveredID` is the flag, so the pair cannot go out of step.
+            if hovering, hoveredID == chapter.id {
+                NSCursor.pointingHand.push()
+            } else if !hovering {
+                NSCursor.pop()
+            }
         }
         .onTapGesture(count: 2) { beginRename(chapter) }
         .onTapGesture { state.seek(toOutput: chapter.outputTime) }

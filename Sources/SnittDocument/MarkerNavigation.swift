@@ -32,6 +32,31 @@ public enum MarkerNavigation {
     /// floating-point noise puts the playhead a hair before it.
     private static let epsilon: Double = 0.01
 
+    /// How close the player has to get before a requested jump counts as
+    /// landed. Wider than a frame: the seek is exact, the clock is sampled.
+    public static let jumpSettledSeconds: Double = 0.05
+
+    /// Where mark-to-mark navigation should reason from, given where the
+    /// player actually is and where a jump has asked it to be.
+    ///
+    /// **The bug this exists for:** a seek is asynchronous, so the player's
+    /// clock still reports the old position for a beat after a jump is
+    /// requested. Reading it directly meant pressing Next twice quickly found
+    /// the same "next" mark both times and seeked to it again — Next advanced
+    /// once and then appeared stuck.
+    ///
+    /// Pure, and separate from the editor, because the interesting part is a
+    /// decision about which of two numbers to trust and that needs no player
+    /// to get wrong.
+    public static func origin(live: Double,
+                              pending: Double?) -> (seconds: Double, dropPending: Bool) {
+        guard let pending else { return (live, false) }
+        // Arrived — or something else moved the playhead there — so the
+        // intention has been served and the live clock takes over again.
+        if abs(live - pending) < jumpSettledSeconds { return (live, true) }
+        return (pending, false)
+    }
+
     /// The mark to jump back to from `time`, or nil if there is none.
     public static func previous(before time: Double, in points: [JumpPoint]) -> JumpPoint? {
         ordered(points).last { $0.timeSeconds < time - settleSeconds }
