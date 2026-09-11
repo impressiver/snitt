@@ -160,3 +160,19 @@ ClickCaptureWiringTests :: Sources/SnittCapture/InputEventMonitor.swift :: kind 
 # Geometry defaulted instead of absent — clicks before the first frame placed
 # confidently at the top-left instead of having no position.
 ClickCaptureWiringTests :: Sources/SnittCapture/ClickPosition.swift :: guard let rect = screenRect else { return nil } :: let rect = screenRect ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+
+# Playback ▸ Show Clicks, stored in edit.json.
+# The flag never survives a save — the menu checks, the file forgets, and
+# reopening the document loses the choice.
+ShowClicksMenuTests :: Sources/SnittDocument/EditDecisionList.swift :: if showClicks { try container.encode(true, forKey: .showClicks) } :: let _ = showClicks
+# The flag defaults ON for bundles that predate it, silently changing what
+# every old recording exports.
+ShowClicksMenuTests :: Sources/SnittDocument/EditDecisionList.swift :: try container.decodeIfPresent(Bool.self, forKey: .showClicks) ?? false :: try container.decodeIfPresent(Bool.self, forKey: .showClicks) ?? true
+# The export sheet ignores what it was handed and always opens unchecked —
+# the exact "menu says yes, export says no" split this feature exists to close.
+ShowClicksMenuTests :: Sources/SnittApp/ExportSheet.swift :: self.drawClicks = drawClicks :: self.drawClicks = false
+# unitMarks returns render pixels rather than fractions: every ring lands in
+# the top-left corner, which reads as a positioning bug, not a units bug.
+ShowClicksMenuTests :: Sources/SnittExport/ClickOverlay.swift :: naturalSize: CGSize(width: 1, height: 1) :: naturalSize: CGSize(width: 1920, height: 1080)
+# The menu item loses its action and silently does nothing when picked.
+ShowClicksMenuTests :: Sources/SnittApp/KeyboardShortcutRegistry.swift :: action: #selector(AppDelegate.toggleShowClicks(_:)) :: action: nil

@@ -22,10 +22,16 @@ struct KeyboardShortcutRegistryTests {
     @Test("Every shortcut in the registry becomes a menu item")
     func menuIsBuiltFromTheRegistry() {
         let item = KeyboardShortcutRegistry.playbackMenuItem()
+        // Only the KEYED entries come from `shortcuts`. The menu also carries
+        // a separator and the Show Clicks toggle, which is deliberately not a
+        // shortcut — it has no key, and `helpText` would render it as a binding
+        // with a blank one. Compared as a prefix so the registry still governs
+        // what it governs, without this test having to know about every item
+        // appended after.
         let titles = item.submenu?.items.map(\.title) ?? []
         let expected = KeyboardShortcutRegistry.shortcuts
             .filter { $0.menu == .playback }.map(\.title)
-        #expect(titles == expected)
+        #expect(Array(titles.prefix(expected.count)) == expected)
     }
 
     @Test("Every shortcut in the registry appears in the help")

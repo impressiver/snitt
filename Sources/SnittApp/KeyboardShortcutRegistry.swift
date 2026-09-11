@@ -47,6 +47,9 @@ public struct KeyboardShortcut: Equatable, Sendable {
 @MainActor
 public enum KeyboardShortcutRegistry {
 
+    /// Named once so the menu and its tests cannot disagree about the wording.
+    public static let showClicksTitle = "Show Clicks"
+
     public static let shortcuts: [KeyboardShortcut] = [
         .init(title: "Play / Pause", key: " ", modifiers: [], menu: .playback,
               selector: #selector(AppDelegate.togglePlayback(_:))),
@@ -73,6 +76,16 @@ public enum KeyboardShortcutRegistry {
             entry.keyEquivalentModifierMask = shortcut.modifiers
             menu.addItem(entry)
         }
+        // Appended outside the `shortcuts` loop because it is a different kind
+        // of thing: a persistent CHECKABLE state, not a key-triggered action.
+        // Forcing it into `shortcuts` would mean an entry with no key, which
+        // `helpText` would then render as a shortcut with a blank binding.
+        menu.addItem(.separator())
+        let clicks = NSMenuItem(title: showClicksTitle,
+                                action: #selector(AppDelegate.toggleShowClicks(_:)),
+                                keyEquivalent: "")
+        menu.addItem(clicks)
+
         item.submenu = menu
         return item
     }

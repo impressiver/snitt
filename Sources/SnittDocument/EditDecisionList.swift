@@ -202,19 +202,37 @@ public struct EditDecisionList: Codable, Sendable {
     /// `nil` means "no crop", which is distinct from `.full` only in what gets
     /// written to disk — both render the whole frame.
     public var crop: CropRect?
+    /// Whether click rings are drawn — in the editor's playback, and therefore
+    /// as the export's default.
+    ///
+    /// Lives with the edit rather than in a preference because it is a property
+    /// of THIS recording: a screen-capture demo wants its clicks shown, and a
+    /// recording of someone's face does not, and the answer should travel with
+    /// the bundle instead of being whatever the app was last set to.
+    ///
+    /// **Deliberately does NOT bump `currentSchemaVersion`.** The gate exists
+    /// to stop an older build silently destroying work, which is why `crop`
+    /// bumped it — losing a crop loses an edit that cannot be recovered from
+    /// `capture.mov`. Losing this loses a checkbox. Bumping would make every
+    /// older build REFUSE the document outright, which costs far more than the
+    /// thing it protects; the honest trade is that an old build round-tripping
+    /// a bundle resets this flag to false.
+    public var showClicks: Bool
 
     private enum CodingKeys: String, CodingKey {
-        case schemaVersion, cuts, trackStates, crop
+        case schemaVersion, cuts, trackStates, crop, showClicks
     }
 
     public init(schemaVersion: Int = EditDecisionList.currentSchemaVersion,
                 cuts: [Cut] = [],
                 trackStates: [TrackState] = [],
-                crop: CropRect? = nil) {
+                crop: CropRect? = nil,
+                showClicks: Bool = false) {
         self.schemaVersion = schemaVersion
         self.cuts = cuts
         self.trackStates = trackStates
         self.crop = crop
+        self.showClicks = showClicks
     }
 
     /// Custom rather than synthesized so `schemaVersion` can be checked
@@ -241,6 +259,10 @@ public struct EditDecisionList: Codable, Sendable {
         // decodeIfPresent, not decode: every bundle written before this field
         // existed has no `crop` key, and those must keep opening.
         self.crop = try container.decodeIfPresent(CropRect.self, forKey: .crop)
+        // Same reason as `crop`: every bundle written before this field
+        // existed has no key, and those must keep opening — defaulted off
+        // rather than refused.
+        self.showClicks = try container.decodeIfPresent(Bool.self, forKey: .showClicks) ?? false
     }
 
     /// Custom rather than synthesized so a WRITE always declares the version
@@ -276,6 +298,10 @@ public struct EditDecisionList: Codable, Sendable {
         // encodeIfPresent: an uncropped EDL writes no `crop` key at all, so a
         // file's shape still tells you whether a crop was ever set.
         try container.encodeIfPresent(crop, forKey: .crop)
+        // Written only when ON, so a file's shape still says whether anyone
+        // ever asked for rings — and a bundle from before this field keeps
+        // round-tripping byte-identical while the flag is off.
+        if showClicks { try container.encode(true, forKey: .showClicks) }
     }
 
     /// The default EDL for a fresh recording: nothing cut, nothing muted.

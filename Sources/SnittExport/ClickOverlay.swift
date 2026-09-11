@@ -70,6 +70,27 @@ public enum ClickOverlay {
     /// - Parameter keptRanges: the composition's own kept ranges, so a click
     ///   inside a cut is dropped rather than drawn at a moment it did not
     ///   happen — the same rule `MarkerJumpPoints` applies to markers.
+    /// Marks whose `position` is a FRACTION of the picture, not render pixels.
+    ///
+    /// Playback needs this instead of `marks(…)`. The export knows exactly how
+    /// big its frame is and bakes positions into it; the editor's player does
+    /// not — `AVPlayerLayer` letterboxes the video inside whatever the window
+    /// gives it, and that rectangle changes as the user resizes. Handing the
+    /// overlay a fraction lets it multiply by `videoRect` at draw time, which
+    /// is the only rectangle that is actually correct.
+    ///
+    /// The unit size is what makes this work: `marks(…)` multiplies the stored
+    /// fraction by `naturalSize` and applies `renderTransform`, so a 1×1 size
+    /// and the identity transform give the fraction back unchanged — while
+    /// still doing the part that matters here, mapping each click's source time
+    /// through the cuts to an output time. One implementation, two framings.
+    public static func unitMarks(events: [LoggedEvent],
+                                 keptRanges: [TimeRange]) -> [ClickMark] {
+        marks(events: events, keptRanges: keptRanges,
+              naturalSize: CGSize(width: 1, height: 1),
+              renderTransform: .identity)
+    }
+
     public static func marks(events: [LoggedEvent],
                              keptRanges: [TimeRange],
                              naturalSize: CGSize,
