@@ -86,6 +86,17 @@ struct GainMeterView: View {
                 ForEach((0..<GainMeter.segmentCount).reversed(), id: \.self) { index in
                     RoundedRectangle(cornerRadius: 1)
                         .fill(colour(for: index))
+                        // Unity is two-thirds up a −24…+12 scale, not in the
+                        // middle, and nothing on the ladder said where it was:
+                        // "is this track boosted or cut" was a question you had
+                        // to count segments to answer.
+                        .overlay(alignment: .top) {
+                            if index == GainMeter.unitySegment {
+                                SnittPalette.Swatch.playheadInk
+                                    .frame(height: 1)
+                                    .opacity(muted ? 0.28 : 0.9)
+                            }
+                        }
                 }
             }
             .padding(.horizontal, 8)
@@ -106,14 +117,27 @@ struct GainMeterView: View {
               : "\(title): \(GainMeter.label(forGain: gain)) — drag to adjust, double-click to mute")
     }
 
+    /// Brand ink, brand amber, brand red (rev 5, W13).
+    ///
+    /// The ladder used `Color.accentColor` for a lit segment — the user's
+    /// selection colour, which on a blue-accented Mac put a blue meter beside
+    /// an amber waveform measuring the same track. The arithmetic underneath
+    /// (`GainMeter`) is untouched: this function only colours what
+    /// `litSegments` and `isHot` decide.
+    func colourForTesting(_ index: Int) -> Color { colour(for: index) }
+
     private func colour(for index: Int) -> Color {
-        guard index < lit else { return Color.secondary.opacity(0.16) }
+        guard index < lit else { return SnittPalette.Swatch.ink3.opacity(muted ? 0.28 : 1) }
         // Hot at and above unity, because that is where amplification — and so
         // clipping — begins, which is the one thing a meter exists to warn
-        // about.
+        // about. Red, and the same red a clipped waveform column draws in.
+        // No muted variant here, deliberately: `lit` is 0 while muted, so a
+        // muted ladder never reaches this branch at all. A `muted ? …` here
+        // looked symmetrical and was unreachable — the mutation gate found it
+        // by removing it and nothing failing.
         return GainMeter.isHot(segment: index)
-            ? EditorChromePalette.currentHighlight
-            : Color.accentColor.opacity(0.85)
+            ? SnittPalette.Swatch.recordRed
+            : SnittPalette.Swatch.signal
     }
 }
 

@@ -90,3 +90,7 @@ FoldAppearanceTests :: Sources/SnittApp/FoldPalette.swift :: case .collapsedSele
 # --- rev 5 W12: one silence rule, two consumers ---
 SilenceKernelTests :: Sources/SnittExport/SpeechChunker.swift :: max(absoluteSilenceFloor, referenceLevel(of: peaks) * fraction) :: referenceLevel(of: peaks) * fraction
 AutoDeepTrimTests :: Sources/SnittExport/AutoDeepTrim.swift :: SpeechChunker.silenceThreshold(for: track.peaks, :: SpeechChunker.silenceThreshold(for: [0.5],
+
+# --- rev 5 W13: the gain ladder in brand colours ---
+GainMeterAppearanceTests :: Sources/SnittApp/TimelineGutter.swift :: ? SnittPalette.Swatch.recordRed :: ? SnittPalette.Swatch.signal
+GainMeterAppearanceTests :: Sources/SnittApp/TimelineGutter.swift :: SnittPalette.Swatch.ink3.opacity(muted ? 0.28 : 1) :: SnittPalette.Swatch.ink3
