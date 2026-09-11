@@ -190,7 +190,9 @@ final class RecordingHUDView: NSView {
         configure(markButton, symbol: "flag.fill",
                   label: RecordingHUDModel.controlLabel("Mark this moment",
                                                         shortcut: shortcuts.mark),
-                  action: #selector(markTapped))
+                  action: #selector(markTapped), emphasised: true)
+        markButton.imagePosition = .imageLeading
+        markButton.attributedTitle = Self.markTitle(shortcut: shortcuts.mark)
         configure(pauseButton, symbol: "pause.fill",
                   label: RecordingHUDModel.controlLabel("Pause recording",
                                                         shortcut: shortcuts.pause),
@@ -225,16 +227,58 @@ final class RecordingHUDView: NSView {
     /// than ⏸/⏹ characters, which render as colour emoji on some systems and
     /// as text on others and cannot take a tint.
     private func configure(_ button: NSButton, symbol: String, label: String,
-                           action: Selector) {
+                           action: Selector, emphasised: Bool = false) {
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
-        button.bezelStyle = .flexiblePush
-        button.isBordered = true
+        // Unbordered with our own layer, NOT `bezelColor`: AppKit ignores
+        // that for a push button's bezel style here, so the emphasised
+        // control came out the same grey as the quiet ones — the emphasis
+        // existed in the code and not on the screen.
+        button.isBordered = false
         button.target = self
         button.action = action
         button.setAccessibilityLabel(label)
         button.translatesAutoresizingMaskIntoConstraints = false
-        button.widthAnchor.constraint(equalToConstant: 30).isActive = true
+        // Ink, like the panel they sit on. A system push button here draws in
+        // the menu bar's own light or dark grey, which on an ink field reads
+        // as three chips someone dropped on it.
+        button.wantsLayer = true
+        button.layer?.cornerRadius = 8
+        button.layer?.backgroundColor = (emphasised ? SnittPalette.signalBright
+                                                    : SnittPalette.ink2).cgColor
+        button.contentTintColor = emphasised ? SnittPalette.ink0 : SnittPalette.playheadInk
+        if !emphasised {
+            button.layer?.borderWidth = 1
+            button.layer?.borderColor = SnittPalette.ink3.cgColor
+        }
+        // 28pt clears WCAG 2.5.8's 24pt floor. Mark is wider because it
+        // carries words.
+        button.widthAnchor.constraint(
+            greaterThanOrEqualToConstant: emphasised ? 78 : 30).isActive = true
         button.heightAnchor.constraint(equalToConstant: 28).isActive = true
+    }
+
+    /// Mark's own label: the word, and the key that does it without the HUD.
+    ///
+    /// **The emphasised control, because marking is the gesture Snitt is built
+    /// around** — no competitor puts it one click away — and because the HUD's
+    /// buttons are a visible reminder of hotkeys rather than the only path to
+    /// them (§4.11: nothing here can take focus, so nothing here can be
+    /// tabbed to). Printing the key teaches it.
+    ///
+    /// The user's REAL binding or nothing: `Shortcuts` carries what is
+    /// actually registered, and a hardcoded key that does nothing is PR #66's
+    /// lesson, which is why pause names none.
+    static func markTitle(shortcut: String?) -> NSAttributedString {
+        let title = NSMutableAttributedString(
+            string: "Mark",
+            attributes: [.font: NSFont.systemFont(ofSize: 12, weight: .semibold),
+                         .foregroundColor: SnittPalette.ink0])
+        guard let shortcut, !shortcut.isEmpty else { return title }
+        title.append(NSAttributedString(
+            string: "  " + shortcut,
+            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: 9.5, weight: .medium),
+                         .foregroundColor: SnittPalette.ink0.withAlphaComponent(0.75)]))
+        return title
     }
 
     func apply(_ p: RecordingHUDPresentation) {
@@ -250,16 +294,58 @@ final class RecordingHUDView: NSView {
         dot.layer?.borderWidth = p.isPaused ? 2 : 0
         dot.layer?.borderColor = SnittPalette.slateText.cgColor
 
-        markButton.isEnabled = p.canMark
-        pauseButton.isEnabled = p.canTogglePause
-        stopButton.isEnabled = p.canStop
+        for (button, enabled) in [(markButton, p.canMark),
+                                  (pauseButton, p.canTogglePause),
+                                  (stopButton, p.canStop)] {
+            button.isEnabled = enabled
+            // Drawing our own fill means AppKit's own dimming no longer
+            // reaches it: a disabled Mark stayed fully amber and looked
+            // pressable. The whole control dims instead, so "you cannot do
+            // this now" is legible without reading the glyph.
+            button.alphaValue = enabled ? 1 : 0.4
+        }
 
         let symbol = p.isPaused ? "record.circle.fill" : "pause.fill"
         let label = RecordingHUDModel.controlLabel(
             p.isPaused ? "Resume recording" : "Pause recording", shortcut: shortcuts.pause)
         pauseButton.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
         pauseButton.setAccessibilityLabel(label)
+        // Resume is the one quiet button that turns red: it is the control
+        // that puts the machine back to recording, and the paused HUD's whole
+        // job is to make that findable.
+        pauseButton.contentTintColor = p.isPaused
+            ? SnittPalette.redBright : SnittPalette.playheadInk
+
+        applyBreathing(isPaused: p.isPaused, isVisible: p.isVisible)
     }
+
+    /// Starts or stops the dot's breath, per `RecordingHUDMotion`.
+    ///
+    /// The decision is the model's; this only carries it out. Removing the
+    /// animation rather than pausing it, so a paused dot is a solid dot at
+    /// full strength rather than one frozen mid-fade at whatever opacity it
+    /// happened to reach.
+    private func applyBreathing(isPaused: Bool, isVisible: Bool) {
+        let shouldBreathe = RecordingHUDMotion.dotBreathes(
+            isRecording: isVisible, isPaused: isPaused,
+            reduceMotion: NSWorkspace.shared.accessibilityDisplayShouldReduceMotion)
+        guard shouldBreathe else {
+            dot.layer?.removeAnimation(forKey: Self.breathKey)
+            dot.layer?.opacity = 1
+            return
+        }
+        guard dot.layer?.animation(forKey: Self.breathKey) == nil else { return }
+        let breath = CABasicAnimation(keyPath: "opacity")
+        breath.fromValue = 1.0
+        breath.toValue = 0.55
+        breath.duration = 1.0
+        breath.autoreverses = true
+        breath.repeatCount = .infinity
+        breath.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        dot.layer?.add(breath, forKey: Self.breathKey)
+    }
+
+    private static let breathKey = "snitt.hud.breath"
 
     @objc private func markTapped() { onMark?() }
     @objc private func pauseTapped() { onTogglePause?() }

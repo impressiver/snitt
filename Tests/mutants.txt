@@ -125,3 +125,6 @@ SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: stack.
 LaunchOpenPromptTests :: Sources/SnittApp/LaunchOpenPrompt.swift :: if isRecording { return .recording } :: if false { return .recording }
 LaunchOpenPromptTests :: Sources/SnittApp/LaunchOpenPrompt.swift :: if openingDocument { return .documentAlreadyOpening } :: if false { return .documentAlreadyOpening }
 LaunchOpenPromptTests :: Sources/SnittApp/LaunchOpenPrompt.swift :: if hasVisibleWindows { return .windowAlreadyOpen } :: if false { return .windowAlreadyOpen }
+RecordingHUDMotionTests :: Sources/SnittApp/RecordingHUDModel.swift :: isRecording && !isPaused && !reduceMotion :: isRecording && !reduceMotion
+RecordingHUDMotionTests :: Sources/SnittApp/RecordingHUDModel.swift :: guard isRecording, !isPaused, !pointerNear, :: guard isRecording, !pointerNear,
+RecordingHUDMotionTests :: Sources/SnittApp/RecordingHUDPanel.swift :: guard let shortcut, !shortcut.isEmpty else { return title } :: guard let shortcut else { return title }
