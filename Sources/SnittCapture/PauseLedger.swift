@@ -73,6 +73,16 @@ public struct PauseLedger: Equatable, Sendable {
         CMTimeSubtract(now, start)
     }
 
+    /// Everything paused so far in seconds, counting a pause still open.
+    ///
+    /// Exposed because the WRITTEN file's clock is elapsed-minus-this, and two
+    /// callers outside the ledger need that correction: the offset a marker is
+    /// stamped at, and the duration written to `meta.json`. Both used raw wall
+    /// time and were therefore wrong from the first pause onward.
+    public func totalPausedSeconds(now: CMTime) -> Double {
+        CMTimeGetSeconds(totalPausedIncludingOpenPause(now: now))
+    }
+
     private func totalPausedIncludingOpenPause(now: CMTime) -> CMTime {
         guard let since = pausedSince else { return totalPaused }
         let open = CMTimeSubtract(now, since)

@@ -128,3 +128,6 @@ LaunchOpenPromptTests :: Sources/SnittApp/LaunchOpenPrompt.swift :: if hasVisibl
 RecordingHUDMotionTests :: Sources/SnittApp/RecordingHUDModel.swift :: isRecording && !isPaused && !reduceMotion :: isRecording && !reduceMotion
 RecordingHUDMotionTests :: Sources/SnittApp/RecordingHUDModel.swift :: guard isRecording, !isPaused, !pointerNear, :: guard isRecording, !pointerNear,
 RecordingHUDMotionTests :: Sources/SnittApp/RecordingHUDPanel.swift :: guard let shortcut, !shortcut.isEmpty else { return title } :: guard let shortcut else { return title }
+FootageClockTests :: Sources/SnittCapture/PauseLedger.swift :: CMTimeGetSeconds(totalPausedIncludingOpenPause(now: now)) :: 0
+FootageDurationTests :: Sources/SnittCapture/Recorder.swift :: max(0, stoppedAt.timeIntervalSince(startedAt) - totalPaused) :: stoppedAt.timeIntervalSince(startedAt)
+FootageDurationTests :: Sources/SnittCapture/Recorder.swift :: max(0, stoppedAt.timeIntervalSince(startedAt) - totalPaused) :: stoppedAt.timeIntervalSince(startedAt) - totalPaused
