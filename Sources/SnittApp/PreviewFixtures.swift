@@ -102,9 +102,12 @@ enum PreviewFixtures {
         })
 
     static let exportOptions: [ExportOption] = [
-        ExportOption(resolution: .source, width: 1512, height: 982, maxBytes: 41_000_000),
-        ExportOption(resolution: .hd720p, width: 1280, height: 831, maxBytes: 24_000_000),
-        ExportOption(resolution: .sd480p, width: 640, height: 416, maxBytes: 6_400_000),
+        ExportOption(resolution: .source, width: 1512, height: 982,
+                     maxBytes: 41_000_000, durationSeconds: 26.3),
+        ExportOption(resolution: .hd720p, width: 1280, height: 831,
+                     maxBytes: 24_000_000, durationSeconds: 26.3),
+        ExportOption(resolution: .sd480p, width: 640, height: 416,
+                     maxBytes: 6_400_000, durationSeconds: 26.3),
     ]
 
     /// A timeline view already populated, at `size`. The previews all go

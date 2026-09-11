@@ -14,16 +14,24 @@ public struct ExportOption: Equatable, Sendable {
     public let width: Int
     public let height: Int
     public let maxBytes: Int
+    /// The kept material's duration — exact, unlike `maxBytes`, because it is
+    /// arithmetic on the edit rather than a measurement of a file that does
+    /// not exist yet (rev 5, W5).
+    public let durationSeconds: Double
 
-    public init(resolution: ExportResolution, width: Int, height: Int, maxBytes: Int) {
+    public init(resolution: ExportResolution, width: Int, height: Int,
+                maxBytes: Int, durationSeconds: Double = 0) {
         self.resolution = resolution
         self.width = width
         self.height = height
         self.maxBytes = maxBytes
+        self.durationSeconds = durationSeconds
     }
 
     public var pixels: String { "\(width) × \(height)" }
     public var ceiling: String { ExportPreflight.ceiling(bytes: maxBytes) }
+    /// "0:26" — the length of what is about to be written.
+    public var length: String { ExportPreflight.length(seconds: durationSeconds) }
 }
 
 /// Turning `ExportEstimator`'s answers into a menu a person can pick from.
@@ -59,7 +67,8 @@ public enum ExportPreflight {
             out.append(ExportOption(resolution: estimate.resolution,
                                     width: estimate.width,
                                     height: estimate.height,
-                                    maxBytes: estimate.estimatedMaxBytes))
+                                    maxBytes: estimate.estimatedMaxBytes,
+                                    durationSeconds: estimate.durationSeconds))
         }
         return out
     }
@@ -77,6 +86,13 @@ public enum ExportPreflight {
     /// the MCP tool and this menu describe the same export the same way.
     /// `String(format:)` without a locale is POSIX, so the separator does not
     /// move with the user's region.
+    /// Minutes and seconds, zero-padded — the same shape the transport and
+    /// the marker rail use, so a duration reads the same wherever it appears.
+    public static func length(seconds: Double) -> String {
+        let total = Int(seconds.rounded())
+        return String(format: "%d:%02d", total / 60, total % 60)
+    }
+
     public static func ceiling(bytes: Int) -> String {
         let mb = Double(max(0, bytes)) / 1_000_000
         // Past a thousand megabytes the CLI's format stops being readable
