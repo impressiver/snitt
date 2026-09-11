@@ -697,3 +697,68 @@ but that is the lesser half — the seam is what makes the class unreachable.
 - Three of four hypotheses this session were wrong (`--filter` skipping tests,
   DNS stalls, encoder contention as the hang cause). Each died to one
   measurement. The one that solved it came from somebody looking at the screen.
+
+## Concurrent test safety: aliasing is not a race (2026-09-11)
+
+Chasing "make tests run safely concurrently" after the PR #96 merge run
+attributed an intermittent failure to `SparkleTestGateTests`.
+
+**The bug that was real.** Both test gates — `SparkleTestGate` and
+`EditorWindowTestGate` — were enums with static state, so each gate's OWN
+self-test shared one gate with the tests it is about. The self-test installs a
+deliberately stuck holder and asserts the waiter's timeout names it, but the
+message names whoever holds the gate *at the moment it fires*. A real test
+that took the gate in between was named instead — truthfully. The suite could
+only pass when it got lucky. Both gates became classes with a `shared`
+instance (static members forward, so no call site changed) and each self-test
+now builds a private gate. Nothing else can hold what the test measures.
+
+**The second bug, found by fixing the first.** Both self-tests held their gate
+for a fixed 1.5s. That is a bet that the test gets back onto the main actor
+within 1.5s — and with ~138 `@MainActor` suites competing it loses: the hold
+expired before the waiter could attempt, the waiter *succeeded*, and the test
+failed claiming the timeout was broken. The holder now blocks on a `Latch` the
+test opens, so there is no duration to lose a race against.
+
+Sharing the gate had been *hiding* this: a held shared gate parked every real
+gated test, which freed the main actor the timing depended on. The correct fix
+to bug 1 removed that accidental back-pressure and exposed bug 2. Two of the
+self-tests' assertions were wall-clock ceilings (`waited < 3.0`) that were
+really measuring main-actor scheduling latency — 6.8s observed for a 0.3s
+deadline. They are now loose and say so; the timeout is pinned instead by the
+load-independent branch (an ignored timeout *acquires* and trips
+`Issue.record`). Verified: 6/6 mutants killed.
+
+**The wrong turn, recorded because it was convincing.** Probing found that
+every `UpdaterController` in the test process aliases one global: Sparkle's
+`SPUStandardUpdaterController` targets `Bundle.main`, which has no bundle
+identifier here, so `SUHost` falls back to `UserDefaults.standard`. Measured —
+constructing a second controller with `true` flips an existing controller's
+`automaticChecksEnabled` from `false` to `true`. On that evidence 22 test sites
+were gated across three files. It was wrong, and the suite said so: gating them
+saturated the main actor and broke the gate self-tests.
+
+**Aliasing is necessary for a race but not sufficient — you also need
+concurrent access, and `@MainActor` denies it.** All 22 sites and the
+assertions they could corrupt are *synchronous* `@MainActor` bodies, so the
+main actor already runs each atomically; no interleaving is possible and there
+was never a race. The one candidate that looked async had its `await` on the
+gate acquisition, before the critical region. A sweep for tests that touch
+app/window globals, hold no gate, AND contain an `await` in the critical region
+returns zero.
+
+**Rules worth keeping:**
+- **A gate's own self-test must not use the shared gate.** Give it a private
+  instance. Polling cannot fix a shared resource — it only moves the window.
+- **Never release a test-held lock on a timer.** A duration is a bet on
+  scheduler latency; under a loaded main actor it loses. Hold until the test
+  explicitly releases.
+- **A wall-clock ceiling on main-actor-scheduled work measures the scheduler,
+  not the code.** Find the load-independent discriminator and assert that; keep
+  the ceiling only to separate "gave up" from "hung forever", and say so.
+- **Before gating shared state, ask whether the accessors can actually
+  interleave.** Synchronous `@MainActor` bodies cannot. Gating them is not
+  free — it adds suspension points and can create the contention it was meant
+  to prevent.
+- Back-pressure from a lock can be load-bearing for timing elsewhere. Removing
+  a lock correctly can expose latent timing bets rather than cause them.

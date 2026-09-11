@@ -2452,7 +2452,20 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
 /// nobody. The risk is asymmetric in the same direction: too tight a bound
 /// yields a loud, obvious flake, while no bound yields silence.
 @MainActor
-enum EditorWindowTestGate {
+/// **An instance, with a shared one for real use.** This was an `enum` with
+/// static state, which meant its OWN tests contended with every editor-window
+/// test they are about: the self-test installs a deliberately stuck holder and
+/// asserts a waiter's timeout names it, but the message names whoever holds
+/// the gate AT THE MOMENT IT FIRES — so a real window test that took the gate
+/// in between was named instead, truthfully. `SparkleTestGate` carried exactly
+/// this bug and it went unattributed for four days.
+///
+/// A private instance removes the contention rather than timing around it,
+/// which is what makes a gate's own tests deterministic under parallelism.
+final class EditorWindowTestGate {
+
+    /// The one real window tests share.
+    static let shared = EditorWindowTestGate()
     /// How long a test may WAIT for the gate before giving up.
     ///
     /// Generous: window tests queue behind this gate constantly, and their
@@ -2465,19 +2478,22 @@ enum EditorWindowTestGate {
         let description: String
     }
 
-    private static var locked = false
-    private static var holderDescription = "none"
+    private var locked = false
+    private var holderDescription = "none"
 
     /// Whether the gate is held, and by whom — the seam the gate's own test
     /// needs to know its holder really acquired before testing a waiter.
-    static var currentHolder: String? { locked ? holderDescription : nil }
+    var currentHolder: String? { locked ? holderDescription : nil }
+
+    /// Forwards to `shared`, so existing call sites are unchanged.
+    static var currentHolder: String? { shared.currentHolder }
 
     /// Polls rather than queueing on a continuation: a `CheckedContinuation`
     /// must be resumed exactly once, which makes racing it against a deadline
     /// easy to get wrong in a way that crashes the test process. On
     /// `@MainActor`, `Task.sleep` yields the actor so the holder still runs.
     /// FIFO fairness is lost and no test needs it.
-    private static func acquire(for label: String, timeout: TimeInterval) async throws {
+    private func acquire(for label: String, timeout: TimeInterval) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while locked {
             if Date() >= deadline {
@@ -2493,7 +2509,7 @@ enum EditorWindowTestGate {
         holderDescription = label
     }
 
-    private static func release() {
+    private func release() {
         locked = false
         holderDescription = "none"
     }
@@ -2504,11 +2520,18 @@ enum EditorWindowTestGate {
     ///
     /// `label` defaults to the calling function, so a timeout names a real test
     /// without anyone having to remember to pass a string.
-    static func run<T>(_ label: String = #function,
-                       timeout: TimeInterval = acquireTimeout,
-                       _ body: () async throws -> T) async throws -> T {
+    func run<T>(_ label: String = #function,
+                timeout: TimeInterval = EditorWindowTestGate.acquireTimeout,
+                _ body: () async throws -> T) async throws -> T {
         try await acquire(for: label, timeout: timeout)
         defer { release() }
         return try await body()
+    }
+
+    /// Forwards to `shared`. Existing call sites are unchanged.
+    static func run<T>(_ label: String = #function,
+                       timeout: TimeInterval = acquireTimeout,
+                       _ body: () async throws -> T) async throws -> T {
+        try await shared.run(label, timeout: timeout, body)
     }
 }

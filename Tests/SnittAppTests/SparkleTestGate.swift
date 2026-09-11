@@ -92,8 +92,26 @@ import Foundation
 /// costs the whole run. Note which direction the risk runs: an over-tight
 /// bound produces a flaky failure that is loud and obvious, while an unbounded
 /// wait produces silence indistinguishable from ordinary slow progress.
+/// **An instance, with a shared one for real use.** The gate was an `enum`
+/// with static state, which meant its OWN tests contended with the Sparkle
+/// tests they are about: the self-test installs a deliberately stuck holder
+/// and then asserts that a waiter's timeout names it — but if a real updater
+/// test held the gate at that moment, the stuck holder queued behind it and
+/// the waiter truthfully named the real one instead. That is the intermittent
+/// failure this suite carried from 2026-09-07 to 2026-09-11.
+///
+/// `currentHolder` was added to paper over exactly that and could not: no
+/// amount of waiting helps when the thing you are waiting for is queued
+/// behind a third party. A private instance removes the contention rather
+/// than timing around it, which is what makes the self-test deterministic
+/// under any amount of parallelism.
 @MainActor
-enum SparkleTestGate {
+final class SparkleTestGate {
+
+    /// The one real Sparkle tests share. Everything that drives a real
+    /// `SPUUpdater` goes through this; only the gate's own tests make their
+    /// own.
+    static let shared = SparkleTestGate()
     /// How long a test may WAIT for the gate before giving up.
     ///
     /// Generous on purpose. Under the full suite 214 tests already report 60s
@@ -113,14 +131,18 @@ enum SparkleTestGate {
         let description: String
     }
 
-    private static var locked = false
-    private static var holderDescription = "none"
+    private var locked = false
+    private var holderDescription = "none"
 
     /// Whether the gate is currently held, and by whom. Exists for the gate's
     /// OWN test, which must wait for its holder to really acquire before
     /// testing what a waiter does — otherwise it races the real Sparkle tests
     /// that share this gate and blames the wrong holder.
-    static var currentHolder: String? { locked ? holderDescription : nil }
+    var currentHolder: String? { locked ? holderDescription : nil }
+
+    /// Forwards to `shared`, so the dozens of existing call sites read the
+    /// same as they always did.
+    static var currentHolder: String? { shared.currentHolder }
 
     /// Polls rather than queueing on a continuation.
     ///
@@ -129,12 +151,17 @@ enum SparkleTestGate {
     /// crashes the test process. Polling on `@MainActor` is uninteresting by
     /// comparison: `Task.sleep` yields the actor, so the holder runs. FIFO
     /// fairness is lost and no test needs it.
-    private static func acquire(for label: String, timeout: TimeInterval) async throws {
+    private func acquire(for label: String, timeout: TimeInterval) async throws {
         let deadline = Date().addingTimeInterval(timeout)
         while locked {
             if Date() >= deadline {
+                // The ACTUAL wait, not the class default: a caller may pass
+                // its own, and reporting the default would describe a timeout
+                // that did not happen.
                 throw Timeout(description: """
-                    "\(label)" waited \(Int(acquireTimeout))s for SparkleTestGate and gave up.                     It was held by "\(holderDescription)", which never released it — that holder                     is the defect, not this test.
+                    "\(label)" waited \(timeout)s for SparkleTestGate and gave up. \
+                    It was held by "\(holderDescription)", which never released it — \
+                    that holder is the defect, not this test.
                     """)
             }
             try await Task.sleep(nanoseconds: 20_000_000)
@@ -143,7 +170,7 @@ enum SparkleTestGate {
         holderDescription = label
     }
 
-    private static func release() {
+    private func release() {
         locked = false
         holderDescription = "none"
     }
@@ -154,11 +181,28 @@ enum SparkleTestGate {
     ///
     /// `label` defaults to the calling function, so a timeout message names a
     /// real test without anyone having to remember to pass a string.
-    static func run<T>(_ label: String = #function,
-                       timeout: TimeInterval = acquireTimeout,
-                       _ body: () async throws -> T) async throws -> T {
+    func run<T>(_ label: String = #function,
+                timeout: TimeInterval = SparkleTestGate.acquireTimeout,
+                _ body: () async throws -> T) async throws -> T {
         try await acquire(for: label, timeout: timeout)
         defer { release() }
         return try await body()
     }
+
+    /// Forwards to `shared`. Existing call sites are unchanged.
+    static func run<T>(_ label: String = #function,
+                       timeout: TimeInterval = acquireTimeout,
+                       _ body: () async throws -> T) async throws -> T {
+        try await shared.run(label, timeout: timeout, body)
+    }
+}
+
+/// Holds a test gate open until the test decides to let go.
+///
+/// A holder that releases on a TIMER is a bet on scheduler latency; under a
+/// loaded main actor that bet loses and the test fails for a reason that has
+/// nothing to do with what it measures.
+@MainActor
+final class Latch {
+    var open = false
 }
