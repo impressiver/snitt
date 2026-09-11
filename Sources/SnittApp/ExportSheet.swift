@@ -66,6 +66,7 @@ struct ExportSheet: View {
             VStack(alignment: .leading, spacing: 16) {
                 format
                 resolution
+                headline
                 destination
             }
             .padding(20)
@@ -76,12 +77,20 @@ struct ExportSheet: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text("Export").font(.headline)
-            Text(verbatim: title)
-                .font(.subheadline)
+        HStack(spacing: 10) {
+            // Which kind of file is about to be written, said in a glyph so
+            // the format segment below reads as a confirmation rather than as
+            // the only place that fact appears.
+            Image(systemName: request.format == "gif" ? "photo.stack" : "film")
+                .font(.title3)
                 .foregroundStyle(.secondary)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Export").font(.headline)
+                Text(verbatim: title)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 20)
@@ -152,24 +161,79 @@ struct ExportSheet: View {
             HStack(spacing: 10) {
                 Image(systemName: option.resolution == request.resolution
                       ? "largecircle.fill.circle" : "circle")
+                    .font(.system(size: 16))
                     .foregroundStyle(option.resolution == request.resolution
                                      ? Color.accentColor : .secondary)
                 Text(option.resolution.rawValue)
                     .font(.body)
+                    .fontWeight(option.resolution == request.resolution ? .semibold : .regular)
                     .frame(width: 60, alignment: .leading)
                 Text(option.pixels)
                     .font(.system(.caption, design: .monospaced))
+                    .monospacedDigit()
                     .foregroundStyle(.secondary)
                 Spacer()
                 Text(option.ceiling)
                     .font(.system(.caption, design: .monospaced))
+                    .monospacedDigit()
                     .foregroundStyle(estimatesApply ? .secondary : .tertiary)
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
+            // Selection stays the system accent: it is the one thing on this
+            // sheet that means "you picked this", and that is the user's
+            // colour everywhere else on their Mac.
+            .background(option.resolution == request.resolution
+                        ? Color.accentColor.opacity(0.09) : .clear)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+
+    /// The two numbers the estimator actually produces, given the weight they
+    /// earn: this is the feature — an export priced before you commit — and
+    /// until now both figures were caption-sized, one per row.
+    ///
+    /// **Size ceiling and output length, not "export time".** An earlier draft
+    /// of this design asked for an export-time estimate; no such number exists
+    /// anywhere in the codebase, and inventing one would have put a guess next
+    /// to a measurement. `durationSeconds` is exact, already computed, and
+    /// answers a question somebody about to export actually has.
+    ///
+    /// The wording is `ExportPreflight.ceiling`'s, verbatim — "at most", never
+    /// "≈" — because `estimatedMaxBytes` is an upper bound and the CLI and the
+    /// MCP tool already say it that way. Three surfaces, one sentence.
+    @ViewBuilder
+    private var headline: some View {
+        if let picked = options.first(where: { $0.resolution == request.resolution })
+            ?? options.first {
+            HStack(spacing: 10) {
+                stat(estimatesApply ? picked.ceiling : "—", "size ceiling")
+                stat(picked.length, "output length")
+            }
+            // The numbers change under the pointer as a measurement lands;
+            // crossfading stops them popping, and tabular digits stop the
+            // cards resizing around them.
+            .animation(.easeInOut(duration: 0.2), value: isMeasuring)
+            .animation(.easeInOut(duration: 0.2), value: request.resolution)
+        }
+    }
+
+    private func stat(_ value: String, _ caption: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value)
+                .font(.system(.title3, design: .monospaced).weight(.semibold))
+                .monospacedDigit()
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
+            Text(caption)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private var destination: some View {

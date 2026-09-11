@@ -52,11 +52,35 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private var hotkeyButtons: [HotkeyAction: HotkeyRecorderButton] = [:]
     private var outputDirectoryLabel: NSTextField?
 
+    /// Wide enough for an explanation to be a sentence rather than a column
+    /// of two-word lines. The 420pt window predated the explanations.
+    static let contentWidth: Double = 520
+
     static let agentRecordingTitle = "Allow agent recording"
     static let eventLoggingTitle = "Log input events"
     static let microphoneTitle = "Record voiceover"
     static let automaticUpdatesTitle = "Check for updates automatically"
     static let crashReportsTitle = "Include crash reports in diagnostics"
+
+    // The explanations (rev 5, W6). Several of these settings cannot be
+    // understood from a label alone — what "Allow agent recording" actually
+    // permits, what an input event is — and a checkbox has nowhere to say so,
+    // which is how a privacy-relevant control ends up looking like a
+    // preference. The agent-recording sentence is the consent-relevant one
+    // and a test pins it: it is the disclosure, not decoration.
+    static let agentRecordingDetail = "Lets Claude Code or Codex start a recording "
+        + "without you at the keyboard. Every agent-initiated recording is disclosed "
+        + "in the UI and logged."
+    static let eventLoggingDetail = "Records which keys and clicks happened, so "
+        + "auto-trim can tell working from idle. Keystrokes are stored as "
+        + "content-free beats — never the characters."
+    static let microphoneDetail = "Captures the microphone alongside system audio. "
+        + "Snitt warns you if your speakers will bleed into the mic."
+    static let automaticUpdatesDetail = "Looks for a newer version in the background. "
+        + "Nothing is downloaded or installed until you choose it."
+    static let crashReportsDetail = "Attaches recent crash logs when you export a "
+        + "diagnostics bundle. Nothing is sent anywhere — the bundle is a file you "
+        + "choose to share."
     static let outputDirectoryCaption = "Save recordings to"
     static let outputDirectoryButtonTitle = "Choose…"
 
@@ -226,7 +250,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         self.microphoneToggle = microphoneToggle
         self.hotkeyConflictAlert = hotkeyConflictAlert
         self.outputDirectoryUnwritableAlert = outputDirectoryUnwritableAlert
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 420, height: 280),
+        window = NSWindow(contentRect: NSRect(x: 0, y: 0,
+                                              width: Self.contentWidth, height: 620),
                           styleMask: [.titled, .closable],
                           backing: .buffered,
                           defer: false)
@@ -257,28 +282,33 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        stack.addArrangedSubview(checkbox(
+        stack.addArrangedSubview(settingRow(
             title: Self.agentRecordingTitle,
+            detail: Self.agentRecordingDetail,
             isOn: AgentSettings.load(defaults).agentRecordingEnabled,
             action: #selector(toggleAgentRecording(_:))))
 
-        stack.addArrangedSubview(checkbox(
+        stack.addArrangedSubview(settingRow(
             title: Self.eventLoggingTitle,
+            detail: Self.eventLoggingDetail,
             isOn: EventLoggingSettings.load(defaults).enabled,
             action: #selector(toggleEventLogging(_:))))
 
-        stack.addArrangedSubview(checkbox(
+        stack.addArrangedSubview(settingRow(
             title: Self.microphoneTitle,
+            detail: Self.microphoneDetail,
             isOn: MicrophoneSettings.load(defaults).enabled,
             action: #selector(toggleMicrophone(_:))))
 
-        stack.addArrangedSubview(checkbox(
+        stack.addArrangedSubview(settingRow(
             title: Self.automaticUpdatesTitle,
+            detail: Self.automaticUpdatesDetail,
             isOn: UpdateSettings.load(defaults).automaticChecksEnabled,
             action: #selector(toggleAutomaticUpdates(_:))))
 
-        stack.addArrangedSubview(checkbox(
+        stack.addArrangedSubview(settingRow(
             title: Self.crashReportsTitle,
+            detail: Self.crashReportsDetail,
             isOn: CrashReportSettings.load(defaults).enabled,
             action: #selector(toggleCrashReports(_:))))
 
@@ -290,6 +320,41 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         return stack
     }
 
+    /// One setting: a bold label, and underneath it the sentence that says
+    /// what turning it on actually does (rev 5, W6).
+    ///
+    /// The explanation is reachable without eyes as well as with them — set as
+    /// the checkbox's accessibility help AND left as a real static text in the
+    /// hierarchy. A subtitle that exists only as pixels tells a VoiceOver user
+    /// nothing, which for the agent-recording row would mean the disclosure is
+    /// not disclosed.
+    func settingRow(title: String, detail: String,
+                    isOn: Bool, action: Selector) -> NSView {
+        let button = NSButton(checkboxWithTitle: title, target: self, action: action)
+        button.state = isOn ? .on : .off
+        button.font = .systemFont(ofSize: 13, weight: .semibold)
+        button.setAccessibilityHelp(detail)
+
+        let explanation = NSTextField(wrappingLabelWithString: detail)
+        explanation.font = .systemFont(ofSize: 12)
+        explanation.textColor = .secondaryLabelColor
+        explanation.preferredMaxLayoutWidth = Self.contentWidth - 60
+        explanation.translatesAutoresizingMaskIntoConstraints = false
+
+        let row = NSStackView(views: [button, explanation])
+        row.orientation = .vertical
+        row.alignment = .leading
+        row.spacing = 3
+        NSLayoutConstraint.activate([
+            // Hangs under the title rather than under the box, so the two
+            // read as one thing.
+            explanation.leadingAnchor.constraint(equalTo: row.leadingAnchor, constant: 20),
+            explanation.widthAnchor.constraint(
+                lessThanOrEqualToConstant: Self.contentWidth - 60),
+        ])
+        return row
+    }
+
     private func checkbox(title: String, isOn: Bool, action: Selector) -> NSButton {
         let button = NSButton(checkboxWithTitle: title, target: self, action: action)
         button.state = isOn ? .on : .off
@@ -299,9 +364,18 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// Test-only: looks a checkbox up by its title so a test can simulate a
     /// click without reaching into `NSStackView` internals.
     func checkbox(titled title: String) -> NSButton? {
-        (window.contentView as? NSStackView)?.arrangedSubviews
-            .compactMap { $0 as? NSButton }
-            .first { $0.title == title }
+        // Searches the whole tree, not just the top row. Each setting is
+        // now a small stack — checkbox plus its explanation (rev 5, W6) —
+        // so a direct-children scan finds nothing and every test that
+        // reaches a checkbox through here goes quietly nil.
+        func find(_ view: NSView) -> NSButton? {
+            if let button = view as? NSButton, button.title == title { return button }
+            for child in view.subviews {
+                if let hit = find(child) { return hit }
+            }
+            return nil
+        }
+        return window.contentView.flatMap(find)
     }
 
     /// Builds one hotkey recorder button, wired to re-register through

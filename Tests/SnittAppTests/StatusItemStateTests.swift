@@ -81,3 +81,48 @@ func stopWorksWhilePaused() {
         for: .paused(startedAt: Date(), pausedSeconds: 0), now: Date())
     #expect(paused.isStopEnabled)
 }
+
+// The tint (rev 5, W8). Colour is a SECOND channel on top of the glyph, never
+// the only one, so these assert the pairing rather than the colour alone: a
+// tint that carried the whole meaning would fail anyone who cannot separate
+// amber from red, and a glyph change with no tint would be the shipped
+// behaviour this item set out to improve.
+
+@Test("A live recording tints the menu bar red")
+func recordingTintsRed() {
+    let p = StatusItemController.presentation(
+        for: .recording(startedAt: Date()), now: Date())
+    #expect(p.tint == SnittPalette.recordRed)
+}
+
+@Test("Paused is amber, not red — it is not recording")
+func pausedTintsAmber() {
+    // The distinction that matters. Asserting merely "paused has a tint"
+    // would pass on a menu bar claiming a paused machine is live, which is
+    // the one thing §5.3's indicator must never do.
+    let paused = StatusItemController.presentation(
+        for: .paused(startedAt: Date(), pausedSeconds: 0), now: Date())
+    #expect(paused.tint == SnittPalette.signal)
+    #expect(paused.tint != SnittPalette.recordRed)
+}
+
+@Test("Idle and stopping stay templates, so the menu bar keeps its own look")
+func quietStatesAreUntinted() {
+    #expect(StatusItemController.presentation(for: .idle, now: Date()).tint == nil)
+    #expect(StatusItemController.presentation(for: .stopping, now: Date()).tint == nil)
+}
+
+@Test("Every state is told apart by its glyph, with or without colour")
+func glyphAloneStillDistinguishesEveryState() {
+    // The accessibility floor for this item: strip the tint and the four
+    // states must still be four distinct things. This is what keeps the
+    // colour additive.
+    let now = Date()
+    let symbols = [StatusItemController.presentation(for: .idle, now: now),
+                   StatusItemController.presentation(for: .recording(startedAt: now), now: now),
+                   StatusItemController.presentation(
+                       for: .paused(startedAt: now, pausedSeconds: 0), now: now),
+                   StatusItemController.presentation(for: .stopping, now: now)]
+        .map(\.symbolName)
+    #expect(Set(symbols).count == symbols.count, "two states share a glyph: \(symbols)")
+}

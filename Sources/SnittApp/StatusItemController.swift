@@ -55,6 +55,17 @@ public struct StatusItemPresentation: Equatable {
     public var symbolName: String
     public var title: String
     public var isStopEnabled: Bool
+    /// What to tint the glyph, or nil to leave it a template that follows the
+    /// menu bar's own appearance (rev 5, W8).
+    ///
+    /// Colour is the SECOND channel here, never the only one: the glyph
+    /// already differs per state (`record.circle` / `stop.circle.fill` /
+    /// `pause.circle.fill` / `stop.circle`), and it still does. The tint is
+    /// what makes "this machine is recording right now" legible in a crowded
+    /// menu bar at a glance, without asking anyone to tell two small circles
+    /// apart — and it degrades to the shipped behaviour for anyone who cannot
+    /// separate the hues.
+    public var tint: NSColor?
 }
 
 /// Owns the menu-bar item: the recording indicator and the kill switch.
@@ -82,22 +93,30 @@ final class StatusItemController: NSObject {
         case .idle:
             return StatusItemPresentation(symbolName: "record.circle",
                                           title: "",
-                                          isStopEnabled: false)
+                                          isStopEnabled: false,
+                                          tint: nil)
         case .recording:
             return StatusItemPresentation(symbolName: "stop.circle.fill",
                                           title: RecordingState.clock(state.footageSeconds(at: now)),
-                                          isStopEnabled: true)
+                                          isStopEnabled: true,
+                                          tint: SnittPalette.recordRed)
         case .paused:
             // The FOOTAGE, not the wall clock — see `footageSeconds(at:)`,
             // which both this and the HUD now read. The word "Paused" carries
             // the state; a filled circle would read as still recording.
             return StatusItemPresentation(symbolName: "pause.circle.fill",
                                           title: "Paused " + RecordingState.clock(state.footageSeconds(at: now)),
-                                          isStopEnabled: true)
+                                          isStopEnabled: true,
+                                          // Amber, not red: a paused recording is not
+                                          // recording, and the menu bar should not claim
+                                          // it is. Distinct from both the live red and
+                                          // the untinted idle state.
+                                          tint: SnittPalette.signal)
         case .stopping:
             return StatusItemPresentation(symbolName: "stop.circle",
                                           title: "Saving…",
-                                          isStopEnabled: false)
+                                          isStopEnabled: false,
+                                          tint: nil)
         }
     }
 
@@ -335,6 +354,9 @@ final class StatusItemController: NSObject {
         guard let button = statusItem?.button else { return }
         button.image = NSImage(systemSymbolName: p.symbolName,
                                accessibilityDescription: "Snitt")
+        // nil restores the template, which follows the menu bar's own light
+        // or dark appearance — so idle and "Saving…" look exactly as they did.
+        button.contentTintColor = p.tint
         button.title = p.title.isEmpty ? "" : " \(p.title)"
     }
 }

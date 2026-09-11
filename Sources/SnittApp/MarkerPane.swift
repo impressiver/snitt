@@ -48,6 +48,7 @@ struct MarkerPane: View {
     /// handles the common case; the sheet remains for narration text.
     let onEditMarker: (UUID) -> Void
 
+    @State private var hoveredID: UUID?
     @State private var editingID: UUID?
     @State private var editingText = ""
     @State private var editingTime = ""
@@ -117,14 +118,32 @@ struct MarkerPane: View {
         }
     }
 
+    /// The current marker's amber wash outranks a hover: "this is where
+    /// playback is" is a fact about the recording, and "the pointer is here"
+    /// is a fact about the pointer.
+    private func rowBackground(_ chapter: MarkerChapter, isCurrent: Bool) -> Color {
+        if isCurrent {
+            return EditorChromePalette.currentHighlight
+                .opacity(EditorChromePalette.currentHighlightOpacity)
+        }
+        return hoveredID == chapter.id ? Color.primary.opacity(0.06) : .clear
+    }
+
     @ViewBuilder
     private func row(_ chapter: MarkerChapter, isCurrent: Bool) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
+                // Amber, because a timecode is time (rev 5, W7). It was
+                // `.secondary` — correct as chrome, and wrong as meaning: the
+                // one thing in this row that says WHEN looked exactly like
+                // the things that say what. A marker inside a cut keeps its
+                // quieter treatment, since that is a different fact again.
                 Text(Self.timestamp(chapter.outputTime))
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(chapter.isInsideCut ? AnyShapeStyle(.tertiary)
-                                                         : AnyShapeStyle(.secondary))
+                    .font(.system(.caption, design: .monospaced).weight(.medium))
+                    .monospacedDigit()
+                    .foregroundStyle(chapter.isInsideCut
+                                     ? AnyShapeStyle(.tertiary)
+                                     : AnyShapeStyle(SnittPalette.Swatch.amberText))
                 if editingID == chapter.id {
                     // The time is editable alongside the name: a chapter in the
                     // wrong place is as wrong as one with the wrong name, and
@@ -175,11 +194,14 @@ struct MarkerPane: View {
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isCurrent
-                    ? EditorChromePalette.currentHighlight
-                        .opacity(EditorChromePalette.currentHighlightOpacity)
-                    : Color.clear)
+        .background(rowBackground(chapter, isCurrent: isCurrent))
         .contentShape(Rectangle())
+        // A row has been clickable since M5f and has never looked it. The
+        // hover wash and the pointing cursor are the whole of the fix.
+        .onHover { hovering in
+            hoveredID = hovering ? chapter.id : (hoveredID == chapter.id ? nil : hoveredID)
+            if hovering { NSCursor.pointingHand.push() } else { NSCursor.pop() }
+        }
         .onTapGesture(count: 2) { beginRename(chapter) }
         .onTapGesture { state.seek(toOutput: chapter.outputTime) }
         .contextMenu {

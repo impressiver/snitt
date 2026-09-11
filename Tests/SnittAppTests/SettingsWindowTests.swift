@@ -705,3 +705,73 @@ struct MicrophoneToggleTests {
         #expect(MicrophoneSettings.load(defaults).enabled == false)
     }
 }
+
+// The explaining rows (rev 5, W6).
+//
+// Rev 4 opened by criticising this window — seven controls with bare labels,
+// several of which cannot be understood from a label — and then never fixed
+// it, because it was not one of the nine build items. These pin the fix at
+// the level that matters: not "there is a subtitle" but "the sentence exists,
+// says the thing it has to say, and is reachable without eyes."
+@Suite(.serialized)
+@MainActor
+struct SettingsRowTests {
+
+    init() { _ = NSApplication.shared }
+
+    @Test("Every setting carries an explanation, not just a label")
+    func everySettingExplainsItself() {
+        for (name, detail) in [
+            ("agent recording", SettingsWindowController.agentRecordingDetail),
+            ("event logging", SettingsWindowController.eventLoggingDetail),
+            ("microphone", SettingsWindowController.microphoneDetail),
+            ("automatic updates", SettingsWindowController.automaticUpdatesDetail),
+            ("crash reports", SettingsWindowController.crashReportsDetail),
+        ] {
+            #expect(detail.count > 40, "\(name)'s explanation is \(detail.count) characters")
+            #expect(detail.hasSuffix("."), "\(name)'s explanation is not a sentence")
+        }
+    }
+
+    @Test("The agent-recording row states the disclosure, in as many words")
+    func agentRecordingRowDisclosesDisclosure() {
+        // The consent-relevant one, pinned specifically. §5 requires every
+        // agent-initiated recording to be disclosed and logged; this row is
+        // where the person granting the permission is told so. A test that
+        // only asserted "there is some explanation" would pass on a sentence
+        // that had quietly dropped it.
+        let detail = SettingsWindowController.agentRecordingDetail
+        #expect(detail.contains("disclosed"), "the disclosure sentence lost 'disclosed'")
+        #expect(detail.contains("logged"), "the disclosure sentence lost 'logged'")
+    }
+
+    @Test("The explanation reaches VoiceOver, not only the eye")
+    func explanationIsAccessible() throws {
+        // Through the REAL window rather than a hand-built row: the thing
+        // worth pinning is that the window a user opens carries the help, not
+        // that a helper function can produce one.
+        //
+        // A subtitle that exists only as pixels is invisible to the users who
+        // most need it explained — and for the agent-recording row that would
+        // mean the disclosure is not disclosed.
+        let suiteName = "com.snitt.test.settingsrow.\(UUID().uuidString)"
+        let defaults = try #require(UserDefaults(suiteName: suiteName))
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            SettingsWindowController.resetForTesting()
+        }
+        SettingsWindowController.show(updater: UpdaterController(settings: UpdateSettings.load(defaults)),
+                                      defaults: defaults, activate: false)
+        let checkbox = try #require(
+            SettingsWindowController.shared?.checkbox(titled: SettingsWindowController.agentRecordingTitle))
+        #expect(checkbox.accessibilityHelp() == SettingsWindowController.agentRecordingDetail,
+                "the checkbox carries no accessibility help")
+    }
+
+    @Test("The window is wide enough for a sentence")
+    func windowIsWideEnoughToRead() {
+        // 420pt predated the explanations and would have wrapped each of them
+        // into a column of two-word lines.
+        #expect(SettingsWindowController.contentWidth >= 520)
+    }
+}
