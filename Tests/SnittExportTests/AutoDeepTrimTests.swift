@@ -215,6 +215,44 @@ struct AutoDeepTrimTests {
             #expect(span.start >= 0)
         }
     }
+
+    @Test("A quiet track is judged against its own level, not a loud track's")
+    func thresholdsArePerTrack() {
+        // The rationale `deadSpans` already states — "a microphone and a
+        // system-audio tap sit at completely different levels, and one
+        // threshold for both would call the quieter of them silent
+        // throughout" — was untested until rev 5 (W12) named the shared
+        // threshold and a mutant swapping `track.peaks` for a constant
+        // survived against every test in this file.
+        //
+        // Two tracks an order of magnitude apart, speaking in DIFFERENT
+        // halves. Judged against the loud track alone, the quiet one is
+        // silent throughout and its half gets trimmed; judged per track,
+        // both halves stay.
+        let rate = 10.0
+        let count = Int(duration * rate)
+        var loud = [Float](repeating: 0.001, count: count)
+        var quiet = [Float](repeating: 0.00001, count: count)
+        for i in 0..<(count / 2) { loud[i] = 0.6 }
+        for i in (count / 2)..<count { quiet[i] = 0.02 }
+
+        let spans = AutoDeepTrim.deadSpans(
+            duration: duration,
+            audio: .sampled([
+                WaveformSamples(track: "microphone", samplesPerSecond: rate, peaks: loud),
+                WaveformSamples(track: "systemAudio", samplesPerSecond: rate, peaks: quiet),
+            ]),
+            // The picture is STILL throughout, so audio is the only evidence
+            // that can keep a span alive. With frames moving everywhere the
+            // trim keeps everything regardless and the test cannot fail — the
+            // first version of it did exactly that and passed against its own
+            // mutant.
+            frames: frames(moving: []),
+            transcript: nil, events: [], criteria: criteria)
+
+        #expect(!spans.contains { $0.start >= duration / 2 - 0.5 },
+                "the quiet track's half was cut — it was judged against the loud one: \(spans)")
+    }
 }
 
 /// `FrameActivity.from` reduces decoded frames to "did the picture change".

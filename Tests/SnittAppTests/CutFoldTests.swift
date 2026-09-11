@@ -279,14 +279,17 @@ struct CutFoldTimelineViewTests {
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: 40))
         view.update(duration: duration, cuts: [cut], markerPoints: [], playhead: 0)
         var scrubbed: Double?
-        var toggled: UUID?
+        var expanded: UUID?
         view.onScrub = { scrubbed = $0 }
-        view.onToggleExpansion = { toggled = $0 }
+        view.onExpandAndSelectFold = { expanded = $0 }
 
-        view.mouseDown(with: .synthetic(at: NSPoint(x: foldX, y: 20), in: view))
-        view.mouseUp(with: .synthetic(at: NSPoint(x: foldX, y: 20), in: view))
+        // DOUBLE-click: rev 5 (W11) gives a single click to the lane under
+        // the pointer, because cuts are drawn full height and an ungated
+        // single-click hit took scrubs away from every lane. The gesture
+        // changed; what this test is about did not.
+        view.mouseDown(with: .synthetic(at: NSPoint(x: foldX, y: 20), in: view, clickCount: 2))
 
-        #expect(toggled == cut.id)
+        #expect(expanded == cut.id)
         // The whole point of the hit-test: a fold click must not ALSO
         // scrub — a wrong implementation that checks `foldHit` but still
         // falls through to the scrub path afterward would fire both.
@@ -376,13 +379,16 @@ struct CutFoldTimelineViewTests {
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: 40))
         view.update(duration: duration, cuts: [cut], markerPoints: [], playhead: 0,
                    expandedCutIDs: [cut.id])
-        var toggled: UUID?
-        view.onToggleExpansion = { toggled = $0 }
+        var expanded: UUID?
+        view.onExpandAndSelectFold = { expanded = $0 }
 
-        view.mouseDown(with: .synthetic(at: NSPoint(x: midpoint, y: 20), in: view))
-        view.mouseUp(with: .synthetic(at: NSPoint(x: midpoint, y: 20), in: view))
+        // DOUBLE-click: rev 5 (W11) gives a single click to the lane under
+        // the pointer, because cuts are drawn full height and an ungated
+        // single-click hit took scrubs away from every lane. The gesture
+        // changed; what this test is about did not.
+        view.mouseDown(with: .synthetic(at: NSPoint(x: midpoint, y: 20), in: view, clickCount: 2))
 
-        #expect(toggled == cut.id)
+        #expect(expanded == cut.id)
     }
 
     @Test("Right-clicking a fold offers Remove Cut")

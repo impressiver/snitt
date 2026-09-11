@@ -82,7 +82,7 @@ struct TimelineLaneBudgetTests {
         // band. A test pinning the constants would pass if the distribution
         // stopped using them.
         let natural = TimelineLaneBudget.naturalHeight(audioTracks: both,
-                                                       hasTranscript: false, hasFolds: false)
+                                                       hasTranscript: false)
         let plan = TimelineLaneBudget.plan(availableHeight: natural, audioTracks: both)
         let video = try! #require(plan.height(of: .video))
         let audio = try! #require(plan.height(of: .audio("microphone")))
@@ -136,7 +136,7 @@ struct TimelineLaneBudgetTests {
         // rather than back to the picture. Lanes now take a preferred height
         // and the timeline sizes to the total.
         let natural = TimelineLaneBudget.naturalHeight(
-            audioTracks: both, hasTranscript: true, hasFolds: false)
+            audioTracks: both, hasTranscript: true)
         let plan = TimelineLaneBudget.plan(availableHeight: natural, audioTracks: both,
                                            hasTranscript: true)
         #expect(abs(try! #require(plan.height(of: .audio("microphone")))
@@ -173,9 +173,9 @@ struct TimelineLaneBudgetTests {
         // No transcript and no cuts is two fewer lanes. Claiming the height
         // anyway would stretch the rest to fill it, which is the bug.
         let full = TimelineLaneBudget.naturalHeight(audioTracks: both,
-                                                    hasTranscript: true, hasFolds: true)
+                                                    hasTranscript: true)
         let spare = TimelineLaneBudget.naturalHeight(audioTracks: both,
-                                                     hasTranscript: false, hasFolds: false)
+                                                     hasTranscript: false)
         #expect(spare < full)
     }
 

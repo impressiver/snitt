@@ -77,7 +77,7 @@ struct TimelineTrackLayoutTests {
         let drawn = TimelineTrackLayout.bands(
             in: CGRect(x: 0, y: 0, width: 800, height: height),
             markerHeight: TimelineLaneBudget.minimumTargetHeight,
-            audioTracks: tracks, hasTranscript: false, hasFolds: false)
+            audioTracks: tracks, hasTranscript: false)
         let planned = TimelineLaneBudget.plan(
             availableHeight: height, audioTracks: tracks, hasTranscript: false)
 
@@ -90,35 +90,27 @@ struct TimelineTrackLayoutTests {
         }
     }
 
-    @Test("A recording with no cuts gets no fold lane, and so no gap")
-    func noFoldsNoFoldLane() {
-        // An always-allocated fold lane put an empty 24pt band between the
-        // marker lane and the filmstrip on every recording with no cuts —
-        // which reads as a margin, because that is what it was.
+    @Test("The marker lane meets the filmstrip directly — cuts take no band")
+    func noBandBetweenMarksAndVideo() {
+        // Cuts used to hold a 24pt lane here, and rev 5 (W11) gives it back:
+        // a cut collapses the whole stack, so it draws as a full-height seam
+        // across every lane rather than as a strip of its own. What this
+        // asserts is the consequence a reader can see — nothing sits between
+        // the marks and the picture, whether or not the recording has cuts.
         let bounds = CGRect(x: 0, y: 0, width: 800, height: 300)
-        let without = TimelineTrackLayout.bands(in: bounds, markerHeight: 24,
-                                                audioTracks: ["microphone"], hasFolds: false)
-        #expect(abs(without.fold.height) < 0.001)
-        #expect(abs(without.marker.maxY - without.video.minY) < 0.001,
+        let bands = TimelineTrackLayout.bands(in: bounds, markerHeight: 24,
+                                              audioTracks: ["microphone"])
+        #expect(abs(bands.marker.maxY - bands.video.minY) < 0.001,
                 "a gap survived between the marker lane and the filmstrip")
-
-        let with = TimelineTrackLayout.bands(in: bounds, markerHeight: 24,
-                                             audioTracks: ["microphone"], hasFolds: true)
-        #expect(with.fold.height > 0, "a recording WITH cuts lost its fold lane")
     }
 
     @Test("Bands tile the view with no gap and no overflow")
     func bandsTileTheView() {
         let bands = TimelineTrackLayout.bands(in: bounds, markerHeight: markerHeight,
                                               audioTracks: ["microphone", "systemAudio"])
-        // The fold lane now sits between marks and video, and it appears in
-        // views this test's height did not previously reach — lowering the
-        // video floor to 18 made room for it. Counted rather than skipped: a
-        // tiling test that ignored a real band would stop being a tiling test.
         #expect(bands.marker.minY == 0)
-        #expect(abs(bands.marker.maxY - bands.fold.minY) < 0.001)
-        #expect(abs(bands.fold.maxY - bands.video.minY) < 0.001)
-        let total = bands.marker.height + bands.fold.height + bands.video.height
+        #expect(abs(bands.marker.maxY - bands.video.minY) < 0.001)
+        let total = bands.marker.height + bands.video.height
                   + bands.audio.reduce(0) { $0 + $1.rect.height }
                   + bands.transcript.height
         #expect(abs(total - bounds.height) < 0.001, "bands do not fill the view")

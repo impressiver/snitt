@@ -120,6 +120,10 @@ public final class TimelineView: NSView {
     /// earlier for drag-vs-cut.
     private static let foldHitMarginPixels: Double = 6.0
 
+    /// Half the width of a selected collapsed cut's wash — wide enough to
+    /// read as a band rather than as a thicker line.
+    private static let selectionWashHalfWidth: Double = 7.0
+
     /// Pixels of slop a click gets around a marker's own glyph before it
     /// counts as "aimed at this marker" — the marker-track sibling of
     /// `foldHitMarginPixels`, same reasoning: a marker draws as a handful of
@@ -491,13 +495,6 @@ public final class TimelineView: NSView {
     /// than itself.
     private var markerTrackHeight: Double { min(24.0, bounds.height * 0.4) }
 
-    /// The fold lane's y-range, or nil when the view is too short for one.
-    private var foldLaneRange: ClosedRange<Double>? {
-        let bands = TimelineTrackLayout.bands(in: bounds, markerHeight: markerTrackHeight,
-                                              audioTracks: [], hasFolds: !cuts.isEmpty)
-        guard bands.fold.height > 0 else { return nil }
-        return bands.fold.minY...bands.fold.maxY
-    }
 
     /// The marker whose glyph `point` lands on/near, or `nil`. Gated to the
     /// MARKER LANE's own y-range (`markerTrackHeight` down from the top,
@@ -518,30 +515,6 @@ public final class TimelineView: NSView {
         return nil
     }
 
-    /// The `Cut` whose fold `x` lands in/near, or `nil` if `x` is plain
-    /// scrub/drag territory. A COLLAPSED fold is a `foldHitMarginPixels`
-    /// window either side of its single line; an EXPANDED one is its whole
-    /// widened rect (`expandedWidthPixels`), since that entire rect IS the
-    /// revealed cut once expanded. Checked before any drag/scrub logic runs
-    /// (`mouseDown`, `menu(for:)`) — see this type's own doc comment and
-    /// `foldHitMarginPixels` for why a fold needs its own dedicated hit-test
-    /// rather than falling through to the track's.
-    /// Y-gated, like `markerHit(at:)` and for the same reason.
-    ///
-    /// This used to take only an x and match anywhere in the view, because a
-    /// fold's line is drawn full height on purpose — one collapse across the
-    /// whole synchronised stack. That was survivable while the stack was
-    /// marks/video/audio and the marker lane carried its own y-gate. It stops
-    /// being survivable as lanes are added below Video: an ungated full-height
-    /// hit swallows clicks meant for each of them, three times over.
-    ///
-    /// When the view is too short for a fold lane there is no gate to apply
-    /// and the old full-height behaviour stands, so a cramped timeline keeps
-    /// its folds reachable rather than losing them silently.
-    private func foldHit(at point: NSPoint) -> Cut? {
-        if let range = foldLaneRange, !range.contains(point.y) { return nil }
-        return foldHit(atX: point.x)
-    }
 
     /// One chip per phrase, positioned in OUTPUT time so a cut re-flows them.
     ///
@@ -549,7 +522,60 @@ public final class TimelineView: NSView {
     /// text: `TranscriptPhrases.displayText` returns "" there rather than an
     /// ellipsis, because an ellipsis alone occupies a chip, reads as text, and
     /// carries none.
+    /// How many words the lane is being asked to draw — the input the tier
+    /// decision is made from.
+    var wordCountForTesting: Int { phrases.reduce(0) { $0 + $1.words.count } }
+
+    /// The tier this lane can honestly draw at its current width (rev 5, W14).
+    ///
+    /// `WordLaneTiers` decides; this view only asks. The model, its constants
+    /// and its monotonicity were built and tested (D89) before this lane
+    /// existed — rev 5's spec briefly described re-deriving them, which would
+    /// have produced a second answer to a settled question, and a different
+    /// one: the spec's stated phrases/density boundary was 4 pt/word against
+    /// the shipped `minimumPhraseWidth / wordsPerPhrase` = 11.25.
+    var currentTierForTesting: WordLaneTier {
+        WordLaneTiers.tier(wordCount: wordCountForTesting, laneWidth: Double(bounds.width))
+    }
+
     private func drawPhrases(in band: NSRect) {
+        switch currentTierForTesting {
+        case .density: drawWordDensity(in: band)
+        case .phrases, .words: drawPhraseChips(in: band)
+        }
+    }
+
+    /// Where the talking is, when there is no room for words or phrases.
+    ///
+    /// A 30-minute recording gives this lane a fifth of a point per word.
+    /// Chips are not merely small there, they are a lie — you cannot average
+    /// two words. What survives downsampling is DENSITY, so that is what the
+    /// lane draws: speech reads as glow, silence as nothing, and the lane
+    /// stays a map of where to look.
+    private func drawWordDensity(in band: NSRect) {
+        guard !phrases.isEmpty, band.height > 0 else { return }
+        let strip = NSRect(x: 0, y: band.midY - 3, width: bounds.width, height: 6)
+        var perColumn = [Int](repeating: 0, count: max(1, Int(bounds.width)))
+        for phrase in phrases {
+            for word in phrase.words {
+                let x = Int(geometry.x(atOutput: OutputTime(word.start)))
+                guard x >= 0, x < perColumn.count else { continue }
+                perColumn[x] += 1
+            }
+        }
+        let busiest = max(1, perColumn.max() ?? 1)
+        for (x, count) in perColumn.enumerated() where count > 0 {
+            // Ramp from ink3 to signal: a column with one word in it is
+            // structure, a column with several is speech.
+            let fraction = min(1.0, Double(count) / Double(busiest))
+            Palette.chip.blended(withFraction: CGFloat(fraction),
+                                 of: Palette.waveform)?.setFill()
+            NSBezierPath(rect: NSRect(x: Double(x), y: strip.minY,
+                                      width: 1, height: strip.height)).fill()
+        }
+    }
+
+    private func drawPhraseChips(in band: NSRect) {
         // No band fill. The lane's ground is the timeline's own, so the chips
         // read as objects sitting on the timeline rather than as a fourth
         // stripe competing with the waveforms above them — and silence, which
@@ -606,11 +632,10 @@ public final class TimelineView: NSView {
     }
 
     /// The phrase whose chip contains `point`, y-gated to the transcript lane
-    /// exactly as folds are gated to theirs.
+    /// exactly as the marker lane gates its own.
     func phraseHit(at point: NSPoint) -> TranscriptPhrase? {
         let bands = TimelineTrackLayout.bands(in: bounds, markerHeight: markerTrackHeight,
-                                              audioTracks: [], hasTranscript: !phrases.isEmpty,
-                                              hasFolds: !cuts.isEmpty)
+                                              audioTracks: [], hasTranscript: !phrases.isEmpty)
         guard bands.transcript.height > 0, bands.transcript.contains(point) else { return nil }
         return phrases.first { phrase in
             let start = geometry.x(atOutput: OutputTime(phrase.start))
@@ -639,15 +664,8 @@ public final class TimelineView: NSView {
     @discardableResult
     func handlePhraseClickForTesting(at point: NSPoint) -> Bool { handlePhraseClick(at: point) }
 
-    /// Test seam for the y-gate, in VIEW coordinates.
-    ///
-    /// Driving this through a synthetic `NSEvent` would test AppKit's
-    /// window-to-view conversion on a view that has no window — and at the
-    /// 40pt height every existing fold test uses, a click at y=20 is
-    /// flip-symmetric, so such a test cannot tell a correct conversion from an
-    /// inverted one. The gate is a y-range check; this asserts the y-range
-    /// check.
-    func foldHitForTesting(at point: NSPoint) -> Cut? { foldHit(at: point) }
+    /// Test seam for the shared, x-only cut hit test.
+    func foldHitForTesting(atX x: Double) -> Cut? { foldHit(atX: x) }
 
     /// How the view would draw `id` right now. The property that matters is
     /// that this reflects what `update` was handed: the model tracked fold
@@ -658,7 +676,7 @@ public final class TimelineView: NSView {
         FoldPalette.appearance(expanded: expandedCutIDs.contains(id),
                                selected: id == selectedFoldID)
     }
-    var foldLaneRangeForTesting: ClosedRange<Double>? { foldLaneRange }
+
     var markerTrackHeightForTesting: Double { markerTrackHeight }
 
     private func foldHit(atX x: Double) -> Cut? {
@@ -1003,16 +1021,22 @@ public final class TimelineView: NSView {
             }
         }
         if handlePhraseClick(at: point) { return }
-        if let cut = foldHit(at: point) {
-            activeFoldClick = cut.id
-            // Selecting as well as toggling: a fold you have just opened is a
-            // segment you are deciding about, and it should be the thing
-            // Delete acts on without a second gesture to say so.
-            onSelectFold(cut.id)
-            onToggleExpansion(cut.id)
-            needsDisplay = true
-            return
-        }
+        // A SINGLE CLICK NEVER HITS A CUT (rev 5, W11).
+        //
+        // Cuts are drawn full height now — they are not a lane — and a
+        // full-height hit region with a 6pt margin took every single click
+        // within 12pt of a cut, in every lane, away from the lane under the
+        // pointer. That was measured rather than assumed: deleting the old
+        // y-gate and running `GestureMatrixTests` failed seven assertions,
+        // toggling a fold from the marker, video, audio and transcript lanes
+        // and killing scrubbing at that x in all of them.
+        //
+        // So the resolution is a PRIORITY rule rather than a region: the
+        // precise gesture yields to the lane, and the coarse ones keep their
+        // reach. Double-click still expands and selects a cut from anywhere,
+        // right-click still offers Remove Cut from anywhere — both ungated,
+        // both already tested — and neither competes with anything, because
+        // no lane assigns them a meaning at a cut's x.
         activeFoldClick = nil
         let output = time(for: event)
         gesture.began(atTime: output.seconds)
@@ -1213,6 +1237,16 @@ public final class TimelineView: NSView {
     /// ever being re-read: the samples are the recording's, the axis is the
     /// edit's. A column with no source behind it (past the trimmed end) draws
     /// nothing rather than repeating the last value.
+    /// The preset the waveform's silence is drawn against.
+    ///
+    /// It has to be A preset, not "silence" in the abstract: the threshold and
+    /// the minimum span are both properties of a `DeepTrimCriteria`, and they
+    /// differ by a factor of four between Conservative and Aggressive. The
+    /// lane draws Default, so what it shows is what Auto-Trim ▸ Default would
+    /// take — and running Aggressive cuts more than the lane showed, which is
+    /// honest only because it is said out loud here and in the menu.
+    static let waveformSilencePreset = DeepTrimPreset.default
+
     private func drawWaveform(_ samples: WaveformSamples, in rect: NSRect,
                               muted: Bool, gain: Double) {
         guard !samples.peaks.isEmpty, rect.height > 2 else { return }
@@ -1224,7 +1258,21 @@ public final class TimelineView: NSView {
         // clipping is damage, and hiding the damage because the track is
         // currently silent is how it survives to the export.
         let clipping = Palette.clipping.withAlphaComponent(muted ? 0.5 : 0.9)
+        let baseline = Palette.silenceBaseline.withAlphaComponent(muted ? 0.084 : 0.3)
 
+        // The SAME threshold Auto-Trim uses, from the same function — see
+        // `SpeechChunker.silenceThreshold`. A second copy here would let the
+        // lane draw gaps the trim would not take, which is the one thing a
+        // segmented waveform must not do.
+        let criteria = DeepTrimCriteria.preset(Self.waveformSilencePreset)
+        let threshold = SpeechChunker.silenceThreshold(
+            for: samples.peaks, fraction: criteria.audioSilenceFraction)
+
+        // Column by column, exactly as before — one pass over the peaks, no
+        // second walk. What is new is that each column is also CLASSIFIED.
+        struct Column { let x: Double; let peak: Double; let clipped: Bool }
+        var columns: [Column] = []
+        var quiet: [Bool] = []
         var x = 0.0
         while x < bounds.width {
             defer { x += 1 }
@@ -1234,20 +1282,58 @@ public final class TimelineView: NSView {
                 samplesPerSecond: samples.samplesPerSecond,
                 sampleCount: samples.peaks.count) else { continue }
             let peak = Double(samples.peaks[index])
-            let clipped = WaveformScale.isClipped(peak: peak, gain: gain)
-            (clipped ? clipping : normal).setFill()
+            columns.append(Column(x: x, peak: peak,
+                                  clipped: WaveformScale.isClipped(peak: peak, gain: gain)))
+            quiet.append(Float(peak) <= threshold)
+        }
+        guard !columns.isEmpty else { return }
+
+        // Hysteresis, and it is the preset's, not a number invented here.
+        // Auto-Trim only removes a silence once it lasts `minimumSpan`, so a
+        // shorter gap drawn as a gap would be a gap the edit keeps — the lane
+        // would be promising a cut that never comes. Short quiet runs are
+        // therefore drawn as audio, which is what they are.
+        let secondsPerColumn = columns.count > 1
+            ? abs(geometry.outputTime(atX: columns[1].x).seconds
+                  - geometry.outputTime(atX: columns[0].x).seconds)
+            : 0
+        if secondsPerColumn > 0 {
+            let minimumColumns = Int((criteria.minimumSpan / secondsPerColumn).rounded())
+            var runStart = 0
+            for i in 0...quiet.count {
+                if i == quiet.count || quiet[i] != quiet[runStart] {
+                    if quiet[runStart], i - runStart < minimumColumns {
+                        for j in runStart..<i { quiet[j] = false }
+                    }
+                    runStart = i
+                }
+            }
+        }
+
+        for (i, column) in columns.enumerated() {
+            if quiet[i] {
+                // Silence is a line, not a short bar. A short bar reads as
+                // "quiet audio"; a baseline reads as "nothing here", which is
+                // the difference between a waveform and a preview of the edit.
+                baseline.setFill()
+                NSBezierPath(rect: NSRect(x: column.x, y: midY - 0.5,
+                                          width: 1, height: 1)).fill()
+                continue
+            }
+            (column.clipped ? clipping : normal).setFill()
             // Logarithmic, and gain-aware: the bar shows what will be
             // exported, not what was captured (`WaveformScale`).
             //
             // A floor of half a pixel so a quiet passage still reads as "there
             // is audio here" rather than as a gap in the track.
-            let height = max(0.5, WaveformScale.height(forPeak: peak, gain: gain) * halfHeight)
-            NSBezierPath(rect: NSRect(x: x, y: midY - height, width: 1, height: height * 2)).fill()
+            let height = max(0.5, WaveformScale.height(forPeak: column.peak, gain: gain) * halfHeight)
+            NSBezierPath(rect: NSRect(x: column.x, y: midY - height,
+                                      width: 1, height: height * 2)).fill()
             // A clipped column is marked at the band's edges too, so it is
             // findable when the whole passage is loud and every bar is tall.
-            if clipped {
-                NSBezierPath(rect: NSRect(x: x, y: rect.minY, width: 1, height: 2)).fill()
-                NSBezierPath(rect: NSRect(x: x, y: rect.maxY - 2, width: 1, height: 2)).fill()
+            if column.clipped {
+                NSBezierPath(rect: NSRect(x: column.x, y: rect.minY, width: 1, height: 2)).fill()
+                NSBezierPath(rect: NSRect(x: column.x, y: rect.maxY - 2, width: 1, height: 2)).fill()
             }
         }
     }
@@ -1316,6 +1402,8 @@ public final class TimelineView: NSView {
         /// — a fourth opinion about colour, and the one the eye lands on
         /// first, since a mark is what you are usually looking for.
         static let mark = SnittPalette.signal
+        /// Silence, drawn as a hairline rather than as a short bar.
+        static let silenceBaseline = SnittPalette.slateText
         /// Clipping is damage rather than an edit, but it is still red, and
         /// one red is the point: `NSColor.systemRed` beside a brand-red cut
         /// read as two unrelated warnings.
@@ -1345,8 +1433,7 @@ public final class TimelineView: NSView {
         let bands = TimelineTrackLayout.bands(in: bounds,
                                               markerHeight: markerTrackHeight,
                                               audioTracks: tracks,
-                                              hasTranscript: !phrases.isEmpty,
-                                              hasFolds: !cuts.isEmpty)
+                                              hasTranscript: !phrases.isEmpty)
         if bands.transcript.height > 0 { drawPhrases(in: bands.transcript) }
         // The marks lane carries no band of its own: the rev 5 style sheet
         // makes it transparent on `ink0`, so what identifies it is its amber
@@ -1434,10 +1521,23 @@ public final class TimelineView: NSView {
                                                     height: bounds.height))
             } else {
                 let width = FoldPalette.lineWidth(foldLook)
+                // The armed wash first, so the seam sits on top of it.
+                if let wash = FoldPalette.selectionWash(foldLook) {
+                    wash.setFill()
+                    NSBezierPath(rect: NSRect(x: foldX - Self.selectionWashHalfWidth, y: 0,
+                                              width: Self.selectionWashHalfWidth * 2,
+                                              height: bounds.height)).fill()
+                }
                 FoldPalette.fill(foldLook).setFill()
                 NSBezierPath(rect: NSRect(x: foldX - width / 2, y: 0,
                                           width: width,
                                           height: bounds.height)).fill()
+                // A notch at the top, where the ruler is. A three-point line
+                // crossing a busy stack is easy to mistake for a lane
+                // boundary; the notch is the bit that says "this is an object,
+                // and it is here".
+                NSBezierPath(roundedRect: NSRect(x: foldX - 5, y: 0, width: 10, height: 6),
+                             xRadius: 2, yRadius: 2).fill()
             }
         }
 

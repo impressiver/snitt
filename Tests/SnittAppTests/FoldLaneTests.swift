@@ -9,18 +9,36 @@ import AppKit
 @testable import SnittApp
 @testable import SnittDocument
 
-/// The fold lane, and the y-gate that goes with it.
+/// How a click resolves now that cuts have no lane (rev 5, W11).
 ///
-/// **Every existing fold test uses a 40pt-tall view**, which is shorter than a
-/// fold lane can exist in — so all of them exercise the ungated fallback and
-/// none of them touches the gate. These use a realistic height on purpose;
-/// without that they would look like coverage and assert nothing about the
-/// behaviour they name.
+/// **This file used to test the opposite**, and the reversal is worth keeping
+/// visible rather than quietly rewriting. Rev 4 gave folds a 24pt lane and
+/// y-gated their hits to it, because an ungated full-height hit swallowed
+/// clicks meant for every lane below. The product owner then ruled that cuts
+/// do not belong in a lane at all — a cut collapses the entire timeline, so
+/// drawing it as one strip among others was the picture disagreeing with the
+/// model.
+///
+/// Deleting the gate as that directive implied was *measured* before it was
+/// believed, and it failed: with the gate gone, a single click at a cut's x
+/// toggled the fold from the marker, video, audio and transcript lanes and
+/// killed scrubbing at that x in all of them — seven assertions in
+/// `GestureMatrixTests`.
+///
+/// So the answer is a PRIORITY rule rather than a region. The precise gesture
+/// yields to the lane under the pointer; the coarse gestures keep their reach,
+/// because no lane assigns them a meaning at a cut's x:
+///
+/// | Gesture | Resolves to |
+/// |---|---|
+/// | single click | the lane under the pointer, always |
+/// | double-click | the cut — expand and select — from any lane |
+/// | right-click | the cut's Remove Cut menu, from any lane |
 @MainActor
-struct FoldLaneTests {
+struct FoldHitPriorityTests {
     private let width = 800.0
     private let duration = 20.0
-    /// Tall enough for marks (24) + fold lane (24) + a usable video band (36).
+    /// Tall enough for marks (24) and a usable video band.
     private let tallEnough = 140.0
 
     private func makeView(height: Double) -> (TimelineView, Cut, CGFloat) {
@@ -33,89 +51,56 @@ struct FoldLaneTests {
         return (view, cut, CGFloat(geometry.x(atFold: cut)))
     }
 
-    @Test("A hit inside the fold lane finds the fold")
-    func foldLaneHitFindsTheFold() {
+    @Test("A cut is hittable at any height, because it is drawn at any height")
+    func aCutIsHitAtEveryY() {
+        // The x-only hit test is unchanged and stays the shared one: what
+        // moved is which GESTURES consult it, not where a cut lives.
         let (view, cut, foldX) = makeView(height: tallEnough)
-        let range = try! #require(view.foldLaneRangeForTesting)
-        #expect(range.contains(36), "expected the fold lane to span 24...48, got \(range)")
-        #expect(view.foldHitForTesting(at: NSPoint(x: foldX, y: 36))?.id == cut.id)
+        for y in [10.0, 36.0, 80.0, 120.0] {
+            #expect(view.foldHitForTesting(atX: Double(foldX))?.id == cut.id,
+                    "a cut was unreachable at y=\(y)")
+        }
     }
 
-    @Test("The SAME x below the fold lane is not a fold hit")
-    func belowTheFoldLaneIsNotAFold() {
-        // The whole reason the gate exists. `foldHit` took no y and a fold's
-        // line is drawn full height on purpose, so before this a hit on the
-        // audio band at a fold's x resolved to that fold instead of falling
-        // through to scrub — and every lane added below Video multiplies the
-        // collision.
-        let (view, _, foldX) = makeView(height: tallEnough)
-        #expect(view.foldHitForTesting(at: NSPoint(x: foldX, y: 120)) == nil,
-                "a hit on the audio band resolved to a fold")
+    @Test("Single click scrubs at a cut's x, in a tall view and a cramped one")
+    func singleClickAlwaysScrubs() {
+        // Both heights, because the old behaviour differed between them: a
+        // view too short for a fold lane had no gate to apply and fell back to
+        // full-height fold hits. That fallback is gone with the lane, so the
+        // two heights now behave identically — which is the simplification
+        // this ruling buys.
+        for height in [tallEnough, 40.0] {
+            let (view, _, foldX) = makeView(height: height)
+            var toggled: UUID?
+            var scrubbed: Double?
+            view.onToggleExpansion = { toggled = $0 }
+            view.onScrub = { scrubbed = $0 }
+            view.mouseDown(with: .synthetic(at: NSPoint(x: foldX, y: height / 2), in: view))
+            view.mouseUp(with: .synthetic(at: NSPoint(x: foldX, y: height / 2), in: view))
+            #expect(toggled == nil, "a single click toggled a cut in a \(height)pt view")
+            #expect(scrubbed != nil, "a single click did not scrub in a \(height)pt view")
+        }
     }
 
-    @Test("The marker lane above the fold lane is not a fold hit either")
-    func aboveTheFoldLaneIsNotAFold() {
-        let (view, _, foldX) = makeView(height: tallEnough)
-        #expect(view.foldHitForTesting(at: NSPoint(x: foldX, y: 10)) == nil)
-    }
-
-    @Test("On a view too short for a fold lane, folds stay reachable everywhere")
-    func crampedViewKeepsFullHeightFolds() {
-        // The fallback, and it must not be silent: gating a lane that has no
-        // room to exist would make folds unclickable on a short timeline
-        // rather than merely undecorated. This is also the height every
-        // pre-existing fold test uses.
+    @Test("Double-click still reaches a cut in a cramped view")
+    func doubleClickSurvivesAShortView() {
+        // The gesture that carries selection now, checked at the height where
+        // every pre-existing fold test used to live.
         let (view, cut, foldX) = makeView(height: 40)
-        var toggled: UUID?
-        view.onToggleExpansion = { toggled = $0 }
-        view.mouseDown(with: .synthetic(at: NSPoint(x: foldX, y: 20), in: view))
-        view.mouseUp(with: .synthetic(at: NSPoint(x: foldX, y: 20), in: view))
-        #expect(toggled == cut.id)
+        var expanded: UUID?
+        view.onExpandAndSelectFold = { expanded = $0 }
+        view.mouseDown(with: .synthetic(at: NSPoint(x: foldX, y: 20), in: view, clickCount: 2))
+        #expect(expanded == cut.id)
     }
 
     @Test("The marker lane clears the 24pt target floor at a realistic height")
     func markerLaneMeetsTheFloor() {
-        // Shipped at `min(14.0, …)`, and markers are draggable. WCAG 2.5.8 AA
-        // sets 24x24 as the enforceable minimum — this was a defect in the app
-        // independent of any redesign.
-        // Read from the VIEW, not from a height this test computed itself.
-        // The first version passed `min(24, height * 0.4)` into `bands` and
-        // asserted on the result — which tests this test's arithmetic and
-        // leaves `markerTrackHeight` free to revert to 14. A mutant that did
-        // exactly that survived, which is how the gap was found.
+        // Unrelated to cuts, and kept: shipped at `min(14.0, …)` while markers
+        // are draggable, against WCAG 2.5.8 AA's 24×24 enforceable minimum.
+        // Read from the VIEW, not from a height this test computed itself — an
+        // earlier version asserted on its own arithmetic and a mutant that
+        // reverted `markerTrackHeight` to 14 survived it.
         let (view, _, _) = makeView(height: tallEnough)
         #expect(view.markerTrackHeightForTesting >= 24)
-    }
-
-    @Test("The fold lane appears only when a usable video band survives it")
-    func foldLaneYieldsToTheFilmstrip() {
-        // The filmstrip is protected last. Taking 24pt for a fold lane that
-        // pushed the video band under its own floor would trade the spine for
-        // a decoration.
-        let tall = TimelineTrackLayout.bands(in: NSRect(x: 0, y: 0, width: width, height: tallEnough),
-                                             markerHeight: 24, audioTracks: ["microphone"])
-        // Genuinely short, derived rather than guessed: the lane fits only
-        // while marks + folds + the video floor still do. This constant has
-        // moved twice as the floor was tuned, so it is computed now.
-        let tooShort = 24 + TimelineTrackLayout.foldLaneHeight
-                     + TimelineLaneBudget.minimumVideoHeight - 1
-        let short = TimelineTrackLayout.bands(in: NSRect(x: 0, y: 0, width: width, height: tooShort),
-                                              markerHeight: 24, audioTracks: ["microphone"])
-        #expect(abs(tall.fold.height - TimelineTrackLayout.foldLaneHeight) < 0.001)
-        #expect(abs(short.fold.height) < 0.001)
-        #expect(short.video.height > 0, "the filmstrip was squeezed out for a fold lane")
-    }
-
-    @Test("Bands never overlap and never leave a gap")
-    func bandsTile() {
-        // Adding a lane between marks and video is exactly where an off-by-one
-        // leaves a dead strip or a double-drawn edge.
-        let bands = TimelineTrackLayout.bands(in: NSRect(x: 0, y: 0, width: width, height: tallEnough),
-                                              markerHeight: 24,
-                                              audioTracks: ["microphone", "systemAudio"])
-        #expect(abs(bands.marker.maxY - bands.fold.minY) < 0.001)
-        #expect(abs(bands.fold.maxY - bands.video.minY) < 0.001)
-        #expect(abs(bands.video.maxY - bands.audio[0].rect.minY) < 0.001)
-        #expect(abs(bands.audio.last!.rect.maxY - tallEnough) < 0.001)
     }
 }

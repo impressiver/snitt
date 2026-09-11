@@ -107,19 +107,13 @@ public enum TimelineLaneBudget {
 
     /// What the whole stack wants, given what this recording actually has.
     public static func naturalHeight(audioTracks: [String],
-                                     hasTranscript: Bool,
-                                     hasFolds: Bool) -> Double {
+                                     hasTranscript: Bool) -> Double {
         minimumTargetHeight                                    // marks
-            + (hasFolds ? foldLaneHeight : 0)
             + preferredVideoHeight
             + preferredAudioHeight * Double(audioTracks.count)
             + (hasTranscript ? transcriptLaneHeight : 0)
     }
 
-    /// The fold lane's height, mirrored from `TimelineTrackLayout` so
-    /// `naturalHeight` can account for it without the two types importing each
-    /// other in a circle.
-    public static let foldLaneHeight: Double = 24
 
     /// What the timeline should be given, for a window of this height.
     ///
@@ -130,10 +124,9 @@ public enum TimelineLaneBudget {
     /// bigger.
     public static func timelineHeight(forWindowHeight window: Double,
                                       audioTracks: [String] = ["microphone", "systemAudio"],
-                                      hasTranscript: Bool = false,
-                                      hasFolds: Bool = false) -> Double {
+                                      hasTranscript: Bool = false) -> Double {
         let wanted = naturalHeight(audioTracks: audioTracks,
-                                   hasTranscript: hasTranscript, hasFolds: hasFolds)
+                                   hasTranscript: hasTranscript)
         return max(minimumTimelineHeight, min(wanted, window * maximumWindowShare))
     }
 

@@ -67,20 +67,55 @@ struct FoldAppearanceTests {
         // would read as a different KIND of thing rather than as this thing,
         // chosen — and would be a third opinion about what a cut looks like,
         // alongside the line and the band.
-        let base = FoldPalette.base.usingColorSpace(.sRGB)!
+        // HUE, not identical components. Rev 5 gives a selected collapsed cut
+        // `redBright` — a lighter red, and the second channel a three-point
+        // line needs once it is the only thing marking selection. That is
+        // still "this thing, chosen": same hue, more emphasis. Asserting the
+        // components were byte-identical was one implementation of the rule,
+        // not the rule, and it would have blocked exactly the change the rule
+        // permits while still passing for an orange with the same alpha.
         for look in [FoldPalette.Appearance.collapsed, .collapsedSelected,
                      .expanded, .expandedSelected] {
             let fill = FoldPalette.fill(look).usingColorSpace(.sRGB)!
-            #expect(abs(fill.redComponent - base.redComponent) < 0.001)
-            #expect(abs(fill.greenComponent - base.greenComponent) < 0.001)
-            #expect(abs(fill.blueComponent - base.blueComponent) < 0.001)
+            #expect(fill.redComponent > fill.greenComponent + 0.3,
+                    "\(look) is not red: \(fill)")
+            #expect(abs(fill.greenComponent - fill.blueComponent) < 0.02,
+                    "\(look) has drifted off the red axis toward orange: \(fill)")
         }
         // Stronger, in the direction that reads as emphasis on each shape:
-        // more opaque for the band, wider for the line.
+        // more opaque for the band, wider AND brighter for the line.
         #expect(FoldPalette.fill(.expandedSelected).alphaComponent
                 > FoldPalette.fill(.expanded).alphaComponent)
         #expect(FoldPalette.lineWidth(.collapsedSelected)
                 > FoldPalette.lineWidth(.collapsed))
+        // Brightness is the channel rev 5 added, and width alone no longer
+        // covers it: a mutant that put the collapsed-selected fill back to
+        // plain `base` kept every other assertion here green, because the
+        // line was still wider and still red.
+        func luminance(_ color: NSColor) -> Double {
+            let c = color.usingColorSpace(.sRGB)!
+            return 0.299 * Double(c.redComponent) + 0.587 * Double(c.greenComponent)
+                 + 0.114 * Double(c.blueComponent)
+        }
+        #expect(luminance(FoldPalette.fill(.collapsedSelected))
+                > luminance(FoldPalette.fill(.collapsed)) + 0.05,
+                "a selected collapsed cut is no brighter than an unselected one")
+    }
+
+    @Test("A selected collapsed cut gets a wash, because three points cannot carry it")
+    func selectedCollapsedCutGetsAWash() {
+        // The channel a collapsed cut gained in rev 5 (W11). It is drawn three
+        // points wide across the whole stack; brightening three points is not
+        // enough to say "this is what ⌫ deletes". Nothing else has a wash —
+        // an expanded cut already has a body — so a wash on any other state
+        // would be noise.
+        let wash = FoldPalette.selectionWash(.collapsedSelected)
+        #expect(wash != nil, "an armed cut has nothing but three brighter points")
+        #expect((wash?.alphaComponent ?? 0) > 0.05 && (wash?.alphaComponent ?? 1) < 0.25,
+                "the wash is either invisible or loud enough to read as a band of its own")
+        for quiet in [FoldPalette.Appearance.collapsed, .expanded, .expandedSelected] {
+            #expect(FoldPalette.selectionWash(quiet) == nil, "\(quiet) grew a wash")
+        }
     }
 
     @Test("Only the selected band gets an edge")

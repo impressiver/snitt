@@ -12,12 +12,17 @@ RecordingHUDPanelTests :: Sources/SnittApp/RecordingHUDPanel.swift :: override v
 RecordingHUDPanelTests :: Sources/SnittApp/RecordingHUDPanel.swift :: isReleasedWhenClosed = false :: isReleasedWhenClosed = true
 
 # Timeline hit-testing — the class that produced two shipped regressions.
-GestureMatrixTests :: Sources/SnittApp/TimelineView.swift :: guard let cut = foldHit(atX: point.x) else { return nil } :: guard let cut = foldHit(at: point) else { return nil }
-GestureMatrixTests :: Sources/SnittApp/TimelineView.swift :: if let range = foldLaneRange, !range.contains(point.y) { return nil } ::
+GestureMatrixTests :: Sources/SnittApp/TimelineView.swift :: guard let cut = foldHit(atX: point.x) else { return nil } :: guard let cut = foldHit(atX: point.x + 10_000) else { return nil }
+# PARKED, not forgotten: `foldHit`'s `geometry.duration > 0` term cannot be
+# killed. Deleting it changes no observable behaviour even for a recording
+# whose every second is cut — something upstream already stops a phantom
+# fold at the origin, so the term is belt-and-braces rather than load-
+# bearing. `TimelineViewTests.fullyCutRecordingHasNoFoldPositions` pins the
+# BEHAVIOUR; a mutant that cannot fail would only have inflated the count.
 
 # Lane geometry — wrong sizes render, they do not throw.
 TimelineLaneBudgetTests :: Sources/SnittApp/TimelineLaneBudget.swift :: public static let minimumTargetHeight: Double = 24 :: public static let minimumTargetHeight: Double = 10
-TimelineTrackLayoutTests :: Sources/SnittApp/TimelineTrackLayout.swift :: let stackTop = markerHeight + foldHeight :: let stackTop = markerHeight
+TimelineTrackLayoutTests :: Sources/SnittApp/TimelineTrackLayout.swift :: let stackTop = markerHeight :: let stackTop = markerHeight + 24
 
 # Export wording — a ceiling presented as an estimate is wrong every time.
 ExportPreflightTests :: Sources/SnittApp/ExportPreflight.swift :: "at most %.1f MB" :: "≈ %.1f MB"
@@ -47,8 +52,8 @@ ExportSheetTests :: Sources/SnittApp/EditorWindowController.swift :: let folder 
 # Fold selection — the model tracked it correctly for a milestone while every
 # cut drew identically, and no model test could tell.
 FoldAppearanceTests :: Sources/SnittApp/TimelineView.swift :: selectedFoldID: display.selectedFoldID, :: selectedFoldID: nil,
-FoldAppearanceTests :: Sources/SnittApp/FoldPalette.swift :: appearance == .collapsedSelected ? 4 : 2 :: 2
-FoldAppearanceTests :: Sources/SnittApp/FoldPalette.swift :: case .expandedSelected: base.withAlphaComponent(0.55) :: case .expandedSelected: base.withAlphaComponent(0.35)
+FoldAppearanceTests :: Sources/SnittApp/FoldPalette.swift :: appearance == .collapsedSelected ? 4 : 3 :: 3
+FoldAppearanceTests :: Sources/SnittApp/FoldPalette.swift :: case .expandedSelected: base.withAlphaComponent(0.32) :: case .expandedSelected: base.withAlphaComponent(0.20)
 
 # Releases — a missing DMG looks exactly like a release.
 ReleaseScriptTests :: Scripts/release.sh :: printf '%s\n' "$ZIP" "$APPCAST" "$DMG" :: printf '%s\n' "$ZIP" "$APPCAST"
@@ -80,3 +85,21 @@ SettingsRowTests :: Sources/SnittApp/SettingsWindowController.swift :: + "in the
 SettingsRowTests :: Sources/SnittApp/SettingsWindowController.swift :: static let contentWidth: Double = 520 :: static let contentWidth: Double = 420
 ExportHeadlineTests :: Sources/SnittApp/ExportPreflight.swift :: durationSeconds: estimate.durationSeconds)) :: durationSeconds: 0))
 ExportHeadlineTests :: Sources/SnittApp/ExportPreflight.swift :: return String(format: "%d:%02d", total / 60, total % 60) :: return String(format: "%d:%d", total / 60, total % 60)
+
+# --- rev 5 W11: cuts are seams, and single click yields to the lane ---
+GestureMatrixTests :: Sources/SnittApp/TimelineView.swift :: if handlePhraseClick(at: point) { return } :: if handlePhraseClick(at: point) { return }; if let cut = foldHit(atX: point.x) { onSelectFold(cut.id); onToggleExpansion(cut.id); return }
+FoldAppearanceTests :: Sources/SnittApp/FoldPalette.swift :: appearance == .collapsedSelected ? base.withAlphaComponent(0.12) : nil :: nil
+TimelineTrackLayoutTests :: Sources/SnittApp/TimelineTrackLayout.swift :: let stackTop = markerHeight :: let stackTop = markerHeight + 24
+FoldAppearanceTests :: Sources/SnittApp/FoldPalette.swift :: case .collapsedSelected: SnittPalette.redBright :: case .collapsedSelected: base
+
+# --- rev 5 W12: one silence rule, two consumers ---
+SilenceKernelTests :: Sources/SnittExport/SpeechChunker.swift :: max(absoluteSilenceFloor, referenceLevel(of: peaks) * fraction) :: referenceLevel(of: peaks) * fraction
+AutoDeepTrimTests :: Sources/SnittExport/AutoDeepTrim.swift :: SpeechChunker.silenceThreshold(for: track.peaks, :: SpeechChunker.silenceThreshold(for: [0.5],
+
+# --- rev 5 W13: the gain ladder in brand colours ---
+GainMeterAppearanceTests :: Sources/SnittApp/TimelineGutter.swift :: ? SnittPalette.Swatch.recordRed :: ? SnittPalette.Swatch.signal
+GainMeterAppearanceTests :: Sources/SnittApp/TimelineGutter.swift :: SnittPalette.Swatch.ink3.opacity(muted ? 0.28 : 1) :: SnittPalette.Swatch.ink3
+
+# --- rev 5 W14: the words lane asks the tier model ---
+WordLaneViewTests :: Sources/SnittApp/TimelineView.swift :: WordLaneTiers.tier(wordCount: wordCountForTesting, laneWidth: Double(bounds.width)) :: .phrases
+WordLaneViewTests :: Sources/SnittApp/TimelineView.swift :: var wordCountForTesting: Int { phrases.reduce(0) { $0 + $1.words.count } } :: var wordCountForTesting: Int { phrases.count }

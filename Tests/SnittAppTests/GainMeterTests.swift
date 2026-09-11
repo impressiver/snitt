@@ -6,6 +6,8 @@
 
 import Testing
 import Foundation
+import AppKit
+import SwiftUI
 @testable import SnittApp
 
 /// The gain ladder beside each audio lane.
@@ -108,5 +110,60 @@ struct GainMeterTests {
         // "+6 dB" and "−6 dB" are different instructions; "6 dB" is neither.
         #expect(GainMeter.label(forGain: 2).hasPrefix("+"))
         #expect(GainMeter.label(forGain: 0.5).hasPrefix("-"))
+    }
+}
+
+// The ladder's colours (rev 5, W13). `GainMeter`'s arithmetic is tested above
+// and unchanged; what these pin is that the view colours what the arithmetic
+// decides, in the brand's vocabulary rather than the user's accent colour.
+@Suite
+struct GainMeterAppearanceTests {
+
+    private func srgb(_ color: Color) -> NSColor {
+        NSColor(color).usingColorSpace(.sRGB)!
+    }
+
+    @Test("A hot segment is red and a lit one is amber — the same red and amber as the lanes")
+    func ladderSpeaksTheBrand() {
+        // It was `Color.accentColor` for lit and the chrome highlight for hot,
+        // so on a blue-accented Mac a blue meter sat beside an amber waveform
+        // measuring the same track. Identity, not "some warm colour": the
+        // meter and the waveform must agree about what a loud microphone
+        // looks like.
+        let view = GainMeterView(title: "Mic", gain: 2.0, muted: false,
+                                 onGain: { _ in }, onToggleMute: {})
+        #expect(srgb(view.colourForTesting(0)) == srgb(SnittPalette.Swatch.signal),
+                "a lit segment is not brand amber")
+        #expect(srgb(view.colourForTesting(GainMeter.unitySegment))
+                == srgb(SnittPalette.Swatch.recordRed),
+                "a segment at unity is not brand red")
+    }
+
+    @Test("A muted ladder goes dark but stays visible")
+    func mutedLadderDims() {
+        // A muted track lights NO segments — `lit` is 0 — so the whole ladder
+        // falls to the unlit colour. What matters is that it dims rather than
+        // disappearing: a meter you cannot see is a meter you cannot un-mute
+        // from, and double-clicking it is how you do that.
+        //
+        // Stated this way because the first version asserted the lit colour
+        // dimmed when muted, which cannot happen and so passed against an
+        // implementation with no dimming at all.
+        let muted = GainMeterView(title: "Mic", gain: 2.0, muted: true,
+                                  onGain: { _ in }, onToggleMute: {})
+        let unmuted = GainMeterView(title: "Mic", gain: 2.0, muted: false,
+                                    onGain: { _ in }, onToggleMute: {})
+        let mutedAlpha = srgb(muted.colourForTesting(0)).alphaComponent
+        #expect(mutedAlpha < srgb(unmuted.colourForTesting(0)).alphaComponent,
+                "muting did not dim the ladder")
+        #expect(mutedAlpha > 0.1, "a muted ladder went invisible")
+    }
+
+    @Test("An unlit segment is ink, not a system grey")
+    func unlitIsInk() {
+        let view = GainMeterView(title: "Mic", gain: 0.1, muted: false,
+                                 onGain: { _ in }, onToggleMute: {})
+        #expect(srgb(view.colourForTesting(GainMeter.segmentCount - 1))
+                == srgb(SnittPalette.Swatch.ink3))
     }
 }

@@ -153,8 +153,8 @@ public enum AutoDeepTrim {
         // and one threshold for both would call the quieter of them silent
         // throughout.
         let thresholds = tracks.map { track in
-            max(SpeechChunker.absoluteSilenceFloor,
-                SpeechChunker.referenceLevel(of: track.peaks) * criteria.audioSilenceFraction)
+            SpeechChunker.silenceThreshold(for: track.peaks,
+                                           fraction: criteria.audioSilenceFraction)
         }
 
         for step in 0..<steps {

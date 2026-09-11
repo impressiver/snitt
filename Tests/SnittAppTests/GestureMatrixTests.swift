@@ -40,7 +40,7 @@ struct GestureMatrixTests {
         let marker: JumpPoint
         let foldX: CGFloat
         let markerX: CGFloat
-        let bands: (marker: CGRect, fold: CGRect, video: CGRect,
+        let bands: (marker: CGRect, video: CGRect,
                     audio: [(track: String, rect: CGRect)], transcript: CGRect)
     }
 
@@ -58,7 +58,7 @@ struct GestureMatrixTests {
             timebase: Timebase(sourceDuration: duration, edl: EditDecisionList(cuts: [cut])))
         let bands = TimelineTrackLayout.bands(
             in: view.bounds, markerHeight: view.markerTrackHeightForTesting,
-            audioTracks: ["microphone"], hasTranscript: true, hasFolds: true)
+            audioTracks: ["microphone"], hasTranscript: true)
         return Rig(view: view, cut: cut, marker: marker,
                    foldX: CGFloat(geometry.x(atFold: cut)),
                    // From the geometry, not `width * time / duration`: the
@@ -78,7 +78,7 @@ struct GestureMatrixTests {
         // drawn full height on purpose, so a right-click anywhere along it is
         // a right-click on that fold.
         let r = rig()
-        for (name, y) in [("marks", r.bands.marker.midY), ("folds", r.bands.fold.midY),
+        for (name, y) in [("marks", r.bands.marker.midY),
                           ("video", r.bands.video.midY),
                           ("audio", r.bands.audio[0].rect.midY),
                           ("transcript", r.bands.transcript.midY)] {
@@ -105,13 +105,13 @@ struct GestureMatrixTests {
         // A fresh rig per cell, compared against ITS OWN cut. Reading `r.cut`
         // while clicking a different rig's view compares two fixtures — the
         // identity mistake this suite's own fixtures made once already.
-        for lane in ["marks", "folds", "video", "audio"] {
+        for lane in ["marks", "video", "audio", "transcript"] {
             let r = rig()
             let y: CGFloat
             switch lane {
             case "marks": y = r.bands.marker.midY
-            case "folds": y = r.bands.fold.midY
             case "video": y = r.bands.video.midY
+            case "transcript": y = r.bands.transcript.midY
             default: y = r.bands.audio[0].rect.midY
             }
             var expanded: UUID?
@@ -175,30 +175,60 @@ struct GestureMatrixTests {
     func singleClickIsGatedToTheFoldLane() {
         // The reason the gate exists, stated as a matrix rather than assumed.
         // An ungated single click swallows scrubs meant for every lane below.
-        let r = rig()
-        for lane in ["video", "audio"] {
+        //
+        // EVERY surviving lane, not a sample of two (rev 5, W11 step 0). The
+        // rev 5 design removes the fold lane, and the question this test was
+        // promoted to answer is whether removing it can keep this property:
+        // a click at a cut's x, inside some other lane, must still belong to
+        // that lane. `TimelineView.swift` says why in as many words — "an
+        // ungated full-height hit swallows clicks meant for each of them,
+        // three times over."
+        for lane in ["marker", "video", "audio", "transcript"] {
             let r = rig()
-            let y = lane == "video" ? r.bands.video.midY : r.bands.audio[0].rect.midY
+            let y: CGFloat
+            switch lane {
+            case "marker": y = r.bands.marker.midY
+            case "video": y = r.bands.video.midY
+            case "audio": y = r.bands.audio[0].rect.midY
+            default: y = r.bands.transcript.midY
+            }
             var toggled: UUID?
             var scrubbed: Double?
             r.view.onToggleExpansion = { toggled = $0 }
             r.view.onScrub = { scrubbed = $0 }
             r.view.mouseDown(with: .synthetic(at: NSPoint(x: r.foldX, y: y), in: r.view))
             #expect(toggled == nil, "a single click in the \(lane) lane toggled a fold")
-            #expect(scrubbed != nil, "a single click in the \(lane) lane did not scrub")
+            if lane != "marker" {
+                // The marker lane has its own meaning for a click and does not
+                // scrub; what matters there is only that the fold did not take it.
+                #expect(scrubbed != nil, "a single click in the \(lane) lane did not scrub")
+            }
         }
     }
 
-    @Test("Single click IN the fold lane toggles and selects")
-    func singleClickInFoldLaneToggles() {
+    @Test("Single click never reaches a cut — not even directly on its seam")
+    func singleClickNeverTogglesAFold() {
+        // Replaces `singleClickInFoldLaneToggles`, which asserted the opposite
+        // about a lane that no longer exists (rev 5, W11).
+        //
+        // The cut is drawn full height now, so there is no y at which a single
+        // click could belong to it without taking that click away from the
+        // lane under the pointer — which the test above measures. The
+        // resolution is a priority rule: the precise gesture yields, the
+        // coarse ones keep their reach. Selecting a cut is what double-click
+        // is for, and it always was: it expands AND selects in one move.
         let r = rig()
         var toggled: UUID?
         var selected: UUID?
+        var scrubbed: Double?
         r.view.onToggleExpansion = { toggled = $0 }
         r.view.onSelectFold = { selected = $0 }
-        r.view.mouseDown(with: .synthetic(at: NSPoint(x: r.foldX, y: r.bands.fold.midY),
+        r.view.onScrub = { scrubbed = $0 }
+        r.view.mouseDown(with: .synthetic(at: NSPoint(x: r.foldX, y: r.bands.video.midY),
                                           in: r.view))
-        #expect(toggled == r.cut.id)
-        #expect(selected == r.cut.id, "clicking a fold did not highlight what it removed")
+        #expect(toggled == nil, "a single click on the seam toggled a cut")
+        #expect(selected == nil, "a single click on the seam selected a cut")
+        #expect(scrubbed != nil, "a single click on the seam did not scrub")
     }
+
 }
