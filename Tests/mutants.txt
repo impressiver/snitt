@@ -103,3 +103,10 @@ GainMeterAppearanceTests :: Sources/SnittApp/TimelineGutter.swift :: SnittPalett
 # --- rev 5 W14: the words lane asks the tier model ---
 WordLaneViewTests :: Sources/SnittApp/TimelineView.swift :: WordLaneTiers.tier(wordCount: wordCountForTesting, laneWidth: Double(bounds.width)) :: .phrases
 WordLaneViewTests :: Sources/SnittApp/TimelineView.swift :: var wordCountForTesting: Int { phrases.reduce(0) { $0 + $1.words.count } } :: var wordCountForTesting: Int { phrases.count }
+
+# --- rev 5 W3: one deck of chrome, and the title still exists ---
+TitlebarChromeTests :: Sources/SnittApp/EditorWindowController.swift :: window.titleVisibility = .hidden :: window.titleVisibility = .visible
+TitlebarChromeTests :: Sources/SnittApp/EditorWindowController.swift :: window.titlebarAppearsTransparent = true :: window.titlebarAppearsTransparent = false
+TitlebarChromeTests :: Sources/SnittApp/EditorWindowController.swift ::                         .fullSizeContentView], ::                         .titled],
+TitlebarChromeTests :: Sources/SnittApp/EditorWindowController.swift :: window.title = title :: window.title = ""
+TitlebarChromeTests :: Sources/SnittApp/EditorChrome.swift :: static let trafficLightInset: Double = 78 :: static let trafficLightInset: Double = 12
