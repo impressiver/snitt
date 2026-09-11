@@ -87,8 +87,11 @@ Other modes, none of which need credentials or touch anything:
 ./Scripts/release.sh 0.3.0 --resume-from 7   # after a diagnosed failure
 ```
 
-It refuses, before spending a network round trip, to: release a version
-that disagrees with `AppVersion.fallback`; release without
+It refuses, before spending a network round trip, to: release a
+development version (anything carrying a marker, like `0.5.0-dev` —
+which `main` deliberately holds between releases, so it is what you get
+by copying what the file says); release a version that disagrees with
+`AppVersion.marketing`; release without
 `SNITT_SIGN_IDENTITY`; release from a dirty tree or a non-default branch;
 re-use an existing tag; or publish with any required asset missing or
 zero-length.

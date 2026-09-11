@@ -57,7 +57,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 REPO="impressiver/snitt"
-VERSION_SOURCE="Sources/SnittDocument/AppVersion.swift"
+# Overridable for tests ONLY. Several of them drive the full dry-run path,
+# which needs a version the preflight will accept — and `main` deliberately
+# carries a marked one between releases, which the guard below refuses. The
+# precedent is SNITT_FAKE_TEAM_IDENTIFIER_LINE; a real release never sets this.
+VERSION_SOURCE="${SNITT_VERSION_SOURCE:-Sources/SnittDocument/AppVersion.swift}"
 DEFAULT_BRANCH="main"
 
 VERSION=""
@@ -90,6 +94,28 @@ done
 case "$VERSION" in
   [0-9]*.[0-9]*.[0-9]*) ;;
   *) echo "error: version must look like 1.2.3, got '$VERSION'" >&2; exit 1 ;;
+esac
+
+# A development version is not releasable, and the shape check above does not
+# catch it: `0.5.0-dev` matches that glob, because its last component starts
+# with a digit.
+#
+# Releasing one would tag v0.5.0-dev, name every artifact after it, and ship an
+# app whose CFBundleShortVersionString says -dev to everyone who installs it.
+# `main` carries exactly such a version between releases — the marker is what
+# stops a development build claiming to be a release — so this is a plausible
+# mistake to make, not a far-fetched one.
+case "$VERSION" in
+  *-*)
+    bare="${VERSION%%-*}"
+    echo "error: '$VERSION' is a development version, not a releasable one." >&2
+    echo "       main carries a marked version between releases so that a" >&2
+    echo "       build made there cannot claim to BE a release. Releasing" >&2
+    echo "       means setting AppVersion.marketing to the bare version" >&2
+    echo "       first:" >&2
+    echo "         $bare, then ./Scripts/release.sh $bare" >&2
+    echo "       Step 10 puts the marker back afterwards." >&2
+    exit 1 ;;
 esac
 
 ZIP="Snitt-$VERSION.zip"
@@ -219,8 +245,17 @@ echo "=== 0. Preflight"
 declared="$(sed -nE 's/.*public static let marketing = "([^"]+)".*/\1/p' "$VERSION_SOURCE")"
 if [ "$declared" != "$VERSION" ]; then
   echo "error: releasing $VERSION but $VERSION_SOURCE declares '$declared'." >&2
-  echo "       Bump AppVersion.marketing first — make-app.sh reads it for" >&2
-  echo "       CFBundleShortVersionString, and Sparkle compares against that." >&2
+  case "$declared" in
+    "$VERSION"-*)
+      # The ordinary case, not an error the releaser should have to puzzle
+      # over: main is on the development version for exactly this release.
+      echo "       That is this release's development version. Set" >&2
+      echo "       AppVersion.marketing to '$VERSION' and commit, then" >&2
+      echo "       re-run — step 10 puts the marker back afterwards." >&2 ;;
+    *)
+      echo "       Bump AppVersion.marketing first — make-app.sh reads it for" >&2
+      echo "       CFBundleShortVersionString, and Sparkle compares against that." >&2 ;;
+  esac
   exit 1
 fi
 echo "  version    $VERSION (matches $VERSION_SOURCE)"
