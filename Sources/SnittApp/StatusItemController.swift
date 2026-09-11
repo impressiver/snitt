@@ -120,6 +120,21 @@ final class StatusItemController: NSObject {
         }
     }
 
+    /// The menu-bar title, with digits that do not change width.
+    ///
+    /// Separate and `nonisolated` so the choice is assertable without a menu
+    /// bar to hang it on — the title is the only part of this controller that
+    /// changes twenty times a minute, and the only part where a font choice
+    /// is visible as movement rather than as typography.
+    nonisolated static func attributedTitle(_ title: String) -> NSAttributedString {
+        guard !title.isEmpty else { return NSAttributedString(string: "") }
+        let size = NSFont.systemFontSize
+        return NSAttributedString(
+            string: " " + title,
+            attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: size,
+                                                                 weight: .regular)])
+    }
+
     /// Invoked when the user clicks the menu-bar item. This is §5.3's kill
     /// switch: a control that stops a recording immediately. Wired by the app
     /// delegate; without it the item would be a display-only indicator and the
@@ -357,6 +372,11 @@ final class StatusItemController: NSObject {
         // nil restores the template, which follows the menu bar's own light
         // or dark appearance — so idle and "Saving…" look exactly as they did.
         button.contentTintColor = p.tint
-        button.title = p.title.isEmpty ? "" : " \(p.title)"
+        // Tabular digits (rev 5, W9). The menu-bar title is a running clock,
+        // and in the proportional system font every tick changes the width of
+        // the whole item — so the icon and everything left of it twitch once a
+        // second, for the entire length of a recording. A monospaced-digit
+        // font at the same size fixes the width without looking different.
+        button.attributedTitle = Self.attributedTitle(p.title)
     }
 }

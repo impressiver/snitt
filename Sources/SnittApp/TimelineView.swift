@@ -1581,7 +1581,13 @@ public final class TimelineView: NSView {
             // either. Only the hue changes here, from orange to blue; that
             // is what carries the new meaning ("selected, not yet decided")
             // instead of the old one ("about to remove this").
-            NSColor.systemBlue.withAlphaComponent(0.35).setFill()
+            // The USER's accent, not a fixed blue (rev 5, W9). §6 keeps
+            // selection on the system accent everywhere — it is the one thing
+            // on screen that means "you picked this", and that is the colour
+            // the rest of their Mac uses for it. `NSColor.systemBlue` looked
+            // like the accent on a default install and stopped being it the
+            // moment anybody changed theirs.
+            NSColor.controlAccentColor.withAlphaComponent(0.35).setFill()
             NSBezierPath(rect: NSRect(x: startX, y: 0, width: endX - startX,
                                       height: bounds.height)).fill()
         }

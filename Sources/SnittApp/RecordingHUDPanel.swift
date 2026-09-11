@@ -165,17 +165,27 @@ final class RecordingHUDView: NSView {
     init(shortcuts: Shortcuts = Shortcuts()) {
         self.shortcuts = shortcuts
         super.init(frame: NSRect(x: 0, y: 0, width: 300, height: 44))
+        // Ink, in both appearances (rev 5, W4's paint — see this file's note
+        // below on why it arrives with the sweep).
+        //
+        // It was `windowBackgroundColor` on `separatorColor`, which follows
+        // the system theme. This panel floats over somebody else's screen —
+        // arbitrary content, usually light — so a theme-following pill goes
+        // near-white on a light desktop and disappears into it. Ink reads on
+        // anything, and it is the one surface where the brand is at full
+        // strength, because it is what is on screen while Snitt does its job.
         wantsLayer = true
         layer?.cornerRadius = 14
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
+        layer?.backgroundColor = SnittPalette.ink1.withAlphaComponent(0.94).cgColor
         layer?.borderWidth = 1
-        layer?.borderColor = NSColor.separatorColor.cgColor
+        layer?.borderColor = SnittPalette.slateText.withAlphaComponent(0.30).cgColor
 
         dot.wantsLayer = true
         dot.layer?.cornerRadius = 4.5
         clock.font = .monospacedDigitSystemFont(ofSize: 12.5, weight: .medium)
+        clock.textColor = SnittPalette.clockAmber
         status.font = .preferredFont(forTextStyle: .caption1)
-        status.textColor = .secondaryLabelColor
+        status.textColor = SnittPalette.slateText
 
         configure(markButton, symbol: "flag.fill",
                   label: RecordingHUDModel.controlLabel("Mark this moment",
@@ -236,9 +246,9 @@ final class RecordingHUDView: NSView {
         // Shape first, colour second. A hollow ring versus a filled dot is
         // what a person who cannot separate red from grey has to read.
         dot.layer?.backgroundColor = p.isPaused
-            ? NSColor.clear.cgColor : NSColor.systemRed.cgColor
+            ? NSColor.clear.cgColor : SnittPalette.recordRed.cgColor
         dot.layer?.borderWidth = p.isPaused ? 2 : 0
-        dot.layer?.borderColor = NSColor.secondaryLabelColor.cgColor
+        dot.layer?.borderColor = SnittPalette.slateText.cgColor
 
         markButton.isEnabled = p.canMark
         pauseButton.isEnabled = p.canTogglePause
