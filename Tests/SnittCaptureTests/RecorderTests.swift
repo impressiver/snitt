@@ -236,7 +236,7 @@ func stopReleasesMonitorEvenWhenFinalizationThrows() async throws {
 
     weak var weakMonitor: InputEventMonitor?
     do {
-        let monitor = InputEventMonitor { _ in }
+        let monitor = InputEventMonitor { _, _ in }
         weakMonitor = monitor
         await recorder.injectMonitorForTesting(monitor)
     }

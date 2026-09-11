@@ -136,3 +136,27 @@ MarkerPreviousTests :: Sources/SnittDocument/MarkerNavigation.swift :: if time -
 MarkerPreviousTests :: Sources/SnittDocument/MarkerNavigation.swift :: return ordered[..<index].last { $0.timeSeconds < current.timeSeconds - epsilon } :: return ordered[..<index].last
 WaveformMinimumHeightTests :: Sources/SnittApp/TimelineView.swift :: let height = max(Self.minimumWaveformHalfHeight, :: let height = max(0.0,
 WaveformMinimumHeightTests :: Sources/SnittDocument/TimelineSampleIndex.swift :: guard index >= 0, index <= sampleCount else { return nil } :: guard index >= 0 else { return nil }
+
+# D64 — a click's position, from the desktop into the recorded picture.
+# The origin never subtracted: correct only when the content starts at (0,0),
+# which is exactly what a full-screen capture on the main display looks like.
+ClickPositionTests :: Sources/SnittCapture/ClickPosition.swift :: let x = (point.x - content.minX) / content.width :: let x = point.x / content.width
+# A vertical flip: rings mirrored about the midline, right at the centre and
+# increasingly wrong towards the edges.
+ClickPositionTests :: Sources/SnittCapture/ClickPosition.swift :: let y = (point.y - content.minY) / content.height :: let y = 1 - (point.y - content.minY) / content.height
+# Axes transposed — passes against any square, centred fixture.
+ClickPositionTests :: Sources/SnittCapture/ClickPosition.swift :: let x = (point.x - content.minX) / content.width :: let x = (point.y - content.minY) / content.height
+# Clamping instead of rejecting: a click on another display draws a ring pinned
+# to the nearest edge, reading as a real click that happened there.
+ClickPositionTests :: Sources/SnittCapture/ClickPosition.swift :: guard (0..<1).contains(x), (0..<1).contains(y) else { return nil } :: let _ = (x, y)
+# Geometry captured once instead of per frame — a window dragged mid-recording
+# maps every later click against the rectangle it used to occupy.
+CapturedContentGeometryTests :: Sources/SnittCapture/ClickPosition.swift :: public func update(screenRect: CGRect) { :: public func update(screenRect: CGRect) { if true { return }
+# The tap drops the location again — the original defect, restored.
+ClickCaptureWiringTests :: Sources/SnittCapture/InputEventMonitor.swift :: kind == .click ? event.location : nil :: nil
+# A keystroke carries the mouse's position: coordinates for an event that has
+# none, which reads as data rather than as a bug.
+ClickCaptureWiringTests :: Sources/SnittCapture/InputEventMonitor.swift :: kind == .click ? event.location : nil :: event.location
+# Geometry defaulted instead of absent — clicks before the first frame placed
+# confidently at the top-left instead of having no position.
+ClickCaptureWiringTests :: Sources/SnittCapture/ClickPosition.swift :: guard let rect = screenRect else { return nil } :: let rect = screenRect ?? CGRect(x: 0, y: 0, width: 1, height: 1)

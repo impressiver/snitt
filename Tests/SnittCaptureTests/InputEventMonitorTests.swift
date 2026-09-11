@@ -66,7 +66,7 @@ func monitorIsReleasedAfterStop() {
     // and the mach port would leak with it.
     weak var weakMonitor: InputEventMonitor?
     do {
-        let monitor = InputEventMonitor { _ in }
+        let monitor = InputEventMonitor { _, _ in }
         weakMonitor = monitor
         let started = monitor.start()
         #expect(started == InputMonitoringAccess.isGranted(),
@@ -86,7 +86,7 @@ func stopBeforeStartIsSafe() {
     // with no thread returns promptly — which is what a caller depends on.
     // It does NOT discriminate the semaphore's shape: the tap guard alone
     // would also make this path fast.
-    let monitor = InputEventMonitor { _ in }
+    let monitor = InputEventMonitor { _, _ in }
     let began = Date()
     monitor.stop()
     #expect(Date().timeIntervalSince(began) < 0.5,
@@ -101,7 +101,7 @@ func stopTwiceIsSafe() {
     weak var weakMonitor: InputEventMonitor?
     let began: Date
     do {
-        let monitor = InputEventMonitor { _ in }
+        let monitor = InputEventMonitor { _, _ in }
         weakMonitor = monitor
         _ = monitor.start()
         monitor.stop()
