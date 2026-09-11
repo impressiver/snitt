@@ -72,3 +72,11 @@ SnittPaletteTests :: Sources/SnittApp/EditorChromePalette.swift :: static let cu
 SnittPaletteTests :: Sources/SnittApp/FoldPalette.swift :: appearance == .expandedSelected ? SnittPalette.redBright : base :: base
 SnittPaletteTests :: Sources/SnittApp/TimelineView.swift :: static let mark = SnittPalette.signal :: static let mark = NSColor.systemYellow
 SnittPaletteTests :: Sources/SnittApp/TimelineView.swift :: static let clipping = SnittPalette.recordRed :: static let clipping = NSColor.systemRed
+
+# --- rev 5 PR 2: transport on ink, settings rows, export headline ---
+TransportSurfaceTests :: Sources/SnittApp/EditorChrome.swift :: .background(alignment: .top) { :: .background(.bar).background(alignment: .top) {
+SettingsRowTests :: Sources/SnittApp/SettingsWindowController.swift :: button.setAccessibilityHelp(detail) :: _ = detail
+SettingsRowTests :: Sources/SnittApp/SettingsWindowController.swift :: + "in the UI and logged." :: + "in the UI."
+SettingsRowTests :: Sources/SnittApp/SettingsWindowController.swift :: static let contentWidth: Double = 520 :: static let contentWidth: Double = 420
+ExportHeadlineTests :: Sources/SnittApp/ExportPreflight.swift :: durationSeconds: estimate.durationSeconds)) :: durationSeconds: 0))
+ExportHeadlineTests :: Sources/SnittApp/ExportPreflight.swift :: return String(format: "%d:%02d", total / 60, total % 60) :: return String(format: "%d:%d", total / 60, total % 60)
