@@ -112,6 +112,25 @@ struct TimelineViewTests {
         #expect(abs(selection.range.end - 15.0) < 0.01)
     }
 
+    @Test("With everything cut away, no click lands on a phantom fold")
+    func fullyCutRecordingHasNoFoldPositions() {
+        // A recording with every second cut away — the degenerate case
+        // `foldHit`'s guard names. Worth pinning as BEHAVIOUR even though the
+        // guard itself turned out not to be what enforces it: deleting the
+        // `geometry.duration > 0` term changes nothing observable here, so
+        // that term is belt-and-braces over a protection further up. The
+        // behaviour is real and untested either way, which is what this
+        // covers.
+        let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 400, height: 40))
+        view.update(duration: 10,
+                    cuts: [Cut(range: TimeRange(start: 0, end: 10))],
+                    markerPoints: [], playhead: 0)
+        var expanded: UUID?
+        view.onExpandAndSelectFold = { expanded = $0 }
+        view.mouseDown(with: .synthetic(at: NSPoint(x: 0, y: 20), in: view, clickCount: 2))
+        #expect(expanded == nil, "a click landed on a fold that has no position")
+    }
+
     @Test("A zero-width view does not produce NaN, and a click there never selects")
     func zeroWidthViewIsFinite() {
         // Views are laid out at zero width before their first real layout pass,
