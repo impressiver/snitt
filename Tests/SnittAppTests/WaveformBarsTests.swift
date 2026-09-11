@@ -178,3 +178,75 @@ struct WaveformZoomStabilityTests {
                 "the lane is \(Int(narrow * 100))% covered at 400pt and \(Int(wide * 100))% at 2400pt")
     }
 }
+
+/// A bar wherever there are samples; blank only where there are none
+/// (2026-09-11, product-owner direction).
+///
+/// "Set the minimum audio renderer to 1px unless literally no audio data was
+/// received during that segment."
+///
+/// This REVERSES W12's silence baseline. That drew sub-threshold spans as a
+/// slate hairline, arguing a short bar reads as "quiet audio" while a baseline
+/// reads as "nothing here" — a preview of what Auto-Trim would take. In use it
+/// was the wrong trade: a quiet passage IS audio, and painting it a different
+/// colour at the midline made real speech look like dead space. Auto-Trim is
+/// untouched; how this lane paints was never what decided the cut.
+@Suite(.serialized)
+@MainActor
+struct WaveformMinimumHeightTests {
+    init() { _ = NSApplication.shared }
+
+    private func lane(peaks: [Float], duration: Double = 20,
+                      width: Double = 600) throws -> (lit: Int, width: Int) {
+        let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: 200))
+        view.update(duration: duration, cuts: [], markerPoints: [], playhead: 0,
+                    trackStates: [TrackState(track: "microphone")],
+                    waveforms: [WaveformSamples(track: "microphone",
+                                                samplesPerSecond: 100, peaks: peaks)])
+        let rep = try #require(view.bitmapImageRepForCachingDisplay(in: view.bounds))
+        view.cacheDisplay(in: view.bounds, to: rep)
+        let signal = SnittPalette.signal.usingColorSpace(.sRGB)!
+        var lit = 0
+        for x in 0..<rep.pixelsWide {
+            for y in stride(from: 0, to: rep.pixelsHigh, by: 1) {
+                guard let p = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
+                if abs(Double(p.redComponent - signal.redComponent)) < 0.08,
+                   abs(Double(p.greenComponent - signal.greenComponent)) < 0.08 {
+                    lit += 1
+                    break
+                }
+            }
+        }
+        return (lit, rep.pixelsWide)
+    }
+
+    @Test("Audio too quiet to see still draws")
+    func veryQuietAudioStillDraws() throws {
+        // Barely above nothing — far below any silence threshold — but it IS
+        // audio, and the lane must say so. This is the case that used to
+        // render as a faint hairline in a different colour and read as a gap.
+        let result = try lane(peaks: [Float](repeating: 0.0008, count: 2000))
+        #expect(Double(result.lit) / Double(result.width) > 0.5,
+                "only \(result.lit) of \(result.width) columns drew for a quiet-but-present track")
+    }
+
+    @Test("Digital silence still draws, because silence was recorded")
+    func exactZeroStillDraws() throws {
+        // Zero samples are a recording of silence, which is data. "No audio
+        // data" means no samples — a different thing, below.
+        let result = try lane(peaks: [Float](repeating: 0, count: 2000))
+        #expect(result.lit > 0, "a recorded silence drew nothing at all")
+    }
+
+    @Test("A span with no samples at all draws nothing")
+    func missingSamplesDrawNothing() throws {
+        // The one honest meaning of a blank lane: the track has 2 seconds of
+        // samples against a 20-second recording, so the last 90% has nothing
+        // to draw and must not invent a floor for it.
+        let result = try lane(peaks: [Float](repeating: 0.4, count: 200), duration: 20)
+        let covered = Double(result.lit) / Double(result.width)
+        #expect(covered > 0.02, "the two seconds that DO have samples drew nothing")
+        #expect(covered < 0.35,
+                "\(Int(covered * 100))% of the lane drew from a track covering 10% of it")
+    }
+}

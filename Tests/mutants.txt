@@ -134,3 +134,5 @@ FootageDurationTests :: Sources/SnittCapture/Recorder.swift :: max(0, stoppedAt.
 PauseResumePairTests :: Sources/SnittCapture/Recorder.swift :: if let stamped = pausedAtOffset { :: if false, let stamped = pausedAtOffset {
 MarkerPreviousTests :: Sources/SnittDocument/MarkerNavigation.swift :: if time - current.timeSeconds > settleSeconds { return current } :: if false { return current }
 MarkerPreviousTests :: Sources/SnittDocument/MarkerNavigation.swift :: return ordered[..<index].last { $0.timeSeconds < current.timeSeconds - epsilon } :: return ordered[..<index].last
+WaveformMinimumHeightTests :: Sources/SnittApp/TimelineView.swift :: let height = max(Self.minimumWaveformHalfHeight, :: let height = max(0.0,
+WaveformMinimumHeightTests :: Sources/SnittDocument/TimelineSampleIndex.swift :: guard index >= 0, index <= sampleCount else { return nil } :: guard index >= 0 else { return nil }
