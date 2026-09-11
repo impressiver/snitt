@@ -574,7 +574,7 @@ public final class TimelineView: NSView {
             let chip = NSRect(x: startX, y: band.minY + 3, width: width - 1,
                               height: band.height - 6)
             guard chip.maxX > 0, chip.minX < bounds.width else { continue }
-            Palette.markerLane.setFill()
+            Palette.chip.setFill()
             NSBezierPath(roundedRect: chip, xRadius: 3, yRadius: 3).fill()
             let text = TranscriptPhrases.displayText(phrase, widthPoints: Double(width),
                                                      pointsPerCharacter: 7.5)
@@ -1223,7 +1223,7 @@ public final class TimelineView: NSView {
         // Clipping stays visible on a muted track: muting is an edit decision,
         // clipping is damage, and hiding the damage because the track is
         // currently silent is how it survives to the export.
-        let clipping = NSColor.systemRed.withAlphaComponent(muted ? 0.5 : 0.9)
+        let clipping = Palette.clipping.withAlphaComponent(muted ? 0.5 : 0.9)
 
         var x = 0.0
         while x < bounds.width {
@@ -1277,27 +1277,49 @@ public final class TimelineView: NSView {
     /// and separators are spelled out here: on a fixed dark ground, a
     /// `labelColor` playhead would be black-on-black under a light system
     /// theme.
+    /// The timeline's surfaces, forwarding to `SnittPalette` (rev 5, W1).
+    ///
+    /// This enum stays as the timeline's own vocabulary — forty-odd call
+    /// sites read `Palette.videoBand` rather than `SnittPalette.ink1`, and
+    /// renaming them all would have buried a colour change inside a diff
+    /// nobody could review. What changed is where the values come from: a
+    /// tuned neutral grey ramp became the app's navy ink ramp, and the
+    /// waveform's `NSColor.systemOrange` became brand amber.
+    ///
+    /// The two tokens that used to live here and no longer do:
+    ///
+    /// - `markerLane` (`grey(0.26)`) drew two different things — the marks
+    ///   band and the transcript's phrase chips. The rev 5 style sheet gives
+    ///   each its own answer (marks are transparent on `ink0`; chips are
+    ///   `ink2`), so one token cannot serve both and neither call site needs
+    ///   a value of its own.
+    /// - `audioBandMuted` (`grey(0.155)`) is `ink1`. Its whole job is to sit
+    ///   a step below `audioBand`, which `ink1` does; a dedicated token would
+    ///   have landed within 0.008 luminance of `ink1` — a distinction no eye
+    ///   resolves and one more thing to keep in step.
     enum Palette {
-        /// sRGB rather than `NSColor(white:)`: the latter lands in a generic
-        /// gray space whose numbers do not correspond to the hex value they
-        /// look like, and the first pass of these came out markedly darker
-        /// than the values read.
-        private static func grey(_ v: CGFloat) -> NSColor {
-            NSColor(srgbRed: v, green: v, blue: v, alpha: 1)
-        }
-        static let background = grey(0.13)
-        static let markerLane = grey(0.26)
-        static let videoBand = grey(0.17)
+        static let background = SnittPalette.ink0
+        static let videoBand = SnittPalette.ink1
         /// Lighter than `background`, so an audio band reads as a band rather
         /// than as the waveform floating on the view's backdrop.
-        static let audioBand = grey(0.22)
+        static let audioBand = SnittPalette.ink2
         /// A muted source draws flatter and darker — the one visible
         /// difference between "this audio is in the export" and "it is not".
-        static let audioBandMuted = grey(0.155)
-        static let separator = grey(0.34)
-        static let playhead = grey(0.97)
-        static let waveform = NSColor.systemOrange
-        static let waveformMuted = NSColor.systemOrange.withAlphaComponent(0.28)
+        static let audioBandMuted = SnittPalette.ink1
+        static let separator = SnittPalette.ink3
+        static let playhead = SnittPalette.playheadInk
+        static let waveform = SnittPalette.signal
+        static let waveformMuted = SnittPalette.signal.withAlphaComponent(0.28)
+        /// Word and phrase chips: `ink2`, per the rev 5 style sheet.
+        static let chip = SnittPalette.ink2
+        /// Marks are time, and time is amber. This was `NSColor.systemYellow`
+        /// — a fourth opinion about colour, and the one the eye lands on
+        /// first, since a mark is what you are usually looking for.
+        static let mark = SnittPalette.signal
+        /// Clipping is damage rather than an edit, but it is still red, and
+        /// one red is the point: `NSColor.systemRed` beside a brand-red cut
+        /// read as two unrelated warnings.
+        static let clipping = SnittPalette.recordRed
     }
 
     public override func draw(_ dirtyRect: NSRect) {
@@ -1326,7 +1348,10 @@ public final class TimelineView: NSView {
                                               hasTranscript: !phrases.isEmpty,
                                               hasFolds: !cuts.isEmpty)
         if bands.transcript.height > 0 { drawPhrases(in: bands.transcript) }
-        Palette.markerLane.setFill()
+        // The marks lane carries no band of its own: the rev 5 style sheet
+        // makes it transparent on `ink0`, so what identifies it is its amber
+        // ticks and flags, not a shade a hair off the ground behind them.
+        Palette.background.setFill()
         NSBezierPath(rect: bands.marker).fill()
         Palette.videoBand.setFill()
         NSBezierPath(rect: bands.video).fill()
@@ -1393,7 +1418,7 @@ public final class TimelineView: NSView {
                     // straddling its own edge — a sub-second cut at low zoom
                     // is a fraction of a pixel wide, and `insetBy` on that
                     // yields a negative-width rect.
-                    FoldPalette.base.setFill()
+                    FoldPalette.border(foldLook).setFill()
                     NSBezierPath(rect: NSRect(x: band.minX, y: 0, width: border,
                                               height: band.height)).fill()
                     NSBezierPath(rect: NSRect(x: band.maxX - border, y: 0,
@@ -1473,9 +1498,9 @@ public final class TimelineView: NSView {
             // it is still there, still draggable and deletable, but it sits on
             // a fold rather than on footage anyone will see.
             if point.isInsideCut {
-                NSColor.systemYellow.withAlphaComponent(0.35).setFill()
+                Palette.mark.withAlphaComponent(0.35).setFill()
             } else {
-                NSColor.systemYellow.setFill()
+                Palette.mark.setFill()
             }
             let seconds = (point.id == activeMarkerDrag)
                 ? (markerDragPreviewOutputTime ?? point.timeSeconds)

@@ -62,3 +62,13 @@ ReleaseScriptTests :: Scripts/notarize.sh :: if ! probe="$(xcrun notarytool hist
 # The filmstrip must show DIFFERENT moments — a sampler returning one frame
 # N times draws a plausible strip and passes every structural check.
 FilmstripSamplerTests :: Sources/SnittExport/FilmstripSampler.swift :: let time = CMTime(seconds: Double(index) * interval + interval / 2, :: let time = CMTime(seconds: 0 * interval + interval / 2,
+
+# --- rev 5 W1: the brand palette (SnittPalette) ---
+SnittPaletteTests :: Sources/SnittApp/SnittPalette.swift :: static let ink0 = NSColor(srgbRed: 0.078, green: 0.090, blue: 0.118, alpha: 1) :: static let ink0 = NSColor(white: 0.13, alpha: 1)
+SnittPaletteTests :: Sources/SnittApp/SnittPalette.swift :: static let recordRed = NSColor(srgbRed: 0.933, green: 0.267, blue: 0.267, alpha: 1) :: static let recordRed = NSColor.systemRed
+SnittPaletteTests :: Sources/SnittApp/FoldPalette.swift :: static let base = SnittPalette.recordRed :: static let base = NSColor.systemRed
+SnittPaletteTests :: Sources/SnittApp/TimelineView.swift :: static let waveform = SnittPalette.signal :: static let waveform = NSColor.systemOrange
+SnittPaletteTests :: Sources/SnittApp/EditorChromePalette.swift :: static let currentHighlightColor: NSColor = SnittPalette.amberText :: static let currentHighlightColor: NSColor = .systemOrange
+SnittPaletteTests :: Sources/SnittApp/FoldPalette.swift :: appearance == .expandedSelected ? SnittPalette.redBright : base :: base
+SnittPaletteTests :: Sources/SnittApp/TimelineView.swift :: static let mark = SnittPalette.signal :: static let mark = NSColor.systemYellow
+SnittPaletteTests :: Sources/SnittApp/TimelineView.swift :: static let clipping = SnittPalette.recordRed :: static let clipping = NSColor.systemRed

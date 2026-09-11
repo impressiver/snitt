@@ -56,9 +56,7 @@ enum EditorChromePalette {
     /// instrument rather than the chrome. Pinned dark like the lanes — this is
     /// the surface the well's rule was changed AWAY from, deliberately, and
     /// the two are separate decisions now.
-    static var timelineSurface: Color {
-        Color(nsColor: NSColor(srgbRed: 0.13, green: 0.13, blue: 0.13, alpha: 1))
-    }
+    static var timelineSurface: Color { SnittPalette.Swatch.ink0 }
 
     /// The rule where appearance-following chrome meets a pinned-dark media
     /// surface. Drawn on the chrome's side, so it reads as the panel's own
@@ -83,7 +81,7 @@ enum EditorChromePalette {
     /// to assert against. A test that named `.systemOrange` itself would keep
     /// passing after this property changed — which is exactly what happened,
     /// and a mutant that swapped it back to yellow survived.
-    static let currentHighlightColor: NSColor = .systemOrange
+    static let currentHighlightColor: NSColor = SnittPalette.amberText
     static var currentHighlight: Color { Color(nsColor: currentHighlightColor) }
 
     /// How strongly to wash the highlight behind text. Low enough to keep
