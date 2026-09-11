@@ -50,7 +50,7 @@ struct TimelinePaletteTests {
         // and both what this replaced.
         let surfaces: [(String, NSColor)] = [
             ("background", TimelineView.Palette.background),
-            ("markerLane", TimelineView.Palette.markerLane),
+            ("chip", TimelineView.Palette.chip),
             ("videoBand", TimelineView.Palette.videoBand),
             ("audioBand", TimelineView.Palette.audioBand),
             ("audioBandMuted", TimelineView.Palette.audioBandMuted),

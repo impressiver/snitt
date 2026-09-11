@@ -23,10 +23,14 @@ import AppKit
 /// tested, and had no pixels.
 enum FoldPalette {
 
-    /// One hue for every state. The states differ in weight, never in colour:
+    /// One hue for every state. The states differ in weight, never in hue:
     /// a cut that turned orange when selected would read as a different kind
     /// of thing rather than as the same thing, chosen.
-    static let base = NSColor.systemRed
+    ///
+    /// Brand red since rev 5 (W1) rather than `NSColor.systemRed` — the same
+    /// value the app icon's record dot is drawn in, so a cut and the thing
+    /// that made it agree about what red means.
+    static let base = SnittPalette.recordRed
 
     enum Appearance: Equatable {
         case collapsed, collapsedSelected, expanded, expandedSelected
@@ -66,5 +70,13 @@ enum FoldPalette {
     /// second band to compare against.
     static func borderWidth(_ appearance: Appearance) -> Double {
         appearance == .expandedSelected ? 2 : 0
+    }
+
+    /// The selected band's edge colour: one step brighter than the fill it
+    /// bounds, which is what makes an edge read as an edge rather than as a
+    /// slightly denser part of the same wash. Still the same hue — the rule
+    /// at the top of this file holds.
+    static func border(_ appearance: Appearance) -> NSColor {
+        appearance == .expandedSelected ? SnittPalette.redBright : base
     }
 }

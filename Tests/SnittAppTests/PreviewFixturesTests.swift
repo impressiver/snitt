@@ -112,7 +112,30 @@ struct PreviewFixturesTests {
                                       colour.greenComponent, colour.blueComponent))
             }
         }
-        #expect(colours.count > 3,
-                "the floor-height timeline drew \(colours.count) distinct colours")
+        // Identity, not a count. This used to assert "more than 3 distinct
+        // colours", which was a proxy for "the lanes drew" — and the proxy
+        // broke when rev 5's style sheet made the marks lane transparent on
+        // `ink0` rather than a band of its own. A count would have had to be
+        // lowered to 3 to pass, at which point it could no longer tell a
+        // rendered timeline from one missing a lane. Naming the three bands
+        // asserts what the count was standing in for, and gets stronger
+        // rather than weaker as lanes stop being distinguished by shade.
+        func key(_ color: NSColor) -> String {
+            let c = color.usingColorSpace(.sRGB) ?? color
+            return String(format: "%.2f-%.2f-%.2f", c.redComponent,
+                          c.greenComponent, c.blueComponent)
+        }
+        // What actually reaches the floor is narrower than it looks: at
+        // `minimumTimelineHeight` the video and audio bands are collapsed
+        // away entirely, and what renders is the ground plus the marks and
+        // cuts drawn ON it. So naming specific bands is wrong too — the
+        // assertion that survives the collapse is "the ground drew, and
+        // things drew on it", which is exactly the blank-render this test
+        // was written to catch.
+        let ground = key(TimelineView.Palette.background)
+        #expect(colours.contains(ground), "the timeline ground never drew")
+        let content = colours.subtracting([ground])
+        #expect(content.count >= 2,
+                "only \(content.count) colours drew on the ground — \(colours.sorted())")
     }
 }
