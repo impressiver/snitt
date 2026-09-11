@@ -176,3 +176,23 @@ ShowClicksMenuTests :: Sources/SnittApp/ExportSheet.swift :: self.drawClicks = d
 ShowClicksMenuTests :: Sources/SnittExport/ClickOverlay.swift :: naturalSize: CGSize(width: 1, height: 1) :: naturalSize: CGSize(width: 1920, height: 1080)
 # The menu item loses its action and silently does nothing when picked.
 ShowClicksMenuTests :: Sources/SnittApp/KeyboardShortcutRegistry.swift :: action: #selector(AppDelegate.toggleShowClicks(_:)) :: action: nil
+
+# Settings is the ONLY route to crash reporting since the status-menu item
+# was removed.
+SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: isOn: CrashReportSettings.load(defaults).enabled :: isOn: false
+SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: CrashReportSettings(enabled: sender.state == .on).save(to: defaults) :: let _ = sender
+
+# The status menu's grouping, and Show Clicks' binding.
+# Separators stop being emitted — the capture toggles run straight into the
+# update actions, which is what the crash-reports removal did by accident.
+StatusItemMenuTests :: Sources/SnittApp/StatusItemController.swift :: menu.addItem(.separator()) :: let _ = menu
+# Show Clicks loses its modifier mask and becomes plain Cmd-C, which is Copy.
+ShowClicksMenuTests :: Sources/SnittApp/KeyboardShortcutRegistry.swift :: entry.keyEquivalentModifierMask = shortcut.modifiers :: let _ = shortcut.modifiers
+# The grouping separator in the Playback menu is dropped.
+ShowClicksMenuTests :: Sources/SnittApp/KeyboardShortcutRegistry.swift :: if shortcut.startsGroup { menu.addItem(.separator()) } :: let _ = shortcut.startsGroup
+
+# The status menu reads its checkmarks from the store as it is built.
+StatusItemMenuStateTests :: Sources/SnittApp/StatusItemController.swift :: microphoneItem.state = MicrophoneSettings.load(defaults).enabled ? .on : .off :: microphoneItem.state = .off
+StatusItemMenuStateTests :: Sources/SnittApp/StatusItemController.swift :: agentItem.state = AgentSettings.load(defaults).agentRecordingEnabled ? .on : .off :: agentItem.state = .off
+StatusItemMenuStateTests :: Sources/SnittApp/StatusItemController.swift :: eventsItem.state = EventLoggingSettings.load(defaults).enabled ? .on : .off :: eventsItem.state = .off
+StatusItemMenuStateTests :: Sources/SnittApp/StatusItemController.swift :: self.defaults = defaults :: self.defaults = .standard

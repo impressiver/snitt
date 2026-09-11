@@ -233,6 +233,56 @@ struct SettingsWindowTests {
         #expect(EventLoggingSettings.load(defaults).enabled == true)
     }
 
+    /// Crash reporting has NO other surface any more.
+    ///
+    /// It used to sit in the status-item menu, whose comment called that item
+    /// "the ONLY way a user can ever turn it on — a setting nothing can set is
+    /// not a setting". The Settings window made that false and the menu item
+    /// was removed, which makes this row the single route to §12's opt-in —
+    /// and it had no test at all until the removal went looking for one.
+    @Test("The crash-reports checkbox reads the store it was given")
+    func crashReportsCheckboxSharesStorage() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            SettingsWindowController.resetForTesting()
+        }
+
+        CrashReportSettings(enabled: true).save(to: defaults)
+
+        let updater = UpdaterController(settings: UpdateSettings.load(defaults))
+        SettingsWindowController.show(updater: updater, defaults: defaults, activate: false)
+
+        let checkbox = try #require(
+            SettingsWindowController.shared?.checkbox(titled: SettingsWindowController.crashReportsTitle))
+        #expect(checkbox.state == .on)
+    }
+
+    /// Clicking it must actually persist — the half a "reads the store" test
+    /// cannot see. With the menu item gone there is nothing else that writes
+    /// this setting, so a checkbox that toggled visually and stored nothing
+    /// would leave §12's opt-in permanently off however many times it was
+    /// clicked.
+    @Test("Clicking crash reports persists the choice")
+    func crashReportsPersists() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            SettingsWindowController.resetForTesting()
+        }
+
+        #expect(CrashReportSettings.load(defaults).enabled == false)
+
+        let updater = UpdaterController(settings: UpdateSettings.load(defaults))
+        SettingsWindowController.show(updater: updater, defaults: defaults, activate: false)
+        let checkbox = try #require(
+            SettingsWindowController.shared?.checkbox(titled: SettingsWindowController.crashReportsTitle))
+        checkbox.performClick(nil)
+
+        #expect(CrashReportSettings.load(defaults).enabled == true,
+                "the checkbox changed on screen but stored nothing")
+    }
+
     /// The microphone half of `bothSurfacesShareStorage` — the window must
     /// read the setting the status item already wrote, not a store of its
     /// own. Verified to fail against the mutation that test's own doc

@@ -34,17 +34,55 @@ struct ShowClicksMenuTests {
         #expect(clicks.action == #selector(AppDelegate.toggleShowClicks(_:)))
     }
 
-    @Test("Show Clicks is a toggle, not one of the keyed shortcuts")
-    func showClicksIsNotAShortcut() {
-        // It deliberately sits outside `shortcuts`: that array drives the
-        // Keyboard Shortcuts help, and an entry with no key would render there
-        // as a binding with a blank key. Pins the reason it was appended
-        // separately, so a later tidy-up that folds it in fails here.
-        #expect(!KeyboardShortcutRegistry.shortcuts.contains {
+    @Test("Show Clicks has a shortcut, and the help says what it is")
+    func showClicksIsBoundAndDocumented() throws {
+        // It lived outside `shortcuts` while it had no key, because `helpText`
+        // renders that array and would have shown a binding with a blank key.
+        // Giving it ⇧⌘C moved it in — which is the registry's whole point: a
+        // binding written down once, so the menu and the help cannot disagree.
+        let entry = try #require(KeyboardShortcutRegistry.shortcuts.first {
             $0.title == KeyboardShortcutRegistry.showClicksTitle
         })
-        #expect(!KeyboardShortcutRegistry.helpText
-            .contains(KeyboardShortcutRegistry.showClicksTitle))
+        #expect(entry.key == "c")
+        #expect(entry.modifiers == [.command, .shift])
+        #expect(KeyboardShortcutRegistry.helpText.contains("⇧⌘C"),
+                "the shortcuts help does not show ⇧⌘C")
+    }
+
+    @Test("No two shortcuts claim the same key")
+    func shortcutsDoNotCollide() {
+        // The check that makes "⇧⌘C is free" a fact rather than something
+        // asserted in a commit message. A collision does not error — AppKit
+        // simply gives the keystroke to one of them, and which one is not
+        // something you would predict from reading the list.
+        let bindings = KeyboardShortcutRegistry.shortcuts.map {
+            "\($0.modifiers.rawValue)-\($0.key)"
+        }
+        #expect(Set(bindings).count == bindings.count,
+                "two shortcuts share a binding: \(bindings)")
+    }
+
+    @Test("The menu item carries the key equivalent, not just the registry")
+    func menuItemCarriesTheKey() throws {
+        // The registry having a binding and the MENU having it are different
+        // facts: the item is built in a loop that could drop the modifier mask
+        // and still produce a working-looking menu — with ⌘C, which is Copy.
+        let submenu = try #require(KeyboardShortcutRegistry.playbackMenuItem().submenu)
+        let clicks = try #require(
+            submenu.items.first { $0.title == KeyboardShortcutRegistry.showClicksTitle })
+        #expect(clicks.keyEquivalent == "c")
+        #expect(clicks.keyEquivalentModifierMask == [.command, .shift])
+    }
+
+    @Test("A separator sets Show Clicks apart from the navigation items")
+    func showClicksIsGrouped() throws {
+        // It changes what you SEE; the four above it change where you ARE.
+        let submenu = try #require(KeyboardShortcutRegistry.playbackMenuItem().submenu)
+        let index = try #require(
+            submenu.items.firstIndex { $0.title == KeyboardShortcutRegistry.showClicksTitle })
+        #expect(index > 0)
+        #expect(submenu.items[index - 1].isSeparatorItem,
+                "Show Clicks runs straight into the navigation items")
     }
 
     @Test("The flag round-trips through edit.json, and defaults off")

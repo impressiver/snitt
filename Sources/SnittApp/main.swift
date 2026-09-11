@@ -55,14 +55,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.updaterController.checkForUpdates()
         }
 
-        statusItem.automaticUpdateChecksEnabled = UpdateSettings.load().automaticChecksEnabled
         statusItem.onToggleAutomaticUpdateChecks = { [weak self] enabled in
             guard let self else { return }
             var settings = UpdateSettings.load()
             settings.automaticChecksEnabled = enabled
             settings.save()
             self.updaterController.automaticChecksEnabled = enabled
-            self.statusItem.automaticUpdateChecksEnabled = enabled
         }
 
         // Where recordings are saved (D56/M5d's deferred output-location
@@ -80,45 +78,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.coordinator = coordinator
 
         var agentSettings = AgentSettings.load()
-        statusItem.agentRecordingEnabled = agentSettings.agentRecordingEnabled
-        statusItem.onToggleAgentRecording = { [weak self] enabled in
+        statusItem.onToggleAgentRecording = { enabled in
             agentSettings.agentRecordingEnabled = enabled
             agentSettings.save()
-            self?.statusItem.agentRecordingEnabled = enabled
         }
 
-        statusItem.eventLoggingEnabled = EventLoggingSettings.load().enabled
-        statusItem.onToggleEventLogging = { [weak self] enabled in
-            guard let self else { return }
+        statusItem.onToggleEventLogging = { enabled in
             // Routed through EventLoggingToggle so the status item and the
             // Settings window run exactly the same §4.10 ladder — see its
             // doc comment for why a second copy of this logic is a defect,
-            // not a convenience. `apply` returns the state actually
-            // persisted, which is `false` (not `enabled`) whenever the
-            // pre-explain is declined or the grant is unavailable; the
-            // mirrored property below is what makes the menu's checkmark
-            // reflect that, exactly as it did before this was extracted.
-            self.statusItem.eventLoggingEnabled = EventLoggingToggle.apply(enabled)
+            // not a convenience. `apply` PERSISTS the state actually reached,
+            // which is `false` (not `enabled`) whenever the pre-explain is
+            // declined or the grant is unavailable — and the menu reads that
+            // store when it is next built, so a refused grant leaves the
+            // checkmark off without anything having to mirror the result.
+            _ = EventLoggingToggle.apply(enabled)
         }
 
-        statusItem.microphoneEnabled = MicrophoneSettings.load().enabled
-        statusItem.onToggleMicrophone = { [weak self] enabled in
-            guard let self else { return }
+        statusItem.onToggleMicrophone = { enabled in
             // Same §4.10 ladder, same reasoning as `onToggleEventLogging`
             // just above — see `MicrophoneToggle`'s doc comment.
-            self.statusItem.microphoneEnabled = MicrophoneToggle.apply(enabled)
-        }
-
-        // §12's opt-in crash reporting: no handler, no network — purely
-        // whether `snitt diagnostics export` reads Snitt's own `.ips` files
-        // and folds redacted summaries into the bundle it already writes.
-        statusItem.crashReportingEnabled = CrashReportSettings.load().enabled
-        statusItem.onToggleCrashReporting = { [weak self] enabled in
-            guard let self else { return }
-            var settings = CrashReportSettings.load()
-            settings.enabled = enabled
-            settings.save()
-            self.statusItem.crashReportingEnabled = enabled
+            _ = MicrophoneToggle.apply(enabled)
         }
 
         // §5.3 requires a visible indicator for the WHOLE duration of a
@@ -435,28 +415,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // comment) — in the shipping app, launch always runs first, so this
         // is never nil when a person can actually click Settings.
         guard let hotkeyRegistrar else {
-            SettingsWindowController.show(updater: updaterController) { [weak self] in
-                self?.refreshStatusItemFromSettings()
-            }
+            SettingsWindowController.show(updater: updaterController)
             return
         }
-        SettingsWindowController.show(updater: updaterController, hotkeyRegistrar: hotkeyRegistrar) { [weak self] in
-            self?.refreshStatusItemFromSettings()
-        }
-    }
-
-    /// Keeps the status item's cached checkmark state in sync with whatever
-    /// the Settings window just changed. Both surfaces read and write the
-    /// same `UserDefaults` keys, but `StatusItemController`'s checkmarks are
-    /// cached properties updated only when the status item's OWN toggle
-    /// handlers run — without this, a change made in the window would leave
-    /// the menu showing stale state until the app relaunched.
-    private func refreshStatusItemFromSettings() {
-        statusItem.agentRecordingEnabled = AgentSettings.load().agentRecordingEnabled
-        statusItem.eventLoggingEnabled = EventLoggingSettings.load().enabled
-        statusItem.microphoneEnabled = MicrophoneSettings.load().enabled
-        statusItem.automaticUpdateChecksEnabled = UpdateSettings.load().automaticChecksEnabled
-        statusItem.crashReportingEnabled = CrashReportSettings.load().enabled
+        SettingsWindowController.show(updater: updaterController,
+                                      hotkeyRegistrar: hotkeyRegistrar)
     }
 
     // MARK: - §4.14: File ▸ Open, Open Recent, Finder double-click
