@@ -49,6 +49,18 @@ public final class InputEventMonitor: @unchecked Sendable {
     /// Key UP is excluded so one keystroke is one event — M3c's `--auto-trim`
     /// reasons about event density. The tap-disabled notifications arrive
     /// through this same callback and are control messages, not input.
+    /// The position an event contributes to the log, or nil for kinds that
+    /// have none.
+    ///
+    /// Extracted from the tap callback so it can be tested. The callback itself
+    /// needs a live `CGEventTap` and therefore a granted Accessibility
+    /// permission, so nothing headless reaches it — and the defect this whole
+    /// change fixes lived exactly there, as a location that was read and then
+    /// dropped. A `CGEvent` can be synthesised in a test; a tap cannot.
+    static func location(for kind: EventKind, in event: CGEvent) -> CGPoint? {
+        kind == .click ? event.location : nil
+    }
+
     public static func kind(for type: CGEventType) -> EventKind? {
         switch type {
         case .keyDown: return .keystroke
@@ -57,7 +69,15 @@ public final class InputEventMonitor: @unchecked Sendable {
         }
     }
 
-    private let onEvent: @Sendable (EventKind) -> Void
+    /// Carries WHERE as well as what, for the kinds that have a where.
+    ///
+    /// The location is the click's point on the desktop, straight from the
+    /// `CGEvent`; it is nil for keystrokes, which have no position. Mapping it
+    /// into the recorded picture is deliberately NOT done here — this callback
+    /// runs inside the event tap, and macOS silently disables a tap whose
+    /// callback runs long (the `tapDisabledByTimeout` branch below exists
+    /// because it already happens). The caller does the arithmetic.
+    private let onEvent: @Sendable (EventKind, CGPoint?) -> Void
     private var thread: Thread?
     private var runLoop: CFRunLoop?
     private let ready = DispatchSemaphore(value: 0)
@@ -110,7 +130,7 @@ public final class InputEventMonitor: @unchecked Sendable {
     /// see `finished`.
     private var retained: Unmanaged<InputEventMonitor>?
 
-    public init(onEvent: @escaping @Sendable (EventKind) -> Void) {
+    public init(onEvent: @escaping @Sendable (EventKind, CGPoint?) -> Void) {
         self.onEvent = onEvent
     }
 
@@ -136,7 +156,12 @@ public final class InputEventMonitor: @unchecked Sendable {
             }
 
             if let kind = InputEventMonitor.kind(for: type) {
-                monitor.onEvent(kind)
+                // `location` is read here, in the callback, because this is the
+                // only place the `CGEvent` exists — it is not retained past the
+                // return. Reading a property off it is the cheap half; the
+                // mapping it feeds is the caller's problem, for the reason
+                // given on `onEvent`.
+                monitor.onEvent(kind, InputEventMonitor.location(for: kind, in: event))
             }
             // Listen-only: the event is always passed through untouched.
             return Unmanaged.passUnretained(event)

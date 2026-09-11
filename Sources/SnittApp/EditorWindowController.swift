@@ -46,6 +46,26 @@ final class EditorTimelineState: ObservableObject {
     /// on it and `TimelineViewRepresentable` can feed it back down to the
     /// view for drawing.
     @Published var selection: Selection?
+
+    /// Playback ▸ Show Clicks, which lives in `edit.json` — so it is read
+    /// from the EDL rather than mirrored beside it. A second copy is how a
+    /// checked menu ends up exporting without rings.
+    var showClicks: Bool { edl.showClicks }
+
+    /// Click positions as FRACTIONS of the picture, for the playback overlay.
+    ///
+    /// Empty when clicks are off, and — just as importantly — empty when the
+    /// recording has none with coordinates, which is every recording made
+    /// before D64. The player attaches no time observer for an empty list, so
+    /// an older document costs nothing for a feature it cannot use.
+    ///
+    /// Derived from `events` and the CURRENT kept ranges, so trimming a cut
+    /// that contained a click removes its ring without anything recomputing
+    /// explicitly.
+    var clickMarks: [ClickMark] {
+        guard showClicks else { return [] }
+        return ClickOverlay.unitMarks(events: events, keptRanges: controller.keptRanges)
+    }
     /// What the toolbar names this document, and how many editable things are
     /// in it. Set by the controller, which is the only thing that knows the
     /// bundle it opened.
@@ -1181,7 +1201,7 @@ final class EditorTimelineState: ObservableObject {
         // `rebuild: false` — gain touches nothing but the audio mix, and a
         // rebuild would replace the player's item and send the playhead back
         // to zero on every slider tick.
-        applyAndSave(rebuild: false)
+        applyAndSave(.audioMixOnly)
     }
 
     /// Mutes or unmutes one audio track.
@@ -1191,7 +1211,7 @@ final class EditorTimelineState: ObservableObject {
         let current = edl
         undoManager?.registerUndo(withTarget: self) { $0.restore(current) }
         edl.trackStates[index].muted = muted
-        applyAndSave(rebuild: false)
+        applyAndSave(.audioMixOnly)
     }
 
     /// The audio tracks this recording actually has, in draw order — the same
@@ -1254,7 +1274,31 @@ final class EditorTimelineState: ObservableObject {
     ///   including the serialization against the previous save — a gain
     ///   change and a cut both write the whole `edit.json`, so they must not
     ///   race each other.
-    private func applyAndSave(rebuild: Bool = true) {
+    /// How much of the pipeline an edit actually needs.
+    ///
+    /// Was a `rebuild: Bool`, which had no way to say "the composition did not
+    /// change at all". Show Clicks is the first edit of that kind: it changes
+    /// what is drawn OVER the video, never the video, so rebuilding — or even
+    /// re-applying the audio mix, which interrupts playback — would be work the
+    /// user can see for no reason.
+    enum EDLApplication {
+        case rebuild
+        case audioMixOnly
+        case saveOnly
+    }
+
+    /// Playback ▸ Show Clicks, for this document.
+    ///
+    /// `.saveOnly`: the flag changes what is drawn OVER the video, never the
+    /// video, so neither a rebuild nor an audio-mix re-apply is warranted —
+    /// both would interrupt playback to change nothing about it.
+    func setShowClicks(_ enabled: Bool) {
+        guard edl.showClicks != enabled else { return }
+        edl.showClicks = enabled
+        applyAndSave(.saveOnly)
+    }
+
+    private func applyAndSave(_ application: EDLApplication = .rebuild) {
         // Marked here, synchronously, NOT inside the save task below. The EDL
         // has already changed by the time this is called, and a user who cuts
         // and immediately closes the window would otherwise race the save: the
@@ -1271,10 +1315,13 @@ final class EditorTimelineState: ObservableObject {
         pendingSaveTask = Task { @MainActor [weak self] in
             await previousSave?.value
             do {
-                if rebuild {
+                switch application {
+                case .rebuild:
                     try await controller.apply(edl: edl, events: events)
-                } else {
+                case .audioMixOnly:
                     try await controller.applyAudioMix(edl: edl)
+                case .saveOnly:
+                    break
                 }
                 try controller.persist(edl)
                 self?.lastSavedEDL = edl
@@ -1532,7 +1579,7 @@ struct EditorContentView: View {
                     dragStartWidth = nil
                     paneWidths.save()
                 }
-                PlayerLayerView(player: controller.player)
+                PlayerLayerView(player: controller.player, clickMarks: state.clickMarks)
                     .frame(minWidth: EditorWindowController.minimumPlayerSize.width,
                            minHeight: EditorWindowController.minimumPlayerSize.height)
                     .overlay {
@@ -1636,7 +1683,13 @@ struct EditorContentView: View {
         // Raised by the toolbar button and by File ▸ Export… alike — the
         // menu no longer keeps a save panel of its own.
         .onChange(of: state.exportRequestToken) { _, _ in
-            exportRequest = ExportRequest(destination: state.defaultExportURL)
+            // Seeded from Playback ▸ Show Clicks, which is the whole point of
+            // that menu item being a preference rather than a per-window
+            // toggle: what you set up while watching is what you get when you
+            // export. Still overridable in the sheet — this is the default,
+            // not a lock.
+            exportRequest = ExportRequest(destination: state.defaultExportURL,
+                                          drawClicks: state.showClicks)
             exportOptions = []
             measuringExport = true
             showingExport = true
@@ -2163,6 +2216,17 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// Thin wrappers rather than exposing `state`: the delegate needs four
     /// verbs, not the whole editor model, and every other menu action here
     /// reaches the document the same way.
+    /// Playback ▸ Show Clicks, for THIS document.
+    ///
+    /// Per document, not app-wide: the flag lives in `edit.json`, so the menu
+    /// acts on whichever recording is in front — the same scoping File ▸ Export
+    /// already uses. Persisted through the ordinary EDL save path so it is
+    /// undoable and survives closing the window.
+    public func setShowClicks(_ enabled: Bool) { state.setShowClicks(enabled) }
+
+    /// What the menu's checkmark reads.
+    public var showsClicks: Bool { state.edl.showClicks }
+
     public func togglePlayback() { state.togglePlayback() }
     public func rewindToStart() { state.rewind() }
     public func goToPreviousMark() { state.goToPreviousMark() }

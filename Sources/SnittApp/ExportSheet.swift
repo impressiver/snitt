@@ -15,7 +15,13 @@ struct ExportRequest: Equatable {
     var destination: URL
     var drawClicks: Bool = false
 
-    init(destination: URL) { self.destination = destination }
+    /// `drawClicks` defaults off so the previews and tests that construct a
+    /// request directly are unaffected; the editor passes Playback ▸ Show
+    /// Clicks through, so the sheet opens agreeing with the menu.
+    init(destination: URL, drawClicks: Bool = false) {
+        self.destination = destination
+        self.drawClicks = drawClicks
+    }
 
     /// Changing the format renames the file, because a `.mp4` holding a GIF
     /// is a file Finder opens in the wrong app and QuickLook renders as

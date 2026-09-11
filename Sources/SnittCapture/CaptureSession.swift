@@ -44,6 +44,13 @@ public enum CaptureError: Error, Equatable {
 /// why macOS 15 is the floor (spec sections 4.6 and 9).
 public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable {
     private let target: ResolvedTarget?
+
+    /// Where the recorded content is on the desktop, as of the latest frame.
+    ///
+    /// `let` and internally locked, so the event tap's callback can read it
+    /// without hopping onto an actor — the tap is `nonisolated`, cannot await,
+    /// and gets disabled by macOS if it runs long. See `CapturedContentGeometry`.
+    public let contentGeometry = CapturedContentGeometry()
     private let sink: SampleBufferSink
     private let options: CaptureOptions
 
@@ -320,6 +327,16 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
         // are never filtered here.
         if type == .screen, !Self.isCompleteFrame(buffer) { return }
 
+        // Where the recorded content sits on the desktop, refreshed from every
+        // frame (D64). This is what turns a click's desktop point into a
+        // fraction of the picture, and it has to come per frame rather than
+        // once at start: the user can drag the recorded window mid-recording,
+        // and ScreenCaptureKit already reports the new position here. Only
+        // `.screen` buffers carry it; audio has no geometry.
+        if type == .screen, let rect = Self.contentScreenRect(buffer) {
+            contentGeometry.update(screenRect: rect)
+        }
+
         // The lock is held across begin+append, not just across the didBegin
         // flip. ScreenCaptureKit delivers on a CONCURRENT queue, so releasing
         // it earlier would let an append from another track reach the sink
@@ -365,6 +382,29 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
             // Dropping a buffer must never tear down the stream; a partial
             // recording beats no recording (spec section 11).
         }
+    }
+
+    /// The captured content's rectangle on the desktop, from a frame's own
+    /// attachments.
+    ///
+    /// `SCStreamFrameInfoScreenRect` is ScreenCaptureKit's own answer to "where
+    /// is this picture on screen", so a window that moves reports its new
+    /// position without anything here polling for it — and the answer is
+    /// already synchronised with the frame rather than sampled beside it.
+    ///
+    /// Returns nil rather than a guess when the key is absent: synthetic
+    /// buffers in tests carry no attachments, and a click during a recording
+    /// that never reported geometry must end up with no position rather than a
+    /// confident wrong one.
+    static func contentScreenRect(_ buffer: CMSampleBuffer) -> CGRect? {
+        guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
+                buffer, createIfNecessary: false
+              ) as? [[SCStreamFrameInfo: Any]],
+              let first = attachments.first,
+              let raw = first[.screenRect] as? [String: Any],
+              let rect = CGRect(dictionaryRepresentation: raw as CFDictionary)
+        else { return nil }
+        return rect
     }
 
     /// True when a screen sample buffer represents a newly rendered frame.

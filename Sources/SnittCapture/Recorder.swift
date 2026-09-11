@@ -148,7 +148,7 @@ public actor Recorder {
         let started = startedAt
         let session = self.session
 
-        let monitor = InputEventMonitor { [weak self] kind in
+        let monitor = InputEventMonitor { [weak self] kind, screenPoint in
             guard let self else { return }
             // The offset is taken HERE, when the key was actually pressed —
             // not inside the Task, whenever the scheduler gets to it. Computing
@@ -160,7 +160,14 @@ public actor Recorder {
             // captured instead. Arrival order is still not guaranteed —
             // `writeSidecars` sorts, so it does not have to be.
             let offset = Recorder.inputOffset(session: session, startedAt: started)
-            Task { await self.recordInputEvent(kind, at: offset) }
+            // Mapped HERE, for the same reason the offset is: the answer
+            // depends on where the recorded window was AT THE CLICK, and a
+            // window dragged between the click and the Task being scheduled
+            // would otherwise place the ring at the window's new position. The
+            // read is a lock and some arithmetic — cheap enough for a tap
+            // callback, unlike anything that would query the window server.
+            let position = screenPoint.flatMap { session.contentGeometry.fraction(ofScreenPoint: $0) }
+            Task { await self.recordInputEvent(kind, at: offset, position: position) }
         }
 
         guard monitor.start() else {
@@ -406,8 +413,16 @@ public actor Recorder {
     ///
     /// The offset is a parameter, not something this method computes: by the
     /// time this runs, an unbounded scheduling delay has already passed.
-    private func recordInputEvent(_ kind: EventKind, at offset: Double) async {
-        await eventLog.add(at: offset, kind: kind, label: nil)
+    /// `position` is a fraction of the recorded picture, or nil when the click
+    /// had no place in it — outside the captured window, on another display, or
+    /// before the first frame established any geometry. Nil is recorded as a
+    /// click with no coordinates, which is what every human recording produced
+    /// before D64 and what `ClickOverlay` already skips.
+    private func recordInputEvent(_ kind: EventKind, at offset: Double,
+                                  position: CGPoint? = nil) async {
+        await eventLog.add(at: offset, kind: kind, label: nil,
+                           x: position.map { Double($0.x) },
+                           y: position.map { Double($0.y) })
     }
 
     /// How long the FILE is, which is not how long the session lasted.
@@ -497,8 +512,9 @@ public actor Recorder {
 
     /// Appends straight to the event log, bypassing the tap — so the ordering
     /// guarantee in `writeSidecars` can be tested without one.
-    func recordInputEventForTesting(_ kind: EventKind, at offset: Double) async {
-        await recordInputEvent(kind, at: offset)
+    func recordInputEventForTesting(_ kind: EventKind, at offset: Double,
+                                    position: CGPoint? = nil) async {
+        await recordInputEvent(kind, at: offset, position: position)
     }
 
     /// Feeds a synthetic buffer straight to the session, bypassing SCStream.

@@ -513,6 +513,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func goToPreviousMark(_ sender: Any?) { focusedEditor?.goToPreviousMark() }
     @objc func goToNextMark(_ sender: Any?) { focusedEditor?.goToNextMark() }
 
+    /// Playback ▸ Show Clicks, for the document in front.
+    ///
+    /// Per document, because the flag lives in that document's `edit.json`: a
+    /// screen-capture demo wants its clicks shown and a recording of somebody's
+    /// face does not, and the answer travels with the bundle. Resolved from the
+    /// KEY window — the same question `exportDocument` asks, so the menu cannot
+    /// act on a document that is not the one you are looking at.
+    @objc func toggleShowClicks(_ sender: Any?) {
+        guard let editor = focusedEditor else { return }
+        editor.setShowClicks(!editor.showsClicks)
+    }
+
     /// Help ▸ Keyboard Shortcuts, rendered from the registry that installed
     /// the keys — so it cannot describe a binding that does not exist.
     @objc func showKeyboardShortcuts(_ sender: Any?) {
@@ -694,6 +706,19 @@ extension AppDelegate: NSMenuItemValidation {
         // Note this asks for the KEY window's editor, the same question the
         // action itself asks. Enabling on "any editor exists" would re-create
         // the same silence whenever the frontmost window is Settings.
+        // The checkmark IS the document's state — read from `edit.json` via
+        // the focused editor, never tracked beside it. A menu item holding its
+        // own copy is how a toggle ends up showing one thing while the export
+        // does another.
+        //
+        // Disabled with no document in front, like Export: the action resolves
+        // its editor from the key window and would otherwise do nothing when
+        // picked, which reads as a broken app rather than as "nothing is open".
+        if menuItem.action == #selector(toggleShowClicks(_:)) {
+            let editor = EditorWindowController.openEditors.first { $0.window == NSApp.keyWindow }
+            menuItem.state = (editor?.showsClicks ?? false) ? .on : .off
+            return editor != nil
+        }
         if menuItem.action == #selector(exportDocument(_:)) {
             return EditorWindowController.openEditors.contains { $0.window == NSApp.keyWindow }
         }
