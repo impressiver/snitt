@@ -78,6 +78,17 @@ public struct StatusItemPresentation: Equatable {
 @MainActor
 final class StatusItemController: NSObject {
     private var statusItem: NSStatusItem?
+
+    /// Where the menu reads its checkmarks from, at the moment it is built.
+    ///
+    /// A parameter so tests get their own suite: the menu now reads the real
+    /// store, and against `.standard` its checkmarks would depend on whatever
+    /// the developer running the suite happens to have switched on.
+    let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
     private var timer: Timer?
     private(set) var state: RecordingState = .idle
 
@@ -208,19 +219,37 @@ final class StatusItemController: NSObject {
     /// one unattributed failure in this suite; building a menu needs none of
     /// it.
     func contextMenu() -> NSMenu {
+        // Every checkmark below is read from the STORE, here, as the menu is
+        // built — never from a cached mirror.
+        //
+        // Four of these settings also appear in the Settings window, which is
+        // intended: this menu is §4.11's fast path and reaching them without
+        // opening a window is the point. What is not intended is two copies of
+        // the ANSWER. Each surface used to hold its own, and keeping them
+        // agreeing took a patch in each direction —
+        // `refreshStatusItemFromSettings` for window → menu, and
+        // `refreshFromStore` for menu → window, the latter written only after
+        // a status-item toggle was found silently reverting what the window
+        // had just done.
+        //
+        // This menu is rebuilt on every right-click, so it does not need a
+        // mirror to be current; it only needed one because it had one. Reading
+        // live deletes the window → menu direction outright rather than
+        // keeping it correct. The window is a persistent thing and still
+        // refreshes itself.
         let menu = NSMenu()
         let agentItem = NSMenuItem(title: "Allow agent recording",
                                    action: #selector(toggleAgentRecording),
                                    keyEquivalent: "")
         agentItem.target = self
-        agentItem.state = agentRecordingEnabled ? .on : .off
+        agentItem.state = AgentSettings.load(defaults).agentRecordingEnabled ? .on : .off
         menu.addItem(agentItem)
 
         let eventsItem = NSMenuItem(title: "Log input events",
                                     action: #selector(toggleEventLogging),
                                     keyEquivalent: "")
         eventsItem.target = self
-        eventsItem.state = eventLoggingEnabled ? .on : .off
+        eventsItem.state = EventLoggingSettings.load(defaults).enabled ? .on : .off
         menu.addItem(eventsItem)
 
         // §4.10 rung 2 — off by default, the mic prompt is paid only when
@@ -231,7 +260,7 @@ final class StatusItemController: NSObject {
                                         action: #selector(toggleMicrophone),
                                         keyEquivalent: "")
         microphoneItem.target = self
-        microphoneItem.state = microphoneEnabled ? .on : .off
+        microphoneItem.state = MicrophoneSettings.load(defaults).enabled ? .on : .off
         menu.addItem(microphoneItem)
 
         // D73. Built here rather than cached because this menu is constructed
@@ -239,7 +268,7 @@ final class StatusItemController: NSObject {
         // the moment someone is about to record — which is the only moment the
         // warning is worth anything.
         if let warning = Self.speakerBleedWarning(route: AudioOutputRoute.current(),
-                                                  microphoneEnabled: microphoneEnabled) {
+                                                  microphoneEnabled: MicrophoneSettings.load(defaults).enabled) {
             let item = NSMenuItem(title: warning, action: nil, keyEquivalent: "")
             // Informational, not actionable: there is nothing for Snitt to DO
             // about it, and §4.11 forbids putting a dialog in front of the
@@ -281,13 +310,19 @@ final class StatusItemController: NSObject {
         // it ON in the first place — Sparkle's own permission prompt never
         // appears, because the plist's `SUEnableAutomaticChecks` cold-start
         // default suppresses it permanently (see `startUpdateCycle`'s
-        // `shouldPrompt` check). This is the only route by which a user can
-        // ever opt in.
+        // `shouldPrompt` check).
+        //
+        // This used to say it was "the only route by which a user can ever
+        // opt in". §4.14's Settings window has carried the same row since,
+        // so it is no longer the only one — it is the FAST one, which is
+        // what this menu is for (§4.11). Kept deliberately: the claim went
+        // stale, the item did not.
         let automaticUpdatesItem = NSMenuItem(title: "Automatically check for updates",
                                               action: #selector(toggleAutomaticUpdateChecks),
                                               keyEquivalent: "")
         automaticUpdatesItem.target = self
-        automaticUpdatesItem.state = automaticUpdateChecksEnabled ? .on : .off
+        automaticUpdatesItem.state =
+            UpdateSettings.load(defaults).automaticChecksEnabled ? .on : .off
         menu.addItem(automaticUpdatesItem)
         menu.addItem(.separator())
 
@@ -311,44 +346,32 @@ final class StatusItemController: NSObject {
         onCheckForUpdates?()
     }
 
-    /// Mirrors the persisted setting so the menu can show a checkmark.
-    var automaticUpdateChecksEnabled = false
-
     /// Invoked when the user toggles automatic update checks from the menu.
     var onToggleAutomaticUpdateChecks: ((Bool) -> Void)?
 
     @objc private func toggleAutomaticUpdateChecks() {
-        onToggleAutomaticUpdateChecks?(!automaticUpdateChecksEnabled)
+        onToggleAutomaticUpdateChecks?(!UpdateSettings.load(defaults).automaticChecksEnabled)
     }
-
-    /// Mirrors the persisted setting so the menu can show a checkmark.
-    var agentRecordingEnabled = false
 
     /// Invoked when the user toggles agent recording from the menu.
     var onToggleAgentRecording: ((Bool) -> Void)?
 
     @objc private func toggleAgentRecording() {
-        onToggleAgentRecording?(!agentRecordingEnabled)
+        onToggleAgentRecording?(!AgentSettings.load(defaults).agentRecordingEnabled)
     }
-
-    /// Mirrors the persisted setting so the menu can show a checkmark.
-    var eventLoggingEnabled = false
 
     /// Invoked when the user toggles input-event logging from the menu.
     var onToggleEventLogging: ((Bool) -> Void)?
 
     @objc private func toggleEventLogging() {
-        onToggleEventLogging?(!eventLoggingEnabled)
+        onToggleEventLogging?(!EventLoggingSettings.load(defaults).enabled)
     }
-
-    /// Mirrors the persisted setting so the menu can show a checkmark.
-    var microphoneEnabled = false
 
     /// Invoked when the user toggles microphone capture from the menu.
     var onToggleMicrophone: ((Bool) -> Void)?
 
     @objc private func toggleMicrophone() {
-        onToggleMicrophone?(!microphoneEnabled)
+        onToggleMicrophone?(!MicrophoneSettings.load(defaults).enabled)
     }
 
     func update(_ newState: RecordingState) {

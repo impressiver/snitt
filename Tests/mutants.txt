@@ -190,3 +190,9 @@ StatusItemMenuTests :: Sources/SnittApp/StatusItemController.swift :: menu.addIt
 ShowClicksMenuTests :: Sources/SnittApp/KeyboardShortcutRegistry.swift :: entry.keyEquivalentModifierMask = shortcut.modifiers :: let _ = shortcut.modifiers
 # The grouping separator in the Playback menu is dropped.
 ShowClicksMenuTests :: Sources/SnittApp/KeyboardShortcutRegistry.swift :: if shortcut.startsGroup { menu.addItem(.separator()) } :: let _ = shortcut.startsGroup
+
+# The status menu reads its checkmarks from the store as it is built.
+StatusItemMenuStateTests :: Sources/SnittApp/StatusItemController.swift :: microphoneItem.state = MicrophoneSettings.load(defaults).enabled ? .on : .off :: microphoneItem.state = .off
+StatusItemMenuStateTests :: Sources/SnittApp/StatusItemController.swift :: agentItem.state = AgentSettings.load(defaults).agentRecordingEnabled ? .on : .off :: agentItem.state = .off
+StatusItemMenuStateTests :: Sources/SnittApp/StatusItemController.swift :: eventsItem.state = EventLoggingSettings.load(defaults).enabled ? .on : .off :: eventsItem.state = .off
+StatusItemMenuStateTests :: Sources/SnittApp/StatusItemController.swift :: self.defaults = defaults :: self.defaults = .standard

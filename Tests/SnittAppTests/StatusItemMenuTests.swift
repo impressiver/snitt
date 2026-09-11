@@ -22,6 +22,14 @@ import AppKit
 @MainActor
 struct StatusItemMenuTests {
 
+    /// An isolated domain — the menu reads the real store, so against
+    /// `.standard` these checkmarks would depend on whatever the developer
+    /// running the suite happens to have switched on.
+    private func fixture() throws -> (UserDefaults, String) {
+        let name = "com.snitt.test.statusmenu.\(UUID().uuidString)"
+        return (try #require(UserDefaults(suiteName: name)), name)
+    }
+
     /// Holds the controller alive for the duration of the check.
     ///
     /// `NSMenuItem.target` is a WEAK, zeroing reference, so
@@ -31,8 +39,9 @@ struct StatusItemMenuTests {
     /// exactly that and failed against correct code, which is worth keeping
     /// visible: a menu built from a temporary controller is inert, and that is
     /// a property of AppKit rather than a quirk of this test.
-    private func withMenu<T>(_ body: (NSMenu) -> T) -> T {
-        let controller = StatusItemController()
+    private func withMenu<T>(defaults: UserDefaults = .standard,
+                             _ body: (NSMenu) -> T) -> T {
+        let controller = StatusItemController(defaults: defaults)
         let result = body(controller.contextMenu())
         withExtendedLifetime(controller) {}
         return result
@@ -109,5 +118,74 @@ struct StatusItemMenuTests {
                 #expect(item.target != nil, "\(item.title) has an action with no target")
             }
         }
+    }
+}
+
+/// The checkmarks, which are read from the store as the menu is built.
+///
+/// These four settings appear both here and in the Settings window — by
+/// design, since this menu is §4.11's fast path. What used to differ was the
+/// ANSWER: each surface cached its own, and a change in one left the other
+/// stale until a sync patch caught it. The menu is rebuilt on every
+/// right-click, so reading live removes the whole class.
+@MainActor
+struct StatusItemMenuStateTests {
+
+    private func fixture() throws -> (UserDefaults, String) {
+        let name = "com.snitt.test.statusmenustate.\(UUID().uuidString)"
+        return (try #require(UserDefaults(suiteName: name)), name)
+    }
+
+    private func state(of title: String, in defaults: UserDefaults) -> NSControl.StateValue? {
+        let controller = StatusItemController(defaults: defaults)
+        let menu = controller.contextMenu()
+        let value = menu.items.first { $0.title == title }?.state
+        withExtendedLifetime(controller) {}
+        return value
+    }
+
+    @Test("Each checkmark reflects what is stored, not a default")
+    func checkmarksReadTheStore() throws {
+        let (defaults, name) = try fixture()
+        defer { defaults.removePersistentDomain(forName: name) }
+
+        // All four ON, so a menu that ignored the store and showed everything
+        // off fails on every one. The off case is covered below — asserting
+        // only one polarity passes against a checkmark hardcoded to it.
+        var agent = AgentSettings.load(defaults)
+        agent.agentRecordingEnabled = true
+        agent.save(to: defaults)
+        EventLoggingSettings(enabled: true).save(to: defaults)
+        MicrophoneSettings(enabled: true).save(to: defaults)
+        var updates = UpdateSettings.load(defaults)
+        updates.automaticChecksEnabled = true
+        updates.save(to: defaults)
+
+        #expect(state(of: "Allow agent recording", in: defaults) == .on)
+        #expect(state(of: "Log input events", in: defaults) == .on)
+        #expect(state(of: "Record voiceover", in: defaults) == .on)
+        #expect(state(of: "Automatically check for updates", in: defaults) == .on)
+    }
+
+    @Test("A store written AFTER the controller exists still shows through")
+    func laterWritesAreVisible() throws {
+        // THE property the sweep bought, and the one a mirror cannot have:
+        // the Settings window writing this key while the app is running must
+        // change what the menu shows, with nothing told to refresh. Against
+        // the old cached mirrors this failed — the value was captured at
+        // launch and only `refreshStatusItemFromSettings` moved it.
+        let (defaults, name) = try fixture()
+        defer { defaults.removePersistentDomain(forName: name) }
+
+        let controller = StatusItemController(defaults: defaults)
+        #expect(controller.contextMenu().items
+            .first { $0.title == "Record voiceover" }?.state == .off)
+
+        MicrophoneSettings(enabled: true).save(to: defaults)
+
+        #expect(controller.contextMenu().items
+            .first { $0.title == "Record voiceover" }?.state == .on,
+                "the menu showed stale state after the store changed")
+        withExtendedLifetime(controller) {}
     }
 }
