@@ -40,10 +40,17 @@ public enum ClickPosition {
     ///   captured content", and ScreenCaptureKit reports window geometry the
     ///   way `kCGWindowBounds` does — top-left.
     ///
-    /// Agreeing means no flip. If that is ever wrong the symptom is specific
-    /// and worth recognising: rings appear mirrored about the horizontal
-    /// midline, exactly right for a click at the vertical centre and
-    /// increasingly wrong towards the edges.
+    /// Agreeing means no flip, and that was CONFIRMED against a real recording
+    /// on 2026-09-11 — clicks drawn where they were made — rather than left as
+    /// two documented claims that happen to point the same way. It needed a
+    /// human with a mouse: nothing headless can produce a `CGEvent` from a real
+    /// click or a frame from a real capture, so `yIsTopLeftOrigin` pins the
+    /// convention this code implements while the agreement between the two
+    /// frameworks stays an empirical fact recorded here.
+    ///
+    /// If it is ever wrong the symptom is specific and worth recognising:
+    /// rings appear mirrored about the horizontal midline, exactly right for a
+    /// click at the vertical centre and increasingly wrong towards the edges.
     ///
     /// - Parameters:
     ///   - point: where the click happened, on the desktop.
