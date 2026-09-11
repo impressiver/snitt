@@ -240,3 +240,81 @@ struct SnittPaletteTests {
         }
     }
 }
+
+// The icon ARTWORK, not just the constant (rev 5, W10).
+//
+// `SnittPaletteTests.recordRedMatchesTheIcon` pins the palette to
+// `RecordingIcon.recordRed` — two constants agreeing with each other. Neither
+// of them had ever been checked against the file the Dock actually shows, and
+// they did not match it: the artwork was drawn in 0.92/0.18/0.22 while both
+// constants said 0.933/0.267/0.267. Three things claiming to be "Snitt red",
+// two of them agreeing, and the one anybody can see disagreeing with both.
+@Suite
+struct AppIconArtworkTests {
+
+    private func artwork() throws -> NSBitmapImageRep {
+        // From this file's own location, so the test does not depend on which
+        // directory the runner happened to start in — the project closed a
+        // current-directory race structurally and this must not reopen it.
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()   // SnittAppTests
+            .deletingLastPathComponent()   // Tests
+            .deletingLastPathComponent()   // repo root
+        let url = root.appendingPathComponent("Resources/AppIcon.png")
+        let data = try Data(contentsOf: url)
+        return try #require(NSBitmapImageRep(data: data))
+    }
+
+    @Test("The icon generator draws its dot in the palette's record red")
+    func generatorUsesTheBrandRed() throws {
+        // Reads the GENERATOR's declared constant, not the rendered pixels.
+        //
+        // Sampling the artwork was tried first and abandoned, which is worth
+        // recording. Even with every colour constructed in an explicit sRGB
+        // space — a real bug, found this way and fixed: `CGColor(red:green:
+        // blue:alpha:)` creates a GENERIC RGB colour whose components shift
+        // when drawn into an sRGB context, the same trap `TimelineView.Palette`
+        // documents for `NSColor(white:)` — the value read back out of the
+        // PNG and the .icns still differs from the value written, by more than
+        // the drift this test exists to catch. Colour management between
+        // CoreGraphics, `iconutil` and `NSImage` is not something a unit test
+        // can pin down, and a tolerance loose enough to pass would also have
+        // passed the artwork this replaced.
+        //
+        // The generator is the artwork's source, so that is where the claim
+        // can be made honestly: the number the icon is drawn from is the
+        // number the app is painted from. Nobody can edit one without the
+        // other now — which is exactly what had happened, leaving the icon at
+        // 0.92/0.18/0.22 while both constants said 0.933/0.267/0.267.
+        let root = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let source = try String(contentsOf: root.appendingPathComponent(
+            "Scripts/generate-app-icon.swift"), encoding: .utf8)
+        let line = try #require(
+            source.split(separator: "\n").first { $0.hasPrefix("let recordRed = ") },
+            "the generator no longer declares `recordRed` where this can find it")
+        let numbers = line.split(whereSeparator: { !"0123456789.".contains($0) })
+            .compactMap { Double($0) }
+        #expect(numbers.count == 3, "could not read three components from: \(line)")
+        let brand = SnittPalette.recordRed.usingColorSpace(.sRGB)!
+        let expected = [Double(brand.redComponent), Double(brand.greenComponent),
+                        Double(brand.blueComponent)]
+        for (drawn, painted) in zip(numbers, expected) {
+            #expect(abs(drawn - painted) < 0.001,
+                    "the icon is drawn in \(numbers), the app is painted in \(expected)")
+        }
+    }
+
+    @Test("The icon is not a full-bleed square — it has the system's margin")
+    func artworkIsASquircle() throws {
+        // The rev 5 rendering sits the mark on the standard squircle with a
+        // transparent margin, rather than painting the whole tile. A corner
+        // pixel is the cheapest way to tell the two apart, and it is the
+        // change most likely to be silently lost by an edit to the generator.
+        let rep = try artwork()
+        let corner = try #require(rep.colorAt(x: 2, y: 2))
+        #expect(corner.alphaComponent < 0.1,
+                "the icon paints its own corners — it is a square, not a squircle")
+    }
+}

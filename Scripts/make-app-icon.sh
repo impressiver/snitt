@@ -1,32 +1,25 @@
 #!/bin/bash
-# Builds Resources/AppIcon.icns from Resources/AppIcon.png (the source
-# rendered by Scripts/generate-app-icon.swift).
+# Builds Resources/AppIcon.icns by running Scripts/generate-app-icon.swift and
+# compiling what it renders.
 #
-# Run this whenever Resources/AppIcon.png changes; the resulting .icns is
-# committed alongside the source so a build never depends on this script
-# having been run first. Rerunning it is what keeps the two in sync.
+# The .icns and the reference AppIcon.png are committed, so a build never
+# depends on this script having been run first. Rerunning it is what keeps
+# them in sync with the generator.
 set -euo pipefail
 
-SOURCE_PNG="Resources/AppIcon.png"
 ICONSET="Resources/AppIcon.iconset"
 ICNS="Resources/AppIcon.icns"
 
-if [ ! -f "$SOURCE_PNG" ]; then
-  echo "error: $SOURCE_PNG not found — run ./Scripts/generate-app-icon.swift first" >&2
+# The generator writes every rendition itself, each drawn at its own size
+# (rev 5, W10). `sips` used to downscale one 1024 master into all ten, which
+# is exactly what `RecordingIcon` warns against for the poster badge: the
+# small sizes — the ones Finder lists and the menu bar show — came out muddy.
+./Scripts/generate-app-icon.swift
+
+if [ ! -d "$ICONSET" ]; then
+  echo "error: $ICONSET not found — the generator did not run" >&2
   exit 1
 fi
-
-rm -rf "$ICONSET"
-mkdir -p "$ICONSET"
-
-# The standard set iconutil expects: base size plus its @2x Retina variant,
-# for every size Finder/Dock/⌘-Tab/Get-Info actually render at.
-declare -a SIZES=(16 32 128 256 512)
-for base in "${SIZES[@]}"; do
-  double=$((base * 2))
-  sips -z "$base" "$base" "$SOURCE_PNG" --out "$ICONSET/icon_${base}x${base}.png" >/dev/null
-  sips -z "$double" "$double" "$SOURCE_PNG" --out "$ICONSET/icon_${base}x${base}@2x.png" >/dev/null
-done
 
 iconutil -c icns "$ICONSET" -o "$ICNS"
 rm -rf "$ICONSET"
