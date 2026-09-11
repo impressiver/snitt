@@ -200,11 +200,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             Task { @MainActor in
                 let recording = await self.coordinator?.isRecording ?? false
+                // The app's OWN windows, not `NSApp.windows`.
+                //
+                // `NSApp.windows` includes the `NSStatusBarWindow` the
+                // menu-bar item lives in — which exists from the moment
+                // `statusItem.install()` runs, i.e. always, by the time this
+                // asks. So `hasVisibleWindows` was true on every launch and
+                // the panel never appeared: the decision was right and its
+                // input was wrong, which is the harder half to see.
+                //
+                // An editor window is what "something is already open" means
+                // here, and `openEditors` is the registry that knows.
+                let openDocuments = EditorWindowController.openEditors.contains {
+                    $0.window.isVisible
+                }
                 let decision = LaunchOpenPrompt.decide(
                     openingDocument: !self.openTasks.isEmpty,
-                    hasVisibleWindows: NSApp.windows.contains { $0.isVisible },
+                    hasVisibleWindows: openDocuments,
                     isRecording: recording)
                 guard decision == .prompt else { return }
+                // Bring the app forward first. A launch from Spotlight or the
+                // Dock usually activates it anyway, but a modal panel run by
+                // an app that is not frontmost opens behind whatever is —
+                // which looks exactly like the panel never appearing.
+                NSApp.activate(ignoringOtherApps: true)
                 self.openDocument(nil)
             }
         }

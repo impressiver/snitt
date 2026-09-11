@@ -103,3 +103,20 @@ struct ExportMenuValidationTests {
         #expect(delegate.validateMenuItem(item))
     }
 }
+
+// NOT TESTED, deliberately, and the reason is worth more than the test was.
+//
+// The launch prompt never appeared because `hasVisibleWindows` was read from
+// `NSApp.windows`, which includes the `NSStatusBarWindow` the menu-bar item
+// lives in — present from the moment `statusItem.install()` runs, so every
+// launch looked like "something is already open". The decision was right and
+// its INPUT was wrong, which is the harder half to see. It now asks
+// `EditorWindowController.openEditors`, which is what "a document is open"
+// actually means here.
+//
+// A test demonstrating the false positive was written and removed: it had to
+// create a real `NSStatusBar` item, and mutating global UI state while the
+// rest of the suite runs in parallel produced an unexplained failure on the
+// very next run. A 1452-test suite that fails once in a while is worse than a
+// missing demonstration — this project has spent whole sessions chasing
+// exactly that, and the field notes say so.
