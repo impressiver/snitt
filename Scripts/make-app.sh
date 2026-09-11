@@ -21,10 +21,31 @@ cleanup_on_failure() {
 }
 trap cleanup_on_failure EXIT
 
-APP_VERSION="$(sed -nE 's/.*public static let fallback = "([^"]+)".*/\1/p' "$VERSION_SOURCE")"
+APP_VERSION="$(sed -nE 's/.*public static let marketing = "([^"]+)".*/\1/p' "$VERSION_SOURCE")"
 if [ -z "$APP_VERSION" ]; then
-  echo "error: could not extract AppVersion.fallback from $VERSION_SOURCE" >&2
+  echo "error: could not extract AppVersion.marketing from $VERSION_SOURCE" >&2
   echo "refusing to write an empty CFBundleShortVersionString" >&2
+  exit 1
+fi
+
+# The build number Sparkle actually compares (CFBundleVersion), kept DISJOINT
+# from the human version above — which is Sparkle's own guidance, and what
+# lets `main` carry `0.5.0-dev` without a development build claiming to be the
+# real 0.5.0 and then refusing it when it ships.
+#
+# The commit count is the whole mechanism: strictly larger on every commit, so
+# a later build always outranks an earlier one, and nobody has to remember to
+# bump anything. `--first-parent` counts merges as one step, so the number a
+# release gets does not depend on how many commits its PR happened to contain.
+BUILD_NUMBER="$(git rev-list --count --first-parent HEAD 2>/dev/null || true)"
+if [ -z "$BUILD_NUMBER" ]; then
+  # A tarball with no .git, or a shallow clone. Refused rather than defaulted:
+  # a CFBundleVersion of "0" or "1" would be LOWER than every shipped build,
+  # so Sparkle would offer this app an "update" to a version it already has,
+  # for ever. A loud failure is recoverable; that is not.
+  echo "error: could not count commits for CFBundleVersion." >&2
+  echo "       This must be a full git clone — Sparkle compares this number," >&2
+  echo "       and a wrong one silently breaks updates rather than failing." >&2
   exit 1
 fi
 
@@ -99,11 +120,19 @@ cat > "$APP/Contents/Info.plist" <<PLIST
        CFBundleShortVersionString above). Without it, SPUUpdater's own
        checkIfConfiguredProperlyAndRequireFeedURL: bails immediately with
        SUInvalidHostVersionError and the updater never starts — before any
-       of the SU* keys below are even consulted. AppVersion.swift's comment
-       about Sparkle comparing against CFBundleShortVersionString describes
-       appcast-item comparison once the updater IS running; this key is a
-       separate, earlier gate. Same value, same single source. -->
-  <key>CFBundleVersion</key><string>$APP_VERSION</string>
+       of the SU* keys below are even consulted.
+
+       This is the monotonic build number, NOT the marketing version, and
+       the two are deliberately disjoint — Sparkle asks that the version it
+       compares be strictly numeric and that a human-readable string be kept
+       apart from it. That separation is what lets main carry a -dev
+       marketing version between releases: the marker changes what a person
+       reads without touching what Sparkle compares.
+
+       No backticks in this comment, deliberately. This heredoc delimiter is
+       unquoted so APP_VERSION expands, which means a backtick would run as a
+       command substitution while the plist is being written. -->
+  <key>CFBundleVersion</key><string>$BUILD_NUMBER</string>
   <key>LSMinimumSystemVersion</key><string>26.0</string>
   <!-- D62/D68: transcription is on-device only; this grant never sends audio
        anywhere. Requested at first USE of transcription, not at launch

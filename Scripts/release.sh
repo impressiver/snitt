@@ -42,7 +42,7 @@
 # WHAT IT REFUSES TO DO, and why each check is here rather than in a person's
 # memory:
 #
-#   - Release a version that disagrees with `AppVersion.fallback`. Sparkle
+#   - Release a version that disagrees with `AppVersion.marketing`. Sparkle
 #     compares the appcast against the installed app's
 #     CFBundleShortVersionString, so a tag and a binary that disagree produce
 #     "updates sometimes don't appear" with no error attached.
@@ -57,7 +57,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 REPO="impressiver/snitt"
-VERSION_SOURCE="Sources/SnittDocument/AppVersion.swift"
+# Overridable for tests ONLY. Several of them drive the full dry-run path,
+# which needs a version the preflight will accept — and `main` deliberately
+# carries a marked one between releases, which the guard below refuses. The
+# precedent is SNITT_FAKE_TEAM_IDENTIFIER_LINE; a real release never sets this.
+VERSION_SOURCE="${SNITT_VERSION_SOURCE:-Sources/SnittDocument/AppVersion.swift}"
 DEFAULT_BRANCH="main"
 
 VERSION=""
@@ -92,6 +96,28 @@ case "$VERSION" in
   *) echo "error: version must look like 1.2.3, got '$VERSION'" >&2; exit 1 ;;
 esac
 
+# A development version is not releasable, and the shape check above does not
+# catch it: `0.5.0-dev` matches that glob, because its last component starts
+# with a digit.
+#
+# Releasing one would tag v0.5.0-dev, name every artifact after it, and ship an
+# app whose CFBundleShortVersionString says -dev to everyone who installs it.
+# `main` carries exactly such a version between releases — the marker is what
+# stops a development build claiming to be a release — so this is a plausible
+# mistake to make, not a far-fetched one.
+case "$VERSION" in
+  *-*)
+    bare="${VERSION%%-*}"
+    echo "error: '$VERSION' is a development version, not a releasable one." >&2
+    echo "       main carries a marked version between releases so that a" >&2
+    echo "       build made there cannot claim to BE a release. Releasing" >&2
+    echo "       means setting AppVersion.marketing to the bare version" >&2
+    echo "       first:" >&2
+    echo "         $bare, then ./Scripts/release.sh $bare" >&2
+    echo "       Step 10 puts the marker back afterwards." >&2
+    exit 1 ;;
+esac
+
 ZIP="Snitt-$VERSION.zip"
 DMG="Snitt-$VERSION.dmg"
 APPCAST="appcast.xml"
@@ -115,6 +141,42 @@ run() {
   else
     "$@"
   fi
+}
+
+# Writes the next development version to the version file and pushes it.
+#
+# Returns non-zero rather than exiting on any failure: the caller turns that
+# into a warning, because by this point the release is already public.
+#
+# Pulls with --rebase first. A release takes ten minutes or so of building and
+# two notarization round trips, and `main` can easily have moved in that time;
+# a push rejected as non-fast-forward would otherwise be the common outcome
+# rather than the rare one. A rebase conflict here leaves the tree dirty, so it
+# is aborted and reported rather than left for someone to discover later.
+bump_to_next_dev() {
+  local next="$1"
+  git fetch origin "$DEFAULT_BRANCH" --quiet || return 1
+  if ! git pull --rebase --quiet origin "$DEFAULT_BRANCH"; then
+    git rebase --abort 2>/dev/null || true
+    return 1
+  fi
+  # Anchored on the exact released version, so this cannot rewrite a file
+  # somebody edited in the meantime to say something else.
+  local pattern="public static let marketing = \"$VERSION\""
+  grep -q "$pattern" "$VERSION_SOURCE" || return 1
+  sed -i '' "s/public static let marketing = \"$VERSION\"/public static let marketing = \"$next\"/" \
+    "$VERSION_SOURCE" || return 1
+  git add "$VERSION_SOURCE" || return 1
+  git commit --quiet -m "release: main moves to $next
+
+Published $VERSION, so main must stop claiming it: a build made here would
+otherwise report the same version as the release, and a bug report could not
+tell the two apart.
+
+The -dev marker reaches CFBundleShortVersionString only. CFBundleVersion is
+the commit count, which Sparkle compares and which keeps rising on its own, so
+this cannot make a development build refuse a real release." || return 1
+  git push --quiet origin "$DEFAULT_BRANCH" || return 1
 }
 
 step() {
@@ -180,11 +242,20 @@ fi
 # ---------------------------------------------------------------------------
 echo "=== 0. Preflight"
 
-declared="$(sed -nE 's/.*public static let fallback = "([^"]+)".*/\1/p' "$VERSION_SOURCE")"
+declared="$(sed -nE 's/.*public static let marketing = "([^"]+)".*/\1/p' "$VERSION_SOURCE")"
 if [ "$declared" != "$VERSION" ]; then
   echo "error: releasing $VERSION but $VERSION_SOURCE declares '$declared'." >&2
-  echo "       Bump AppVersion.fallback first — make-app.sh reads it for" >&2
-  echo "       CFBundleShortVersionString, and Sparkle compares against that." >&2
+  case "$declared" in
+    "$VERSION"-*)
+      # The ordinary case, not an error the releaser should have to puzzle
+      # over: main is on the development version for exactly this release.
+      echo "       That is this release's development version. Set" >&2
+      echo "       AppVersion.marketing to '$VERSION' and commit, then" >&2
+      echo "       re-run — step 10 puts the marker back afterwards." >&2 ;;
+    *)
+      echo "       Bump AppVersion.marketing first — make-app.sh reads it for" >&2
+      echo "       CFBundleShortVersionString, and Sparkle compares against that." >&2 ;;
+  esac
   exit 1
 fi
 echo "  version    $VERSION (matches $VERSION_SOURCE)"
@@ -383,6 +454,57 @@ if step 9 "Verify what actually landed"; then
     echo "   [dry-run] gh release view $TAG --json assets"
   else
     verify_release
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# Step 10. Leave `main` carrying the NEXT version, not the one just shipped.
+#
+# Without this, `main` claims a version that is already public: every build a
+# developer makes reports the same version as the release, so a bug report
+# cannot distinguish "the shipped 0.4.0" from "0.4.0 plus thirty commits".
+#
+# The marker is what makes this safe, and it is the reason the two plist keys
+# were split. A bare next-version here would make every development build
+# claim to BE 0.5.0, and Sparkle would then refuse the real 0.5.0 when it
+# shipped — 0.5.0 is not newer than 0.5.0. `-dev` only ever reaches
+# CFBundleShortVersionString, which Sparkle does not compare; CFBundleVersion
+# is the commit count and keeps rising regardless.
+#
+# NEXT MINOR, following the convention this pattern comes from — Maven's
+# release plugin proposes a minor increment for the next development version —
+# and matching this project's own history, where every release so far has been
+# one. A patch release just sets it explicitly; preflight already refuses a
+# version that disagrees with the file, so that conversation cannot be skipped.
+# ---------------------------------------------------------------------------
+next_dev_version() {
+  local v="$1" major rest minor
+  major="${v%%.*}"; rest="${v#*.}"; minor="${rest%%.*}"
+  case "$major$minor" in ""|*[!0-9]*) return 1 ;; esac
+  printf '%s.%s.0-dev\n' "$major" "$((minor + 1))"
+}
+
+if step 10 "Leave main on the next development version"; then
+  if ! NEXT_DEV="$(next_dev_version "$VERSION")"; then
+    echo "warning: could not derive a next version from '$VERSION'." >&2
+    echo "         The release is published and fine — only the bump was" >&2
+    echo "         skipped. Set AppVersion.marketing by hand." >&2
+  elif [ "$DRY_RUN" -eq 1 ]; then
+    echo "   [dry-run] set AppVersion.marketing to $NEXT_DEV, commit, push to $DEFAULT_BRANCH"
+  else
+    # Every failure from here on is a WARNING, never an exit. The release is
+    # already published and verified; reporting it as failed because a
+    # bookkeeping commit did not land would send someone looking for a broken
+    # release that is fine. Each branch says exactly what to run by hand.
+    if bump_to_next_dev "$NEXT_DEV"; then
+      printf '==> main now carries %s\n' "$NEXT_DEV"
+    else
+      echo "warning: the release is published and verified, but main still" >&2
+      echo "         carries $VERSION. Fix it with:" >&2
+      echo "           sed -i '' 's/marketing = \"$VERSION\"/marketing = \"$NEXT_DEV\"/' \\" >&2
+      echo "             $VERSION_SOURCE" >&2
+      echo "           git commit -am 'release: main moves to $NEXT_DEV' && git push" >&2
+    fi
   fi
 fi
 
