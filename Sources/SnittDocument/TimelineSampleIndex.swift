@@ -32,10 +32,19 @@ public enum TimelineSampleIndex {
         guard let source = TimeRangeMapping.sourceTime(ofTrimmedTime: outputSeconds,
                                                        keptRanges: keptRanges) else { return nil }
         let index = Int(source * samplesPerSecond)
-        // Clamped at the top rather than returning nil: the last bucket is
-        // partial, so a source time inside the final fraction of a second
-        // legitimately rounds one past the end.
-        guard index >= 0 else { return nil }
+        // Clamped at the top rather than returning nil — but by ONE bucket,
+        // not without limit. The last bucket is partial, so a source time
+        // inside the final fraction of a second legitimately rounds one past
+        // the end and should read the last sample.
+        //
+        // Past that there is genuinely no data, and saying so matters: an
+        // unbounded clamp made every instant after a track's final sample
+        // report that sample, so a microphone that stopped early painted its
+        // last value across the rest of the lane. A track covering two
+        // seconds of a twenty-second recording filled two thirds of the
+        // waveform. "No audio data for this segment" is a real answer and
+        // this is where it has to be given.
+        guard index >= 0, index <= sampleCount else { return nil }
         return min(index, sampleCount - 1)
     }
 }

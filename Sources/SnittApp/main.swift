@@ -180,6 +180,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .item(withTitle: "Open Recent")?.submenu {
             recentMenu.delegate = self
         }
+
+        offerToOpenADocumentIfLaunchedBare()
+    }
+
+    /// Launching Snitt on its own opens the Open dialog; every other way in
+    /// does not. See `LaunchOpenPrompt` for which cases those are and why.
+    ///
+    /// **Deferred by a runloop pass, deliberately.** `application(_:open:)`
+    /// can arrive either side of `applicationDidFinishLaunching` on a cold
+    /// launch — its own doc comment says so — so asking "was a document
+    /// opened" right here would sometimes be asking before the answer exists,
+    /// and double-clicking a `.snitt` would occasionally get a panel over the
+    /// document it just opened. One hop is enough: by the next pass the open
+    /// event has been delivered, a recording started by the hotkey has set
+    /// the coordinator's state, and any editor window is on screen.
+    private func offerToOpenADocumentIfLaunchedBare() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                let recording = await self.coordinator?.isRecording ?? false
+                // The app's OWN windows, not `NSApp.windows`.
+                //
+                // `NSApp.windows` includes the `NSStatusBarWindow` the
+                // menu-bar item lives in — which exists from the moment
+                // `statusItem.install()` runs, i.e. always, by the time this
+                // asks. So `hasVisibleWindows` was true on every launch and
+                // the panel never appeared: the decision was right and its
+                // input was wrong, which is the harder half to see.
+                //
+                // An editor window is what "something is already open" means
+                // here, and `openEditors` is the registry that knows.
+                let openDocuments = EditorWindowController.openEditors.contains {
+                    $0.window.isVisible
+                }
+                let decision = LaunchOpenPrompt.decide(
+                    openingDocument: !self.openTasks.isEmpty,
+                    hasVisibleWindows: openDocuments,
+                    isRecording: recording)
+                guard decision == .prompt else { return }
+                // Bring the app forward first. A launch from Spotlight or the
+                // Dock usually activates it anyway, but a modal panel run by
+                // an app that is not frontmost opens behind whatever is —
+                // which looks exactly like the panel never appearing.
+                NSApp.activate(ignoringOtherApps: true)
+                self.openDocument(nil)
+            }
+        }
     }
 
     private func handleHotkey() {
@@ -638,6 +685,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// to normal text editing instead.
 extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        // Export needs a document to export. With no editor in front of it the
+        // item did nothing when picked — `exportDocument(_:)` resolves its
+        // editor from `NSApp.keyWindow` and returns early when there is none —
+        // so the menu offered an action and then silently declined it, which
+        // reads as a broken app rather than as "nothing is open".
+        //
+        // Note this asks for the KEY window's editor, the same question the
+        // action itself asks. Enabling on "any editor exists" would re-create
+        // the same silence whenever the frontmost window is Settings.
+        if menuItem.action == #selector(exportDocument(_:)) {
+            return EditorWindowController.openEditors.contains { $0.window == NSApp.keyWindow }
+        }
         guard menuItem.action == #selector(cutTimelineSelection(_:)) else { return true }
         // The title follows the highlight: one key, one item, two edits. A
         // menu permanently reading "Cut Selection" while Delete would restore

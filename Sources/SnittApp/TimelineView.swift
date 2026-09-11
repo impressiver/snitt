@@ -558,7 +558,10 @@ public final class TimelineView: NSView {
         var perColumn = [Int](repeating: 0, count: max(1, Int(bounds.width)))
         for phrase in phrases {
             for word in phrase.words {
-                let x = Int(geometry.x(atOutput: OutputTime(word.start)))
+                // SOURCE time, mapped through the edit — see `drawPhraseChips`.
+                guard let position = geometry.x(atSource: SourceTime(word.start))
+                else { continue }
+                let x = Int(position)
                 guard x >= 0, x < perColumn.count else { continue }
                 perColumn[x] += 1
             }
@@ -594,8 +597,24 @@ public final class TimelineView: NSView {
             .paragraphStyle: style,
         ]
         for phrase in phrases {
-            let startX = geometry.x(atOutput: OutputTime(phrase.start))
-            let endX = geometry.x(atOutput: OutputTime(phrase.end))
+            // SOURCE time, mapped through the edit — NOT `x(atOutput:)`.
+            //
+            // A transcript's times are facts about the CAPTURE (see
+            // `TranscriptPhrase`), and this lane was handing them to the
+            // output axis as though they were already trimmed. With no cuts
+            // the two clocks agree and it looked right; with any cut the text
+            // slid away from the audio it belongs to, by the total length of
+            // everything removed before it. The waveform above has always
+            // mapped through `keptRanges`, so the two lanes disagreed about
+            // the same instant.
+            //
+            // `x(atSource:)` returns nil for an instant that was cut away —
+            // a phrase spoken inside a removed span has no position on the
+            // timeline, and drawing it at a clamped edge would put words under
+            // audio that never contained them.
+            guard let startX = geometry.x(atSource: SourceTime(phrase.start)),
+                  let endX = geometry.x(atSource: SourceTime(phrase.end))
+            else { continue }
             let width = max(2, endX - startX)
             let chip = NSRect(x: startX, y: band.minY + 3, width: width - 1,
                               height: band.height - 6)
@@ -638,8 +657,12 @@ public final class TimelineView: NSView {
                                               audioTracks: [], hasTranscript: !phrases.isEmpty)
         guard bands.transcript.height > 0, bands.transcript.contains(point) else { return nil }
         return phrases.first { phrase in
-            let start = geometry.x(atOutput: OutputTime(phrase.start))
-            let end = geometry.x(atOutput: OutputTime(phrase.end))
+            // The same mapping the chips are DRAWN with. Hit-testing on a
+            // different axis than the drawing is this view's oldest defect
+            // class, and it is the reason `GestureAxisTests` exists.
+            guard let start = geometry.x(atSource: SourceTime(phrase.start)),
+                  let end = geometry.x(atSource: SourceTime(phrase.end))
+            else { return false }
             return point.x >= start && point.x <= max(end, start + 2)
         }
     }
@@ -1237,15 +1260,25 @@ public final class TimelineView: NSView {
     /// ever being re-read: the samples are the recording's, the axis is the
     /// edit's. A column with no source behind it (past the trimmed end) draws
     /// nothing rather than repeating the last value.
-    /// The preset the waveform's silence is drawn against.
+    /// The waveform's bar rhythm: a bar every `waveformBarStride` points,
+    /// `waveformBarWidth` wide, leaving a point of ground between them.
     ///
-    /// It has to be A preset, not "silence" in the abstract: the threshold and
-    /// the minimum span are both properties of a `DeepTrimCriteria`, and they
-    /// differ by a factor of four between Conservative and Aggressive. The
-    /// lane draws Default, so what it shows is what Auto-Trim ▸ Default would
-    /// take — and running Aggressive cuts more than the lane showed, which is
-    /// honest only because it is said out loud here and in the menu.
-    static let waveformSilencePreset = DeepTrimPreset.default
+    /// Drawn as discrete bars rather than as a filled shape, which is what the
+    /// design asks for and what every meter looks like — a solid orange mass
+    /// says "there is audio" and nothing else, while bars with air between
+    /// them read as samples and let the eye follow the envelope. The painter
+    /// filled every 1pt column, so at any real width the columns touched and
+    /// the lane became a silhouette.
+    ///
+    /// Nothing is lost by striding: each bar takes the LOUDEST peak in the
+    /// span it covers, so a transient between two bars still raises one.
+    static let waveformBarStride: Double = 3
+    static let waveformBarWidth: Double = 2
+
+    /// Half the thinnest bar the waveform will draw, so the whole bar is a
+    /// point tall. Anything present gets at least this; only a span with no
+    /// samples at all gets nothing.
+    static let minimumWaveformHalfHeight: Double = 0.5
 
     private func drawWaveform(_ samples: WaveformSamples, in rect: NSRect,
                               muted: Bool, gain: Double) {
@@ -1258,82 +1291,96 @@ public final class TimelineView: NSView {
         // clipping is damage, and hiding the damage because the track is
         // currently silent is how it survives to the export.
         let clipping = Palette.clipping.withAlphaComponent(muted ? 0.5 : 0.9)
-        let baseline = Palette.silenceBaseline.withAlphaComponent(muted ? 0.084 : 0.3)
 
-        // The SAME threshold Auto-Trim uses, from the same function — see
-        // `SpeechChunker.silenceThreshold`. A second copy here would let the
-        // lane draw gaps the trim would not take, which is the one thing a
-        // segmented waveform must not do.
-        let criteria = DeepTrimCriteria.preset(Self.waveformSilencePreset)
-        let threshold = SpeechChunker.silenceThreshold(
-            for: samples.peaks, fraction: criteria.audioSilenceFraction)
-
-        // Column by column, exactly as before — one pass over the peaks, no
-        // second walk. What is new is that each column is also CLASSIFIED.
+        // One pass over the peaks. A column exists only where SAMPLES exist —
+        // the guard below is the whole of "no audio data for this segment",
+        // and it is the only thing that leaves the lane blank.
         struct Column { let x: Double; let peak: Double; let clipped: Bool }
         var columns: [Column] = []
-        var quiet: [Bool] = []
         var x = 0.0
         while x < bounds.width {
             defer { x += 1 }
+            // THE PEAK OVER THE SPAN THIS COLUMN COVERS, not the one sample
+            // that happens to land under its left edge.
+            //
+            // Point-sampling is why the waveform "glitched in and out" while
+            // zooming: at any zoom-out a column spans many samples, and
+            // whether it drew tall or vanished depended on whether its single
+            // sample fell on a peak or in a trough between two syllables.
+            // Zoom changed which samples were hit, so the envelope flickered
+            // and long stretches of real speech read as silence.
+            //
+            // Taking the max over the span makes the drawing an ENVELOPE:
+            // vertically the same at every zoom.
             let output = geometry.outputTime(atX: x).seconds
-            guard let index = TimelineSampleIndex.index(
+            let nextOutput = geometry.outputTime(atX: x + 1).seconds
+            guard let start = TimelineSampleIndex.index(
                 forOutputSeconds: output, keptRanges: kept,
                 samplesPerSecond: samples.samplesPerSecond,
                 sampleCount: samples.peaks.count) else { continue }
-            let peak = Double(samples.peaks[index])
+            // One past the end of the span, clamped by `index` itself. A
+            // column narrower than a sample gives start == end, so the range
+            // below still reads exactly one value.
+            let end = TimelineSampleIndex.index(
+                forOutputSeconds: nextOutput, keptRanges: kept,
+                samplesPerSecond: samples.samplesPerSecond,
+                sampleCount: samples.peaks.count) ?? start
+            let span = samples.peaks[min(start, end)...max(start, end)]
+            let peak = Double(span.max() ?? 0)
             columns.append(Column(x: x, peak: peak,
-                                  clipped: WaveformScale.isClipped(peak: peak, gain: gain)))
-            quiet.append(Float(peak) <= threshold)
+                                  clipped: span.contains {
+                                      WaveformScale.isClipped(peak: Double($0), gain: gain)
+                                  }))
         }
         guard !columns.isEmpty else { return }
 
-        // Hysteresis, and it is the preset's, not a number invented here.
-        // Auto-Trim only removes a silence once it lasts `minimumSpan`, so a
-        // shorter gap drawn as a gap would be a gap the edit keeps — the lane
-        // would be promising a cut that never comes. Short quiet runs are
-        // therefore drawn as audio, which is what they are.
-        let secondsPerColumn = columns.count > 1
-            ? abs(geometry.outputTime(atX: columns[1].x).seconds
-                  - geometry.outputTime(atX: columns[0].x).seconds)
-            : 0
-        if secondsPerColumn > 0 {
-            let minimumColumns = Int((criteria.minimumSpan / secondsPerColumn).rounded())
-            var runStart = 0
-            for i in 0...quiet.count {
-                if i == quiet.count || quiet[i] != quiet[runStart] {
-                    if quiet[runStart], i - runStart < minimumColumns {
-                        for j in runStart..<i { quiet[j] = false }
-                    }
-                    runStart = i
-                }
-            }
-        }
+        // One bar per stride, carrying the loudest peak it spans.
+        var index = 0
+        while index < columns.count {
+            let stride = Int(Self.waveformBarStride)
+            let group = columns[index..<min(index + stride, columns.count)]
+            defer { index += stride }
+            guard let first = group.first else { break }
 
-        for (i, column) in columns.enumerated() {
-            if quiet[i] {
-                // Silence is a line, not a short bar. A short bar reads as
-                // "quiet audio"; a baseline reads as "nothing here", which is
-                // the difference between a waveform and a preview of the edit.
-                baseline.setFill()
-                NSBezierPath(rect: NSRect(x: column.x, y: midY - 0.5,
-                                          width: 1, height: 1)).fill()
-                continue
-            }
-            (column.clipped ? clipping : normal).setFill()
+            // NOTHING IS DRAWN AS A BASELINE ANY MORE (product-owner
+            // direction, 2026-09-11): "minimum 1px unless literally no audio
+            // data was received during that segment".
+            //
+            // W12 drew sub-threshold spans as a slate hairline, arguing that a
+            // short bar reads as "quiet audio" while a baseline reads as
+            // "nothing here" — a preview of what Auto-Trim would take. In use
+            // that is the wrong trade: a quiet passage IS audio, and painting
+            // it a different colour at the midline made real speech look like
+            // dead space. Blankness now has one honest meaning — no samples
+            // for this span — and that is the `continue` above.
+            //
+            // Auto-Trim is untouched: it still asks
+            // `SpeechChunker.silenceThreshold` for what to cut. How this lane
+            // paints was never what decided that.
+            // The loudest peak in the span, so striding hides no transient —
+            // averaging would, which is why this takes a max.
+            let loudest = group.filter { _ in true }.max { $0.peak < $1.peak } ?? first
+            let clipped = group.contains { $0.clipped }
+            (clipped ? clipping : normal).setFill()
             // Logarithmic, and gain-aware: the bar shows what will be
             // exported, not what was captured (`WaveformScale`).
             //
-            // A floor of half a pixel so a quiet passage still reads as "there
-            // is audio here" rather than as a gap in the track.
-            let height = max(0.5, WaveformScale.height(forPeak: column.peak, gain: gain) * halfHeight)
-            NSBezierPath(rect: NSRect(x: column.x, y: midY - height,
-                                      width: 1, height: height * 2)).fill()
-            // A clipped column is marked at the band's edges too, so it is
+            // A floor of half a point EACH SIDE of the midline, so the
+            // thinnest bar this lane can draw is a full point tall. Below
+            // that a quiet passage rounds away to nothing on a 1x display and
+            // the lane lies about what was recorded.
+            let height = max(Self.minimumWaveformHalfHeight,
+                             WaveformScale.height(forPeak: loudest.peak, gain: gain) * halfHeight)
+            NSBezierPath(rect: NSRect(x: first.x, y: midY - height,
+                                      width: Self.waveformBarWidth,
+                                      height: height * 2)).fill()
+            // A clipped span is marked at the band's edges too, so it is
             // findable when the whole passage is loud and every bar is tall.
-            if column.clipped {
-                NSBezierPath(rect: NSRect(x: column.x, y: rect.minY, width: 1, height: 2)).fill()
-                NSBezierPath(rect: NSRect(x: column.x, y: rect.maxY - 2, width: 1, height: 2)).fill()
+            if clipped {
+                NSBezierPath(rect: NSRect(x: first.x, y: rect.minY,
+                                          width: Self.waveformBarWidth, height: 2)).fill()
+                NSBezierPath(rect: NSRect(x: first.x, y: rect.maxY - 2,
+                                          width: Self.waveformBarWidth, height: 2)).fill()
             }
         }
     }
@@ -1402,8 +1449,6 @@ public final class TimelineView: NSView {
         /// — a fourth opinion about colour, and the one the eye lands on
         /// first, since a mark is what you are usually looking for.
         static let mark = SnittPalette.signal
-        /// Silence, drawn as a hairline rather than as a short bar.
-        static let silenceBaseline = SnittPalette.slateText
         /// Clipping is damage rather than an edit, but it is still red, and
         /// one red is the point: `NSColor.systemRed` beside a brand-red cut
         /// read as two unrelated warnings.

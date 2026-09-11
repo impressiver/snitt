@@ -250,8 +250,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         self.microphoneToggle = microphoneToggle
         self.hotkeyConflictAlert = hotkeyConflictAlert
         self.outputDirectoryUnwritableAlert = outputDirectoryUnwritableAlert
+        // Height 0: `sizeToFitContent` below replaces it with what the
+        // content actually needs. A guessed height is how the first version
+        // ended up several hundred points taller than its rows, which the
+        // stack then had to put somewhere.
         window = NSWindow(contentRect: NSRect(x: 0, y: 0,
-                                              width: Self.contentWidth, height: 620),
+                                              width: Self.contentWidth, height: 0),
                           styleMask: [.titled, .closable],
                           backing: .buffered,
                           defer: false)
@@ -269,55 +273,124 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // in M5c and never did. `WindowLifetimeTests` now pins BOTH, so a third
         // window cannot repeat it.
         window.isReleasedWhenClosed = false
-        window.center()
         super.init()
         window.delegate = self
-        window.contentView = makeContentView()
+        let content = makeContentView()
+        window.contentView = content
+        // Fit the window to the rows, then centre — in that order, or it
+        // centres the wrong size and jumps.
+        let fitted = content.fittingSize
+        window.setContentSize(NSSize(width: Self.contentWidth,
+                                     height: max(fitted.height, 1)))
+        window.center()
     }
 
     private func makeContentView() -> NSView {
         let stack = NSStackView()
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        // No `distribution` setting here on purpose. The first fix for the
+        // stretched-row bug set `.fill`, and a mutant swapping it for
+        // `.fillEqually` survived every test — because once the window is
+        // sized to its content (below) there is no spare height for any
+        // distribution to distribute. The window's height was the whole
+        // defect; the stack was only where it showed.
+        stack.spacing = 2
+        stack.edgeInsets = NSEdgeInsets(top: 18, left: 20, bottom: 18, right: 20)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        stack.addArrangedSubview(settingRow(
-            title: Self.agentRecordingTitle,
-            detail: Self.agentRecordingDetail,
-            isOn: AgentSettings.load(defaults).agentRecordingEnabled,
-            action: #selector(toggleAgentRecording(_:))))
+        for row in [
+            settingRow(title: Self.agentRecordingTitle, detail: Self.agentRecordingDetail,
+                       isOn: AgentSettings.load(defaults).agentRecordingEnabled,
+                       action: #selector(toggleAgentRecording(_:))),
+            settingRow(title: Self.eventLoggingTitle, detail: Self.eventLoggingDetail,
+                       isOn: EventLoggingSettings.load(defaults).enabled,
+                       action: #selector(toggleEventLogging(_:))),
+            settingRow(title: Self.microphoneTitle, detail: Self.microphoneDetail,
+                       isOn: MicrophoneSettings.load(defaults).enabled,
+                       action: #selector(toggleMicrophone(_:))),
+            settingRow(title: Self.automaticUpdatesTitle, detail: Self.automaticUpdatesDetail,
+                       isOn: UpdateSettings.load(defaults).automaticChecksEnabled,
+                       action: #selector(toggleAutomaticUpdates(_:))),
+            settingRow(title: Self.crashReportsTitle, detail: Self.crashReportsDetail,
+                       isOn: CrashReportSettings.load(defaults).enabled,
+                       action: #selector(toggleCrashReports(_:))),
+        ] {
+            stack.addArrangedSubview(row)
+            stack.setCustomSpacing(14, after: row)
+        }
+        // The last toggle needs more room than the gap between two toggles,
+        // because what follows it is a rule rather than another setting.
+        if let lastToggle = stack.arrangedSubviews.last {
+            stack.setCustomSpacing(20, after: lastToggle)
+        }
 
-        stack.addArrangedSubview(settingRow(
-            title: Self.eventLoggingTitle,
-            detail: Self.eventLoggingDetail,
-            isOn: EventLoggingSettings.load(defaults).enabled,
-            action: #selector(toggleEventLogging(_:))))
-
-        stack.addArrangedSubview(settingRow(
-            title: Self.microphoneTitle,
-            detail: Self.microphoneDetail,
-            isOn: MicrophoneSettings.load(defaults).enabled,
-            action: #selector(toggleMicrophone(_:))))
-
-        stack.addArrangedSubview(settingRow(
-            title: Self.automaticUpdatesTitle,
-            detail: Self.automaticUpdatesDetail,
-            isOn: UpdateSettings.load(defaults).automaticChecksEnabled,
-            action: #selector(toggleAutomaticUpdates(_:))))
-
-        stack.addArrangedSubview(settingRow(
-            title: Self.crashReportsTitle,
-            detail: Self.crashReportsDetail,
-            isOn: CrashReportSettings.load(defaults).enabled,
-            action: #selector(toggleCrashReports(_:))))
-
-        stack.addArrangedSubview(hotkeyRecorderButton(for: .record))
-        stack.addArrangedSubview(hotkeyRecorderButton(for: .marker))
-
-        stack.addArrangedSubview(outputDirectoryRow())
+        // The two groups that are not toggles get headers and a rule, because
+        // a hotkey recorder and a folder picker among five checkboxes read as
+        // leftovers otherwise — which is what the screenshot showed.
+        addGroup(to: stack, titled: "Shortcuts",
+                 rows: [HotkeyAction.record, .marker].map(hotkeyRow(for:)))
+        addGroup(to: stack, titled: Self.outputDirectoryCaption,
+                 rows: [outputDirectoryRow()])
 
         return stack
+    }
+
+    /// A titled group, under a rule, with the air a rule needs on both sides.
+    ///
+    /// The spacing is the whole of this function. A separator inheriting the
+    /// stack's row spacing sits almost touching the heading under it and the
+    /// paragraph above it, which reads as a line that fell over rather than as
+    /// a division — the screenshot that prompted this showed exactly that.
+    private func addGroup(to stack: NSStackView, titled title: String, rows: [NSView]) {
+        let rule = separator()
+        stack.addArrangedSubview(rule)
+        stack.setCustomSpacing(10, after: rule)
+
+        let header = groupHeader(title)
+        stack.addArrangedSubview(header)
+        stack.setCustomSpacing(8, after: header)
+
+        for row in rows {
+            stack.addArrangedSubview(row)
+            stack.setCustomSpacing(6, after: row)
+        }
+        // Air before whatever comes next — another rule, or the window's edge.
+        if let last = rows.last { stack.setCustomSpacing(20, after: last) }
+    }
+
+    /// A hairline the full width of the content, so a group reads as a group.
+    private func separator() -> NSView {
+        let line = NSBox()
+        line.boxType = .separator
+        line.translatesAutoresizingMaskIntoConstraints = false
+        line.widthAnchor.constraint(equalToConstant: Self.contentWidth - 40).isActive = true
+        return line
+    }
+
+    private func groupHeader(_ title: String) -> NSView {
+        let label = NSTextField(labelWithString: title)
+        label.font = .systemFont(ofSize: 11, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+        return label
+    }
+
+    /// A named hotkey and its recorder, on one line.
+    ///
+    /// The recorder button used to carry the name itself ("Record hotkey:
+    /// ⌥⌘5"), so the control was as wide as its own label and the two hotkeys
+    /// were two differently-sized buttons floating in the margin. Name on the
+    /// left, control on the right, both of them aligned with everything else.
+    private func hotkeyRow(for action: HotkeyAction) -> NSView {
+        let label = NSTextField(labelWithString: action.label)
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.widthAnchor.constraint(equalToConstant: 150).isActive = true
+
+        let row = NSStackView(views: [label, hotkeyRecorderButton(for: action)])
+        row.orientation = .horizontal
+        row.alignment = .firstBaseline
+        row.spacing = 10
+        return row
     }
 
     /// One setting: a bold label, and underneath it the sentence that says
@@ -439,8 +512,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         container.alignment = .leading
         container.spacing = 4
 
-        let caption = NSTextField(labelWithString: "\(Self.outputDirectoryCaption):")
-        container.addArrangedSubview(caption)
+        // No caption here: the group header above the row carries it now, and
+        // two labels reading "Save recordings to" one above the other is what
+        // the first version of this grouping shipped.
 
         let row = NSStackView()
         row.orientation = .horizontal
@@ -636,7 +710,11 @@ final class HotkeyRecorderButton: NSButton {
 
     func setDisplayedCombination(_ combination: HotkeyCombination) {
         isRecording = false
-        title = "\(hotkeyAction.label): \(combination.displayString)"
+        // The keys alone. The row beside this carries the name now, and a
+        // button reading "Record hotkey: ⌥⌘5" next to a label reading
+        // "Record hotkey" says it twice and makes the two recorders different
+        // widths for no reason.
+        title = combination.displayString
     }
 
     @objc private func handleClick(_ sender: Any?) {

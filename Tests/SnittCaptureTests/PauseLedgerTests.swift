@@ -108,3 +108,134 @@ struct PauseLedgerTests {
         #expect(ledger.recordedElapsed(since: t(0), now: t(600)) == t(10))
     }
 }
+
+/// Markers and durations belong on the FILE's clock, not the wall's
+/// (2026-09-11).
+///
+/// Reported from a real recording: "multiple pause/resume cause all markers
+/// except the first pause/resume to show up at the end of the recording (and
+/// erroneously says they're in a cut)".
+///
+/// The recording is in the repo's own field notes now, but the arithmetic is
+/// the whole story. `Snitt-1789151395.snitt`:
+///
+/// - `capture.mov` is **27.742s** of footage.
+/// - `meta.durationSeconds` said **49.308s**.
+/// - Markers were stamped at 6.688, 18.508, 28.756, 33.224, 35.506, 40.785.
+/// - Paused total: 11.819 + 4.468 + 5.279 = **21.566s**.
+/// - 49.308 − 21.566 = **27.742**, exactly the footage.
+///
+/// So both the markers and the duration were wall-clock while the file is
+/// footage. Only the first marker — before any pause — was right, which is
+/// precisely what was reported. The last two exceed 27.742 altogether, so they
+/// clamp to the final instant and resolve as "inside a cut".
+@Suite
+struct FootageClockTests {
+
+    private func time(_ seconds: Double) -> CMTime {
+        CMTime(seconds: seconds, preferredTimescale: 600)
+    }
+
+    @Test("Paused time accumulates across every cycle, not just the first")
+    func pausesAccumulate() {
+        // The shape of the bug: one pause was survivable because the first
+        // marker is stamped before it. Three pauses put everything after them
+        // progressively further out.
+        var ledger = PauseLedger()
+        ledger.pause(at: time(6.688))
+        ledger.resume(at: time(18.507))
+        ledger.pause(at: time(28.756))
+        ledger.resume(at: time(33.224))
+        ledger.pause(at: time(35.506))
+        ledger.resume(at: time(40.785))
+        #expect(abs(ledger.totalPausedSeconds(now: time(49.308)) - 21.566) < 0.01,
+                "got \(ledger.totalPausedSeconds(now: time(49.308)))")
+    }
+
+    @Test("The real recording's wall clock, corrected, is its footage length")
+    func theReportedRecordingReconciles() {
+        // Not a synthetic case: these are the numbers out of the bundle. The
+        // correction has to land on 27.742 or the file and its metadata still
+        // describe different recordings.
+        var ledger = PauseLedger()
+        for (pause, resume) in [(6.688, 18.507), (28.756, 33.224), (35.506, 40.785)] {
+            ledger.pause(at: time(pause))
+            ledger.resume(at: time(resume))
+        }
+        let wall = 49.308
+        let footage = wall - ledger.totalPausedSeconds(now: time(wall))
+        #expect(abs(footage - 27.742) < 0.02,
+                "corrected duration is \(footage), the file is 27.742")
+    }
+
+    @Test("Every marker after the first lands inside the footage once corrected")
+    func markersFallInsideTheFootage() {
+        // The symptom, stated as the property that was violated: a marker
+        // stamped during a recording is by definition at an instant the file
+        // contains. Past the end it clamps, and a clamped marker sits on the
+        // last frame and reads as "inside a cut" — which is what was seen.
+        var ledger = PauseLedger()
+        let cycles = [(6.688, 18.507), (28.756, 33.224), (35.506, 40.785)]
+        let stamps = [6.688, 18.507, 28.756, 33.224, 35.506, 40.785]
+        var corrected: [Double] = []
+        var cycleIndex = 0
+        for stamp in stamps {
+            // Replay the ledger up to each stamp, as the session does.
+            while cycleIndex < cycles.count, cycles[cycleIndex].0 <= stamp {
+                if !ledger.isPaused { ledger.pause(at: time(cycles[cycleIndex].0)) }
+                if cycles[cycleIndex].1 <= stamp {
+                    ledger.resume(at: time(cycles[cycleIndex].1))
+                    cycleIndex += 1
+                } else { break }
+            }
+            corrected.append(stamp - ledger.totalPausedSeconds(now: time(stamp)))
+        }
+        for (stamp, footageTime) in zip(stamps, corrected) {
+            #expect(footageTime <= 27.742 + 0.01,
+                    "a marker stamped at \(stamp) corrects to \(footageTime), past the end of 27.742s of footage")
+            #expect(footageTime >= 0)
+        }
+        // And uncorrected, FOUR of the six really were past the end of the
+        // footage — so this fixture reproduces the report rather than merely
+        // agreeing with the fix. (Four, not two: an earlier version of this
+        // assertion said two and was wrong, which is the same off-by-a-pause
+        // confusion the bug itself is made of.)
+        #expect(stamps.filter { $0 > 27.742 }.count == 4)
+    }
+}
+
+/// `meta.durationSeconds` describes the FILE (2026-09-11).
+@Suite
+struct FootageDurationTests {
+
+    @Test("A paused session writes the footage length, not the wall length")
+    func pausedSessionWritesFootage() {
+        // The real recording: 49.308s of session, 21.566s of it paused, and a
+        // capture.mov of 27.742s. The editor lays its timeline out against
+        // this number, so writing the wall length gave every marker a ruler
+        // longer than the recording it measures.
+        let start = Date(timeIntervalSince1970: 0)
+        let duration = Recorder.footageDuration(startedAt: start,
+                                                stoppedAt: start.addingTimeInterval(49.308),
+                                                totalPaused: 21.566)
+        #expect(abs(duration - 27.742) < 0.01, "wrote \(duration)")
+    }
+
+    @Test("An unpaused session is unchanged — which is why this hid")
+    func unpausedSessionIsUnchanged() {
+        let start = Date(timeIntervalSince1970: 0)
+        #expect(Recorder.footageDuration(startedAt: start,
+                                         stoppedAt: start.addingTimeInterval(30),
+                                         totalPaused: 0) == 30)
+    }
+
+    @Test("A bundle never records a negative duration")
+    func durationIsNeverNegative() {
+        // Defensive, and cheap: a ledger that somehow out-counted the wall
+        // would otherwise write a negative length into a file other tools read.
+        let start = Date(timeIntervalSince1970: 0)
+        #expect(Recorder.footageDuration(startedAt: start,
+                                         stoppedAt: start.addingTimeInterval(5),
+                                         totalPaused: 9) == 0)
+    }
+}

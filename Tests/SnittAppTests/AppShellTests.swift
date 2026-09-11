@@ -165,13 +165,20 @@ struct AppShellTests {
         try await EditorWindowTestGate.run {
             NoModalAlerts.silence()
             let delegate = AppDelegate()
-            // Any other wired action — `exportDocument` here, but the point
-            // is that this is NOT `cutTimelineSelection` — must stay live
-            // unconditionally, matching every other item in this menu (see
-            // `exportDocument`'s own doc comment on that convention). A
-            // mutant that defaulted the guard to `false` instead of `true`
-            // would disable the ENTIRE menu, not just Cut Selection.
-            let other = NSMenuItem(title: "Export…", action: #selector(AppDelegate.exportDocument(_:)), keyEquivalent: "")
+            // An action this method does not own must stay live: a guard that
+            // broadened would disable the ENTIRE menu rather than the two
+            // items it is meant to govern.
+            //
+            // This used `exportDocument` as the example, because Export WAS
+            // unconditional. It no longer is (2026-09-11, product owner):
+            // with nothing open the item did nothing when picked, since
+            // `exportDocument(_:)` resolves its editor from `NSApp.keyWindow`
+            // and returns early — a menu offering an action and then silently
+            // declining it. `ExportMenuValidationTests` covers that; this test
+            // needs an action that is still genuinely pass-through.
+            let other = NSMenuItem(title: "Close",
+                                   action: #selector(NSWindow.performClose(_:)),
+                                   keyEquivalent: "")
             #expect(delegate.validateMenuItem(other) == true)
         }
     }

@@ -122,3 +122,79 @@ struct RecordingHUDModelTests {
         #expect(p.clock == "0:00")
     }
 }
+
+// What the HUD animates, and when (rev 5, W4).
+//
+// W4's paint and behaviours were never scheduled — the spec's five-PR table
+// omitted W4 from every group — so the HUD shipped with three identical
+// system buttons and no motion at all. These pin the rules rather than the
+// animations: "is a CAAnimation attached" asserts the mechanism, and the
+// interesting part is WHEN.
+@Suite
+struct RecordingHUDMotionTests {
+
+    @Test("The dot breathes only while actually recording")
+    func breathesWhileRecording() {
+        #expect(RecordingHUDMotion.dotBreathes(isRecording: true, isPaused: false,
+                                               reduceMotion: false))
+    }
+
+    @Test("A paused HUD is still")
+    func pausedDoesNotBreathe() {
+        // A pulsing dot beside the word "Paused" says two different things at
+        // once, and §5.3's obligation is that a glance tells you which.
+        #expect(!RecordingHUDMotion.dotBreathes(isRecording: true, isPaused: true,
+                                                reduceMotion: false))
+    }
+
+    @Test("Reduced motion is a setting, not a preference to weigh")
+    func reducedMotionWins() {
+        #expect(!RecordingHUDMotion.dotBreathes(isRecording: true, isPaused: false,
+                                                reduceMotion: true))
+    }
+
+    @Test("A HUD left alone while recording fades")
+    func idleRecordingFades() {
+        // At full strength through a ten-minute recording it stops being
+        // lightweight, which is the one thing §4.11 asks this panel to be.
+        #expect(RecordingHUDMotion.alpha(isRecording: true, isPaused: false,
+                                         pointerNear: false,
+                                         secondsIdle: RecordingHUDMotion.idleAfterSeconds)
+                == RecordingHUDMotion.idleAlpha)
+    }
+
+    @Test("The pointer coming near brings it straight back")
+    func pointerRestoresIt() {
+        #expect(RecordingHUDMotion.alpha(isRecording: true, isPaused: false,
+                                         pointerNear: true, secondsIdle: 600) == 1)
+    }
+
+    @Test("A paused HUD never fades — it is reporting an abnormal state")
+    func pausedNeverFades() {
+        // The sequence that matters: pausing DURING the fade must restore it.
+        // A paused recording is the state you are most likely to be looking
+        // for, and a faded panel is the one you cannot find.
+        #expect(RecordingHUDMotion.alpha(isRecording: true, isPaused: true,
+                                         pointerNear: false, secondsIdle: 600) == 1)
+    }
+
+    @Test("It does not fade before it has been left alone")
+    func fadesOnlyAfterTheDelay() {
+        #expect(RecordingHUDMotion.alpha(isRecording: true, isPaused: false,
+                                         pointerNear: false,
+                                         secondsIdle: RecordingHUDMotion.idleAfterSeconds - 0.1)
+                == 1)
+    }
+
+    @MainActor
+    @Test("Mark prints the user's real key, or no key at all")
+    func markTitleUsesTheRealBinding() {
+        // PR #66's rule, on the one control this design emphasises: a
+        // hardcoded shortcut that does nothing is worse than none. Pause has
+        // no `HotkeyAction` case, so it names none — and Mark must behave the
+        // same way when nothing is bound.
+        #expect(RecordingHUDView.markTitle(shortcut: "⌥⌘M").string.contains("⌥⌘M"))
+        #expect(RecordingHUDView.markTitle(shortcut: nil).string == "Mark")
+        #expect(RecordingHUDView.markTitle(shortcut: "").string == "Mark")
+    }
+}

@@ -164,6 +164,36 @@ public final class CaptureSession: NSObject, SCStreamOutput, @unchecked Sendable
     ///
     /// Returns nil before the first buffer arrives, when there is no video
     /// time base to be relative to yet.
+    /// Where "now" sits in the WRITTEN file — media elapsed minus everything
+    /// paused, including a pause still open.
+    ///
+    /// This is the clock markers, cuts and the duration belong on, and
+    /// `latestFrameForScreenshot` already says so in as many words: *"the
+    /// instant this frame occupies in the written file, which is the clock
+    /// markers and cuts use."* A pause is the ABSENCE of buffers — the writer
+    /// cannot be paused — so file time and elapsed time diverge by exactly the
+    /// paused total from the first pause onward.
+    ///
+    /// Nil before the first frame, like `mediaOffsetNow`.
+    func outputOffsetNow() -> Double? {
+        lock.lock()
+        let first = firstPresentationTime
+        let ledger = pauses
+        lock.unlock()
+        let now = CMClockGetTime(CMClockGetHostTimeClock())
+        guard let elapsed = Self.mediaOffset(from: first, to: now) else { return nil }
+        return elapsed - ledger.totalPausedSeconds(now: now)
+    }
+
+    /// Everything paused so far, for callers that need to correct a wall-clock
+    /// span rather than ask for an instant.
+    func totalPausedSecondsNow() -> Double {
+        lock.lock()
+        let ledger = pauses
+        lock.unlock()
+        return ledger.totalPausedSeconds(now: CMClockGetTime(CMClockGetHostTimeClock()))
+    }
+
     func mediaOffsetNow() -> Double? {
         lock.lock()
         let first = firstPresentationTime

@@ -115,3 +115,24 @@ TitlebarChromeTests :: Sources/SnittApp/EditorChrome.swift :: static let traffic
 PolishSweepTests :: Sources/SnittApp/StatusItemController.swift :: attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: size, :: attributes: [.font: NSFont.systemFont(ofSize: size,
 PolishSweepTests :: Sources/SnittApp/EditorChrome.swift :: return key.isEmpty ? label : "\(label) — \(key)" :: return label
 SweptSurfaceTests :: Sources/SnittApp/RecordingHUDPanel.swift :: SnittPalette.ink1.withAlphaComponent(0.94).cgColor :: NSColor.windowBackgroundColor.cgColor
+
+# --- fixes from use, 2026-09-11 ---
+MarkerNavigationOriginTests :: Sources/SnittDocument/MarkerNavigation.swift :: if abs(live - pending) < jumpSettledSeconds { return (live, true) } :: if true { return (live, true) }
+MarkerNavigationOriginTests :: Sources/SnittDocument/MarkerNavigation.swift :: return (pending, false) :: return (live, false)
+SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: height: max(fitted.height, 1)) :: height: 620)
+WaveformBarsTests :: Sources/SnittApp/TimelineView.swift :: static let waveformBarWidth: Double = 2 :: static let waveformBarWidth: Double = 3
+SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: stack.setCustomSpacing(10, after: rule) :: stack.setCustomSpacing(2, after: rule)
+LaunchOpenPromptTests :: Sources/SnittApp/LaunchOpenPrompt.swift :: if isRecording { return .recording } :: if false { return .recording }
+LaunchOpenPromptTests :: Sources/SnittApp/LaunchOpenPrompt.swift :: if openingDocument { return .documentAlreadyOpening } :: if false { return .documentAlreadyOpening }
+LaunchOpenPromptTests :: Sources/SnittApp/LaunchOpenPrompt.swift :: if hasVisibleWindows { return .windowAlreadyOpen } :: if false { return .windowAlreadyOpen }
+RecordingHUDMotionTests :: Sources/SnittApp/RecordingHUDModel.swift :: isRecording && !isPaused && !reduceMotion :: isRecording && !reduceMotion
+RecordingHUDMotionTests :: Sources/SnittApp/RecordingHUDModel.swift :: guard isRecording, !isPaused, !pointerNear, :: guard isRecording, !pointerNear,
+RecordingHUDMotionTests :: Sources/SnittApp/RecordingHUDPanel.swift :: guard let shortcut, !shortcut.isEmpty else { return title } :: guard let shortcut else { return title }
+FootageClockTests :: Sources/SnittCapture/PauseLedger.swift :: CMTimeGetSeconds(totalPausedIncludingOpenPause(now: now)) :: 0
+FootageDurationTests :: Sources/SnittCapture/Recorder.swift :: max(0, stoppedAt.timeIntervalSince(startedAt) - totalPaused) :: stoppedAt.timeIntervalSince(startedAt)
+FootageDurationTests :: Sources/SnittCapture/Recorder.swift :: max(0, stoppedAt.timeIntervalSince(startedAt) - totalPaused) :: stoppedAt.timeIntervalSince(startedAt) - totalPaused
+PauseResumePairTests :: Sources/SnittCapture/Recorder.swift :: if let stamped = pausedAtOffset { :: if false, let stamped = pausedAtOffset {
+MarkerPreviousTests :: Sources/SnittDocument/MarkerNavigation.swift :: if time - current.timeSeconds > settleSeconds { return current } :: if false { return current }
+MarkerPreviousTests :: Sources/SnittDocument/MarkerNavigation.swift :: return ordered[..<index].last { $0.timeSeconds < current.timeSeconds - epsilon } :: return ordered[..<index].last
+WaveformMinimumHeightTests :: Sources/SnittApp/TimelineView.swift :: let height = max(Self.minimumWaveformHalfHeight, :: let height = max(0.0,
+WaveformMinimumHeightTests :: Sources/SnittDocument/TimelineSampleIndex.swift :: guard index >= 0, index <= sampleCount else { return nil } :: guard index >= 0 else { return nil }

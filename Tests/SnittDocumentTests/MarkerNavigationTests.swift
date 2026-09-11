@@ -106,3 +106,134 @@ struct MarkerNavigationTests {
         #expect(MarkerNavigation.current(at: 5, in: []) == nil)
     }
 }
+
+// Where navigation reasons FROM while a jump is in flight (2026-09-11).
+//
+// Reported from use: "the next marker advance only advances one marker and
+// gets stuck". The seek is asynchronous — `onScrub` hands it to a `Task` — so
+// the player's clock still reports the old position for a beat afterwards.
+// Pressing Next twice in that beat read the same position twice, found the
+// same "next" mark twice, and seeked to it again.
+@Suite
+struct MarkerNavigationOriginTests {
+
+    @Test("With no jump outstanding, the live clock is the origin")
+    func liveClockWhenNothingPending() {
+        let result = MarkerNavigation.origin(live: 4.0, pending: nil)
+        #expect(result.seconds == 4.0)
+        #expect(result.dropPending == false)
+    }
+
+    @Test("A jump in flight is the origin, not the position it left")
+    func pendingJumpWins() {
+        // The bug, in one assertion: the player still says 4.0 while a jump to
+        // 9.0 is in flight, and navigating from 4.0 finds the mark at 9.0
+        // again. Navigating from 9.0 finds the one after it.
+        let result = MarkerNavigation.origin(live: 4.0, pending: 9.0)
+        #expect(result.seconds == 9.0, "navigation reasoned from where it left, not where it is going")
+        #expect(result.dropPending == false, "the jump has not landed yet")
+    }
+
+    @Test("Once the player arrives, the live clock takes over again")
+    func arrivalReleasesThePendingJump() {
+        let result = MarkerNavigation.origin(live: 9.0, pending: 9.0)
+        #expect(result.seconds == 9.0)
+        #expect(result.dropPending, "the intention outlived its own arrival")
+    }
+
+    @Test("Close enough counts as arrived — the clock is sampled, not exact")
+    func nearlyArrivedCounts() {
+        let result = MarkerNavigation.origin(
+            live: 9.0 + MarkerNavigation.jumpSettledSeconds / 2, pending: 9.0)
+        #expect(result.dropPending)
+    }
+
+    @Test("Three presses reach the third mark, not the first one three times")
+    func repeatedPressesCompose() {
+        // The whole reported behaviour, end to end against the pure model:
+        // the clock never moves — the worst case, and what a fast triple-press
+        // actually looks like — and navigation still walks the list.
+        let marks = [1.0, 5.0, 9.0, 14.0].map {
+            JumpPoint(id: UUID(), timeSeconds: $0, label: "m", transcript: nil,
+                      isInsideCut: false)
+        }
+        var pending: Double?
+        var landed: [Double] = []
+        for _ in 0..<3 {
+            let origin = MarkerNavigation.origin(live: 0, pending: pending)
+            guard let next = MarkerNavigation.next(after: origin.seconds, in: marks)
+            else { break }
+            pending = next.timeSeconds
+            landed.append(next.timeSeconds)
+        }
+        #expect(landed == [1.0, 5.0, 9.0],
+                "three presses landed on \(landed) — it got stuck")
+    }
+}
+
+/// Previous, measured from the mark you are on (2026-09-11).
+///
+/// Reported from use: "pressing marker back button doesn't correctly select
+/// the previous marker — pressing next marker does seem to work". The two
+/// directions were not symmetric: Next stepped past anything more than 0.01s
+/// away, while Previous refused to reach anything less than 0.5s back. That
+/// made Back skip close marks entirely — including the other half of a
+/// pause/resume pair, which sits at the same instant by definition.
+@Suite
+struct MarkerPreviousTests {
+
+    private func marks(_ times: [Double]) -> [JumpPoint] {
+        times.map { JumpPoint(id: UUID(), timeSeconds: $0, label: "m",
+                              transcript: nil, isInsideCut: false) }
+    }
+
+    @Test("A little way into a mark, Previous restarts it")
+    func restartsTheCurrentMark() {
+        // The music-player idiom this was always meant to be.
+        #expect(MarkerNavigation.previous(before: 12.0, in: marks([5, 10, 20]))?
+            .timeSeconds == 10)
+    }
+
+    @Test("At a mark, Previous goes back one")
+    func steppsBackFromAMark() {
+        #expect(MarkerNavigation.previous(before: 10.0, in: marks([5, 10, 20]))?
+            .timeSeconds == 5)
+    }
+
+    @Test("Previous reaches a mark closer than the settle window")
+    func reachesCloseMarks() {
+        // The defect. Standing on the mark at 10.2 with another at 10.0, the
+        // old cutoff looked for marks before 9.7 and skipped both — so Back
+        // jumped to 5 or did nothing visible, while Next stepped normally.
+        #expect(MarkerNavigation.previous(before: 10.2, in: marks([5, 10.0, 10.2]))?
+            .timeSeconds == 10.0)
+    }
+
+    @Test("A pause and its resume are one stop, not two")
+    func coincidentMarksAreOneStop() {
+        // They sit at the same instant by definition — a pause occupies no
+        // footage — so Back from the next mark lands on that instant once and
+        // Back again goes past both.
+        let pair = marks([4, 10, 10, 25])
+        #expect(MarkerNavigation.previous(before: 25.0, in: pair)?.timeSeconds == 10)
+        #expect(MarkerNavigation.previous(before: 10.0, in: pair)?.timeSeconds == 4)
+    }
+
+    @Test("Before the first mark there is nothing to go back to")
+    func nothingBeforeTheStart() {
+        #expect(MarkerNavigation.previous(before: 2.0, in: marks([5, 10])) == nil)
+        #expect(MarkerNavigation.previous(before: 5.0, in: marks([5, 10])) == nil)
+    }
+
+    @Test("Next and Previous compose: one of each returns you where you were")
+    func theTwoDirectionsAgree() {
+        // The property the asymmetry broke. From a mark, Next then Back must
+        // land back on it — otherwise the pair of buttons does not describe
+        // one list.
+        let list = marks([5, 10, 20])
+        let forward = try! #require(MarkerNavigation.next(after: 10, in: list))
+        #expect(forward.timeSeconds == 20)
+        #expect(MarkerNavigation.previous(before: forward.timeSeconds, in: list)?
+            .timeSeconds == 10)
+    }
+}

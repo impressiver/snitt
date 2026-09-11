@@ -19,6 +19,16 @@ struct ResizableDivider: View {
     let onCommit: () -> Void
 
     @State private var hovering = false
+    /// Whether THIS divider currently owns a pushed cursor.
+    ///
+    /// `NSCursor.push()`/`pop()` is a stack, and `onContinuousHover` reports
+    /// `.active` on every mouse MOVE, not once on entry — so the old code
+    /// pushed the resize cursor dozens of times during a single pass across
+    /// the divider and popped it once. The stack never unwound, and the
+    /// pointer stayed a resize arrow over the whole window until something
+    /// else reset it. Pushing only on the transition is what makes the pair
+    /// balance.
+    @State private var owningCursor = false
 
     var body: some View {
         Rectangle()
@@ -31,8 +41,18 @@ struct ResizableDivider: View {
                 // The cursor is the affordance. Without it the divider is a
                 // hairline that happens to respond to dragging, which nobody
                 // discovers.
-                if case .active = phase { NSCursor.resizeLeftRight.push() }
-                else { NSCursor.pop() }
+                let inside: Bool
+                if case .active = phase { inside = true } else { inside = false }
+                guard inside != owningCursor else { return }
+                owningCursor = inside
+                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+            }
+            // A divider can vanish while the pointer is over it — the
+            // transcript pane closes, the window resizes past a pane's
+            // minimum — and a push with no matching pop leaves the resize
+            // cursor on screen with nothing under it to explain why.
+            .onDisappear {
+                if owningCursor { NSCursor.pop(); owningCursor = false }
             }
             .gesture(
                 DragGesture(coordinateSpace: .global)

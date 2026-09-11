@@ -315,6 +315,10 @@ final class EditorTimelineState: ObservableObject {
     func onScrub(_ time: Double) {
         guard let trimmedTime = TimeRangeMapping.nearestTrimmedTime(
             toSourceTime: time, keptRanges: controller.keptRanges) else { return }
+        // A scrub is the user saying where to be, which supersedes a mark jump
+        // still in flight. `jump(toMarkAt:)` re-arms it immediately after, so
+        // navigation keeps its own intention and loses everybody else's.
+        pendingMarkJump = nil
         controller.pause()
         Task { await controller.seek(toSeconds: trimmedTime) }
     }
@@ -329,7 +333,12 @@ final class EditorTimelineState: ObservableObject {
     /// Seeks the composition directly rather than mapping through
     /// `keptRanges`: zero in OUTPUT time is the start of the edit whatever is
     /// cut, so there is nothing to resolve.
-    func rewind() { Task { await controller.seek(toSeconds: 0) } }
+    func rewind() {
+        // Abandons any in-flight mark jump: rewinding is a decision about
+        // where to be that outranks one already asked for.
+        pendingMarkJump = nil
+        Task { await controller.seek(toSeconds: 0) }
+    }
 
     /// One toggle, not two buttons.
     ///
@@ -346,15 +355,48 @@ final class EditorTimelineState: ObservableObject {
     /// own: jump points are already OUTPUT time, and every other navigation
     /// gesture in this editor lands the playhead the same way.
     func goToPreviousMark() {
-        guard let point = MarkerNavigation.previous(before: currentOutputSeconds,
+        guard let point = MarkerNavigation.previous(before: navigationOrigin,
                                                     in: controller.jumpPoints) else { return }
-        seek(toOutput: point.timeSeconds)
+        jump(toMarkAt: point.timeSeconds)
     }
 
     func goToNextMark() {
-        guard let point = MarkerNavigation.next(after: currentOutputSeconds,
+        guard let point = MarkerNavigation.next(after: navigationOrigin,
                                                 in: controller.jumpPoints) else { return }
-        seek(toOutput: point.timeSeconds)
+        jump(toMarkAt: point.timeSeconds)
+    }
+
+    /// Where mark-to-mark navigation reasons FROM.
+    ///
+    /// **Not the player's clock, while a jump is still in flight.** `onScrub`
+    /// hands the seek to a `Task`, so `player.currentTime()` still reports the
+    /// old position for a beat after a jump is requested. Pressing Next twice
+    /// in that beat read the same position twice, found the same "next" mark
+    /// twice, and seeked to it again — so Next advanced once and then appeared
+    /// stuck, which is exactly what it does today.
+    ///
+    /// The pending target is dropped as soon as the player reaches it, so a
+    /// scrub or a play that moves the head elsewhere takes over immediately
+    /// rather than navigating from a stale intention.
+    private var navigationOrigin: Double {
+        let decision = MarkerNavigation.origin(live: currentOutputSeconds,
+                                               pending: pendingMarkJump)
+        if decision.dropPending { pendingMarkJump = nil }
+        return decision.seconds
+    }
+
+    /// The mark jump this editor has asked for and not yet seen land.
+    private var pendingMarkJump: Double?
+
+    /// Jump, and remember where we asked to be until we are there.
+    ///
+    /// The order matters: `seek` routes through `onScrub`, which abandons any
+    /// pending jump because a scrub is the user overriding one. Arming after
+    /// the call is what lets navigation keep its own intention while still
+    /// losing to everybody else's.
+    private func jump(toMarkAt seconds: Double) {
+        seek(toOutput: seconds)
+        pendingMarkJump = seconds
     }
 
     /// The mark the playhead is inside, for the transport's readout — the
@@ -783,7 +825,32 @@ final class EditorTimelineState: ObservableObject {
     /// Seeks the preview to a chapter. Through `onScrub` for the same reason
     /// `seek(toWord:)` is: it is the one path that keeps the timeline playhead
     /// and the panes agreeing about where playback is.
-    func seek(toOutput seconds: Double) { onScrub(seconds) }
+    /// Put the playhead at an OUTPUT instant.
+    ///
+    /// **Not through `onScrub`**, which is the bug this replaced. `onScrub`
+    /// takes SOURCE time and converts it with
+    /// `TimeRangeMapping.nearestTrimmedTime(toSourceTime:)`; handing it a time
+    /// that was already output ran that conversion a second time, so every
+    /// caller landed EARLY by the total length of everything cut before the
+    /// target. With no cuts the two clocks agree and it looked correct.
+    ///
+    /// Everything that calls this passes output time — mark navigation, a
+    /// marker row in the rail (`chapter.outputTime`), a timecode typed into
+    /// the transport — so all three drifted the moment a recording had a cut
+    /// in it, and drifted further the more was removed. "Next marker doesn't
+    /// line up with the actual markers" is what that looks like from the
+    /// outside, because the markers are DRAWN at `x(atOutput:)` and only the
+    /// jump was being converted.
+    ///
+    /// Seeks the composition directly, exactly as `rewind()` does and for the
+    /// same stated reason: the composition's clock IS output time.
+    func seek(toOutput seconds: Double) {
+        // A deliberate destination supersedes a mark jump still in flight;
+        // `jump(toMarkAt:)` re-arms its own immediately after calling this.
+        pendingMarkJump = nil
+        controller.pause()
+        Task { await controller.seek(toSeconds: seconds) }
+    }
 
     /// The events-side twin of `restore(_:)`: pushes the CURRENT `events`
     /// back onto the undo stack as the redo before installing `snapshot`, so

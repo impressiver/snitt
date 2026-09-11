@@ -302,15 +302,44 @@ public actor Recorder {
     public func pause() async {
         guard !session.isPaused else { return }
         session.pause()
-        await eventLog.add(at: await currentOffset(), kind: .marker, label: "Paused")
+        let offset = await currentOffset()
+        pausedAtOffset = offset
+        await eventLog.add(at: offset, kind: .marker, label: "Paused")
     }
 
     /// Resumes a paused recording. Idempotent.
     public func resume() async {
         guard session.isPaused else { return }
         session.resume()
-        await eventLog.add(at: await currentOffset(), kind: .marker, label: "Resumed")
+        // THE SAME INSTANT THE PAUSE WAS STAMPED AT, deliberately.
+        //
+        // A pause occupies no footage — it is the absence of buffers — so the
+        // instant the recording stopped and the instant it started again are
+        // one point in the file. Anything else is two markers claiming a gap
+        // that the file does not contain.
+        //
+        // They used to disagree by the capture latency, and in a way that read
+        // as nonsense: `pause()` stamps from the host clock at the moment the
+        // request is made, while `resume()` resolved to the pause's MEDIA
+        // instant — `pausedSince - firstPresentationTime` — and ScreenCaptureKit
+        // delivers buffers carrying timestamps from the recent past. So Resumed
+        // landed ~170ms BEFORE the Paused that preceded it. A real recording
+        // shows the pair at 3.000 and 3.172, and again at 11.827 and 11.843.
+        //
+        // Reusing the pause's own offset makes the pair exact by construction
+        // rather than by two computations happening to agree.
+        let offset: Double
+        if let stamped = pausedAtOffset {
+            offset = stamped
+        } else {
+            offset = await currentOffset()
+        }
+        pausedAtOffset = nil
+        await eventLog.add(at: offset, kind: .marker, label: "Resumed")
     }
+
+    /// Where the current pause was stamped, so its resume can match it.
+    private var pausedAtOffset: Double?
 
     public var isPaused: Bool { session.isPaused }
 
@@ -321,10 +350,27 @@ public actor Recorder {
     /// The offset a marker dropped right now would carry. Extracted from
     /// `mark` so pause/resume stamp on exactly the same clock, rather than
     /// growing a second, subtly different implementation of "now".
+    /// Where "now" is in the WRITTEN file — which is the clock every marker,
+    /// cut and duration is expressed in.
+    ///
+    /// **Both candidates used to be wall-clock.** `mediaOffsetNow()` is the
+    /// host clock minus the first frame, and the fallback was elapsed time
+    /// since `startedAt`; neither subtracts anything for a pause. But a pause
+    /// is the ABSENCE of buffers — an `AVAssetWriter` session cannot be paused
+    /// — so from the first pause onward the file is shorter than the wall by
+    /// exactly the paused total, and every marker stamped this way landed too
+    /// late. Far enough into a paused session they landed past the end of the
+    /// footage entirely, where they clamp to the last instant and read as
+    /// "inside a cut": a real recording had six markers, and the five after
+    /// the first pause were all wrong, the last two piled at the end.
+    ///
+    /// `outputOffsetNow()` applies the ledger. The wall-clock fallback — for
+    /// the moment before any frame has arrived — now applies it too.
     private func currentOffset() async -> Double {
-        let wallClock = startedAt.map { Date().timeIntervalSince($0) } ?? 0
+        let paused = session.totalPausedSecondsNow()
+        let wallClock = (startedAt.map { Date().timeIntervalSince($0) } ?? 0) - paused
         return CaptureSession.plausibleOffset(
-            media: session.mediaOffsetNow(), wallClock: wallClock) ?? wallClock
+            media: session.outputOffsetNow(), wallClock: wallClock) ?? wallClock
     }
 
     public func mark(label: String?) async -> Double {
@@ -364,8 +410,32 @@ public actor Recorder {
         await eventLog.add(at: offset, kind: kind, label: nil)
     }
 
+    /// How long the FILE is, which is not how long the session lasted.
+    ///
+    /// `meta.durationSeconds` was `stoppedAt - startedAt`: wall time, including
+    /// every pause. But a pause is the absence of buffers — an `AVAssetWriter`
+    /// session cannot be paused — so the file is shorter than the wall by
+    /// exactly the paused total. A real recording reported 49.308s for 27.742s
+    /// of footage, and the editor lays its timeline out against this number,
+    /// so every marker was being measured against a ruler longer than the
+    /// recording.
+    ///
+    /// Pure, and separate, because it is arithmetic that needs no capture
+    /// session to be wrong — and because the version that WAS wrong had no
+    /// test, which is how it survived.
+    ///
+    /// Never negative: a ledger that somehow out-counted the wall would
+    /// otherwise write a negative duration into the bundle.
+    static func footageDuration(startedAt: Date, stoppedAt: Date,
+                                totalPaused: Double) -> Double {
+        max(0, stoppedAt.timeIntervalSince(startedAt) - totalPaused)
+    }
+
     private func writeSidecars(stoppedAt: Date, collectedEvents: [LoggedEvent]) throws {
-        let duration = startedAt.map { stoppedAt.timeIntervalSince($0) }
+        let duration = startedAt.map {
+            Self.footageDuration(startedAt: $0, stoppedAt: stoppedAt,
+                                 totalPaused: session.totalPausedSecondsNow())
+        }
         let metadata = RecordingMetadata(
             createdAt: startedAt ?? stoppedAt,
             initiator: initiator,

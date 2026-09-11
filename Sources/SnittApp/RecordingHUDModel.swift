@@ -7,6 +7,42 @@
 import Foundation
 
 /// What the recording HUD shows for a given state.
+/// The two things the HUD animates, as decisions rather than as animations
+/// (rev 5, W4).
+///
+/// Pure, and separate from the panel, for the reason every model in this
+/// project is: what is interesting here is WHEN to animate, and that needs no
+/// CoreAnimation to get wrong. Testing "does the layer have an animation
+/// attached" would assert the mechanism; these assert the rule.
+public enum RecordingHUDMotion {
+
+    /// Whether the record dot should breathe.
+    ///
+    /// Only while actually recording. A paused HUD is reporting an abnormal
+    /// state and must be still — a pulsing dot beside the word "Paused" says
+    /// two different things at once — and reduced motion is a setting, not a
+    /// preference to weigh against the effect.
+    public static func dotBreathes(isRecording: Bool, isPaused: Bool,
+                                   reduceMotion: Bool) -> Bool {
+        isRecording && !isPaused && !reduceMotion
+    }
+
+    /// The alpha a HUD with no pointer near it should settle to.
+    ///
+    /// A HUD at full strength through a ten-minute recording stops being
+    /// lightweight, so it fades once it has been left alone. Never while
+    /// paused: that is the state you are most likely to be looking for.
+    public static let idleAlpha: Double = 0.40
+    public static let idleAfterSeconds: Double = 4
+
+    public static func alpha(isRecording: Bool, isPaused: Bool,
+                             pointerNear: Bool, secondsIdle: Double) -> Double {
+        guard isRecording, !isPaused, !pointerNear,
+              secondsIdle >= idleAfterSeconds else { return 1 }
+        return idleAlpha
+    }
+}
+
 public struct RecordingHUDPresentation: Equatable, Sendable {
     /// Whether the panel is on screen at all.
     public var isVisible: Bool

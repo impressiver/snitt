@@ -139,17 +139,36 @@ thumbnails is too few on a long recording.
 these two features are the first work in a while whose quality genuinely cannot
 be judged from tests.
 
-## Open — one unattributed intermittent test failure
+## ~~Open — one unattributed intermittent test failure~~ ATTRIBUTED 2026-09-11
 
 2026-09-07: a full-suite run failed with a single issue, and the three runs after
-it were green. I did not capture WHICH test, so it is unattributed. The suite has
-two known load-sensitive families — the real-`SPUUpdater` tests, whose ceilings
-were raised 60s to 180s the same day — and this may be a third instance of that
-or something else entirely.
+it were green. I did not capture WHICH test, so it was unattributed. The note
+then said: **"If it recurs, capture the test name before re-running."**
 
-**If it recurs, capture the test name before re-running.** A green re-run erases
-the evidence, which is what happened here. Worth adding `--verbose` or teeing the
-output when a failure appears.
+**2026-09-11: it recurred, and this time the output was teed to a file first.**
+That instruction is the only reason this is answerable, and it cost nothing.
+
+The test is `SparkleTestGateTests`, *"A holder that never finishes fails its
+waiters instead of hanging them"*. It asserts that when a waiter times out, the
+message names the holder — and checks for the string `a deliberately stuck
+holder`, which is the fixture it installs itself. The failing run reported:
+
+> `"the waiter" waited 300s for SparkleTestGate and gave up. It was held by
+> "turningOffCancelsAPendingCheck()", which never released it`
+
+So the gate's own self-test timed out against a REAL holder rather than its
+fixture. `turningOffCancelsAPendingCheck()` is one of the `SPUUpdater` tests —
+the load-sensitive family this note already suspected — and under load it held
+the shared gate past the self-test's 300s ceiling.
+
+**The shape worth keeping:** the self-test shares one global gate with the
+tests it is about, so it can only pass when nothing real is holding it. It is
+not measuring what it claims under parallel execution; it is measuring whether
+it got lucky. A gate instance of its own would make it deterministic, which is
+the fix if this becomes annoying rather than merely explained.
+
+Not fixed here, deliberately — it was found while merging unrelated work, and
+changing shared test infrastructure in that PR would bury it.
 
 ## Manual checklist — for the next session at the machine
 
