@@ -85,26 +85,55 @@ struct EditorToolbar: View {
                 Button("Reset Crop", action: onResetCrop)
             }
 
-            if hasTranscript {
-                Toggle(isOn: $showTranscript) {
-                    Label("Transcript", systemImage: "text.alignleft")
-                }
-                .toggleStyle(.button)
-                .help("Read the transcript beside the picture")
-            }
-
             Button(action: onExport) {
                 Label("Export…", systemImage: "square.and.arrow.up")
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut("e", modifiers: .command)
+
+            if hasTranscript {
+                // A PANEL TOGGLE, not an action (rev 5, W3).
+                //
+                // It sat among Auto-Trim, Crop and Export wearing the same
+                // clothes — three things that change the recording and one
+                // that changes what you can see, all dressed identically.
+                // Icon-only at the trailing edge, past a divider, is where
+                // every Mac app puts its inspector toggle, and being there is
+                // most of what tells you what it does.
+                Divider().frame(height: 16)
+                Toggle(isOn: $showTranscript) {
+                    Label("Transcript", systemImage: "sidebar.trailing")
+                }
+                .toggleStyle(.button)
+                .labelStyle(.iconOnly)
+                .help(showTranscript ? "Hide the transcript panel"
+                                     : "Show the transcript panel")
+                .accessibilityLabel("Transcript panel")
+                .accessibilityAddTraits(showTranscript ? [.isSelected] : [])
+            }
         }
         .labelStyle(.titleAndIcon)
         .controlSize(.regular)
-        .padding(.horizontal, 12)
+        // 78pt clears the traffic lights, which now float over this row
+        // rather than sitting in a strip above it (rev 5, W3).
+        .padding(.leading, Self.trafficLightInset)
+        .padding(.trailing, 12)
         .padding(.vertical, 8)
+        .frame(minHeight: Self.height, alignment: .center)
+        // This row is the titlebar now, and a titlebar you cannot drag the
+        // window by is what would make `.fullSizeContentView` feel broken.
+        // Nothing here has to arrange that: AppKit turns a press into a window
+        // drag based on the hit view's `mouseDownCanMoveWindow`, and
+        // `NSHostingView` already answers true — measured, not assumed, and
+        // pinned by `TitlebarChromeTests` so a future wrapper view that
+        // answers false is caught rather than discovered by dragging.
         .background(.bar)
     }
+
+    /// Leading inset that clears the close/minimise/zoom buttons.
+    static let trafficLightInset: Double = 78
+    /// The chrome row's height — one deck, where there used to be two.
+    static let height: Double = 38
 }
 
 // MARK: - Transport bar

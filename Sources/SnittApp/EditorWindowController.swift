@@ -1837,6 +1837,33 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// Transport row, audio controls and the button row beneath the timeline.
     static let editorChromeHeight: Double = 96
 
+    /// The editor window, configured as one deck of chrome (rev 5, W3).
+    ///
+    /// A function rather than five lines inside `init` because the
+    /// configuration is the whole of this item and is worth asserting without
+    /// building a recording to get at it.
+    ///
+    /// `.fullSizeContentView` puts the content under the titlebar, so the
+    /// toolbar row IS the titlebar rather than a second deck beneath it — the
+    /// window was spending a strip on a title the row below already showed.
+    static func makeWindow(contentRect: NSRect, title: String) -> NSWindow {
+        let window = NSWindow(
+            contentRect: contentRect,
+            styleMask: [.titled, .closable, .resizable, .miniaturizable,
+                        .fullSizeContentView],
+            backing: .buffered,
+            defer: false)
+        window.titlebarAppearsTransparent = true
+        // HIDDEN, not empty. The title still has to be SET — Mission Control,
+        // the Window menu, ⌘-tab and VoiceOver all read it, and a window
+        // called "" is one you cannot find among six others. Clearing it
+        // instead of hiding it looks identical in the one place you are
+        // looking when you make the change.
+        window.titleVisibility = .hidden
+        window.title = title
+        return window
+    }
+
     static var minimumContentSize: NSSize {
         NSSize(width: chaptersRailWidth + minimumPlayerSize.width,
                height: minimumPlayerSize.height
@@ -1900,12 +1927,9 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         state.loadTranscript()
         state.beginTranscriptionIfNeeded()
         let hosting = NSHostingView(rootView: EditorContentView(state: state))
-        let window = NSWindow(
+        let window = Self.makeWindow(
             contentRect: Self.openingContentRect(on: NSScreen.main?.visibleFrame),
-            styleMask: [.titled, .closable, .resizable, .miniaturizable],
-            backing: .buffered,
-            defer: false)
-        window.title = title
+            title: title)
         state.documentTitle = title
         state.defaultExportURL = Self.defaultExportURL(forBundle: bundleURL)
         // Enforced by the window itself, not merely documented: a layout with
