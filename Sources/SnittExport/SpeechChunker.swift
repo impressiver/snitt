@@ -62,6 +62,23 @@ public enum SpeechChunker {
     /// High enough to sit among the loud passages rather than the quiet ones,
     /// and low enough that isolated spikes — a clip, a chime, music bleeding in
     /// from speakers — cannot drag it up and swallow the speech.
+    /// The level below which a peak counts as silence, for a given track and
+    /// a given trim preset's `audioSilenceFraction`.
+    ///
+    /// **One expression, two consumers** (rev 5, W12). `AutoDeepTrim` decides
+    /// what to CUT with this, and the timeline's waveform decides what to DRAW
+    /// as silence with it. They were the same arithmetic written once and
+    /// reachable only inside this module; making the waveform compute its own
+    /// would have let the lane show gaps Auto-Trim would not take, and the
+    /// whole value of a segmented waveform is that its gaps ARE the edit.
+    ///
+    /// Per track, against that track's own typical level: a microphone and a
+    /// system-audio tap sit at completely different levels, and one threshold
+    /// for both calls the quieter of them silent throughout.
+    public static func silenceThreshold(for peaks: [Float], fraction: Float) -> Float {
+        max(absoluteSilenceFloor, referenceLevel(of: peaks) * fraction)
+    }
+
     static func referenceLevel(of peaks: [Float]) -> Float {
         guard !peaks.isEmpty else { return 0 }
         let sorted = peaks.sorted()

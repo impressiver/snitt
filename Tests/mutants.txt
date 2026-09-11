@@ -86,3 +86,7 @@ GestureMatrixTests :: Sources/SnittApp/TimelineView.swift :: if handlePhraseClic
 FoldAppearanceTests :: Sources/SnittApp/FoldPalette.swift :: appearance == .collapsedSelected ? base.withAlphaComponent(0.12) : nil :: nil
 TimelineTrackLayoutTests :: Sources/SnittApp/TimelineTrackLayout.swift :: let stackTop = markerHeight :: let stackTop = markerHeight + 24
 FoldAppearanceTests :: Sources/SnittApp/FoldPalette.swift :: case .collapsedSelected: SnittPalette.redBright :: case .collapsedSelected: base
+
+# --- rev 5 W12: one silence rule, two consumers ---
+SilenceKernelTests :: Sources/SnittExport/SpeechChunker.swift :: max(absoluteSilenceFloor, referenceLevel(of: peaks) * fraction) :: referenceLevel(of: peaks) * fraction
+AutoDeepTrimTests :: Sources/SnittExport/AutoDeepTrim.swift :: SpeechChunker.silenceThreshold(for: track.peaks, :: SpeechChunker.silenceThreshold(for: [0.5],

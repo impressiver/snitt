@@ -1184,6 +1184,16 @@ public final class TimelineView: NSView {
     /// ever being re-read: the samples are the recording's, the axis is the
     /// edit's. A column with no source behind it (past the trimmed end) draws
     /// nothing rather than repeating the last value.
+    /// The preset the waveform's silence is drawn against.
+    ///
+    /// It has to be A preset, not "silence" in the abstract: the threshold and
+    /// the minimum span are both properties of a `DeepTrimCriteria`, and they
+    /// differ by a factor of four between Conservative and Aggressive. The
+    /// lane draws Default, so what it shows is what Auto-Trim ▸ Default would
+    /// take — and running Aggressive cuts more than the lane showed, which is
+    /// honest only because it is said out loud here and in the menu.
+    static let waveformSilencePreset = DeepTrimPreset.default
+
     private func drawWaveform(_ samples: WaveformSamples, in rect: NSRect,
                               muted: Bool, gain: Double) {
         guard !samples.peaks.isEmpty, rect.height > 2 else { return }
@@ -1195,7 +1205,21 @@ public final class TimelineView: NSView {
         // clipping is damage, and hiding the damage because the track is
         // currently silent is how it survives to the export.
         let clipping = Palette.clipping.withAlphaComponent(muted ? 0.5 : 0.9)
+        let baseline = Palette.silenceBaseline.withAlphaComponent(muted ? 0.084 : 0.3)
 
+        // The SAME threshold Auto-Trim uses, from the same function — see
+        // `SpeechChunker.silenceThreshold`. A second copy here would let the
+        // lane draw gaps the trim would not take, which is the one thing a
+        // segmented waveform must not do.
+        let criteria = DeepTrimCriteria.preset(Self.waveformSilencePreset)
+        let threshold = SpeechChunker.silenceThreshold(
+            for: samples.peaks, fraction: criteria.audioSilenceFraction)
+
+        // Column by column, exactly as before — one pass over the peaks, no
+        // second walk. What is new is that each column is also CLASSIFIED.
+        struct Column { let x: Double; let peak: Double; let clipped: Bool }
+        var columns: [Column] = []
+        var quiet: [Bool] = []
         var x = 0.0
         while x < bounds.width {
             defer { x += 1 }
@@ -1205,20 +1229,58 @@ public final class TimelineView: NSView {
                 samplesPerSecond: samples.samplesPerSecond,
                 sampleCount: samples.peaks.count) else { continue }
             let peak = Double(samples.peaks[index])
-            let clipped = WaveformScale.isClipped(peak: peak, gain: gain)
-            (clipped ? clipping : normal).setFill()
+            columns.append(Column(x: x, peak: peak,
+                                  clipped: WaveformScale.isClipped(peak: peak, gain: gain)))
+            quiet.append(Float(peak) <= threshold)
+        }
+        guard !columns.isEmpty else { return }
+
+        // Hysteresis, and it is the preset's, not a number invented here.
+        // Auto-Trim only removes a silence once it lasts `minimumSpan`, so a
+        // shorter gap drawn as a gap would be a gap the edit keeps — the lane
+        // would be promising a cut that never comes. Short quiet runs are
+        // therefore drawn as audio, which is what they are.
+        let secondsPerColumn = columns.count > 1
+            ? abs(geometry.outputTime(atX: columns[1].x).seconds
+                  - geometry.outputTime(atX: columns[0].x).seconds)
+            : 0
+        if secondsPerColumn > 0 {
+            let minimumColumns = Int((criteria.minimumSpan / secondsPerColumn).rounded())
+            var runStart = 0
+            for i in 0...quiet.count {
+                if i == quiet.count || quiet[i] != quiet[runStart] {
+                    if quiet[runStart], i - runStart < minimumColumns {
+                        for j in runStart..<i { quiet[j] = false }
+                    }
+                    runStart = i
+                }
+            }
+        }
+
+        for (i, column) in columns.enumerated() {
+            if quiet[i] {
+                // Silence is a line, not a short bar. A short bar reads as
+                // "quiet audio"; a baseline reads as "nothing here", which is
+                // the difference between a waveform and a preview of the edit.
+                baseline.setFill()
+                NSBezierPath(rect: NSRect(x: column.x, y: midY - 0.5,
+                                          width: 1, height: 1)).fill()
+                continue
+            }
+            (column.clipped ? clipping : normal).setFill()
             // Logarithmic, and gain-aware: the bar shows what will be
             // exported, not what was captured (`WaveformScale`).
             //
             // A floor of half a pixel so a quiet passage still reads as "there
             // is audio here" rather than as a gap in the track.
-            let height = max(0.5, WaveformScale.height(forPeak: peak, gain: gain) * halfHeight)
-            NSBezierPath(rect: NSRect(x: x, y: midY - height, width: 1, height: height * 2)).fill()
+            let height = max(0.5, WaveformScale.height(forPeak: column.peak, gain: gain) * halfHeight)
+            NSBezierPath(rect: NSRect(x: column.x, y: midY - height,
+                                      width: 1, height: height * 2)).fill()
             // A clipped column is marked at the band's edges too, so it is
             // findable when the whole passage is loud and every bar is tall.
-            if clipped {
-                NSBezierPath(rect: NSRect(x: x, y: rect.minY, width: 1, height: 2)).fill()
-                NSBezierPath(rect: NSRect(x: x, y: rect.maxY - 2, width: 1, height: 2)).fill()
+            if column.clipped {
+                NSBezierPath(rect: NSRect(x: column.x, y: rect.minY, width: 1, height: 2)).fill()
+                NSBezierPath(rect: NSRect(x: column.x, y: rect.maxY - 2, width: 1, height: 2)).fill()
             }
         }
     }
@@ -1287,6 +1349,8 @@ public final class TimelineView: NSView {
         /// — a fourth opinion about colour, and the one the eye lands on
         /// first, since a mark is what you are usually looking for.
         static let mark = SnittPalette.signal
+        /// Silence, drawn as a hairline rather than as a short bar.
+        static let silenceBaseline = SnittPalette.slateText
         /// Clipping is damage rather than an edit, but it is still red, and
         /// one red is the point: `NSColor.systemRed` beside a brand-red cut
         /// read as two unrelated warnings.

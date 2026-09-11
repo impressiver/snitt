@@ -145,6 +145,15 @@ enum PreviewFixtures {
             // A slow envelope over the noise, so it reads as speech rather
             // than as static.
             let envelope = Float(abs(sin(Double(index) / 37.0)))
+            // A deliberate silent stretch through the middle third, so every
+            // preview shows the segmented waveform's three-part grammar —
+            // bars, baseline, bars — rather than an unbroken block that says
+            // nothing about what Auto-Trim would take (rev 5, W12).
+            let fraction = Double(index) / Double(max(1, count))
+            if fraction > 0.38, fraction < 0.52 {
+                out.append(floor * 0.05)
+                continue
+            }
             out.append(floor + noise * envelope * (ceiling - floor))
         }
         return out
