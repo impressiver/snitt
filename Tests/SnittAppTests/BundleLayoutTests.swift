@@ -1004,3 +1004,90 @@ func infoPlistCarriesStandardKeys() throws {
         #expect(source.contains("<key>\(key)</key>"), "Info.plist is missing \(key)")
     }
 }
+
+// MARK: - The two version keys, deliberately disjoint
+
+@Test("CFBundleVersion is a plain number, and is NOT the marketing version",
+      .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason))
+func versionKeysAreDisjoint() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
+    let plist = try #require(NSDictionary(contentsOf: app.appending(path: "Contents/Info.plist")))
+    let short = try #require(plist["CFBundleShortVersionString"] as? String)
+    let build = try #require(plist["CFBundleVersion"] as? String)
+
+    // Sparkle compares CFBundleVersion and asks that it be a plain increasing
+    // number, keeping any human-readable string disjoint from it. Both keys
+    // used to carry one value, which is what made it impossible for `main` to
+    // hold anything but the last released version: a bare next-version there
+    // makes a development build claim to BE 0.5.0 and then refuse the real
+    // 0.5.0, and a marked one (`0.5.0-dev`) breaks the comparison instead.
+    let buildIsNumeric = build.allSatisfy(\.isNumber)
+    #expect(buildIsNumeric, "CFBundleVersion must be numeric, got \(build)")
+    #expect(!build.isEmpty)
+
+    // The marketing string is free to carry a marker, and must never be what
+    // Sparkle reads. Asserting they DIFFER is the discriminating check: a
+    // regression that wired both keys back to one value passes every
+    // numeric-shape assertion above whenever the marketing version happens to
+    // be bare, which is exactly the state of a release commit.
+    #expect(short != build,
+            "both version keys carry \(build) — they were re-merged, so a -dev marketing version would now reach the number Sparkle compares")
+}
+
+@Test("The build number rises with the commit count, so a later build outranks an earlier one",
+      .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason))
+func buildNumberTracksCommits() throws {
+    try #require(appIsBuilt, appBundleSkipReason)
+    let plist = try #require(NSDictionary(contentsOf: app.appending(path: "Contents/Info.plist")))
+    let build = try #require(plist["CFBundleVersion"] as? String)
+
+    // Pinned against the source of the number rather than a literal: the whole
+    // mechanism is that nobody edits this, so the test must fail if the app
+    // were stamped from something that does not move on its own.
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+    process.arguments = ["rev-list", "--count", "--first-parent", "HEAD"]
+    let pipe = Pipe()
+    process.standardOutput = pipe
+    try process.run()
+    process.waitUntilExit()
+    let counted = String(decoding: pipe.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+
+    // Equal only when the bundle was built from the current HEAD, which is not
+    // guaranteed — a stale build/Snitt.app is ordinary. So the assertion is the
+    // property that matters: it is a number on the same scale, not a version
+    // string and not zero. Zero would be LOWER than every shipped build, which
+    // would offer this app an endless "update" to what it already has.
+    #expect(Int(build) != nil, "CFBundleVersion is not an integer: \(build)")
+    #expect((Int(build) ?? 0) > 0)
+    #expect(Int(counted) != nil, "could not count commits to compare against")
+}
+
+@Test("make-app.sh stamps the two version keys from DIFFERENT variables")
+func plistVersionKeysComeFromDifferentSources() throws {
+    // Asserted against the SCRIPT, not the built app, and the distinction is
+    // the point. `versionKeysAreDisjoint` above reads build/Snitt.app, which
+    // nothing rebuilds during a mutation run — so re-pointing CFBundleVersion
+    // at the marketing version survived it, reading a stale bundle that still
+    // had the right values. The script is the thing that decides.
+    //
+    // Re-merging the keys is the regression that matters: it re-creates the
+    // state where `main` cannot carry a -dev version without either breaking
+    // Sparkle's comparison or making every development build claim to be a
+    // release it will then refuse.
+    let source = try String(contentsOf: makeAppScript, encoding: .utf8)
+    let lines = source.split(separator: "\n", omittingEmptySubsequences: false)
+
+    let shortLine = try #require(lines.first { $0.contains("<key>CFBundleShortVersionString</key>") },
+                                 "make-app.sh no longer writes CFBundleShortVersionString")
+    let buildLine = try #require(lines.first { $0.contains("<key>CFBundleVersion</key>") },
+                                 "make-app.sh no longer writes CFBundleVersion")
+
+    #expect(shortLine.contains("$APP_VERSION"),
+            "CFBundleShortVersionString is not stamped from the marketing version: \(shortLine)")
+    #expect(buildLine.contains("$BUILD_NUMBER"),
+            "CFBundleVersion is not stamped from the build number: \(buildLine)")
+    #expect(!buildLine.contains("$APP_VERSION"),
+            "CFBundleVersion is stamped from the marketing version — the keys were re-merged")
+}

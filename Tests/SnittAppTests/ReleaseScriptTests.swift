@@ -161,11 +161,11 @@ struct ReleaseScriptTests {
         #expect(result.output.contains("Verify what actually landed"))
     }
 
-    @Test("A version that disagrees with AppVersion.fallback is refused")
+    @Test("A version that disagrees with AppVersion.marketing is refused")
     func versionMustMatchTheBinary() throws {
         // Sparkle compares the appcast against the INSTALLED app's
         // CFBundleShortVersionString, which make-app.sh takes from
-        // AppVersion.fallback. A tag and a binary that disagree produce
+        // AppVersion.marketing. A tag and a binary that disagree produce
         // "updates sometimes don't appear", with no error anywhere.
         let stubs = try makeStubs()
         defer { try? FileManager.default.removeItem(at: stubs) }
@@ -173,7 +173,7 @@ struct ReleaseScriptTests {
                                env: ["SNITT_SIGN_IDENTITY": "Developer ID Application: test"],
                                extraPath: stubs.path)
         #expect(result.status != 0)
-        #expect(result.stderr.contains("AppVersion.fallback"))
+        #expect(result.stderr.contains("AppVersion.marketing"))
         // And it stopped BEFORE building — a script that printed the warning
         // and carried on passes a message-only assertion.
         #expect(!result.output.contains("1. Build"))
@@ -342,6 +342,50 @@ struct ReleaseScriptTests {
         }
     }
 
+    @Test("The release ends by leaving main on the NEXT version, marked -dev")
+    func postReleaseBumpIsPlanned() throws {
+        // The bookkeeping step, asserted through the dry-run because the real
+        // one commits and pushes. Two properties, and both matter:
+        //
+        //  - the version MOVES, so main stops claiming what just shipped;
+        //  - it carries `-dev`, which is the only reason moving it is safe.
+        //    A bare next version would make every build here claim to BE
+        //    0.5.0, and Sparkle would refuse the real 0.5.0 when it shipped.
+        let stubs = try makeStubs()
+        defer { try? FileManager.default.removeItem(at: stubs) }
+        let result = runScript([declaredVersion(), "--dry-run"],
+                               env: ["SNITT_SIGN_IDENTITY": "Developer ID Application: test",
+                                     "NOTARY_PROFILE": "snitt"],
+                               extraPath: stubs.path)
+        #expect(result.status == 0, "\(result.output)")
+        #expect(result.output.contains("10. Leave main on the next development version"),
+                "the release never plans to move main off the version it shipped")
+        #expect(result.output.contains("-dev"),
+                "the next version is unmarked — a development build would claim to be a release")
+    }
+
+    @Test("The next version is the next MINOR, not a re-release of this one")
+    func postReleaseBumpPicksTheNextMinor() throws {
+        // Pinned against the actual declared version rather than a literal, so
+        // this keeps meaning the same thing after every release. A bump that
+        // produced the SAME version would satisfy "contains -dev" while
+        // leaving main claiming a shipped version, which is the whole defect.
+        let current = declaredVersion()
+        let parts = current.split(separator: ".")
+        let expected = "\(parts[0]).\(Int(parts[1])! + 1).0-dev"
+
+        let stubs = try makeStubs()
+        defer { try? FileManager.default.removeItem(at: stubs) }
+        let result = runScript([current, "--dry-run"],
+                               env: ["SNITT_SIGN_IDENTITY": "Developer ID Application: test",
+                                     "NOTARY_PROFILE": "snitt"],
+                               extraPath: stubs.path)
+        #expect(result.output.contains(expected),
+                "expected main to move to \(expected); output was:\n\(result.output)")
+        #expect(!result.output.contains("marketing to \(current),"),
+                "main would be left on the version just released")
+    }
+
     @Test("A malformed version is refused before anything runs")
     func versionShapeIsChecked() {
         // `release.sh main` would otherwise produce Snitt-main.dmg and a tag
@@ -424,7 +468,7 @@ struct ReleaseScriptTests {
     }
 }
 
-/// Whatever `AppVersion.fallback` says right now. Read from the file rather
+/// Whatever `AppVersion.marketing` says right now. Read from the file rather
 /// than imported, so this suite keeps testing the script's own comparison
 /// instead of agreeing with it by construction — and so a version bump does
 /// not break the tests.
@@ -433,7 +477,7 @@ private func declaredVersion() -> String {
         + "/Sources/SnittDocument/AppVersion.swift"
     guard let text = try? String(contentsOfFile: source, encoding: .utf8),
           let line = text.split(separator: "\n").first(where: {
-              $0.contains("public static let fallback")
+              $0.contains("public static let marketing")
           }),
           let start = line.firstIndex(of: "\""),
           let end = line.lastIndex(of: "\""), start < end

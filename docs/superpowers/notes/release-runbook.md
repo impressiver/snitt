@@ -97,11 +97,47 @@ zero-length.
 more importantly, pins that the upload list and the verification list are
 the same list.
 
+## Two version numbers, deliberately disjoint
+
+`CFBundleShortVersionString` is what a person reads. `CFBundleVersion` is
+what Sparkle compares. They used to be one string in both keys, and that
+is what made it impossible for `main` to carry anything but the version
+last released.
+
+The trap is specific. Put a bare next version (`0.5.0`) on `main` and every
+development build claims to BE 0.5.0 — so when the real 0.5.0 ships,
+Sparkle compares 0.5.0 against 0.5.0, finds nothing newer, and that build
+never updates. Mark it (`0.5.0-dev`) and the claim is honest but the
+comparison breaks instead, because Sparkle asks that the version it
+compares be strictly numeric and that a human-readable string be kept
+disjoint from it.
+
+So they are disjoint, which is Sparkle's own advice:
+
+| Key | Value | Set by |
+|---|---|---|
+| `CFBundleShortVersionString` | `AppVersion.marketing`, e.g. `0.5.0-dev` | a person, and step 10 |
+| `CFBundleVersion` | `git rev-list --count --first-parent HEAD` | `make-app.sh`, every build |
+
+The commit count is the whole mechanism: strictly larger on every commit,
+so a later build always outranks an earlier one and nobody has to remember
+to bump it. `--first-parent` counts a merge as one step, so the number a
+release gets does not depend on how many commits its PR contained.
+
+**Migration note.** Releases up to and including 0.4.0 shipped with
+`CFBundleVersion` set to the dotted marketing version (`0.4.0`). Sparkle
+compares component-wise, so the first component decides: a build numbered
+`141` outranks `0.4.0` because 141 > 0. Installed copies of every previous
+release are therefore offered the next one as normal.
+
 ## The path, in order
 
-Bump `AppVersion.fallback` in `Sources/SnittDocument/AppVersion.swift`
+Bump `AppVersion.marketing` in `Sources/SnittDocument/AppVersion.swift`
 first — everything below reads the version from there, and step 0 of the
-script refuses if the argument disagrees with it.
+script refuses if the argument disagrees with it. Between releases that
+constant carries the NEXT version with a `-dev` marker (see "Two version
+numbers" below), so releasing 0.5.0 means changing `0.5.0-dev` to
+`0.5.0`. The script puts the marker back afterwards.
 
 1. **Build, with the real Developer ID.**
 

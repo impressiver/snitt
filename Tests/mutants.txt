@@ -196,3 +196,8 @@ StatusItemMenuStateTests :: Sources/SnittApp/StatusItemController.swift :: micro
 StatusItemMenuStateTests :: Sources/SnittApp/StatusItemController.swift :: agentItem.state = AgentSettings.load(defaults).agentRecordingEnabled ? .on : .off :: agentItem.state = .off
 StatusItemMenuStateTests :: Sources/SnittApp/StatusItemController.swift :: eventsItem.state = EventLoggingSettings.load(defaults).enabled ? .on : .off :: eventsItem.state = .off
 StatusItemMenuStateTests :: Sources/SnittApp/StatusItemController.swift :: self.defaults = defaults :: self.defaults = .standard
+
+# The two version numbers, and the post-release bump that needs them split.
+BundleLayoutTests :: Scripts/make-app.sh :: <key>CFBundleVersion</key><string>$BUILD_NUMBER</string> :: <key>CFBundleVersion</key><string>$APP_VERSION</string>
+ReleaseScriptTests :: Scripts/release.sh :: printf '%s.%s.0-dev\n' "$major" "$((minor + 1))" :: printf '%s.%s.0-dev\n' "$major" "$minor"
+ReleaseScriptTests :: Scripts/release.sh :: printf '%s.%s.0-dev\n' "$major" "$((minor + 1))" :: printf '%s.%s.0\n' "$major" "$((minor + 1))"
