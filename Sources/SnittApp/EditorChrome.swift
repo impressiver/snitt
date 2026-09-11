@@ -141,17 +141,31 @@ struct TransportBar: View {
                 // The agent-authored label, on screen, costing no vertical
                 // space — the thing competitors do not have, and previously
                 // reachable only by opening the chapters list.
-                Label(currentMark, systemImage: "flag.fill")
-                    .font(.caption)
-                    .lineLimit(1).truncationMode(.tail)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: 240, alignment: .leading)
-                    .help(currentMark)
+                Label {
+                    Text(currentMark)
+                        .foregroundStyle(SnittPalette.Swatch.slateText)
+                } icon: {
+                    // The flag is amber because a mark is a moment in time,
+                    // and the lane it came from draws it in the same colour.
+                    Image(systemName: "flag.fill")
+                        .foregroundStyle(SnittPalette.Swatch.signal)
+                }
+                .font(.caption)
+                .lineLimit(1).truncationMode(.tail)
+                .frame(maxWidth: 240, alignment: .leading)
+                .help(currentMark)
             }
             Spacer(minLength: 8)
             scrollBar
             Button("Cut", systemImage: "scissors", action: onCut)
                 .labelStyle(.iconOnly)
+                .buttonStyle(.plain)
+                // Red once it can actually remove something, slate while it
+                // cannot — the one control here that destroys, saying so only
+                // when it would.
+                .foregroundStyle(canCut
+                                 ? SnittPalette.Swatch.redBright
+                                 : SnittPalette.Swatch.slateText.opacity(0.35))
                 .disabled(!canCut)
                 .help("Cut the selected range — Delete")
             zoomSlider
@@ -159,7 +173,22 @@ struct TransportBar: View {
         .buttonStyle(.borderless)
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
-        .background(.bar)
+        // The transport belongs to the INSTRUMENT, not to the chrome (rev 5,
+        // W2). It was `.bar`, which follows the system appearance — so under
+        // a light theme a pale strip appeared between light chrome above and
+        // the permanently dark lanes below, which is the "two apps stapled
+        // together" seam rev 4 named and did not close. The transport drives
+        // the playhead that lives in those lanes; it is part of them.
+        //
+        // The ink3 hairline is drawn on the instrument's own side of the
+        // join, under the chrome's `mediaEdge` separator, so the seam reads
+        // as a machined edge rather than as two surfaces that happen to meet.
+        .background(alignment: .top) {
+            SnittPalette.Swatch.ink0
+                .overlay(alignment: .top) {
+                    SnittPalette.Swatch.ink3.frame(height: 1)
+                }
+        }
     }
 
     /// One rounded container, in the order the playhead moves. Grouping is the
@@ -172,22 +201,34 @@ struct TransportBar: View {
             Button(action: onTogglePlay) {
                 Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                     .frame(width: 30, height: 22)
+                    .foregroundStyle(SnittPalette.Swatch.ink0)
+                    .background(SnittPalette.Swatch.signalBright,
+                                in: RoundedRectangle(cornerRadius: 5))
             }
-            .buttonStyle(.borderedProminent)
+            // Not `.borderedProminent`: that draws in the system accent, which
+            // is whatever colour the user picked for selection — so the one
+            // filled control on the instrument would change meaning from Mac
+            // to Mac, and sit next to amber marks in an unrelated hue.
+            .buttonStyle(.plain)
             .help("Play or pause — Space")
             transportButton("forward.frame.fill", "Next mark — ⌥→",
                             enabled: hasMarks, action: onNextMark)
         }
         .padding(3)
-        .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+        .background(SnittPalette.Swatch.ink2, in: RoundedRectangle(cornerRadius: 8))
     }
 
     private func transportButton(_ symbol: String, _ help: String,
                                  enabled: Bool = true,
                                  action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Image(systemName: symbol).frame(width: 26, height: 22)
+            Image(systemName: symbol)
+                .frame(width: 26, height: 22)
+                .foregroundStyle(enabled
+                                 ? SnittPalette.Swatch.slateText
+                                 : SnittPalette.Swatch.slateText.opacity(0.35))
         }
+        .buttonStyle(.plain)
         .disabled(!enabled)
         .help(help)
     }
@@ -197,9 +238,20 @@ struct TransportBar: View {
     private var timeField: some View {
         HStack(spacing: 4) {
             TextField("", text: $timeText)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(.caption, design: .monospaced))
+                // Still a real field — typing a timecode goes there — but
+                // dressed as the tape counter it behaves like rather than as
+                // a form control borrowed from a settings window.
+                .textFieldStyle(.plain)
+                .font(.system(.caption, design: .monospaced).weight(.medium))
+                .monospacedDigit()
+                .foregroundStyle(SnittPalette.Swatch.clockAmber)
+                .multilineTextAlignment(.center)
                 .frame(width: 66)
+                .padding(.vertical, 3)
+                .background(SnittPalette.Swatch.ink1,
+                            in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6)
+                    .strokeBorder(SnittPalette.Swatch.ink3, lineWidth: 1))
                 .focused($timeFocused)
                 .onSubmit {
                     onSeekToTime(timeText)
@@ -213,7 +265,8 @@ struct TransportBar: View {
                 }
             Text("/ \(totalTime)")
                 .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(.tertiary)
+                .monospacedDigit()
+                .foregroundStyle(SnittPalette.Swatch.slateText)
         }
     }
 
@@ -235,9 +288,9 @@ struct TransportBar: View {
         if isScrollable {
             GeometryReader { geometry in
                 ZStack(alignment: .leading) {
-                    Capsule().fill(.quaternary)
+                    Capsule().fill(SnittPalette.Swatch.ink2)
                     Capsule()
-                        .fill(.secondary)
+                        .fill(SnittPalette.Swatch.slateText)
                         .frame(width: max(24, geometry.size.width * visibleFraction))
                         .offset(x: (geometry.size.width
                                     - max(24, geometry.size.width * visibleFraction))
@@ -261,11 +314,14 @@ struct TransportBar: View {
     /// travel at the far end.
     private var zoomSlider: some View {
         HStack(spacing: 6) {
-            Image(systemName: "minus.magnifyingglass").foregroundStyle(.secondary)
+            Image(systemName: "minus.magnifyingglass")
+                .foregroundStyle(SnittPalette.Swatch.slateText)
             Slider(value: $zoomFraction, in: 0...1)
                 .frame(width: 90)
                 .controlSize(.mini)
-            Image(systemName: "plus.magnifyingglass").foregroundStyle(.secondary)
+                .tint(SnittPalette.Swatch.signal)
+            Image(systemName: "plus.magnifyingglass")
+                .foregroundStyle(SnittPalette.Swatch.slateText)
         }
         .help("Zoom the timeline")
     }
