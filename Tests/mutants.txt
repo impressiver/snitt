@@ -94,3 +94,7 @@ AutoDeepTrimTests :: Sources/SnittExport/AutoDeepTrim.swift :: SpeechChunker.sil
 # --- rev 5 W13: the gain ladder in brand colours ---
 GainMeterAppearanceTests :: Sources/SnittApp/TimelineGutter.swift :: ? SnittPalette.Swatch.recordRed :: ? SnittPalette.Swatch.signal
 GainMeterAppearanceTests :: Sources/SnittApp/TimelineGutter.swift :: SnittPalette.Swatch.ink3.opacity(muted ? 0.28 : 1) :: SnittPalette.Swatch.ink3
+
+# --- rev 5 W14: the words lane asks the tier model ---
+WordLaneViewTests :: Sources/SnittApp/TimelineView.swift :: WordLaneTiers.tier(wordCount: wordCountForTesting, laneWidth: Double(bounds.width)) :: .phrases
+WordLaneViewTests :: Sources/SnittApp/TimelineView.swift :: var wordCountForTesting: Int { phrases.reduce(0) { $0 + $1.words.count } } :: var wordCountForTesting: Int { phrases.count }

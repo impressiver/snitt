@@ -522,7 +522,60 @@ public final class TimelineView: NSView {
     /// text: `TranscriptPhrases.displayText` returns "" there rather than an
     /// ellipsis, because an ellipsis alone occupies a chip, reads as text, and
     /// carries none.
+    /// How many words the lane is being asked to draw — the input the tier
+    /// decision is made from.
+    var wordCountForTesting: Int { phrases.reduce(0) { $0 + $1.words.count } }
+
+    /// The tier this lane can honestly draw at its current width (rev 5, W14).
+    ///
+    /// `WordLaneTiers` decides; this view only asks. The model, its constants
+    /// and its monotonicity were built and tested (D89) before this lane
+    /// existed — rev 5's spec briefly described re-deriving them, which would
+    /// have produced a second answer to a settled question, and a different
+    /// one: the spec's stated phrases/density boundary was 4 pt/word against
+    /// the shipped `minimumPhraseWidth / wordsPerPhrase` = 11.25.
+    var currentTierForTesting: WordLaneTier {
+        WordLaneTiers.tier(wordCount: wordCountForTesting, laneWidth: Double(bounds.width))
+    }
+
     private func drawPhrases(in band: NSRect) {
+        switch currentTierForTesting {
+        case .density: drawWordDensity(in: band)
+        case .phrases, .words: drawPhraseChips(in: band)
+        }
+    }
+
+    /// Where the talking is, when there is no room for words or phrases.
+    ///
+    /// A 30-minute recording gives this lane a fifth of a point per word.
+    /// Chips are not merely small there, they are a lie — you cannot average
+    /// two words. What survives downsampling is DENSITY, so that is what the
+    /// lane draws: speech reads as glow, silence as nothing, and the lane
+    /// stays a map of where to look.
+    private func drawWordDensity(in band: NSRect) {
+        guard !phrases.isEmpty, band.height > 0 else { return }
+        let strip = NSRect(x: 0, y: band.midY - 3, width: bounds.width, height: 6)
+        var perColumn = [Int](repeating: 0, count: max(1, Int(bounds.width)))
+        for phrase in phrases {
+            for word in phrase.words {
+                let x = Int(geometry.x(atOutput: OutputTime(word.start)))
+                guard x >= 0, x < perColumn.count else { continue }
+                perColumn[x] += 1
+            }
+        }
+        let busiest = max(1, perColumn.max() ?? 1)
+        for (x, count) in perColumn.enumerated() where count > 0 {
+            // Ramp from ink3 to signal: a column with one word in it is
+            // structure, a column with several is speech.
+            let fraction = min(1.0, Double(count) / Double(busiest))
+            Palette.chip.blended(withFraction: CGFloat(fraction),
+                                 of: Palette.waveform)?.setFill()
+            NSBezierPath(rect: NSRect(x: Double(x), y: strip.minY,
+                                      width: 1, height: strip.height)).fill()
+        }
+    }
+
+    private func drawPhraseChips(in band: NSRect) {
         // No band fill. The lane's ground is the timeline's own, so the chips
         // read as objects sitting on the timeline rather than as a fourth
         // stripe competing with the waveforms above them — and silence, which
