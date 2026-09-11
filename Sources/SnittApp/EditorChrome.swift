@@ -81,8 +81,10 @@ struct EditorToolbar: View {
                 Button("Apply", action: onApplyCrop)
                     .buttonStyle(.borderedProminent)
                     .disabled(!canApplyCrop)
+                    .help("Crop the picture to the box you drew")
             } else if hasCrop {
                 Button("Reset Crop", action: onResetCrop)
+                    .help("Show the whole picture again")
             }
 
             Button(action: onExport) {
@@ -90,6 +92,7 @@ struct EditorToolbar: View {
             }
             .buttonStyle(.borderedProminent)
             .keyboardShortcut("e", modifiers: .command)
+            .help("Write a video file — ⌘E")
 
             if hasTranscript {
                 // A PANEL TOGGLE, not an action (rev 5, W3).
@@ -220,12 +223,33 @@ struct TransportBar: View {
         }
     }
 
+    /// A tooltip that names its key by ASKING the registry, rather than
+    /// repeating it (rev 5, W9).
+    ///
+    /// These read "Previous mark — ⌥←" and the arrow was typed here, a second
+    /// copy of a binding `KeyboardShortcutRegistry` already owns and already
+    /// renders into Help ▸ Keyboard Shortcuts. D84's whole point is that one
+    /// list is the only place a binding is written down; a tooltip that
+    /// hardcodes one is the drift that list exists to prevent, and it drifts
+    /// silently — the button keeps working, it just starts lying about which
+    /// key does it.
+    ///
+    /// `shortcutDisplay(titled:)` returns empty for a title nothing claims, so
+    /// a renamed shortcut leaves the tooltip short rather than stale.
+    static func help(_ label: String, _ registryTitle: String) -> String {
+        let key = KeyboardShortcutRegistry.shortcutDisplay(titled: registryTitle)
+        return key.isEmpty ? label : "\(label) — \(key)"
+    }
+
     /// One rounded container, in the order the playhead moves. Grouping is the
     /// point: four loose buttons among nine others read as nine others.
     private var cluster: some View {
         HStack(spacing: 2) {
-            transportButton("backward.end.fill", "Back to start — Home", action: onRewind)
-            transportButton("backward.frame.fill", "Previous mark — ⌥←",
+            transportButton("backward.end.fill",
+                            Self.help("Back to start", "Back to Start"),
+                            action: onRewind)
+            transportButton("backward.frame.fill",
+                            Self.help("Previous mark", "Previous Mark"),
                             enabled: hasMarks, action: onPreviousMark)
             Button(action: onTogglePlay) {
                 Image(systemName: isPlaying ? "pause.fill" : "play.fill")
@@ -239,8 +263,9 @@ struct TransportBar: View {
             // filled control on the instrument would change meaning from Mac
             // to Mac, and sit next to amber marks in an unrelated hue.
             .buttonStyle(.plain)
-            .help("Play or pause — Space")
-            transportButton("forward.frame.fill", "Next mark — ⌥→",
+            .help(Self.help("Play or pause", "Play / Pause"))
+            transportButton("forward.frame.fill",
+                            Self.help("Next mark", "Next Mark"),
                             enabled: hasMarks, action: onNextMark)
         }
         .padding(3)

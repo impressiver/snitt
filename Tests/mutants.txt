@@ -110,3 +110,8 @@ TitlebarChromeTests :: Sources/SnittApp/EditorWindowController.swift :: window.t
 TitlebarChromeTests :: Sources/SnittApp/EditorWindowController.swift ::                         .fullSizeContentView], ::                         .titled],
 TitlebarChromeTests :: Sources/SnittApp/EditorWindowController.swift :: window.title = title :: window.title = ""
 TitlebarChromeTests :: Sources/SnittApp/EditorChrome.swift :: static let trafficLightInset: Double = 78 :: static let trafficLightInset: Double = 12
+
+# --- rev 5 W9: the sweep ---
+PolishSweepTests :: Sources/SnittApp/StatusItemController.swift :: attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: size, :: attributes: [.font: NSFont.systemFont(ofSize: size,
+PolishSweepTests :: Sources/SnittApp/EditorChrome.swift :: return key.isEmpty ? label : "\(label) — \(key)" :: return label
+SweptSurfaceTests :: Sources/SnittApp/RecordingHUDPanel.swift :: SnittPalette.ink1.withAlphaComponent(0.94).cgColor :: NSColor.windowBackgroundColor.cgColor
