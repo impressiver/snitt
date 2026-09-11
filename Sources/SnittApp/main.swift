@@ -180,6 +180,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .item(withTitle: "Open Recent")?.submenu {
             recentMenu.delegate = self
         }
+
+        offerToOpenADocumentIfLaunchedBare()
+    }
+
+    /// Launching Snitt on its own opens the Open dialog; every other way in
+    /// does not. See `LaunchOpenPrompt` for which cases those are and why.
+    ///
+    /// **Deferred by a runloop pass, deliberately.** `application(_:open:)`
+    /// can arrive either side of `applicationDidFinishLaunching` on a cold
+    /// launch — its own doc comment says so — so asking "was a document
+    /// opened" right here would sometimes be asking before the answer exists,
+    /// and double-clicking a `.snitt` would occasionally get a panel over the
+    /// document it just opened. One hop is enough: by the next pass the open
+    /// event has been delivered, a recording started by the hotkey has set
+    /// the coordinator's state, and any editor window is on screen.
+    private func offerToOpenADocumentIfLaunchedBare() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                let recording = await self.coordinator?.isRecording ?? false
+                let decision = LaunchOpenPrompt.decide(
+                    openingDocument: !self.openTasks.isEmpty,
+                    hasVisibleWindows: NSApp.windows.contains { $0.isVisible },
+                    isRecording: recording)
+                guard decision == .prompt else { return }
+                self.openDocument(nil)
+            }
+        }
     }
 
     private func handleHotkey() {

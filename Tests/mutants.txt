@@ -122,3 +122,6 @@ MarkerNavigationOriginTests :: Sources/SnittDocument/MarkerNavigation.swift :: r
 SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: height: max(fitted.height, 1)) :: height: 620)
 WaveformBarsTests :: Sources/SnittApp/TimelineView.swift :: static let waveformBarWidth: Double = 2 :: static let waveformBarWidth: Double = 3
 SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: stack.setCustomSpacing(10, after: rule) :: stack.setCustomSpacing(2, after: rule)
+LaunchOpenPromptTests :: Sources/SnittApp/LaunchOpenPrompt.swift :: if isRecording { return .recording } :: if false { return .recording }
+LaunchOpenPromptTests :: Sources/SnittApp/LaunchOpenPrompt.swift :: if openingDocument { return .documentAlreadyOpening } :: if false { return .documentAlreadyOpening }
+LaunchOpenPromptTests :: Sources/SnittApp/LaunchOpenPrompt.swift :: if hasVisibleWindows { return .windowAlreadyOpen } :: if false { return .windowAlreadyOpen }
