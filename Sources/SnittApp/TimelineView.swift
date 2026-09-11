@@ -1314,14 +1314,38 @@ public final class TimelineView: NSView {
         var x = 0.0
         while x < bounds.width {
             defer { x += 1 }
+            // THE PEAK OVER THE SPAN THIS COLUMN COVERS, not the one sample
+            // that happens to land under its left edge.
+            //
+            // Point-sampling is why the waveform "glitched in and out" while
+            // zooming: at any zoom-out a column spans many samples, and
+            // whether it drew tall or vanished depended on whether its single
+            // sample fell on a peak or in a trough between two syllables.
+            // Zoom changed which samples were hit, so the envelope flickered
+            // and long stretches of real speech read as silence.
+            //
+            // Taking the max over the span makes the drawing an ENVELOPE:
+            // vertically the same at every zoom, and blank only when every
+            // sample under the column really is below the threshold.
             let output = geometry.outputTime(atX: x).seconds
-            guard let index = TimelineSampleIndex.index(
+            let nextOutput = geometry.outputTime(atX: x + 1).seconds
+            guard let start = TimelineSampleIndex.index(
                 forOutputSeconds: output, keptRanges: kept,
                 samplesPerSecond: samples.samplesPerSecond,
                 sampleCount: samples.peaks.count) else { continue }
-            let peak = Double(samples.peaks[index])
+            // One past the end of the span, clamped by `index` itself. A
+            // column narrower than a sample gives start == end, so the range
+            // below still reads exactly one value.
+            let end = TimelineSampleIndex.index(
+                forOutputSeconds: nextOutput, keptRanges: kept,
+                samplesPerSecond: samples.samplesPerSecond,
+                sampleCount: samples.peaks.count) ?? start
+            let span = samples.peaks[min(start, end)...max(start, end)]
+            let peak = Double(span.max() ?? 0)
             columns.append(Column(x: x, peak: peak,
-                                  clipped: WaveformScale.isClipped(peak: peak, gain: gain)))
+                                  clipped: span.contains {
+                                      WaveformScale.isClipped(peak: Double($0), gain: gain)
+                                  }))
             quiet.append(Float(peak) <= threshold)
         }
         guard !columns.isEmpty else { return }

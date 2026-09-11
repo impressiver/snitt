@@ -666,6 +666,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 /// to normal text editing instead.
 extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        // Export needs a document to export. With no editor in front of it the
+        // item did nothing when picked — `exportDocument(_:)` resolves its
+        // editor from `NSApp.keyWindow` and returns early when there is none —
+        // so the menu offered an action and then silently declined it, which
+        // reads as a broken app rather than as "nothing is open".
+        //
+        // Note this asks for the KEY window's editor, the same question the
+        // action itself asks. Enabling on "any editor exists" would re-create
+        // the same silence whenever the frontmost window is Settings.
+        if menuItem.action == #selector(exportDocument(_:)) {
+            return EditorWindowController.openEditors.contains { $0.window == NSApp.keyWindow }
+        }
         guard menuItem.action == #selector(cutTimelineSelection(_:)) else { return true }
         // The title follows the highlight: one key, one item, two edits. A
         // menu permanently reading "Cut Selection" while Delete would restore

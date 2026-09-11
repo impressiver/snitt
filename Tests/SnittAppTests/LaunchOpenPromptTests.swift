@@ -5,6 +5,7 @@
 // Copyright © 2026 Ian White.
 
 import Testing
+import AppKit
 @testable import SnittApp
 
 /// Which launches get an Open dialog (2026-09-11).
@@ -64,5 +65,41 @@ struct LaunchOpenPromptTests {
         #expect(LaunchOpenPrompt.decide(openingDocument: false,
                                         hasVisibleWindows: true,
                                         isRecording: false) == .windowAlreadyOpen)
+    }
+}
+
+// Menu validation (2026-09-11).
+@Suite(.serialized)
+@MainActor
+struct ExportMenuValidationTests {
+    init() { _ = NSApplication.shared }
+
+    @Test("Export is disabled when no editor is in front")
+    func exportDisabledWithNothingOpen() {
+        // Reported from use. With no document open the item did nothing when
+        // picked — `exportDocument(_:)` resolves its editor from
+        // `NSApp.keyWindow` and returns early when there is none — so the menu
+        // offered an action and then silently declined it, which reads as a
+        // broken app rather than as "nothing is open".
+        //
+        // No editor windows exist in this host, and no key window, so this is
+        // the "launched, nothing open" state exactly.
+        let delegate = AppDelegate()
+        let item = NSMenuItem(title: "Export…",
+                              action: #selector(AppDelegate.exportDocument(_:)),
+                              keyEquivalent: "e")
+        #expect(delegate.validateMenuItem(item) == false)
+    }
+
+    @Test("Validation leaves items it does not own alone")
+    func unrelatedItemsStayEnabled() {
+        // The guard that keeps this from disabling the rest of the menu bar:
+        // an item whose action is not one of the two handled here must come
+        // back enabled, not swept up by a broadening condition.
+        let delegate = AppDelegate()
+        let item = NSMenuItem(title: "Close",
+                              action: #selector(NSWindow.performClose(_:)),
+                              keyEquivalent: "w")
+        #expect(delegate.validateMenuItem(item))
     }
 }

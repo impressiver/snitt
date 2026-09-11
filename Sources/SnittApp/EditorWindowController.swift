@@ -825,7 +825,32 @@ final class EditorTimelineState: ObservableObject {
     /// Seeks the preview to a chapter. Through `onScrub` for the same reason
     /// `seek(toWord:)` is: it is the one path that keeps the timeline playhead
     /// and the panes agreeing about where playback is.
-    func seek(toOutput seconds: Double) { onScrub(seconds) }
+    /// Put the playhead at an OUTPUT instant.
+    ///
+    /// **Not through `onScrub`**, which is the bug this replaced. `onScrub`
+    /// takes SOURCE time and converts it with
+    /// `TimeRangeMapping.nearestTrimmedTime(toSourceTime:)`; handing it a time
+    /// that was already output ran that conversion a second time, so every
+    /// caller landed EARLY by the total length of everything cut before the
+    /// target. With no cuts the two clocks agree and it looked correct.
+    ///
+    /// Everything that calls this passes output time — mark navigation, a
+    /// marker row in the rail (`chapter.outputTime`), a timecode typed into
+    /// the transport — so all three drifted the moment a recording had a cut
+    /// in it, and drifted further the more was removed. "Next marker doesn't
+    /// line up with the actual markers" is what that looks like from the
+    /// outside, because the markers are DRAWN at `x(atOutput:)` and only the
+    /// jump was being converted.
+    ///
+    /// Seeks the composition directly, exactly as `rewind()` does and for the
+    /// same stated reason: the composition's clock IS output time.
+    func seek(toOutput seconds: Double) {
+        // A deliberate destination supersedes a mark jump still in flight;
+        // `jump(toMarkAt:)` re-arms its own immediately after calling this.
+        pendingMarkJump = nil
+        controller.pause()
+        Task { await controller.seek(toSeconds: seconds) }
+    }
 
     /// The events-side twin of `restore(_:)`: pushes the CURRENT `events`
     /// back onto the undo stack as the redo before installing `snapshot`, so
