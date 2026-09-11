@@ -176,3 +176,8 @@ ShowClicksMenuTests :: Sources/SnittApp/ExportSheet.swift :: self.drawClicks = d
 ShowClicksMenuTests :: Sources/SnittExport/ClickOverlay.swift :: naturalSize: CGSize(width: 1, height: 1) :: naturalSize: CGSize(width: 1920, height: 1080)
 # The menu item loses its action and silently does nothing when picked.
 ShowClicksMenuTests :: Sources/SnittApp/KeyboardShortcutRegistry.swift :: action: #selector(AppDelegate.toggleShowClicks(_:)) :: action: nil
+
+# Settings is the ONLY route to crash reporting since the status-menu item
+# was removed.
+SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: isOn: CrashReportSettings.load(defaults).enabled :: isOn: false
+SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: CrashReportSettings(enabled: sender.state == .on).save(to: defaults) :: let _ = sender

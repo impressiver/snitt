@@ -231,17 +231,17 @@ final class StatusItemController: NSObject {
             menu.addItem(item)
         }
 
-        // §12's opt-in: with this off, `snitt diagnostics export` never reads
-        // `~/Library/Logs/DiagnosticReports/` at all. This menu item is the
-        // ONLY way a user can ever turn it on — a setting nothing can set is
-        // not a setting (M5b).
-        let crashReportsItem = NSMenuItem(title: "Include crash reports in diagnostics",
-                                          action: #selector(toggleCrashReporting),
-                                          keyEquivalent: "")
-        crashReportsItem.target = self
-        crashReportsItem.state = crashReportingEnabled ? .on : .off
-        menu.addItem(crashReportsItem)
-        menu.addItem(.separator())
+        // §12's opt-in crash reporting is NOT here. It used to be, with a
+        // comment calling this menu "the ONLY way a user can ever turn it on
+        // — a setting nothing can set is not a setting (M5b)". That was true
+        // when it was written and stopped being true when §4.14's Settings
+        // window landed: `SettingsWindowController` carries the row, with the
+        // explanatory detail text this menu had nowhere to put.
+        //
+        // Removed rather than duplicated. Two controls for one setting is two
+        // places a checkmark can disagree with the stored value, and this menu
+        // is the fast path — §4.11's whole point is that it stays short enough
+        // to use without reading.
 
         // A manual check must always be available regardless of the
         // automatic-checks setting — the user clicking this IS the consent
@@ -327,16 +327,6 @@ final class StatusItemController: NSObject {
 
     @objc private func toggleMicrophone() {
         onToggleMicrophone?(!microphoneEnabled)
-    }
-
-    /// Mirrors the persisted setting so the menu can show a checkmark.
-    var crashReportingEnabled = false
-
-    /// Invoked when the user toggles crash-report collection from the menu.
-    var onToggleCrashReporting: ((Bool) -> Void)?
-
-    @objc private func toggleCrashReporting() {
-        onToggleCrashReporting?(!crashReportingEnabled)
     }
 
     func update(_ newState: RecordingState) {
