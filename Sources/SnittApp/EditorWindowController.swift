@@ -1409,8 +1409,7 @@ struct EditorContentView: View {
         TimelineLaneBudget.timelineHeight(
             forWindowHeight: windowHeight,
             audioTracks: TimelineTrackLayout.audioTracks(in: state.audioTracks),
-            hasTranscript: state.transcript != nil,
-            hasFolds: !state.edl.cuts.isEmpty)
+            hasTranscript: state.transcript != nil)
     }
 
     /// The window's content height, measured once and read by the timeline.

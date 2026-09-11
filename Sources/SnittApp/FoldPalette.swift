@@ -50,10 +50,21 @@ enum FoldPalette {
     /// a glance without looking away from the timeline.
     static func fill(_ appearance: Appearance) -> NSColor {
         switch appearance {
-        case .collapsed, .collapsedSelected: base
-        case .expanded: base.withAlphaComponent(0.35)
-        case .expandedSelected: base.withAlphaComponent(0.55)
+        case .collapsed: base
+        case .collapsedSelected: SnittPalette.redBright
+        case .expanded: base.withAlphaComponent(0.20)
+        case .expandedSelected: base.withAlphaComponent(0.32)
         }
+    }
+
+    /// The wash behind a SELECTED collapsed cut, across the whole stack.
+    ///
+    /// A collapsed cut is three points wide. Brightening three points is not
+    /// enough to say "this is the thing ⌫ will delete" — the wash is what
+    /// makes an armed cut unmissable without making an unarmed one loud.
+    /// Nil for every other state: an expanded cut already has a body.
+    static func selectionWash(_ appearance: Appearance) -> NSColor? {
+        appearance == .collapsedSelected ? base.withAlphaComponent(0.12) : nil
     }
 
     /// A collapsed cut is a line, and the selected one is drawn thicker.
@@ -61,13 +72,21 @@ enum FoldPalette {
     /// two pixels of solid red at 100% cannot get any more emphatic without
     /// getting bigger.
     static func lineWidth(_ appearance: Appearance) -> Double {
-        appearance == .collapsedSelected ? 4 : 2
+        appearance == .collapsedSelected ? 4 : 3
     }
 
     /// A solid edge around the selected band. The fill alone is a 20-point
     /// alpha step, which is legible side by side and much less so on its own;
     /// the border is what makes "this one is selected" readable without a
     /// second band to compare against.
+    /// **Only the selected band.** The rev 5 style sheet's table reads as
+    /// though every expanded cut gets a `redBright` edge; it was written
+    /// without the reason this function already carried, and following it
+    /// literally would have made selection *harder* to see. The fill step
+    /// between expanded and expanded-selected is 12 points of alpha — legible
+    /// with two bands side by side, and much less so on its own — so the edge
+    /// is what makes "this one is selected" readable without a second band to
+    /// compare against. A border on every band is a border that says nothing.
     static func borderWidth(_ appearance: Appearance) -> Double {
         appearance == .expandedSelected ? 2 : 0
     }

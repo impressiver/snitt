@@ -276,14 +276,17 @@ struct GestureAxisTests {
         #expect(timebase.foldPosition(for: cut).seconds < geometry.visibleOffset)
         #expect(geometry.x(atFold: cut) == 0)
 
-        var toggled: UUID?
+        // DOUBLE-click: rev 5 (W11) gives a single click to the lane under
+        // the pointer, because cuts are drawn full height and an ungated
+        // single-click hit took scrubs away from every lane. The gesture
+        // changed; what this test is about did not.
+        var expanded: UUID?
         var scrubbed: Double?
-        view.onToggleExpansion = { toggled = $0 }
+        view.onExpandAndSelectFold = { expanded = $0 }
         view.onScrub = { scrubbed = $0 }
-        view.mouseDown(with: .synthetic(at: NSPoint(x: 3, y: 20), in: view))
-        view.mouseUp(with: .synthetic(at: NSPoint(x: 3, y: 20), in: view))
+        view.mouseDown(with: .synthetic(at: NSPoint(x: 3, y: 20), in: view, clickCount: 2))
 
-        #expect(toggled == cut.id)
+        #expect(expanded == cut.id)
         #expect(scrubbed == nil)
     }
 

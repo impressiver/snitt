@@ -61,10 +61,21 @@ struct TranscriptLaneTests {
 
     @Test("The lane yields rather than squeezing the filmstrip under its floor")
     func laneYieldsToTheFilmstrip() {
-        let bands = TimelineTrackLayout.bands(in: NSRect(x: 0, y: 0, width: width, height: 80),
-                                              markerHeight: 24, audioTracks: ["microphone"],
-                                              hasTranscript: true)
-        #expect(abs(bands.transcript.height) < 0.001)
+        // DERIVED, not a fixed 80. This test used to pass at 80pt because the
+        // fold lane took 24 of them; removing that lane (rev 5, W11) freed
+        // exactly enough room for the transcript to fit at that height, and
+        // the test started failing for a reason that was the change working
+        // rather than breaking. A height computed from the constants moves
+        // with them instead of going stale the next time the stack changes.
+        let justTooShort = TimelineLaneBudget.minimumTargetHeight        // marks
+            + TimelineLaneBudget.transcriptLaneHeight
+            + TimelineLaneBudget.minimumVideoHeight - 1
+        let bands = TimelineTrackLayout.bands(
+            in: NSRect(x: 0, y: 0, width: width, height: justTooShort),
+            markerHeight: TimelineLaneBudget.minimumTargetHeight,
+            audioTracks: ["microphone"], hasTranscript: true)
+        #expect(abs(bands.transcript.height) < 0.001,
+                "the transcript lane took room the filmstrip needed")
         #expect(bands.video.height > 0)
     }
 

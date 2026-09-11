@@ -120,6 +120,10 @@ public final class TimelineView: NSView {
     /// earlier for drag-vs-cut.
     private static let foldHitMarginPixels: Double = 6.0
 
+    /// Half the width of a selected collapsed cut's wash — wide enough to
+    /// read as a band rather than as a thicker line.
+    private static let selectionWashHalfWidth: Double = 7.0
+
     /// Pixels of slop a click gets around a marker's own glyph before it
     /// counts as "aimed at this marker" — the marker-track sibling of
     /// `foldHitMarginPixels`, same reasoning: a marker draws as a handful of
@@ -491,13 +495,6 @@ public final class TimelineView: NSView {
     /// than itself.
     private var markerTrackHeight: Double { min(24.0, bounds.height * 0.4) }
 
-    /// The fold lane's y-range, or nil when the view is too short for one.
-    private var foldLaneRange: ClosedRange<Double>? {
-        let bands = TimelineTrackLayout.bands(in: bounds, markerHeight: markerTrackHeight,
-                                              audioTracks: [], hasFolds: !cuts.isEmpty)
-        guard bands.fold.height > 0 else { return nil }
-        return bands.fold.minY...bands.fold.maxY
-    }
 
     /// The marker whose glyph `point` lands on/near, or `nil`. Gated to the
     /// MARKER LANE's own y-range (`markerTrackHeight` down from the top,
@@ -518,30 +515,6 @@ public final class TimelineView: NSView {
         return nil
     }
 
-    /// The `Cut` whose fold `x` lands in/near, or `nil` if `x` is plain
-    /// scrub/drag territory. A COLLAPSED fold is a `foldHitMarginPixels`
-    /// window either side of its single line; an EXPANDED one is its whole
-    /// widened rect (`expandedWidthPixels`), since that entire rect IS the
-    /// revealed cut once expanded. Checked before any drag/scrub logic runs
-    /// (`mouseDown`, `menu(for:)`) — see this type's own doc comment and
-    /// `foldHitMarginPixels` for why a fold needs its own dedicated hit-test
-    /// rather than falling through to the track's.
-    /// Y-gated, like `markerHit(at:)` and for the same reason.
-    ///
-    /// This used to take only an x and match anywhere in the view, because a
-    /// fold's line is drawn full height on purpose — one collapse across the
-    /// whole synchronised stack. That was survivable while the stack was
-    /// marks/video/audio and the marker lane carried its own y-gate. It stops
-    /// being survivable as lanes are added below Video: an ungated full-height
-    /// hit swallows clicks meant for each of them, three times over.
-    ///
-    /// When the view is too short for a fold lane there is no gate to apply
-    /// and the old full-height behaviour stands, so a cramped timeline keeps
-    /// its folds reachable rather than losing them silently.
-    private func foldHit(at point: NSPoint) -> Cut? {
-        if let range = foldLaneRange, !range.contains(point.y) { return nil }
-        return foldHit(atX: point.x)
-    }
 
     /// One chip per phrase, positioned in OUTPUT time so a cut re-flows them.
     ///
@@ -606,11 +579,10 @@ public final class TimelineView: NSView {
     }
 
     /// The phrase whose chip contains `point`, y-gated to the transcript lane
-    /// exactly as folds are gated to theirs.
+    /// exactly as the marker lane gates its own.
     func phraseHit(at point: NSPoint) -> TranscriptPhrase? {
         let bands = TimelineTrackLayout.bands(in: bounds, markerHeight: markerTrackHeight,
-                                              audioTracks: [], hasTranscript: !phrases.isEmpty,
-                                              hasFolds: !cuts.isEmpty)
+                                              audioTracks: [], hasTranscript: !phrases.isEmpty)
         guard bands.transcript.height > 0, bands.transcript.contains(point) else { return nil }
         return phrases.first { phrase in
             let start = geometry.x(atOutput: OutputTime(phrase.start))
@@ -639,15 +611,8 @@ public final class TimelineView: NSView {
     @discardableResult
     func handlePhraseClickForTesting(at point: NSPoint) -> Bool { handlePhraseClick(at: point) }
 
-    /// Test seam for the y-gate, in VIEW coordinates.
-    ///
-    /// Driving this through a synthetic `NSEvent` would test AppKit's
-    /// window-to-view conversion on a view that has no window — and at the
-    /// 40pt height every existing fold test uses, a click at y=20 is
-    /// flip-symmetric, so such a test cannot tell a correct conversion from an
-    /// inverted one. The gate is a y-range check; this asserts the y-range
-    /// check.
-    func foldHitForTesting(at point: NSPoint) -> Cut? { foldHit(at: point) }
+    /// Test seam for the shared, x-only cut hit test.
+    func foldHitForTesting(atX x: Double) -> Cut? { foldHit(atX: x) }
 
     /// How the view would draw `id` right now. The property that matters is
     /// that this reflects what `update` was handed: the model tracked fold
@@ -658,7 +623,7 @@ public final class TimelineView: NSView {
         FoldPalette.appearance(expanded: expandedCutIDs.contains(id),
                                selected: id == selectedFoldID)
     }
-    var foldLaneRangeForTesting: ClosedRange<Double>? { foldLaneRange }
+
     var markerTrackHeightForTesting: Double { markerTrackHeight }
 
     private func foldHit(atX x: Double) -> Cut? {
@@ -1003,16 +968,22 @@ public final class TimelineView: NSView {
             }
         }
         if handlePhraseClick(at: point) { return }
-        if let cut = foldHit(at: point) {
-            activeFoldClick = cut.id
-            // Selecting as well as toggling: a fold you have just opened is a
-            // segment you are deciding about, and it should be the thing
-            // Delete acts on without a second gesture to say so.
-            onSelectFold(cut.id)
-            onToggleExpansion(cut.id)
-            needsDisplay = true
-            return
-        }
+        // A SINGLE CLICK NEVER HITS A CUT (rev 5, W11).
+        //
+        // Cuts are drawn full height now — they are not a lane — and a
+        // full-height hit region with a 6pt margin took every single click
+        // within 12pt of a cut, in every lane, away from the lane under the
+        // pointer. That was measured rather than assumed: deleting the old
+        // y-gate and running `GestureMatrixTests` failed seven assertions,
+        // toggling a fold from the marker, video, audio and transcript lanes
+        // and killing scrubbing at that x in all of them.
+        //
+        // So the resolution is a PRIORITY rule rather than a region: the
+        // precise gesture yields to the lane, and the coarse ones keep their
+        // reach. Double-click still expands and selects a cut from anywhere,
+        // right-click still offers Remove Cut from anywhere — both ungated,
+        // both already tested — and neither competes with anything, because
+        // no lane assigns them a meaning at a cut's x.
         activeFoldClick = nil
         let output = time(for: event)
         gesture.began(atTime: output.seconds)
@@ -1345,8 +1316,7 @@ public final class TimelineView: NSView {
         let bands = TimelineTrackLayout.bands(in: bounds,
                                               markerHeight: markerTrackHeight,
                                               audioTracks: tracks,
-                                              hasTranscript: !phrases.isEmpty,
-                                              hasFolds: !cuts.isEmpty)
+                                              hasTranscript: !phrases.isEmpty)
         if bands.transcript.height > 0 { drawPhrases(in: bands.transcript) }
         // The marks lane carries no band of its own: the rev 5 style sheet
         // makes it transparent on `ink0`, so what identifies it is its amber
@@ -1434,10 +1404,23 @@ public final class TimelineView: NSView {
                                                     height: bounds.height))
             } else {
                 let width = FoldPalette.lineWidth(foldLook)
+                // The armed wash first, so the seam sits on top of it.
+                if let wash = FoldPalette.selectionWash(foldLook) {
+                    wash.setFill()
+                    NSBezierPath(rect: NSRect(x: foldX - Self.selectionWashHalfWidth, y: 0,
+                                              width: Self.selectionWashHalfWidth * 2,
+                                              height: bounds.height)).fill()
+                }
                 FoldPalette.fill(foldLook).setFill()
                 NSBezierPath(rect: NSRect(x: foldX - width / 2, y: 0,
                                           width: width,
                                           height: bounds.height)).fill()
+                // A notch at the top, where the ruler is. A three-point line
+                // crossing a busy stack is easy to mistake for a lane
+                // boundary; the notch is the bit that says "this is an object,
+                // and it is here".
+                NSBezierPath(roundedRect: NSRect(x: foldX - 5, y: 0, width: 10, height: 6),
+                             xRadius: 2, yRadius: 2).fill()
             }
         }
 

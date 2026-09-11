@@ -80,3 +80,9 @@ SettingsRowTests :: Sources/SnittApp/SettingsWindowController.swift :: + "in the
 SettingsRowTests :: Sources/SnittApp/SettingsWindowController.swift :: static let contentWidth: Double = 520 :: static let contentWidth: Double = 420
 ExportHeadlineTests :: Sources/SnittApp/ExportPreflight.swift :: durationSeconds: estimate.durationSeconds)) :: durationSeconds: 0))
 ExportHeadlineTests :: Sources/SnittApp/ExportPreflight.swift :: return String(format: "%d:%02d", total / 60, total % 60) :: return String(format: "%d:%d", total / 60, total % 60)
+
+# --- rev 5 W11: cuts are seams, and single click yields to the lane ---
+GestureMatrixTests :: Sources/SnittApp/TimelineView.swift :: if handlePhraseClick(at: point) { return } :: if handlePhraseClick(at: point) { return }; if let cut = foldHit(atX: point.x) { onSelectFold(cut.id); onToggleExpansion(cut.id); return }
+FoldAppearanceTests :: Sources/SnittApp/FoldPalette.swift :: appearance == .collapsedSelected ? base.withAlphaComponent(0.12) : nil :: nil
+TimelineTrackLayoutTests :: Sources/SnittApp/TimelineTrackLayout.swift :: let stackTop = markerHeight :: let stackTop = markerHeight + 24
+FoldAppearanceTests :: Sources/SnittApp/FoldPalette.swift :: case .collapsedSelected: SnittPalette.redBright :: case .collapsedSelected: base
