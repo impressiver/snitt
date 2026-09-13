@@ -489,6 +489,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editor.setShowClicks(!editor.showsClicks)
     }
 
+    /// Playback ▸ Show Subtitles — captions from the transcript.
+    @objc func toggleShowSubtitles(_ sender: Any?) {
+        guard let editor = focusedEditor else { return }
+        editor.setShowSubtitles(!editor.showsSubtitles)
+    }
+
+    /// Playback ▸ Show Markers — the top-left banner.
+    @objc func toggleShowMarkers(_ sender: Any?) {
+        guard let editor = focusedEditor else { return }
+        editor.setShowMarkers(!editor.showsMarkers)
+    }
+
     /// Help ▸ Keyboard Shortcuts, rendered from the registry that installed
     /// the keys — so it cannot describe a binding that does not exist.
     @objc func showKeyboardShortcuts(_ sender: Any?) {
@@ -694,9 +706,18 @@ extension AppDelegate: NSMenuItemValidation {
         // Disabled with no document in front, like Export: the action resolves
         // its editor from the key window and would otherwise do nothing when
         // picked, which reads as a broken app rather than as "nothing is open".
-        if menuItem.action == #selector(toggleShowClicks(_:)) {
+        // The three overlay toggles are one rule: the checkmark IS the
+        // document's state, read from `edit.json` via the focused editor, and
+        // the item is disabled with nothing in front rather than silently
+        // doing nothing when picked.
+        let overlayState: [Selector: (EditorWindowController) -> Bool] = [
+            #selector(toggleShowClicks(_:)): { $0.showsClicks },
+            #selector(toggleShowSubtitles(_:)): { $0.showsSubtitles },
+            #selector(toggleShowMarkers(_:)): { $0.showsMarkers },
+        ]
+        if let action = menuItem.action, let reads = overlayState[action] {
             let editor = EditorWindowController.openEditors.first { $0.window == NSApp.keyWindow }
-            menuItem.state = (editor?.showsClicks ?? false) ? .on : .off
+            menuItem.state = (editor.map(reads) ?? false) ? .on : .off
             return editor != nil
         }
         // Export, Export for, and Share all resolve their editor from the KEY

@@ -39,6 +39,7 @@ public enum PassthroughEligibility {
         case crop
         case audioMix
         case scaled
+        case burnedInText
     }
 
     /// Nil when the samples can be copied; otherwise the first reason they cannot.
@@ -79,6 +80,11 @@ public enum PassthroughEligibility {
         if maxSizeBytes != nil { return .sizeLimit }
         if !clicks.isEmpty { return .clickOverlay }
         if let crop = edl.crop, !crop.isFullFrame { return .crop }
+        // Captions and marker banners are drawn INTO the frames, so a
+        // composition carrying either is not a no-op however little else
+        // changed. Both asked separately rather than as one flag: the reason
+        // an export re-encoded is worth being able to state.
+        if edl.showSubtitles || edl.showMarkers { return .burnedInText }
         if hasAudioMix { return .audioMix }
         return nil
     }
@@ -108,7 +114,13 @@ public enum PassthroughEligibility {
     /// - `crop` — disqualifies unless full-frame.
     /// - `showClicks` — reaches this predicate as `clicks`, already resolved to
     ///   the marks that will be drawn.
+    /// - `showSubtitles`, `showMarkers` — both burn text into the frames, so
+    ///   both disqualify. Read from the EDL rather than resolved to drawable
+    ///   items first, because an empty transcript still means the caption
+    ///   layer runs, and a predicate that waved that through would depend on
+    ///   whether anyone happened to speak.
     public static let consideredEDLFields: Set<String> = [
         "schemaVersion", "cuts", "trackStates", "crop", "showClicks",
+        "showSubtitles", "showMarkers",
     ]
 }

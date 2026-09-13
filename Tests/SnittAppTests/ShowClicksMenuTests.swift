@@ -34,6 +34,72 @@ struct ShowClicksMenuTests {
         #expect(clicks.action == #selector(AppDelegate.toggleShowClicks(_:)))
     }
 
+    @Test("All three overlay toggles are in the Playback menu with distinct keys")
+    func everyOverlayToggleIsBound() throws {
+        // One test for the three because they are one requirement — the
+        // overlays a person can turn on are the ones the menu offers — and
+        // because a per-item test passes when two of them share a binding.
+        let expected = [
+            (KeyboardShortcutRegistry.showClicksTitle, "c"),
+            (KeyboardShortcutRegistry.showSubtitlesTitle, "s"),
+            (KeyboardShortcutRegistry.showMarkersTitle, "m"),
+        ]
+        for (title, key) in expected {
+            let entry = try #require(KeyboardShortcutRegistry.shortcuts.first { $0.title == title },
+                                     "no shortcut registered for \(title)")
+            #expect(entry.key == key)
+            #expect(entry.modifiers == [.command, .shift])
+        }
+    }
+
+    @Test("Each overlay toggle reaches its own action, not a shared one")
+    func togglesAreDistinct() throws {
+        // The mistake this catches is a copy-paste in the registry: three
+        // items all wired to `toggleShowClicks`, which looks right in the menu
+        // and turns the wrong thing on.
+        let submenu = try #require(KeyboardShortcutRegistry.playbackMenuItem().submenu)
+        func action(_ title: String) throws -> Selector {
+            try #require(submenu.items.first { $0.title == title }?.action)
+        }
+        let clicks = try action(KeyboardShortcutRegistry.showClicksTitle)
+        let subtitles = try action(KeyboardShortcutRegistry.showSubtitlesTitle)
+        let markers = try action(KeyboardShortcutRegistry.showMarkersTitle)
+        #expect(clicks == #selector(AppDelegate.toggleShowClicks(_:)))
+        #expect(subtitles == #selector(AppDelegate.toggleShowSubtitles(_:)))
+        #expect(markers == #selector(AppDelegate.toggleShowMarkers(_:)))
+        #expect(Set([clicks, subtitles, markers]).count == 3)
+    }
+
+    @Test("Subtitles and markers persist in edit.json, independently")
+    func overlayFlagsRoundTrip() throws {
+        // Independently, because one flag standing in for both is the
+        // plausible shortcut — and it would make turning captions on also
+        // draw every marker banner.
+        var edl = EditDecisionList.fullRange()
+        edl.showSubtitles = true
+        let back = try JSONDecoder().decode(
+            EditDecisionList.self, from: try JSONEncoder().encode(edl))
+        #expect(back.showSubtitles)
+        #expect(!back.showMarkers, "showSubtitles turned showMarkers on as well")
+
+        var markersOnly = EditDecisionList.fullRange()
+        markersOnly.showMarkers = true
+        let second = try JSONDecoder().decode(
+            EditDecisionList.self, from: try JSONEncoder().encode(markersOnly))
+        #expect(second.showMarkers)
+        #expect(!second.showSubtitles)
+    }
+
+    @Test("A bundle from before these fields still opens with both off")
+    func olderBundlesHaveNoOverlays() throws {
+        let json = """
+        {"schemaVersion": 3, "cuts": [], "trackStates": []}
+        """
+        let edl = try JSONDecoder().decode(EditDecisionList.self, from: Data(json.utf8))
+        #expect(!edl.showSubtitles)
+        #expect(!edl.showMarkers)
+    }
+
     @Test("Show Clicks has a shortcut, and the help says what it is")
     func showClicksIsBoundAndDocumented() throws {
         // It lived outside `shortcuts` while it had no key, because `helpText`

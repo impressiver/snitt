@@ -261,3 +261,8 @@ SubtitleCuesTests :: Sources/SnittExport/SubtitleCues.swift :: end: min(cue.end,
 MarkerBannersTests :: Sources/SnittExport/MarkerBanners.swift :: holdSeconds: max(0, available))) :: holdSeconds: banner.holdSeconds))
 MarkerBannersTests :: Sources/SnittExport/MarkerBanners.swift :: let eased = 1 - pow(1 - t, 3) :: let eased = t
 MarkerBannersTests :: Sources/SnittExport/MarkerBanners.swift :: guard !label.isEmpty else { return nil } :: if false { return nil }
+
+# Show Subtitles / Show Markers, and their effect on passthrough.
+PassthroughEligibilityTests :: Sources/SnittExport/PassthroughEligibility.swift :: if edl.showSubtitles || edl.showMarkers { return .burnedInText } :: if false { return .burnedInText }
+PassthroughEligibilityTests :: Sources/SnittExport/PassthroughEligibility.swift :: if edl.showSubtitles || edl.showMarkers { return .burnedInText } :: if edl.showSubtitles { return .burnedInText }
+ShowClicksMenuTests :: Sources/SnittDocument/EditDecisionList.swift :: if showMarkers { try container.encode(true, forKey: .showMarkers) } :: if showSubtitles { try container.encode(true, forKey: .showMarkers) }
