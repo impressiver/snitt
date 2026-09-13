@@ -271,3 +271,9 @@ TextOverlayRenderTests :: Sources/SnittExport/TextOverlayComposition.swift :: fo
 TextOverlayRenderTests :: Sources/SnittExport/TextOverlayComposition.swift :: for banner in banners { parent.addSublayer(bannerLayer(for: banner, picture: picture)) } :: let _ = banners
 TextOverlayRenderTests :: Sources/SnittExport/GIFExporter.swift :: if !cues.isEmpty || !banners.isEmpty { :: if false {
 TextOverlayRenderTests :: Sources/SnittExport/TextOverlayComposition.swift :: restingX = box.minX :: layer.frame = box; restingX = box.minX
+# Selecting a cut LINE, so Delete can remove one.
+FoldSelectionTests :: Sources/SnittApp/TimelineView.swift :: onSelectFold(cut.id) :: let _ = cut.id
+FoldSelectionTests :: Sources/SnittApp/TimelineView.swift :: onSelectFold(cut.id) :: onExpandAndSelectFold(cut.id)
+FoldSelectionTests :: Sources/SnittApp/EditorWindowController.swift :: if let id = selectedFoldID { :: if false, let id = selectedFoldID {
+FoldSelectionTests :: Sources/SnittApp/TimelineView.swift :: activeFoldClick = cut.id :: activeFoldClick = nil
+FoldSelectionTests :: Sources/SnittApp/TimelineView.swift :: if activeFoldClick != nil { :: if false {

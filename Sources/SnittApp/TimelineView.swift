@@ -1031,6 +1031,20 @@ public final class TimelineView: NSView {
         if event.clickCount == 2 {
             if let cut = foldHit(atX: point.x) {
                 onExpandAndSelectFold(cut.id)
+                // Claim the gesture, or `mouseUp` undoes it a moment later.
+                //
+                // Without this the trailing `mouseUp` finds no active fold
+                // click, falls through to the plain-click path, and calls
+                // `onSelect(nil)` — which clears `selectedFoldID`. On screen
+                // the fold highlighted and then deselected itself instantly,
+                // so an expanded fold could not be selected at all.
+                //
+                // The single-click branch below has always done this; the
+                // double-click branch returned early and never did. The
+                // existing test drove `mouseDown` with `clickCount: 2` and
+                // stopped there, so it asserted the selection that IS made
+                // and never the `mouseUp` that took it away.
+                activeFoldClick = cut.id
                 return
             }
             // Empty marker lane only. A double-click ON a marker never
@@ -1200,6 +1214,23 @@ public final class TimelineView: NSView {
         // damage from stopping ungated LEFT clicks swallowing scrubs, and it
         // silently removed Remove Cut everywhere except one 24pt strip.
         guard let cut = foldHit(atX: point.x) else { return nil }
+        // Right-clicking a cut SELECTS it, which is what the rest of the app
+        // was already built for and nothing could reach.
+        //
+        // `FoldPalette` has drawn a `collapsedSelected` appearance since M5f,
+        // and `deleteSelection` has removed a selected fold for just as long —
+        // but `onSelectFold` was declared, wired to the state, and called by
+        // no gesture at all. So a cut LINE could never be selected: the only
+        // route in was a double-click, which expands it first, and Delete
+        // could therefore never remove a collapsed cut.
+        //
+        // Right-click is the gesture that fits. W11 ruled a single click must
+        // yield to the lane under the pointer, so selecting on left-click is
+        // out; a right-click already reaches a fold from anywhere, and
+        // selecting the thing you just right-clicked is what every other app
+        // does. It also makes the menu act on something visibly chosen rather
+        // than on an invisible hit test.
+        onSelectFold(cut.id)
         let menu = NSMenu()
         let item = NSMenuItem(title: "Remove Cut",
                               action: #selector(handleRemoveCutMenuItem(_:)),
