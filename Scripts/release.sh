@@ -62,6 +62,7 @@ REPO="impressiver/snitt"
 # carries a marked one between releases, which the guard below refuses. The
 # precedent is SNITT_FAKE_TEAM_IDENTIFIER_LINE; a real release never sets this.
 VERSION_SOURCE="${SNITT_VERSION_SOURCE:-Sources/SnittDocument/AppVersion.swift}"
+CASK_SOURCE="Casks/snitt.rb"
 DEFAULT_BRANCH="main"
 
 VERSION=""
@@ -160,6 +161,18 @@ bump_to_next_dev() {
     git rebase --abort 2>/dev/null || true
     return 1
   fi
+  # The Homebrew cask carries the version and the hash of the release, and
+  # nothing else would notice them going stale — a cask a release forgot to
+  # update installs the PREVIOUS version, silently, for everyone who uses it.
+  # Updated in the same commit as the version bump so the two cannot diverge.
+  if [ -f "$CASK_SOURCE" ]; then
+    local digest
+    digest="$(shasum -a 256 "$ZIP" | awk '{print $1}')"
+    sed -i '' "s/^  version \".*\"$/  version \"$VERSION\"/" "$CASK_SOURCE"
+    sed -i '' "s/^  sha256 \".*\"$/  sha256 \"$digest\"/" "$CASK_SOURCE"
+    git add "$CASK_SOURCE" || return 1
+  fi
+
   # Anchored on the exact released version, so this cannot rewrite a file
   # somebody edited in the meantime to say something else.
   local pattern="public static let marketing = \"$VERSION\""

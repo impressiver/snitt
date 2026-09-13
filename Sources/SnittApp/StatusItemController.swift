@@ -4,6 +4,7 @@
 //
 // Copyright © 2026 Ian White.
 
+import SnittBrand
 import AppKit
 import Foundation
 import SnittCapture
