@@ -4,6 +4,7 @@
 //
 // Copyright © 2026 Ian White.
 
+import SnittExport
 import SwiftUI
 import SnittDocument
 
@@ -14,13 +15,45 @@ struct ExportRequest: Equatable {
     var resolution: ExportResolution = .source
     var destination: URL
     var drawClicks: Bool = false
+    /// A ceiling the export must fit under, or nil for none.
+    ///
+    /// The sheet does not offer this — a person picking a resolution by hand
+    /// is choosing quality, not a byte budget. It exists for the destination
+    /// presets, where the budget is the whole point: "GitHub" means 10 MB
+    /// before it means anything else.
+    var maxSizeBytes: Int?
 
     /// `drawClicks` defaults off so the previews and tests that construct a
     /// request directly are unaffected; the editor passes Playback ▸ Show
     /// Clicks through, so the sheet opens agreeing with the menu.
-    init(destination: URL, drawClicks: Bool = false) {
+    init(destination: URL, drawClicks: Bool = false, maxSizeBytes: Int? = nil) {
         self.destination = destination
         self.drawClicks = drawClicks
+        self.maxSizeBytes = maxSizeBytes
+    }
+
+    /// The request that puts a recording somewhere specific.
+    ///
+    /// Everything the preset knows becomes one of the three settings the
+    /// exporter already takes, so this adds no export machinery — it is a
+    /// translation, and the size ladder does the work.
+    ///
+    /// The filename carries the destination, because these are made to be
+    /// posted and a folder of `demo.mp4`, `demo-1.mp4`, `demo-2.mp4` does not
+    /// say which one is the small one.
+    static func forDestination(_ destination: ExportDestination,
+                               basedOn url: URL,
+                               drawClicks: Bool) -> ExportRequest {
+        let stem = url.deletingPathExtension().lastPathComponent
+        let named = url.deletingLastPathComponent()
+            .appendingPathComponent("\(stem)-\(destination.id)")
+            .appendingPathExtension(destination.format)
+        var request = ExportRequest(destination: named,
+                                    drawClicks: drawClicks,
+                                    maxSizeBytes: destination.maxSizeBytes)
+        request.resolution = destination.resolution
+        request.setFormat(destination.format)
+        return request
     }
 
     /// Changing the format renames the file, because a `.mp4` holding a GIF

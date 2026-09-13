@@ -5,6 +5,7 @@
 // Copyright © 2026 Ian White.
 
 import AppKit
+import SnittExport
 import Foundation
 import SnittCapture
 import SnittDocument
@@ -494,6 +495,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppDelegate.presentMessage(KeyboardShortcutRegistry.helpText)
     }
 
+    /// File ▸ Share… — hands the exported recording to macOS's share sheet.
+    @objc func shareDocument(_ sender: Any?) {
+        focusedEditor?.share()
+    }
+
+    /// File ▸ Export for ▸ <destination>.
+    ///
+    /// Resolved from the sender's `representedObject` rather than its title,
+    /// so renaming a menu entry cannot silently retarget the export.
+    @objc func exportForDestination(_ sender: Any?) {
+        guard let id = (sender as? NSMenuItem)?.representedObject as? String,
+              let destination = ExportDestination.named(id),
+              let editor = focusedEditor else { return }
+        editor.exportFor(destination)
+    }
+
     @objc func exportDocument(_ sender: Any?) {
         guard let editor = EditorWindowController.openEditors.first(where: {
             $0.window == NSApp.keyWindow
@@ -682,7 +699,13 @@ extension AppDelegate: NSMenuItemValidation {
             menuItem.state = (editor?.showsClicks ?? false) ? .on : .off
             return editor != nil
         }
-        if menuItem.action == #selector(exportDocument(_:)) {
+        // Export, Export for, and Share all resolve their editor from the KEY
+        // window and all do nothing without one. Grouped rather than repeated:
+        // three copies of this rule is three places for one of them to drift
+        // into offering an action it then silently declines.
+        if menuItem.action == #selector(exportDocument(_:))
+            || menuItem.action == #selector(exportForDestination(_:))
+            || menuItem.action == #selector(shareDocument(_:)) {
             return EditorWindowController.openEditors.contains { $0.window == NSApp.keyWindow }
         }
         guard menuItem.action == #selector(cutTimelineSelection(_:)) else { return true }

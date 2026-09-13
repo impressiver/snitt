@@ -5,6 +5,7 @@
 // Copyright © 2026 Ian White.
 
 import AppKit
+import SnittExport
 
 /// The application shell: activation policy and main menu (§4.14, D45).
 ///
@@ -108,6 +109,30 @@ enum AppShell {
                                 action: #selector(AppDelegate.exportDocument(_:)),
                                 keyEquivalent: "e")
         menu.addItem(export)
+
+        // "Export for…" — one click to a file the destination will actually
+        // accept, copied to the clipboard, with no sheet in between. The sheet
+        // above is for choosing; this is for the case where the choice is
+        // already made by where it is going.
+        let forItem = NSMenuItem(title: "Export for", action: nil, keyEquivalent: "")
+        let forMenu = NSMenu(title: "Export for")
+        for destination in ExportDestination.all {
+            let entry = NSMenuItem(title: destination.name,
+                                   action: #selector(AppDelegate.exportForDestination(_:)),
+                                   keyEquivalent: "")
+            // The id, not the index: a menu that reordered would otherwise
+            // export to a different place than the one that was clicked.
+            entry.representedObject = destination.id
+            forMenu.addItem(entry)
+        }
+        forItem.submenu = forMenu
+        menu.addItem(forItem)
+
+        // macOS's own share sheet, beside Export, as QuickTime has it.
+        let share = NSMenuItem(title: "Share…",
+                               action: #selector(AppDelegate.shareDocument(_:)),
+                               keyEquivalent: "")
+        menu.addItem(share)
         menu.addItem(.separator())
 
         menu.addItem(withTitle: "Close",
