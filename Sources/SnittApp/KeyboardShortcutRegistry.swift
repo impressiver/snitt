@@ -57,6 +57,8 @@ public enum KeyboardShortcutRegistry {
 
     /// Named once so the menu and its tests cannot disagree about the wording.
     public static let showClicksTitle = "Show Clicks"
+    public static let showSubtitlesTitle = "Show Subtitles"
+    public static let showMarkersTitle = "Show Markers"
 
     public static let shortcuts: [KeyboardShortcut] = [
         .init(title: "Play / Pause", key: " ", modifiers: [], menu: .playback,
@@ -76,6 +78,16 @@ public enum KeyboardShortcutRegistry {
               modifiers: [.command, .shift], menu: .playback,
               selector: #selector(AppDelegate.toggleShowClicks(_:)),
               startsGroup: true),
+        // ⇧⌘S and ⇧⌘M, beside Show Clicks because they are the same kind of
+        // thing: what is drawn OVER the recording. Plain ⌘S and ⌘M are Save
+        // and Minimize; the shifted forms are unclaimed, and
+        // `shortcutsDoNotCollide` is what proves that rather than this comment.
+        .init(title: showSubtitlesTitle, key: "s",
+              modifiers: [.command, .shift], menu: .playback,
+              selector: #selector(AppDelegate.toggleShowSubtitles(_:))),
+        .init(title: showMarkersTitle, key: "m",
+              modifiers: [.command, .shift], menu: .playback,
+              selector: #selector(AppDelegate.toggleShowMarkers(_:))),
     ]
 
     /// Builds the Playback menu from `shortcuts`, so an item cannot exist

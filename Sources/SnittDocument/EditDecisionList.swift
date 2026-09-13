@@ -218,21 +218,32 @@ public struct EditDecisionList: Codable, Sendable {
     /// thing it protects; the honest trade is that an old build round-tripping
     /// a bundle resets this flag to false.
     public var showClicks: Bool
+    /// Whether captions from the transcript are drawn — in playback, and
+    /// therefore as the export's default. Same reasoning as `showClicks`, and
+    /// the same additive, no-version-bump treatment.
+    public var showSubtitles: Bool
+    /// Whether marker banners are drawn.
+    public var showMarkers: Bool
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, cuts, trackStates, crop, showClicks
+        case showSubtitles, showMarkers
     }
 
     public init(schemaVersion: Int = EditDecisionList.currentSchemaVersion,
                 cuts: [Cut] = [],
                 trackStates: [TrackState] = [],
                 crop: CropRect? = nil,
-                showClicks: Bool = false) {
+                showClicks: Bool = false,
+                showSubtitles: Bool = false,
+                showMarkers: Bool = false) {
         self.schemaVersion = schemaVersion
         self.cuts = cuts
         self.trackStates = trackStates
         self.crop = crop
         self.showClicks = showClicks
+        self.showSubtitles = showSubtitles
+        self.showMarkers = showMarkers
     }
 
     /// Custom rather than synthesized so `schemaVersion` can be checked
@@ -263,6 +274,8 @@ public struct EditDecisionList: Codable, Sendable {
         // existed has no key, and those must keep opening — defaulted off
         // rather than refused.
         self.showClicks = try container.decodeIfPresent(Bool.self, forKey: .showClicks) ?? false
+        self.showSubtitles = try container.decodeIfPresent(Bool.self, forKey: .showSubtitles) ?? false
+        self.showMarkers = try container.decodeIfPresent(Bool.self, forKey: .showMarkers) ?? false
     }
 
     /// Custom rather than synthesized so a WRITE always declares the version
@@ -302,6 +315,8 @@ public struct EditDecisionList: Codable, Sendable {
         // ever asked for rings — and a bundle from before this field keeps
         // round-tripping byte-identical while the flag is off.
         if showClicks { try container.encode(true, forKey: .showClicks) }
+        if showSubtitles { try container.encode(true, forKey: .showSubtitles) }
+        if showMarkers { try container.encode(true, forKey: .showMarkers) }
     }
 
     /// The default EDL for a fresh recording: nothing cut, nothing muted.

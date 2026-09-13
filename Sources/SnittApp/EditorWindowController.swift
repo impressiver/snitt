@@ -66,6 +66,22 @@ final class EditorTimelineState: ObservableObject {
         guard showClicks else { return [] }
         return ClickOverlay.unitMarks(events: events, keptRanges: controller.keptRanges)
     }
+
+    var showSubtitles: Bool { edl.showSubtitles }
+    var showMarkers: Bool { edl.showMarkers }
+
+    /// Captions for the player, empty when the toggle is off or nothing was
+    /// transcribed. Derived rather than stored, so a cut re-flows them the
+    /// same way it re-flows the click marks.
+    var subtitleCues: [SubtitleCue] {
+        guard showSubtitles, let transcript else { return [] }
+        return SubtitleCues.cues(words: transcript.words, keptRanges: controller.keptRanges)
+    }
+
+    var markerBanners: [MarkerBanner] {
+        guard showMarkers else { return [] }
+        return MarkerBanners.banners(events: events, keptRanges: controller.keptRanges)
+    }
     /// What the toolbar names this document, and how many editable things are
     /// in it. Set by the controller, which is the only thing that knows the
     /// bundle it opened.
@@ -1298,6 +1314,18 @@ final class EditorTimelineState: ObservableObject {
         applyAndSave(.saveOnly)
     }
 
+    func setShowSubtitles(_ enabled: Bool) {
+        guard edl.showSubtitles != enabled else { return }
+        edl.showSubtitles = enabled
+        applyAndSave(.saveOnly)
+    }
+
+    func setShowMarkers(_ enabled: Bool) {
+        guard edl.showMarkers != enabled else { return }
+        edl.showMarkers = enabled
+        applyAndSave(.saveOnly)
+    }
+
     private func applyAndSave(_ application: EDLApplication = .rebuild) {
         // Marked here, synchronously, NOT inside the save task below. The EDL
         // has already changed by the time this is called, and a user who cuts
@@ -1579,7 +1607,10 @@ struct EditorContentView: View {
                     dragStartWidth = nil
                     paneWidths.save()
                 }
-                PlayerLayerView(player: controller.player, clickMarks: state.clickMarks)
+                PlayerLayerView(player: controller.player,
+                                clickMarks: state.clickMarks,
+                                cues: state.subtitleCues,
+                                banners: state.markerBanners)
                     .frame(minWidth: EditorWindowController.minimumPlayerSize.width,
                            minHeight: EditorWindowController.minimumPlayerSize.height)
                     .overlay {
@@ -2223,9 +2254,13 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// already uses. Persisted through the ordinary EDL save path so it is
     /// undoable and survives closing the window.
     public func setShowClicks(_ enabled: Bool) { state.setShowClicks(enabled) }
+    public func setShowSubtitles(_ enabled: Bool) { state.setShowSubtitles(enabled) }
+    public func setShowMarkers(_ enabled: Bool) { state.setShowMarkers(enabled) }
 
-    /// What the menu's checkmark reads.
+    /// What the menu's checkmarks read.
     public var showsClicks: Bool { state.edl.showClicks }
+    public var showsSubtitles: Bool { state.edl.showSubtitles }
+    public var showsMarkers: Bool { state.edl.showMarkers }
 
     public func togglePlayback() { state.togglePlayback() }
     public func rewindToStart() { state.rewind() }
