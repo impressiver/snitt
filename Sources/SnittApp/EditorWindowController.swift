@@ -2255,6 +2255,93 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// builder") actually asks for: this is the EDL the on-screen preview was
     /// built from, not a second, separately-sourced one that merely usually
     /// matches it.
+    /// File ▸ Share — macOS's own share sheet, the way QuickTime does it.
+    ///
+    /// Deliberately the SYSTEM picker rather than a list Snitt maintains:
+    /// whatever the person has set up — AirDrop, Messages, Mail, a third-party
+    /// extension — is already there and stays right without Snitt tracking it.
+    /// The destination presets answer "make me a file this place accepts";
+    /// this answers "send it", and they are different questions.
+    ///
+    /// A recording must be EXPORTED before it can be shared, because the only
+    /// file that otherwise exists is `capture.mov` — raw, untrimmed, and not
+    /// what anyone means by "share this". Since a source export copies its
+    /// samples rather than re-encoding, that is fast enough not to feel like a
+    /// step.
+    func share() {
+        let stem = state.defaultExportURL.deletingPathExtension().lastPathComponent
+        let temporary = FileManager.default.temporaryDirectory
+            .appendingPathComponent(stem)
+            .appendingPathExtension("mp4")
+        var request = ExportRequest(destination: temporary,
+                                    drawClicks: state.edl.showClicks)
+        request.resolution = .source
+
+        Task { @MainActor in
+            do {
+                // Shares the EDITED recording, and copies it too, so the
+                // clipboard and the share sheet cannot disagree about what
+                // "this recording" currently means.
+                try await performExport(request, pasteboard: .general)
+                self.presentSharePicker(for: temporary)
+            } catch {
+                self.presentExportFailure(error)
+            }
+        }
+    }
+
+    private func presentSharePicker(for url: URL) {
+        guard let anchor = window.contentView else { return }
+        NSApp.activate()
+        let picker = NSSharingServicePicker(items: [url])
+        // Anchored under the top-trailing corner, where the toolbar's own
+        // controls sit — the place a share sheet comes from in every other
+        // Mac app, so it does not appear to belong to the timeline.
+        let rect = NSRect(x: anchor.bounds.maxX - 60, y: anchor.bounds.maxY - 8,
+                          width: 1, height: 1)
+        picker.show(relativeTo: rect, of: anchor, preferredEdge: .minY)
+    }
+
+    /// File ▸ Export for ▸ <destination>: export to a file that place will
+    /// accept, and put it on the clipboard.
+    ///
+    /// No save panel. The sheet exists for choosing settings, and here the
+    /// settings are already decided by where it is going — asking again would
+    /// be a dialog whose every field is already answered.
+    ///
+    /// A recording longer than the destination allows is exported ANYWAY and
+    /// reported. Trimming to fit would destroy content to satisfy somebody
+    /// else's policy, and the person would find out by watching their own demo
+    /// stop mid-sentence; a file that is too long is at least a file they can
+    /// look at and decide about.
+    func exportFor(_ destination: ExportDestination) {
+        let request = ExportRequest.forDestination(destination,
+                                                   basedOn: state.defaultExportURL,
+                                                   drawClicks: state.edl.showClicks)
+        Task { @MainActor in
+            do {
+                try await performExport(request, pasteboard: .general)
+                if destination.exceedsDuration(self.controller.durationSeconds) {
+                    self.presentDurationWarning(for: destination)
+                } else {
+                    self.presentExportSuccess()
+                }
+            } catch {
+                self.presentExportFailure(error)
+            }
+        }
+    }
+
+    private func presentDurationWarning(for destination: ExportDestination) {
+        let limit = Int((destination.maxDurationSeconds ?? 0).rounded())
+        let allowed = "\(limit / 60)m \(limit % 60)s"
+        AppDelegate.presentMessage(
+            "Exported and copied — but this recording is longer than "
+            + "\(destination.name) accepts (\(allowed)).\n\n"
+            + "Snitt did not shorten it. Trim it yourself and export again, "
+            + "or post it somewhere without that limit.")
+    }
+
     func performExport(_ request: ExportRequest) {
         Task { @MainActor in
             do {
@@ -2310,6 +2397,7 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         _ = try await MovieExporter.export(
             bundle: bundle, edl: state.edl, scale: 1.0,
             to: request.destination, format: request.format,
+            maxSizeBytes: request.maxSizeBytes,
             resolution: request.resolution, clicks: request.drawClicks)
         if !ClipboardDestination.copy(fileURL: request.destination, to: pasteboard) {
             // The export itself succeeded — the file the user asked for

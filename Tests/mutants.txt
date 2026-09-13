@@ -234,3 +234,9 @@ TranscriberSpeechTests :: Sources/SnittApp/Transcriber.swift :: guard let audioU
 # carries a timing (20 of 20 on a real recording), so the guard never rejects
 # anything and no test can distinguish it. It stays as defence against a
 # preset change, which the preset mutant above already covers.
+
+# Export for a destination, and Share.
+ExportDestinationTests :: Sources/SnittExport/ExportDestination.swift :: maxSizeBytes: 10_000_000, maxDurationSeconds: nil, :: maxSizeBytes: 100_000_000, maxDurationSeconds: nil,
+ExportForDestinationTests :: Sources/SnittApp/ExportSheet.swift :: maxSizeBytes: destination.maxSizeBytes) :: maxSizeBytes: nil)
+ExportForDestinationTests :: Sources/SnittApp/ExportSheet.swift :: request.setFormat(destination.format) :: let _ = destination.format
+ExportDestinationTests :: Sources/SnittExport/ExportDestination.swift :: return seconds > limit :: return false
