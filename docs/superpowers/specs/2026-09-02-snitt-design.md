@@ -1054,6 +1054,38 @@ D84 and D86 left this section on 2026-09-09 once their real cost was measured.
   `CompositionBuilder`, `TimelineView`, `TranscriptPane`,
   `EditorWindowController`, `AutomationHost` and `RecordingIcon` all still read
   `KeptRanges` directly. `absent: GainEnvelope` (D91).
+- **D96 — estimate a GIF's size by encoding a sample of frames.** Take about
+  ten frames spread across the timeline, encode just those as a GIF, and
+  extrapolate to the full export. Requested 2026-09-13.
+
+  *Why it fits.* `ExportEstimator` refuses GIF outright today and says why —
+  "GIF size tracks how much the picture MOVES rather than how long it runs" —
+  so the export sheet shows no estimate at all for the one format whose size
+  is hardest to guess. Sampling is the same move `MovieExporter.exportSlice`
+  already makes for mp4, which exists "so a size can be MEASURED rather than
+  modelled", and spreading the samples is what captures average motion rather
+  than one quiet second.
+
+  *The objection that does NOT apply, checked rather than assumed:* scattered
+  frames would normally compress worse than consecutive ones, biasing an
+  extrapolation high. Not here — `EstimateError`'s own text records that these
+  frames "carry no interframe compression", so per-frame cost is roughly
+  independent of neighbours and the extrapolation is defensible.
+
+  *The one that does:* ImageIO builds a SINGLE global colour map across every
+  frame — `GIFWritePlugin::writeAllFramesWithGlobalColorMap`, the same fact
+  behind the 2026-09-13 crash. A palette fitted to ten frames is a better fit
+  for each of them than a palette that must cover three hundred, so the sample
+  will likely come out smaller per frame than the real export. That is a
+  calibration factor, and it has to be MEASURED against real exports rather
+  than reasoned about — the direction is predictable, the magnitude is not.
+
+  *Two constraints on the sample itself.* It must be encoded at the scale the
+  export will actually use, after `GIFExporter.maximumWidth` clamps it, or it
+  describes a different file. And it must stay bounded: GIF encoding is what
+  crashed the app, and an estimate that runs on every format change is exactly
+  where an unbounded encode would hurt most. `absent: GIFSizeEstimator` (D91).
+
 - **D95 — an opt-in that lets an agent record with nobody at the keyboard.**
   Requested 2026-09-13. The use case is real and specific: a remote-control
   session where an agent is working a machine no one is sitting at, and the
@@ -1691,6 +1723,7 @@ window-relative overlay. **Zoom + follow-mouse is per *segment*, and segments do
 | D93 | **Recording a voiceover after the fact, in the editor** — queued, not ranked | Product-owner direction, 2026-09-12. Recorded because a decision-log entry alone is invisible to planning (§13's queued section exists for exactly this). **Not "another mic track", and that is the whole cost.** §4.5 makes `capture.mov` immutable, so a voiceover cannot be mixed into it — it is a new asset beside the existing tracks, and `AudioTrackOrder.canonical` is a fixed `[systemAudio, microphone]` order that `MicrophoneTrackExtractor` indexes BY NAME, so a third track must join that vocabulary or transcription silently reads the wrong one. The genuinely new problem is time: a voiceover is spoken against OUTPUT time while every other track lives in SOURCE time, so a later cut has to decide whether the narration moves with the picture or stays where it was said — the first case in `Timebase` with no obvious right answer. It also lands on `PassthroughEligibility` (an added track means an audio mix, so exports stop copying samples) and forces transcription to choose between two spoken tracks. **What it unblocks is the reason to want it**: an agent-made recording can never have narration today, and this is the only route to one | §4.5, §7, D64, D83, D89, D91; `AudioTrackOrder`, `MicrophoneTrackExtractor`, `PassthroughEligibility` | Queued (not ranked) | narration-is-a-new-track-in-output-time-not-a-second-mic |
 | D94 | **An on-device generated title for a recording** — queued, deferred after measurement | Panel proposal (2026-09-12 refinement), built as far as a probe and then stopped on the numbers. `FoundationModels` is genuinely available — `SystemLanguageModel.default.availability` reports `.available`, 23 languages, on macOS 26.5.2 — and a `@Generable` title over a real transcript took 6.65s alone, 10.83s with git context, returning "SoundCloud Song Search" against a bare "SoundCloud" depending on how much context it was given. **Deferred because the floor is already earned without it**: D77's macOS 26 requirement is paid for by the `SpeechAnalyzer` port, which deleted 132 lines and found six more words, so this no longer has to justify the platform floor and can be judged on its own merits. On those merits it is not ready. A confidently wrong title is WORSE than the timestamp it replaces, because a timestamp is not trusted and a name is — so it needs a transcript-length floor or a confidence gate first. It is also the first non-reproducible artifact in a format whose §7 pitch is that everything re-derives from immutable inputs, so the result has to be stored in `meta.json` rather than recomputed, and ~10s cannot sit on the stop path. Recorded rather than dropped: the capability is real and the measurements are the expensive part of deciding | §5, §7, §4.6, D62, D77, D91; `FoundationModels`, `RecordingMetadata`, `BundleNaming` | Queued (deferred) | a-confidently-wrong-name-is-worse-than-a-timestamp |
 | D95 | **An opt-in allowing agent recording with nobody at the keyboard** — queued, not designed | Product-owner request, 2026-09-13, for remote-control sessions where an agent works an unattended machine and the recording is how anyone sees what it did. **The capability is already built**: D42 routes every target through `PickerTargetResolver` unconditionally, but `CachedTargetResolver` still constructs an `SCContentFilter` by enumerating `SCShareableContent` with no picker, and `CaptureTarget`'s deprecation text names it "the bypass path (§5.2)" for headless callers. So this is a consent decision, not a feature to invent. **It partially reopens §5.4** and must be read against it: that section deleted a persistent per-application grant, and its staleness objection still holds — a standing grant cannot know what the target shows six weeks later, which is §5.1's incidental-leak class, and unattended is exactly when nobody is watching. Its spoofing objection is now answerable, since the automation socket reads the caller's signing identity (2026-09-12), so a grant can bind to a signature rather than a bundle id — which is the "access-control grounds" §5.4 itself said such scoping would need. **The limit no opt-in removes**: macOS re-prompts for Screen Recording periodically and that prompt needs a human, so the feature must degrade honestly at that moment rather than fail silently mid-session. §5.3's indicator, the default-off global opt-in, the session cap and the kill switch all stay | §5.1, §5.3, §5.4, §5.5, D42, D91; `CachedTargetResolver`, `PeerIdentity`, `ConsentPolicy` | Queued (not designed) | the-picker-is-policy-not-capability |
+| D96 | **Estimate a GIF's size by encoding ~10 sampled frames and extrapolating** — queued, not designed | Product-owner request, 2026-09-13. `ExportEstimator` refuses GIF today and says why — GIF size tracks how much the picture MOVES rather than how long it runs — so the sheet shows no estimate for the one format whose size is hardest to guess. Sampling is the same move `exportSlice` already makes for mp4 ("so a size can be MEASURED rather than modelled"), and spreading the samples captures average motion instead of one quiet second. **The obvious objection does not apply, and that was checked**: scattered frames would normally compress worse than consecutive ones and bias the estimate high, but `EstimateError`'s own text records that these frames "carry no interframe compression", so per-frame cost is roughly independent of neighbours. **The objection that does apply** is the global colour map — ImageIO fits ONE palette across every frame, the same fact behind the 2026-09-13 GIF crash, so a palette fitted to ten frames suits each better than one covering three hundred and the sample will likely under-report. That is a calibration factor to MEASURE against real exports, not to reason out: the direction is predictable, the magnitude is not. The sample must also be encoded at the post-`GIFExporter.maximumWidth` scale, or it describes a different file, and must stay bounded — GIF encoding is what crashed the app | §8, D91; `ExportEstimator`, `GIFExporter`, `ExportPreflight` | Queued (not designed) | measure-a-sample-then-calibrate-the-palette-effect |
 
 `conformance: 2026-09-07` (post-D66 refinement pass)
 
