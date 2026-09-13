@@ -68,6 +68,31 @@ struct ExportForDestinationTests {
         #expect(!ExportRequest.forDestination(.github, basedOn: base, drawClicks: false).drawClicks)
     }
 
+    @Test("The sheet's overlay toggles are seeded from the document")
+    func overlayTogglesFollowTheDocument() {
+        // Opening the sheet must agree with what the editor was showing —
+        // three separate flags, so a request that carried one for all three
+        // would tick boxes nobody asked for.
+        let request = ExportRequest(destination: base, drawClicks: true,
+                                    drawSubtitles: true, drawMarkers: false)
+        #expect(request.drawClicks)
+        #expect(request.drawSubtitles)
+        #expect(!request.drawMarkers)
+    }
+
+    @Test("A destination export carries every overlay it was given")
+    func destinationCarriesOverlays() {
+        // The presets go through their own constructor, so they are their own
+        // chance to drop one of the three silently.
+        let request = ExportRequest.forDestination(.github, basedOn: base,
+                                                   drawClicks: false,
+                                                   drawSubtitles: true,
+                                                   drawMarkers: true)
+        #expect(request.drawSubtitles)
+        #expect(request.drawMarkers)
+        #expect(!request.drawClicks)
+    }
+
     @Test("An ordinary export has no size ceiling")
     func plainRequestsAreUnconstrained() {
         // The ceiling belongs to the presets. A person choosing a resolution

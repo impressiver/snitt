@@ -225,6 +225,24 @@ public enum MovieExporter {
                                   to outputURL: URL,
                                   maxSizeBytes: Int?) async throws
         -> (built: BuiltComposition, scale: Double, fps: Double, byteSize: Int, sizeMet: Bool) {
+        // Clamp the scale before a single frame is generated. A GIF at Retina
+        // capture size cannot be encoded at all — ImageIO quantises every
+        // frame together inside `CGImageDestinationFinalize` and runs out of
+        // address space — so this is a correctness bound, not a preference.
+        // See `GIFExporter.maximumWidth`.
+        //
+        // Measured from a build rather than from the asset: the render size is
+        // what the encoder actually sees, and it already accounts for the
+        // crop, the preferred transform and the requested scale. Building is
+        // cheap next to encoding, and the second build only happens when the
+        // first was too wide to encode at all.
+        var scale = scale
+        let probe = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: scale)
+        let probeWidth = probe.videoComposition.renderSize.width
+        if probeWidth > GIFExporter.maximumWidth {
+            scale *= GIFExporter.maximumWidth / probeWidth
+        }
+
         guard let maxSizeBytes else {
             // No target: one GIF at the base frame rate and the requested
             // scale, no ladder walked at all.
