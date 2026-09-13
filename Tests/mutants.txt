@@ -221,3 +221,16 @@ TranscriptPanePresentationTests :: Sources/SnittApp/TranscriptPanePresentation.s
 TranscriptPanePresentationTests :: Sources/SnittApp/TranscriptPanePresentation.swift :: return wordCount == 0 ? .noSpeechFound : .transcript :: return .noSpeechFound
 TranscriptPanePresentationTests :: Sources/SnittApp/TranscriptPanePresentation.swift :: guard hasTranscript else { return .unavailable } :: if false { return .unavailable }
 TranscriptPanePresentationTests :: Sources/SnittApp/TranscriptPanePresentation.swift :: case .failed(let message): return .failed(message) :: case .failed: return .failed("")
+
+# Transcription on SpeechAnalyzer (macOS 26).
+# The transcriber loses time indexing, so the transcript stops being a seek
+# index and an edit surface while still reading correctly as text.
+TranscriberSpeechTests :: Sources/SnittApp/Transcriber.swift :: preset: .timeIndexedTranscriptionWithAlternatives :: preset: .transcription
+# A recording with no microphone track claims it was listened to and heard
+# silence — the pane would say "no speech found" for a mic that was never on.
+TranscriberSpeechTests :: Sources/SnittApp/Transcriber.swift :: guard let audioURL = try await MicrophoneTrackExtractor.extract(from: bundle) else { :: let audioURL = try await MicrophoneTrackExtractor.extract(from: bundle) ?? URL(fileURLWithPath: "/dev/null"); if false {
+# NOT listed: replacing the `audioTimeRange` guard with a zero-duration
+# fallback. Measured equivalent — with the time-indexed preset every run
+# carries a timing (20 of 20 on a real recording), so the guard never rejects
+# anything and no test can distinguish it. It stays as defence against a
+# preset change, which the preset mutant above already covers.
