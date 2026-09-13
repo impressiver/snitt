@@ -311,7 +311,7 @@ func bundleOmitsErrorFilePaths() async throws {
     // `appendAudit` must never fail the recording it describes (see its doc
     // comment): a session that recorded successfully but could not be
     // audited must still report `.started`.
-    let started = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.example.App")))
+    let started = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.example.App")), caller: nil)
     guard case .started = started else {
         Issue.record("expected a started response despite the audit append failing, got \(started)")
         return

@@ -209,12 +209,18 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// Since `AuditLog` is append-only JSONL, this is the FIRST of two
     /// records sharing `sessionID` — `recordSessionEnd` appends the second
     /// once the session ends, rather than rewriting this one in place.
-    private func recordSessionStart(sessionID: String, target: String) async {
+    private func recordSessionStart(sessionID: String, target: String,
+                                    caller: PeerIdentity?) async {
         let startedAt = now()
         await auditSessions.remember(sessionID, target: target, startedAt: startedAt)
         appendAudit(AuditRecord(sessionID: sessionID,
                                 target: target,
                                 initiator: Initiator.agent.rawValue,
+                                // nil when the kernel would not say. Left nil
+                                // rather than filled with "unknown": a reader
+                                // must be able to tell an unattributable
+                                // request from an attributed one.
+                                caller: caller?.auditDescription,
                                 startedAt: startedAt))
     }
 
@@ -280,7 +286,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         server = nil
     }
 
-    func handle(_ body: AutomationRequest.Body) async -> AutomationResponse {
+    func handle(_ body: AutomationRequest.Body,
+                caller: PeerIdentity?) async -> AutomationResponse {
         switch body {
         case .handshake:
             return .handshake(HandshakeInfo(protocolVersion: AutomationProtocol.version,
@@ -296,7 +303,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             return await listTargets()
 
         case .startRecording(let options):
-            return await start(options)
+            return await start(options, caller: caller)
 
         case .stopRecording(let sessionID):
             return await stop(sessionID)
@@ -317,6 +324,17 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             return await reportInput(sessionID: sessionID, kind: kind, x: x, y: y, label: label)
 
         case .inspect(let path):
+            // Gated now, and the comment on `inspect` explaining why it was
+            // NOT gated is answered there. Reading a bundle returns the
+            // transcript and the input-event log — including keystroke timing
+            // and click coordinates — so it is a disclosure verb, not a
+            // neutral one, and it was reachable by any same-user process.
+            guard policy().allowsAgentAccess else {
+                return .failure(AutomationError(
+                    code: .consentRequired,
+                    message: "Agent access is off, so Snitt will not read recordings for an agent.",
+                    hint: "Turn on \"Allow agent recording\" in Snitt's menu or Settings."))
+            }
             return inspect(bundlePath: path)
 
         case .trim(let bundlePath, let start, let end, let auto):
@@ -771,9 +789,22 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// exactly how M3a's health block silently reported nothing on every
     /// real machine. The app wrote the file and can always read it.
     ///
-    /// Deliberately NOT gated by `ConsentPolicy`: reading a bundle the agent
-    /// was handed the path to discloses nothing it did not already have, and
-    /// gating it would make an agent unable to describe its own recording.
+    /// **Now gated by `ConsentPolicy`.** It used to say: "reading a bundle the
+    /// agent was handed the path to discloses nothing it did not already have,
+    /// and gating it would make an agent unable to describe its own recording."
+    ///
+    /// The first half assumed the caller had been handed the path, and the
+    /// socket cannot establish that — it accepted any same-user process, which
+    /// could pass any path it could guess or enumerate. What comes back is the
+    /// transcript and the input-event log, including keystroke timing and click
+    /// coordinates, read through an app holding a Files-and-Folders grant the
+    /// caller may not have. That is a disclosure verb reached through a deputy.
+    ///
+    /// The second half still holds and is why the gate is `agentRecordingEnabled`
+    /// rather than something stricter: when agent access is ON, the agent that
+    /// made the recording can still describe it, which is the case the original
+    /// comment was protecting. When it is OFF, nothing should be reading
+    /// recordings on an agent's behalf anyway.
     private func inspect(bundlePath: String) -> AutomationResponse {
         let bundle: SnittBundle
         do {
@@ -866,7 +897,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         }
     }
 
-    private func start(_ options: StartOptions) async -> AutomationResponse {
+    private func start(_ options: StartOptions,
+                       caller: PeerIdentity?) async -> AutomationResponse {
         if let refusal = policy().evaluate(options) { return .failure(refusal) }
 
         let maxDuration = policy().effectiveMaxDuration(options.maxDurationSeconds)
@@ -920,7 +952,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         case .started(let name, _):
             await pushState(.recording(startedAt: Date()))
             armWatchdog(sessionID: sessionID, after: maxDuration)
-            await recordSessionStart(sessionID: sessionID, target: name)
+            await recordSessionStart(sessionID: sessionID, target: name, caller: caller)
             return .started(sessionID: sessionID, target: name)
         default:
             try? await registry.close(sessionID)

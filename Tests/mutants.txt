@@ -205,3 +205,8 @@ ReleaseScriptTests :: Scripts/release.sh :: printf '%s.%s.0-dev\n' "$major" "$((
 # v0.5.0-dev, name every artifact after it, and ship an app telling every user
 # it is a development build.
 ReleaseScriptTests :: Scripts/release.sh :: bare="${VERSION%%-*}" :: bare="$VERSION"; if true; then :; else
+
+# The automation socket knows who is calling it.
+PeerIdentityTests :: Sources/SnittAutomation/PeerIdentity.swift :: guard getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &size) == 0, pid > 0 :: guard false
+PeerIdentityTests :: Sources/SnittAutomation/PeerIdentity.swift :: default: signature = "unsigned" :: default: signature = "\(signingIdentifier ?? "") (no team)"
+AutomationHostTests :: Sources/SnittApp/AutomationHost.swift :: guard policy().allowsAgentAccess else { :: if false {

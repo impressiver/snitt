@@ -21,7 +21,13 @@ final class SpyHandler: AutomationHandling, @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }; return _received
     }
 
-    func handle(_ body: AutomationRequest.Body) async -> AutomationResponse {
+    /// Records the caller too, so a round-trip test can assert the server
+    /// actually reads the peer rather than passing nil through.
+    private(set) var lastCaller: PeerIdentity?
+
+    func handle(_ body: AutomationRequest.Body,
+                caller: PeerIdentity?) async -> AutomationResponse {
+        lastCaller = caller
         record(body)
         return .status(StatusInfo(recording: false, sessionID: nil, elapsedSeconds: nil))
     }
