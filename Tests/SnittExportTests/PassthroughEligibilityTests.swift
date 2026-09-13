@@ -58,6 +58,16 @@ struct PassthroughEligibilityTests {
                 PassthroughEligibility.disqualifier(resolution: .source, maxSizeBytes: nil,
                                                     clicks: [], edl: self.edl(),
                                                     hasAudioMix: true) }),
+            ("burned-in subtitles", .burnedInText, {
+                var edl = self.edl(); edl.showSubtitles = true
+                return PassthroughEligibility.disqualifier(
+                    resolution: .source, maxSizeBytes: nil, clicks: [], edl: edl,
+                    hasAudioMix: false) }),
+            ("burned-in markers", .burnedInText, {
+                var edl = self.edl(); edl.showMarkers = true
+                return PassthroughEligibility.disqualifier(
+                    resolution: .source, maxSizeBytes: nil, clicks: [], edl: edl,
+                    hasAudioMix: false) }),
             ("built at a smaller scale", .scaled, {
                 PassthroughEligibility.disqualifier(resolution: .source, maxSizeBytes: nil,
                                                     clicks: [], edl: self.edl(),

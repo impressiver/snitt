@@ -17,29 +17,46 @@ public struct PlayerLayerView: NSViewRepresentable {
     /// Click positions as FRACTIONS of the picture, empty when clicks are off
     /// or the recording has none.
     public var clickMarks: [ClickMark]
+    public var cues: [SubtitleCue]
+    public var banners: [MarkerBanner]
 
-    public init(player: AVPlayer, clickMarks: [ClickMark] = []) {
+    public init(player: AVPlayer, clickMarks: [ClickMark] = [],
+                cues: [SubtitleCue] = [], banners: [MarkerBanner] = []) {
         self.player = player
         self.clickMarks = clickMarks
+        self.cues = cues
+        self.banners = banners
     }
 
     public func makeNSView(context: Context) -> PlayerLayerBackedView {
         let view = PlayerLayerBackedView()
         view.playerLayer.player = player
         view.clickMarks = clickMarks
+        view.cues = cues
+        view.banners = banners
         return view
     }
 
     public func updateNSView(_ nsView: PlayerLayerBackedView, context: Context) {
         if nsView.playerLayer.player !== player { nsView.playerLayer.player = player }
         nsView.clickMarks = clickMarks
+        nsView.cues = cues
+        nsView.banners = banners
     }
 }
 
 public final class PlayerLayerBackedView: NSView {
     let playerLayer = AVPlayerLayer()
     private let clickOverlay = ClickRingOverlayView()
+    private let textOverlay = OverlayTextView()
     private var timeObserver: Any?
+
+    var cues: [SubtitleCue] = [] {
+        didSet { textOverlay.cues = cues; refreshOverlayVisibility() }
+    }
+    var banners: [MarkerBanner] = [] {
+        didSet { textOverlay.banners = banners; refreshOverlayVisibility() }
+    }
 
     /// Marks to draw, and whether a time observer is needed at all.
     ///
@@ -51,8 +68,17 @@ public final class PlayerLayerBackedView: NSView {
         didSet {
             clickOverlay.marks = clickMarks
             clickOverlay.isHidden = clickMarks.isEmpty
-            clickMarks.isEmpty ? stopObservingTime() : startObservingTime()
+            refreshOverlayVisibility()
         }
+    }
+
+    /// One observer for all three overlays, attached only while at least one
+    /// has something to draw. Three observers would fire three redraws per
+    /// tick for a document using all three, and none of them cheap.
+    private func refreshOverlayVisibility() {
+        textOverlay.isHidden = cues.isEmpty && banners.isEmpty
+        let anything = !clickMarks.isEmpty || !cues.isEmpty || !banners.isEmpty
+        anything ? startObservingTime() : stopObservingTime()
     }
 
     public override init(frame: NSRect) {
@@ -67,6 +93,12 @@ public final class PlayerLayerBackedView: NSView {
         clickOverlay.frame = bounds
         clickOverlay.isHidden = true
         addSubview(clickOverlay)
+
+        textOverlay.videoRect = { [weak self] in self?.playerLayer.videoRect ?? .zero }
+        textOverlay.autoresizingMask = [.width, .height]
+        textOverlay.frame = bounds
+        textOverlay.isHidden = true
+        addSubview(textOverlay)
     }
 
     /// `AVPlayer` keeps its observers alive, so one left attached goes on
@@ -81,7 +113,7 @@ public final class PlayerLayerBackedView: NSView {
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window != nil, !clickMarks.isEmpty { startObservingTime() }
+        if window != nil { refreshOverlayVisibility() }
     }
 
     private func startObservingTime() {
@@ -93,6 +125,7 @@ public final class PlayerLayerBackedView: NSView {
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) {
             [weak self] time in
             self?.clickOverlay.currentTime = time.seconds
+            self?.textOverlay.currentTime = time.seconds
         }
     }
 
