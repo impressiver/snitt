@@ -210,3 +210,9 @@ ReleaseScriptTests :: Scripts/release.sh :: bare="${VERSION%%-*}" :: bare="$VERS
 PeerIdentityTests :: Sources/SnittAutomation/PeerIdentity.swift :: guard getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &size) == 0, pid > 0 :: guard false
 PeerIdentityTests :: Sources/SnittAutomation/PeerIdentity.swift :: default: signature = "unsigned" :: default: signature = "\(signingIdentifier ?? "") (no team)"
 AutomationHostTests :: Sources/SnittApp/AutomationHost.swift :: guard policy().allowsAgentAccess else { :: if false {
+# Passthrough export: copying samples is only correct when nothing changes a pixel.
+PassthroughEligibilityTests :: Sources/SnittExport/PassthroughEligibility.swift :: if hasAudioMix { return .audioMix } :: if false { return .audioMix }
+PassthroughEligibilityTests :: Sources/SnittExport/PassthroughEligibility.swift :: if let crop = edl.crop, !crop.isFullFrame { return .crop } :: if false { return .crop }
+PassthroughEligibilityTests :: Sources/SnittExport/PassthroughEligibility.swift :: if scale != 1.0 { return .scaled } :: if false { return .scaled }
+PassthroughEligibilityTests :: Sources/SnittExport/PassthroughEligibility.swift :: if !clicks.isEmpty { return .clickOverlay } :: if false { return .clickOverlay }
+CropTests :: Sources/SnittExport/MovieExporter.swift :: } ?? false :: } ?? true

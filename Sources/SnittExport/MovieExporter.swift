@@ -91,13 +91,39 @@ public enum MovieExporter {
         }
     }
 
+    /// `edl` is what decides whether the samples can simply be copied. Passed
+    /// in rather than derived from `built`, because by the time a composition
+    /// exists the crop and the gains have already been folded into it and the
+    /// question can no longer be asked of it.
+    ///
+    /// **Nil means re-encode, and that is deliberate.** It first defaulted to
+    /// an empty `EditDecisionList`, which reads as "no crop, no gain" — so a
+    /// caller that simply did not pass one was waved onto the fast path and had
+    /// its crop silently dropped. `CropTests` caught it immediately. Unknown
+    /// has to fail toward the slow, correct answer: the cost of re-encoding
+    /// unnecessarily is a second, and the cost of copying when you should not
+    /// is the wrong picture, exported quickly and without complaint.
     public static func exportMovie(_ built: BuiltComposition,
                                    to url: URL,
                                    maxSizeBytes: Int? = nil,
                                    clicks: [ClickMark] = [],
-                                   resolution: ExportResolution = .source) async throws {
+                                   resolution: ExportResolution = .source,
+                                   edl: EditDecisionList? = nil,
+                                   scale: Double = 1.0) async throws {
+        // Copy the samples when nothing in this export would change a pixel.
+        // Measured on a real 4112x2580 capture: 1.112s to re-encode, 0.023s to
+        // copy, and the decoded frames match. See `PassthroughEligibility`.
+        let canCopy = edl.map {
+            PassthroughEligibility.isEligible(resolution: resolution,
+                                              maxSizeBytes: maxSizeBytes,
+                                              clicks: clicks, edl: $0,
+                                              hasAudioMix: built.audioMix != nil,
+                                              scale: scale)
+        } ?? false
+        let preset = canCopy ? AVAssetExportPresetPassthrough : presetName(for: resolution)
+
         guard let session = AVAssetExportSession(
-            asset: built.composition, presetName: presetName(for: resolution))
+            asset: built.composition, presetName: preset)
         else { throw ExportError.noExportSession }
 
         // With clicks, an export-only copy carrying the animation tool; without
@@ -105,13 +131,19 @@ public enum MovieExporter {
         // `animationTool` cannot be used with `AVPlayerItem` (V5), so setting
         // it on the object preview also holds would break playback in order to
         // decorate the export.
-        session.videoComposition = ClickOverlay.exportComposition(
-            from: built.videoComposition, marks: clicks) ?? built.videoComposition
-        // The mix lives on the export session, not the player item (M4's
-        // preview layer) — §9's whole point is that the two paths cannot
-        // apply the mix differently, and putting it here is what
-        // `exportAppliesTheMix` checks.
-        session.audioMix = built.audioMix
+        // A passthrough session takes NEITHER of these. Setting a
+        // videoComposition forces a re-encode, which would silently undo the
+        // whole point; setting an audioMix on a passthrough session is refused
+        // outright. Eligibility already established that both would be no-ops.
+        if !canCopy {
+            session.videoComposition = ClickOverlay.exportComposition(
+                from: built.videoComposition, marks: clicks) ?? built.videoComposition
+            // The mix lives on the export session, not the player item (M4's
+            // preview layer) — §9's whole point is that the two paths cannot
+            // apply the mix differently, and putting it here is what
+            // `exportAppliesTheMix` checks.
+            session.audioMix = built.audioMix
+        }
         if let maxSizeBytes {
             // The encoder's own primitive: one pass, the session picks a
             // bitrate that fits. Only if this misses do we re-encode at a
@@ -311,7 +343,7 @@ public enum MovieExporter {
                             // recomputes: this rung is a different scale and
                             // therefore a different render transform.
                             clicks: clickMarks(for: rungBuilt, events: clickEvents),
-                            resolution: resolution)
+                            resolution: resolution, edl: edl, scale: rungScale)
                     } catch {
                         // The session may throw rather than produce a
                         // best-effort file when the limit is impossible. Either
@@ -347,14 +379,16 @@ public enum MovieExporter {
                     effectiveScale = smallestScale
                     try await exportMovie(built, to: outputURL, maxSizeBytes: nil,
                                           clicks: clickMarks(for: built, events: clickEvents),
-                                          resolution: resolution)
+                                          resolution: resolution, edl: edl,
+                                          scale: smallestScale)
                     byteSize = try fileByteSize(at: outputURL)
                     sizeMet = byteSize <= maxSizeBytes
                 }
             } else {
                 try await exportMovie(built, to: outputURL, maxSizeBytes: nil,
                                           clicks: clickMarks(for: built, events: clickEvents),
-                                          resolution: resolution)
+                                          resolution: resolution, edl: edl,
+                                          scale: effectiveScale)
                 byteSize = try fileByteSize(at: outputURL)
             }
         }
