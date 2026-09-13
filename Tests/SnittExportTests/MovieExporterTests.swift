@@ -346,8 +346,22 @@ func scaleReductionActuallyShrinksTheFile() async throws {
     let unconstrainedOut = FileManager.default.temporaryDirectory
         .appendingPathComponent("unc-\(UUID().uuidString).mp4")
     defer { try? FileManager.default.removeItem(at: unconstrainedOut) }
+    // A deliberately unreachable ceiling, not the absence of one.
+    //
+    // Both sides of the ratio below must be RE-ENCODED for the comparison to
+    // mean anything, and an export with no ceiling at source resolution now
+    // copies the samples instead (`PassthroughEligibility`). That is the right
+    // behaviour and a much smaller file for real recordings, but it makes a
+    // copied baseline against a re-encoded result apples-to-oranges — the
+    // measured thresholds in the comment below were derived when both sides
+    // re-encoded. A ceiling this large disqualifies passthrough while binding
+    // nothing, so the baseline is the same artifact it always was.
+    let unreachableCeiling = 1_000_000_000
     let unconstrained = try await MovieExporter.export(
-        bundle: bundle, edl: EditDecisionList(), scale: 1.0, to: unconstrainedOut)
+        bundle: bundle, edl: EditDecisionList(), scale: 1.0, to: unconstrainedOut,
+        maxSizeBytes: unreachableCeiling)
+    #expect(unconstrained.scale == 1.0,
+            "the baseline ceiling was supposed to be unreachable, but the ladder walked")
 
     let target = 300_000
     let constrainedOut = FileManager.default.temporaryDirectory
