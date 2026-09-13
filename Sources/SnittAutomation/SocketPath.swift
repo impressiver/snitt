@@ -16,8 +16,20 @@ public enum SocketPath {
         let base = FileManager.default.urls(for: .applicationSupportDirectory,
                                             in: .userDomainMask)[0]
             .appendingPathComponent("Snitt", isDirectory: true)
-        try? FileManager.default.createDirectory(at: base,
-                                                 withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(
+            at: base,
+            withIntermediateDirectories: true,
+            // 0700, not the 0755 the default gives. Defence in depth rather
+            // than the main control — the socket's real gate is the peer check
+            // in `PeerIdentityReader`, because the adversary TCC cares about is
+            // another process running as the SAME user, which no file mode can
+            // exclude. This shuts out the other-user case the comment above
+            // already worried about, and costs nothing.
+            attributes: [.posixPermissions: 0o700])
+        // Applied to a directory that may already exist from an older build,
+        // where `createDirectory` does nothing and its attributes are ignored.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700],
+                                               ofItemAtPath: base.path)
         return base.appendingPathComponent("automation.sock")
     }
 }

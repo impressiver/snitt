@@ -35,7 +35,7 @@ func trimWritesTheEDL() async throws {
 
     let host = AutomationHost.forTesting()
     let response = await host.handle(
-        .trim(bundlePath: bundle.url.path, start: 2, end: 8, auto: false))
+        .trim(bundlePath: bundle.url.path, start: 2, end: 8, auto: false), caller: nil)
 
     guard case .trimmed(let summary) = response else {
         Issue.record("expected trimmed, got \(response)"); return
@@ -55,7 +55,7 @@ func autoTrimRefusesWithoutInput() async throws {
 
     let host = AutomationHost.forTesting()
     let response = await host.handle(
-        .trim(bundlePath: bundle.url.path, start: nil, end: nil, auto: true))
+        .trim(bundlePath: bundle.url.path, start: nil, end: nil, auto: true), caller: nil)
 
     guard case .failure(let error) = response else {
         Issue.record("auto-trim must refuse an empty input log"); return
@@ -91,7 +91,7 @@ func autoTrimPreservesManualInteriorCuts() async throws {
 
     let host = AutomationHost.forTesting()
     let response = await host.handle(
-        .trim(bundlePath: bundle.url.path, start: nil, end: nil, auto: true))
+        .trim(bundlePath: bundle.url.path, start: nil, end: nil, auto: true), caller: nil)
 
     guard case .trimmed(let summary) = response else {
         Issue.record("expected trimmed, got \(response)"); return
@@ -112,7 +112,7 @@ func autoTrimPreservesManualInteriorCuts() async throws {
 func trimOnMissingBundleFails() async {
     let host = AutomationHost.forTesting()
     let response = await host.handle(
-        .trim(bundlePath: "/nope/missing.snitt", start: 0, end: 1, auto: false))
+        .trim(bundlePath: "/nope/missing.snitt", start: 0, end: 1, auto: false), caller: nil)
     guard case .failure(let error) = response else {
         Issue.record("expected a failure"); return
     }
@@ -139,7 +139,7 @@ func trimOnMetadataOnlyBundleFailsExplicitly() async throws {
 
     let host = AutomationHost.forTesting()
     let response = await host.handle(
-        .trim(bundlePath: bundle.url.path, start: 1, end: 5, auto: false))
+        .trim(bundlePath: bundle.url.path, start: 1, end: 5, auto: false), caller: nil)
 
     guard case .failure(let error) = response else {
         Issue.record("trim without a readable capture.mov must fail, not report a wall-clock duration"); return
@@ -174,7 +174,7 @@ func wallAndMediaDurationsDisagreeButTrimAndExportMustAgree() async throws {
 
     let host = AutomationHost.forTesting()
     let trimResponse = await host.handle(
-        .trim(bundlePath: bundle.url.path, start: 1, end: nil, auto: false))
+        .trim(bundlePath: bundle.url.path, start: 1, end: nil, auto: false), caller: nil)
     guard case .trimmed(let summary) = trimResponse else {
         Issue.record("expected trimmed, got \(trimResponse)"); return
     }
@@ -189,7 +189,7 @@ func wallAndMediaDurationsDisagreeButTrimAndExportMustAgree() async throws {
         .appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
     defer { try? FileManager.default.removeItem(at: output) }
     let exportResponse = await host.handle(
-        .export(bundlePath: bundle.url.path, format: "mp4", outputPath: output.path, scale: 1.0, chapters: false, subtitles: false, maxSizeBytes: nil, resolution: .source, clicks: false))
+        .export(bundlePath: bundle.url.path, format: "mp4", outputPath: output.path, scale: 1.0, chapters: false, subtitles: false, maxSizeBytes: nil, resolution: .source, clicks: false), caller: nil)
     guard case .exported(let manifest) = exportResponse else {
         Issue.record("expected exported, got \(exportResponse)"); return
     }
@@ -224,7 +224,7 @@ func exportWithCorruptEDLFailsExplicitly() async throws {
 
     let host = AutomationHost.forTesting()
     let response = await host.handle(
-        .export(bundlePath: bundle.url.path, format: "mp4", outputPath: output.path, scale: 1.0, chapters: false, subtitles: false, maxSizeBytes: nil, resolution: .source, clicks: false))
+        .export(bundlePath: bundle.url.path, format: "mp4", outputPath: output.path, scale: 1.0, chapters: false, subtitles: false, maxSizeBytes: nil, resolution: .source, clicks: false), caller: nil)
 
     guard case .failure(let error) = response else {
         Issue.record("export with a corrupt edit.json must fail, not silently export the full range"); return
@@ -258,7 +258,7 @@ func exportWithNoEDLFileExportsFullRange() async throws {
 
     let host = AutomationHost.forTesting()
     let response = await host.handle(
-        .export(bundlePath: bundle.url.path, format: "mp4", outputPath: output.path, scale: 1.0, chapters: false, subtitles: false, maxSizeBytes: nil, resolution: .source, clicks: false))
+        .export(bundlePath: bundle.url.path, format: "mp4", outputPath: output.path, scale: 1.0, chapters: false, subtitles: false, maxSizeBytes: nil, resolution: .source, clicks: false), caller: nil)
 
     guard case .exported(let manifest) = response else {
         Issue.record("expected exported, got \(response)"); return
@@ -281,7 +281,7 @@ func trimWithCorruptEDLFailsExplicitly() async throws {
 
     let host = AutomationHost.forTesting()
     let response = await host.handle(
-        .trim(bundlePath: bundle.url.path, start: 2, end: 8, auto: false))
+        .trim(bundlePath: bundle.url.path, start: 2, end: 8, auto: false), caller: nil)
 
     guard case .failure(let error) = response else {
         Issue.record("trim with a corrupt edit.json must fail, not silently trim from a fresh full range"); return
@@ -312,7 +312,7 @@ func autoTrimWithCorruptEventsFailsExplicitly() async throws {
 
     let host = AutomationHost.forTesting()
     let response = await host.handle(
-        .trim(bundlePath: bundle.url.path, start: nil, end: nil, auto: true))
+        .trim(bundlePath: bundle.url.path, start: nil, end: nil, auto: true), caller: nil)
 
     guard case .failure(let error) = response else {
         Issue.record("auto-trim with a corrupt events.json must fail, not report a misleading 'no input events'"); return
@@ -341,7 +341,7 @@ func inspectWithFutureSchemaEventsFailsExplicitly() async throws {
     defer { try? FileManager.default.removeItem(at: bundle.url) }
 
     let host = AutomationHost.forTesting()
-    let response = await host.handle(.inspect(bundlePath: bundle.url.path))
+    let response = await host.handle(.inspect(bundlePath: bundle.url.path), caller: nil)
 
     guard case .failure(let error) = response else {
         Issue.record("inspect on a future-schemaVersion events.json must fail, not report an empty marker list"); return

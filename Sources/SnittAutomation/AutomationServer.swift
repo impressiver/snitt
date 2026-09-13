@@ -12,7 +12,11 @@ import Glibc
 #endif
 
 public protocol AutomationHandling: Sendable {
-    func handle(_ body: AutomationRequest.Body) async -> AutomationResponse
+    /// `caller` is who the KERNEL says is on the other end, or nil when it
+    /// would not say. A handler must treat nil as "unattributable" rather than
+    /// as "trusted" — it is the state an audit reviewer can learn nothing from.
+    func handle(_ body: AutomationRequest.Body,
+                caller: PeerIdentity?) async -> AutomationResponse
 }
 
 /// Errors from the raw POSIX socket calls that back the server.
@@ -125,8 +129,13 @@ public final class AutomationServer: @unchecked Sendable {
                 return
             }
             let connFD = client
+            // Read once, here, while the peer is certainly still connected.
+            // Asking later races the caller exiting: the pid would be gone, or
+            // worse, reused by an unrelated process — attributing the request
+            // to whoever happened to inherit the number.
+            let caller = PeerIdentityReader.identity(ofPeerOn: connFD)
             Thread.detachNewThread { [weak self] in
-                self?.handleConnection(connFD)
+                self?.handleConnection(connFD, caller: caller)
             }
         }
     }
@@ -136,7 +145,7 @@ public final class AutomationServer: @unchecked Sendable {
     /// that is a slow thread leak rather than a test-only concern.
     private static let connectionReadTimeout: TimeInterval = 30
 
-    private func handleConnection(_ fd: Int32) {
+    private func handleConnection(_ fd: Int32, caller: PeerIdentity?) {
         defer { close(fd) }
 
         var tv = timeval()
@@ -178,7 +187,7 @@ public final class AutomationServer: @unchecked Sendable {
             }
 
             for message in messages {
-                let response = respond(to: message)
+                let response = respond(to: message, caller: caller)
                 guard let payload = try? JSONEncoder().encode(response) else { continue }
                 guard send(payload: LineFramer.frame(payload), to: fd) else { return }
             }
@@ -200,7 +209,7 @@ public final class AutomationServer: @unchecked Sendable {
         }
     }
 
-    private func respond(to message: Data) -> AutomationResponse {
+    private func respond(to message: Data, caller: PeerIdentity?) -> AutomationResponse {
         do {
             let request = try JSONDecoder().decode(AutomationRequest.self, from: message)
             if request.protocolVersion != AutomationProtocol.version {
@@ -214,7 +223,7 @@ public final class AutomationServer: @unchecked Sendable {
             let semaphore = DispatchSemaphore(value: 0)
             let box = ResponseBox()
             Task {
-                box.value = await handler.handle(request.body)
+                box.value = await handler.handle(request.body, caller: caller)
                 semaphore.signal()
             }
             semaphore.wait()

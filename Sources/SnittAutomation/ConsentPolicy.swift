@@ -26,6 +26,14 @@ public struct ConsentPolicy: Sendable {
         self.maximumSessionSeconds = maximumSessionSeconds
     }
 
+    /// Whether an agent may reach Snitt's data at all.
+    ///
+    /// Separate from `evaluate`, which answers "may this RECORDING proceed" and
+    /// needs `StartOptions`. Reading an existing bundle has no options to
+    /// evaluate but is still an agent touching the user's recordings, so it
+    /// asks this instead of constructing a fake request to get an answer.
+    public var allowsAgentAccess: Bool { agentRecordingEnabled }
+
     /// Returns nil when the request may proceed, or the error to send back.
     public func evaluate(_ options: StartOptions) -> AutomationError? {
         guard agentRecordingEnabled else {

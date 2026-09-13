@@ -332,7 +332,7 @@ func agentStartAndStopDriveTheIndicator() async throws {
     let recorder = StateRecorder()
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
-    let started = await host.handle(startBody())
+    let started = await host.handle(startBody(), caller: nil)
     guard case .started(let sessionID, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
@@ -343,7 +343,7 @@ func agentStartAndStopDriveTheIndicator() async throws {
         return
     }
 
-    let stopped = await host.handle(.stopRecording(sessionID: sessionID))
+    let stopped = await host.handle(.stopRecording(sessionID: sessionID), caller: nil)
     guard case .stopped = stopped else {
         Issue.record("expected a stopped response, got \(stopped)")
         return
@@ -367,7 +367,7 @@ func stopReportsHealthFromCoordinator() async throws {
     let recorder = StateRecorder()
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
-    let started = await host.handle(startBody())
+    let started = await host.handle(startBody(), caller: nil)
     guard case .started(let sessionID, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
@@ -378,7 +378,7 @@ func stopReportsHealthFromCoordinator() async throws {
         .stopped(URL(fileURLWithPath: "/tmp/agent-\(sessionID).snitt"),
                 copied: true, health: expectedHealth))
 
-    let stopped = await host.handle(.stopRecording(sessionID: sessionID))
+    let stopped = await host.handle(.stopRecording(sessionID: sessionID), caller: nil)
     guard case .stopped(_, let health) = stopped else {
         Issue.record("expected a stopped response, got \(stopped)")
         return
@@ -395,7 +395,7 @@ func failedStartDoesNotLightTheIndicator() async {
     let recorder = StateRecorder()
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
-    _ = await host.handle(startBody())
+    _ = await host.handle(startBody(), caller: nil)
     #expect(recorder.states.isEmpty,
             "nothing is recording, so nothing may be indicated")
 }
@@ -413,13 +413,13 @@ func agentSessionIsAudited() async throws {
     let auditLogURL = scratchAuditLogURL()
     let host = makeHost(coordinator: coordinator, recorder: recorder, auditLogURL: auditLogURL)
 
-    let started = await host.handle(startBody())
+    let started = await host.handle(startBody(), caller: nil)
     guard case .started(let sessionID, let target) = started else {
         Issue.record("expected a started response, got \(started)")
         return
     }
 
-    guard case .stopped = await host.handle(.stopRecording(sessionID: sessionID)) else {
+    guard case .stopped = await host.handle(.stopRecording(sessionID: sessionID), caller: nil) else {
         Issue.record("expected a stopped response")
         return
     }
@@ -488,7 +488,7 @@ func cappedSessionRecordsTheCap() async throws {
     let host = makeHost(coordinator: coordinator, recorder: recorder,
                        clock: clock, watchdog: watchdog, auditLogURL: auditLogURL)
 
-    let started = await host.handle(startBody(maxDuration: 0.2))
+    let started = await host.handle(startBody(maxDuration: 0.2), caller: nil)
     guard case .started(let sessionID, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
@@ -533,7 +533,7 @@ func expiredSessionIsStopped() async throws {
 
     // A cap below the 600s ceiling passes through `effectiveMaxDuration`
     // unchanged, so this is the real production path and not a test-only knob.
-    let started = await host.handle(startBody(maxDuration: 0.2))
+    let started = await host.handle(startBody(maxDuration: 0.2), caller: nil)
     guard case .started(let sessionID, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
@@ -546,7 +546,7 @@ func expiredSessionIsStopped() async throws {
     #expect(stopped == [sessionID],
             "the cap exists so a hung agent cannot fill the disk; it must ACT")
 
-    let status = await host.handle(.status)
+    let status = await host.handle(.status, caller: nil)
     #expect(status == .status(StatusInfo(recording: false, sessionID: nil,
                                          elapsedSeconds: nil)),
             "the expired session must be closed, not left claiming to record")
@@ -578,7 +578,7 @@ func watchdogDoesNotStopSomeoneElsesRecording() async throws {
     let host = makeHost(coordinator: coordinator, recorder: recorder,
                        clock: clock, watchdog: watchdog)
 
-    let started = await host.handle(startBody(maxDuration: 0.2))
+    let started = await host.handle(startBody(maxDuration: 0.2), caller: nil)
     guard case .started = started else {
         Issue.record("expected a started response, got \(started)")
         return
@@ -616,7 +616,7 @@ func expiryWithFailedFinalizeClearsTheIndicator() async throws {
     let host = makeHost(coordinator: coordinator, recorder: recorder,
                        clock: clock, watchdog: watchdog)
 
-    let started = await host.handle(startBody(maxDuration: 0.2))
+    let started = await host.handle(startBody(maxDuration: 0.2), caller: nil)
     guard case .started(let sessionID, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
@@ -630,7 +630,7 @@ func expiryWithFailedFinalizeClearsTheIndicator() async throws {
     #expect(recorder.states.last == .idle,
             "an unfinalized recording is still a STOPPED recording; a lit indicator now means the kill switch starts a new one")
 
-    let status = await host.handle(.status)
+    let status = await host.handle(.status, caller: nil)
     #expect(status == .status(StatusInfo(recording: false, sessionID: nil,
                                          elapsedSeconds: nil)))
 }
@@ -658,7 +658,7 @@ func expiryWhileBusyPreservesTheSession() async throws {
     let host = makeHost(coordinator: coordinator, recorder: recorder,
                        clock: clock, watchdog: watchdog)
 
-    let started = await host.handle(startBody(maxDuration: 0.2))
+    let started = await host.handle(startBody(maxDuration: 0.2), caller: nil)
     guard case .started(let sessionID, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
@@ -670,7 +670,7 @@ func expiryWhileBusyPreservesTheSession() async throws {
 
     #expect(await coordinator.stopCalls == [sessionID])
 
-    let status = await host.handle(.status)
+    let status = await host.handle(.status, caller: nil)
     guard case .status(let info) = status else {
         Issue.record("expected status")
         return
@@ -738,7 +738,7 @@ func humanRecordingIsAlreadyRecording() async {
     let recorder = StateRecorder()
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
-    let response = await host.handle(startBody())
+    let response = await host.handle(startBody(), caller: nil)
     guard case .failure(let error) = response else {
         Issue.record("expected a failure, got \(response)")
         return
@@ -755,14 +755,14 @@ func refusedStartClosesTheRegistryEntry() async {
     let recorder = StateRecorder()
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
-    _ = await host.handle(startBody())
-    let status = await host.handle(.status)
+    _ = await host.handle(startBody(), caller: nil)
+    let status = await host.handle(.status, caller: nil)
     #expect(status == .status(StatusInfo(recording: false, sessionID: nil,
                                          elapsedSeconds: nil)))
 
     // ...and a second attempt is not refused with `already_recording`.
     await coordinator.setStartOutcome(.started("Window", usedCache: true))
-    guard case .started = await host.handle(startBody()) else {
+    guard case .started = await host.handle(startBody(), caller: nil) else {
         Issue.record("a failed start must not block the next one")
         return
     }
@@ -782,7 +782,7 @@ func killSwitchStopPreventsBundleLeak() async {
     let recorder = StateRecorder()
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
-    let started = await host.handle(startBody())
+    let started = await host.handle(startBody(), caller: nil)
     guard case .started(let sessionID, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
@@ -795,7 +795,7 @@ func killSwitchStopPreventsBundleLeak() async {
     // The person now starts their own recording. It is NOT an agent session, so
     // the coordinator owns no session id for it and `stopForAgent` must refuse.
 
-    let response = await host.handle(.stopRecording(sessionID: sessionID))
+    let response = await host.handle(.stopRecording(sessionID: sessionID), caller: nil)
     guard case .failure(let error) = response else {
         Issue.record("an agent must not be handed a recording it did not start: \(response)")
         return
@@ -814,14 +814,14 @@ func busyStopKeepsTheSession() async {
     let recorder = StateRecorder()
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
-    let started = await host.handle(startBody())
+    let started = await host.handle(startBody(), caller: nil)
     guard case .started(let sessionID, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
     }
 
     await coordinator.setStopOverride(.busy)
-    let response = await host.handle(.stopRecording(sessionID: sessionID))
+    let response = await host.handle(.stopRecording(sessionID: sessionID), caller: nil)
     guard case .failure(let error) = response else {
         Issue.record("expected a failure, got \(response)")
         return
@@ -829,7 +829,7 @@ func busyStopKeepsTheSession() async {
     #expect(error.code == .internalError)
 
     // The session is still open, because nothing actually stopped.
-    let status = await host.handle(.status)
+    let status = await host.handle(.status, caller: nil)
     guard case .status(let info) = status else {
         Issue.record("expected status")
         return
@@ -850,7 +850,7 @@ func consentGatesTheCoordinator() async {
                               onRecordingState: { state in recorder.record(state) },
                               auditLogURL: scratchAuditLogURL())
 
-    let response = await host.handle(startBody())
+    let response = await host.handle(startBody(), caller: nil)
     guard case .failure(let error) = response else {
         Issue.record("expected a refusal, got \(response)")
         return
@@ -884,7 +884,7 @@ func workingDirectoryBecomesGitContext() async {
         },
         auditLogURL: scratchAuditLogURL())
 
-    _ = await host.handle(startBody(workingDirectory: "/Users/someone/src/project"))
+    _ = await host.handle(startBody(workingDirectory: "/Users/someone/src/project"), caller: nil)
 
     #expect(seen.all == ["/Users/someone/src/project"],
             "the CLIENT's cwd is the only one that means anything — Snitt.app's own is \"/\"")
@@ -908,7 +908,7 @@ func noWorkingDirectoryMeansNoGit() async {
         resolveGit: { url in seen.record(url.path); return GitContext(branch: "x") },
         auditLogURL: scratchAuditLogURL())
 
-    _ = await host.handle(startBody())
+    _ = await host.handle(startBody(), caller: nil)
 
     #expect(seen.all.isEmpty, "nothing may be guessed from Snitt.app's own cwd")
     let git = await coordinator.receivedGit
@@ -936,7 +936,7 @@ func microphoneOptionIsThreadedThrough() async {
     let recorder = StateRecorder()
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
-    _ = await host.handle(startBody(microphone: true, systemAudio: false))
+    _ = await host.handle(startBody(microphone: true, systemAudio: false), caller: nil)
 
     let options = await coordinator.receivedOptions
     #expect(options.count == 1)
@@ -953,7 +953,7 @@ func microphoneIsOffByDefault() async {
     let recorder = StateRecorder()
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
-    _ = await host.handle(startBody())
+    _ = await host.handle(startBody(), caller: nil)
 
     let options = await coordinator.receivedOptions
     #expect(options.first?.captureMicrophone == false)
@@ -972,13 +972,13 @@ func markOnOwnedSessionReturnsTheOffset() async {
     let recorder = StateRecorder()
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
-    let started = await host.handle(startBody())
+    let started = await host.handle(startBody(), caller: nil)
     guard case .started(let sessionID, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
     }
 
-    let response = await host.handle(.mark(sessionID: sessionID, label: "ran the tests"))
+    let response = await host.handle(.mark(sessionID: sessionID, label: "ran the tests"), caller: nil)
     #expect(response == .marked(timeSeconds: 12.5))
 
     let calls = await coordinator.markCalls
@@ -998,8 +998,8 @@ func markOnAnotherSessionIsRefused() async {
     let recorder = StateRecorder()
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
-    _ = await host.handle(startBody())
-    let response = await host.handle(.mark(sessionID: "not-mine", label: nil))
+    _ = await host.handle(startBody(), caller: nil)
+    let response = await host.handle(.mark(sessionID: "not-mine", label: nil), caller: nil)
 
     guard case .failure(let error) = response else {
         Issue.record("expected a refusal, got \(response)")
@@ -1019,7 +1019,7 @@ func markIsGatedByConsent() async {
                               onRecordingState: { state in recorder.record(state) },
                               auditLogURL: scratchAuditLogURL())
 
-    let response = await host.handle(.mark(sessionID: "s1", label: nil))
+    let response = await host.handle(.mark(sessionID: "s1", label: nil), caller: nil)
     guard case .failure(let error) = response else {
         Issue.record("expected a refusal, got \(response)")
         return
@@ -1042,7 +1042,7 @@ func killSwitchStopIsAudited() async throws {
     let auditLogURL = scratchAuditLogURL()
     let host = makeHost(coordinator: coordinator, recorder: recorder, auditLogURL: auditLogURL)
 
-    let started = await host.handle(startBody())
+    let started = await host.handle(startBody(), caller: nil)
     guard case .started(let sessionID, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
@@ -1093,7 +1093,7 @@ func hostWritesDiagnostics() async throws {
         .appendingPathComponent("snitt-diagnostics-\(UUID().uuidString).json")
     defer { try? FileManager.default.removeItem(at: out) }
 
-    let response = await host.handle(.diagnostics(outputPath: out.path))
+    let response = await host.handle(.diagnostics(outputPath: out.path), caller: nil)
 
     guard case .diagnosticsWritten(let report) = response else {
         Issue.record("expected .diagnosticsWritten, got \(response)")
@@ -1126,7 +1126,7 @@ func diagnosticsExportFailureIsReported() async {
     // rather than the host reporting success for a file it never wrote.
     let badPath = "/nonexistent-\(UUID().uuidString)/diagnostics.json"
 
-    let response = await host.handle(.diagnostics(outputPath: badPath))
+    let response = await host.handle(.diagnostics(outputPath: badPath), caller: nil)
     guard case .failure(let error) = response else {
         Issue.record("expected a failure for an unwritable path, got \(response)")
         return
@@ -1147,11 +1147,11 @@ struct PauseAutomationTests {
     func pauseReachesTheCoordinator() async throws {
         let coordinator = FakeCoordinator()
         let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
-        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")))
+        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")), caller: nil)
         let session = try #require(await coordinator.startCalls.first)
 
-        _ = await host.handle(.pauseRecording(sessionID: session))
-        _ = await host.handle(.resumeRecording(sessionID: session))
+        _ = await host.handle(.pauseRecording(sessionID: session), caller: nil)
+        _ = await host.handle(.resumeRecording(sessionID: session), caller: nil)
 
         #expect(await coordinator.pauseCalls.map(\.paused) == [true, false])
         #expect(await coordinator.pauseCalls.allSatisfy { $0.session == session })
@@ -1164,9 +1164,9 @@ struct PauseAutomationTests {
         // guessing a session id must not be able to.
         let coordinator = FakeCoordinator()
         let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
-        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")))
+        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")), caller: nil)
 
-        guard case .failure(let error) = await host.handle(.pauseRecording(sessionID: "THEIRS")) else {
+        guard case .failure(let error) = await host.handle(.pauseRecording(sessionID: "THEIRS"), caller: nil) else {
             Issue.record("pausing another session was allowed"); return
         }
         #expect(error.code == .noSuchSession)
@@ -1178,10 +1178,10 @@ struct PauseAutomationTests {
         // what an agent recovering from a crash would misread.
         let coordinator = FakeCoordinator()
         let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
-        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")))
+        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")), caller: nil)
         await coordinator.setPausedForTesting(true, seconds: 12)
 
-        guard case .status(let info) = await host.handle(.status) else {
+        guard case .status(let info) = await host.handle(.status, caller: nil) else {
             Issue.record("status did not return status"); return
         }
         #expect(info.paused, "a paused session reported itself as merely recording")
@@ -1192,10 +1192,10 @@ struct PauseAutomationTests {
     func pauseReturnsTheNewStatus() async throws {
         let coordinator = FakeCoordinator()
         let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
-        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")))
+        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")), caller: nil)
         let session = try #require(await coordinator.startCalls.first)
 
-        guard case .status(let info) = await host.handle(.pauseRecording(sessionID: session)) else {
+        guard case .status(let info) = await host.handle(.pauseRecording(sessionID: session), caller: nil) else {
             Issue.record("pause did not return a status"); return
         }
         #expect(info.paused)
@@ -1214,11 +1214,11 @@ struct ScreenshotAutomationTests {
         // the drift the primitive exists to remove.
         let coordinator = FakeCoordinator()
         let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
-        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")))
+        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")), caller: nil)
         let session = try #require(await coordinator.startCalls.first)
 
         guard case .screenshotTaken(let path, let time) =
-                await host.handle(.screenshot(sessionID: session, label: "after save")) else {
+                await host.handle(.screenshot(sessionID: session, label: "after save"), caller: nil) else {
             Issue.record("screenshot did not return a screenshot"); return
         }
         #expect(time == 4.25, "the host restamped the offset")
@@ -1233,10 +1233,10 @@ struct ScreenshotAutomationTests {
         // problem, not the caller's.
         let coordinator = FakeCoordinator()
         let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
-        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")))
+        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")), caller: nil)
 
         guard case .failure(let error) =
-                await host.handle(.screenshot(sessionID: "THEIRS", label: nil)) else {
+                await host.handle(.screenshot(sessionID: "THEIRS", label: nil), caller: nil) else {
             Issue.record("photographing another session was allowed"); return
         }
         #expect(error.code == .noSuchSession)
@@ -1248,12 +1248,12 @@ struct ScreenshotAutomationTests {
         // recording that is perfectly healthy and half a frame old.
         let coordinator = FakeCoordinator()
         let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
-        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")))
+        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")), caller: nil)
         let session = try #require(await coordinator.startCalls.first)
         await coordinator.setScreenshotResult(.noFrameYet)
 
         guard case .failure(let error) =
-                await host.handle(.screenshot(sessionID: session, label: nil)) else {
+                await host.handle(.screenshot(sessionID: session, label: nil), caller: nil) else {
             Issue.record("expected a failure"); return
         }
         #expect(error.code != .noSuchSession,
@@ -1270,7 +1270,7 @@ struct ReportedInputAutomationTests {
     private func startedHost() async -> (FakeCoordinator, AutomationHost, String) {
         let coordinator = FakeCoordinator()
         let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
-        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")))
+        _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")), caller: nil)
         let session = await coordinator.startCalls.first ?? ""
         return (coordinator, host, session)
     }
@@ -1279,7 +1279,7 @@ struct ReportedInputAutomationTests {
     func clickReachesTheCoordinator() async throws {
         let (coordinator, host, session) = await startedHost()
         _ = await host.handle(.reportInput(sessionID: session, kind: "click",
-                                           x: 0.25, y: 0.75, label: nil))
+                                           x: 0.25, y: 0.75, label: nil), caller: nil)
         let reported = try #require(await coordinator.reportedInput.first)
         #expect(reported.kind == .click)
         #expect(reported.x == 0.25 && reported.y == 0.75)
@@ -1295,7 +1295,7 @@ struct ReportedInputAutomationTests {
         // signal an agent driving a terminal can offer.
         let (coordinator, host, session) = await startedHost()
         _ = await host.handle(
-            .reportInput(sessionID: session, kind: "keystroke", x: nil, y: nil, label: nil))
+            .reportInput(sessionID: session, kind: "keystroke", x: nil, y: nil, label: nil), caller: nil)
         let reported = try #require(await coordinator.reportedInput.first)
         #expect(reported.kind == .keystroke)
         // Nil, not zero: zero is the top-left corner of the window, and a
@@ -1313,7 +1313,7 @@ struct ReportedInputAutomationTests {
         let (coordinator, host, session) = await startedHost()
         guard case .failure = await host.handle(
             .reportInput(sessionID: session, kind: "keystroke",
-                         x: nil, y: nil, label: "sudo rm -rf /"))
+                         x: nil, y: nil, label: "sudo rm -rf /"), caller: nil)
         else { Issue.record("a keystroke with text was accepted"); return }
         #expect(await coordinator.reportedInput.isEmpty)
     }
@@ -1323,7 +1323,7 @@ struct ReportedInputAutomationTests {
         // Otherwise an agent could write input into a person's recording.
         let (coordinator, host, _) = await startedHost()
         guard case .failure(let error) = await host.handle(
-            .reportInput(sessionID: "THEIRS", kind: "click", x: 0.5, y: 0.5, label: nil))
+            .reportInput(sessionID: "THEIRS", kind: "click", x: 0.5, y: 0.5, label: nil), caller: nil)
         else { Issue.record("reporting into another session was allowed"); return }
         #expect(error.code == .noSuchSession)
         #expect(await coordinator.reportedInput.isEmpty)
@@ -1333,7 +1333,73 @@ struct ReportedInputAutomationTests {
     func unknownKindIsRefused() async throws {
         let (_, host, session) = await startedHost()
         guard case .failure = await host.handle(
-            .reportInput(sessionID: session, kind: "wiggle", x: 0.5, y: 0.5, label: nil))
+            .reportInput(sessionID: session, kind: "wiggle", x: 0.5, y: 0.5, label: nil), caller: nil)
         else { Issue.record("an unknown kind was accepted"); return }
+    }
+}
+
+// MARK: - Reading recordings is an agent-access verb, not a neutral one
+
+/// A bundle that exists on disk. Its contents do not matter here: both tests
+/// below turn on whether the request is REFUSED before anything is read.
+private func emptyBundleOnDisk() throws -> SnittBundle {
+    let root = FileManager.default.temporaryDirectory
+        .appending(path: "inspect-gate-\(UUID().uuidString).snitt")
+    let bundle = try SnittBundle(creatingAt: root)
+    try RecordingMetadata(createdAt: Date(), initiator: .human).write(to: bundle)
+    try EventLog(events: []).write(to: bundle)
+    try EditDecisionList.fullRange().write(to: bundle)
+    return bundle
+}
+
+@MainActor
+@Test("With agent access off, inspect refuses instead of reading the bundle")
+func inspectIsGatedByConsent() async throws {
+    // `inspect` was deliberately ungated, on the reasoning that "reading a
+    // bundle the agent was handed the path to discloses nothing it did not
+    // already have". The socket cannot establish that it was handed anything:
+    // it accepts any same-user process, which can pass any path it can guess.
+    // What comes back is the transcript and the input-event log — keystroke
+    // timing and click coordinates — read through an app holding a
+    // Files-and-Folders grant the caller may not have.
+    let bundle = try emptyBundleOnDisk()
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+    let host = AutomationHost(coordinator: FakeCoordinator(),
+                              settings: { AgentSettings(agentRecordingEnabled: false) },
+                              onRecordingState: { _ in },
+                              auditLogURL: scratchAuditLogURL())
+
+    let response = await host.handle(.inspect(bundlePath: bundle.url.path), caller: nil)
+    guard case .failure(let error) = response else {
+        Issue.record("a bundle was read for an agent with access turned off: \(response)")
+        return
+    }
+    #expect(error.code == .consentRequired)
+}
+
+@MainActor
+@Test("The gate is consent, not a wall — a permitted agent is not refused for consent")
+func inspectIsNotRefusedWhenPermitted() async throws {
+    // The half the original comment was protecting: an agent that made a
+    // recording must still be able to describe it. Without this, a version
+    // that broke inspect outright would pass the refusal test above.
+    //
+    // Asserts only that the refusal is NOT `consentRequired`. Inspect may
+    // still fail on this fixture for unrelated reasons — there is no real
+    // movie in it — and asserting success would make this a test of inspect's
+    // whole behaviour rather than of the gate.
+    let bundle = try emptyBundleOnDisk()
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+    let host = AutomationHost(coordinator: FakeCoordinator(),
+                              settings: { AgentSettings(agentRecordingEnabled: true) },
+                              onRecordingState: { _ in },
+                              auditLogURL: scratchAuditLogURL())
+
+    let response = await host.handle(.inspect(bundlePath: bundle.url.path), caller: nil)
+    if case .failure(let error) = response {
+        #expect(error.code != .consentRequired,
+                "a permitted agent was refused on consent grounds")
     }
 }

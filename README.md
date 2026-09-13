@@ -101,7 +101,9 @@ read and change an edit without going near the GUI.
 ## Privacy
 
 - **Transcription is on-device.** Audio is never uploaded.
-- **Input logging records *that* you typed, never *what***, and is off by default.
+- **Input logging records keystroke *timing*, never the characters** — and is
+  off by default. Timing alone can narrow a guess at what was typed, so the log
+  stays inside the recording's bundle and is never sent anywhere.
 - **The picker appears on every recording**, so nothing is ever captured that you
   did not just select.
 - **No analytics, no telemetry.** The only network call Snitt makes is Sparkle

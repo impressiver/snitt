@@ -23,6 +23,18 @@ public struct AuditRecord: Codable, Sendable, Equatable {
     public let sessionID: String
     public let target: String
     public let initiator: String
+    /// WHICH agent, not merely that one asked.
+    ///
+    /// `initiator` is a category — "agent" describes every caller identically,
+    /// so §12's promise that "an agent-side incident can be reconstructed" was
+    /// unkeepable: the log could say a machine did it and never which machine.
+    /// This carries the pid, the executable and its signing identity.
+    ///
+    /// Optional because the kernel will not always answer, and because logs
+    /// written before this existed must still decode. `nil` means
+    /// unattributable — which is itself worth seeing in a review, and is not
+    /// the same as a caller that turned out to be unsigned.
+    public var caller: String?
     public let startedAt: Date
     public var endedAt: Date?
     public var outcome: String?
@@ -31,6 +43,7 @@ public struct AuditRecord: Codable, Sendable, Equatable {
         sessionID: String,
         target: String,
         initiator: String,
+        caller: String? = nil,
         startedAt: Date,
         endedAt: Date? = nil,
         outcome: String? = nil
@@ -38,6 +51,7 @@ public struct AuditRecord: Codable, Sendable, Equatable {
         self.sessionID = sessionID
         self.target = target
         self.initiator = initiator
+        self.caller = caller
         self.startedAt = startedAt
         self.endedAt = endedAt
         self.outcome = outcome
