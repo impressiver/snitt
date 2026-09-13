@@ -550,6 +550,14 @@ surface, so it carries requirements beyond the universal ones above:
   choose full-display capture, an agent may only do so if the user has granted
   that specifically — the window-scoped default is not overridable from the
   automation API alone.
+- **Recording with nobody at the keyboard is a separate, EXPIRING opt-in**
+  (D95). Enabling it confirms Screen Recording while a person is present —
+  that is its whole mechanism, since the grant is otherwise requested lazily
+  at first record — and it stops authorizing anything thirty days later, on the
+  same cadence macOS re-confirms the underlying permission (§5.5). It is
+  subordinate to the global opt-in above, so turning that off withdraws this
+  too, and its lapse never blocks recording that the global opt-in already
+  allowed.
 
 ### 5.4 No persistent agent target grants — and why
 
@@ -1087,43 +1095,81 @@ D84 and D86 left this section on 2026-09-09 once their real cost was measured.
   where an unbounded encode would hurt most. `absent: GIFSizeEstimator` (D91).
 
 - **D95 — an opt-in that lets an agent record with nobody at the keyboard.**
-  Requested 2026-09-13. The use case is real and specific: a remote-control
-  session where an agent is working a machine no one is sitting at, and the
-  recording is how anyone sees what it did.
+  Requested 2026-09-13, built the same day. The use case is real and specific:
+  a remote-control session where an agent is working a machine no one is
+  sitting at, and the recording is how anyone sees what it did.
 
-  *The capability already exists; the policy is what blocks it.* D42 makes
-  `RecordingCoordinator` resolve every target through `PickerTargetResolver`,
-  unconditionally — the `.cache` arm was deleted as unreachable. But
-  `CachedTargetResolver` still builds an `SCContentFilter` by enumerating
-  `SCShareableContent`, with no picker at all, and `CaptureTarget`'s own
-  deprecation text already calls that "the bypass path (§5.2)" for "headless
-  callers with no human to drive a picker". So this is a decision about
-  consent, not a feature to invent.
+  *The capability already existed; the policy is what blocked it.* D42 makes
+  `RecordingCoordinator` resolve every HOTKEY target through
+  `PickerTargetResolver`, but `startForAgent` has always taken a forced
+  `CachedTargetResolver`, which builds an `SCContentFilter` by enumerating
+  `SCShareableContent` with no picker at all — `CaptureTarget`'s own
+  deprecation text calls that "the bypass path (§5.2)" for "headless callers
+  with no human to drive a picker". So this was a decision about consent, not
+  a feature to invent.
 
-  *It partially reopens §5.4, which must be read first.* That section deleted a
-  persistent per-application grant store and said why, and two of its three
-  arguments still bite. **Staleness**: a standing grant cannot know what the
-  target is showing six weeks later, which is the incidental-leak class §5.1
-  exists to prevent — and unattended is precisely when nobody is watching.
-  **Spoofing**: its key was a bundle identifier with no binding to a code
-  signature. That second objection is now answerable — the automation socket
-  reads the caller's pid, executable and signing identity (2026-09-12), so a
-  grant could be bound to a signature rather than a name. §5.4's own text
-  invites exactly this: per-application scoping "should be justified on
-  access-control grounds", which is what a caller identity is.
+  *What actually stood between the two, measured rather than assumed.* Reading
+  the whole agent path turned up exactly one thing needing a person: **Screen
+  Recording is requested lazily, at first record.** `RecordingCoordinator`'s
+  preflight calls `ScreenRecordingAccess.ensureGranted()`, and macOS
+  re-confirms that grant periodically for anything on the bypass path (§5.5).
+  An unattended machine therefore records fine until the OS decides otherwise,
+  and then fails with nobody there to approve anything. Nothing else in the
+  path prompts: the consent sheets moved out of the critical section
+  deliberately, so an agent gets `permission_denied` over the socket rather
+  than a modal on an empty desk.
 
-  *The hard external limit, which no opt-in removes:* macOS re-prompts for
-  Screen Recording periodically, and that prompt needs a human. So "records
-  without a person present" is true until the OS decides otherwise, and the
-  feature has to degrade honestly at that moment rather than fail silently
-  mid-session. §5.5 already treats recurring consent as by design.
+  **So the mechanism is confirmation, not a new permission.** Turning the
+  setting on is the one instant a person is guaranteed to be at the machine,
+  so that is when the grant is confirmed — `UnattendedRecordingToggle` runs
+  §4.10's `PermissionLadder` against `.screenRecording`, and the ladder's
+  existing rule does the rest: a refused grant persists NOTHING and the
+  checkbox reverts, so a checkmark can never sit over a permission the app
+  does not have. That is the "trigger the required macOS permissions when
+  enabled" half of the request, and the reason a bare stored flag would be a
+  lie.
 
-  *What must not change:* §5.3's visible indicator for the whole duration, the
-  global opt-in staying off by default, the session cap, and the kill switch.
-  "Nothing recorded without explicit permission" survives only if the
-  permission moves from per-recording to a standing, revocable, scoped grant
-  that a person set deliberately — not if it is quietly widened.
-  `absent: UnattendedRecordingGrant` (D91).
+  *It partially reopened §5.4, and only one of its objections survived.*
+  **Spoofing** is answerable now: the automation socket reads the caller's
+  pid, executable and signing identity (2026-09-12), which is the
+  "access-control grounds" §5.4 itself said such scoping would need.
+  **Staleness** still bites and is what shaped the design — "a standing grant
+  cannot know what the target is showing six weeks later, which is the
+  incidental-leak class §5.1 exists to prevent". The answer is that the grant
+  **expires**: `UnattendedRecordingGrant` stops authorizing anything
+  `renewalDays` after the confirmation, and renewing means switching it off
+  and on again, in front of the machine. A grant that expires cannot go six
+  weeks stale.
+
+  *Thirty days is not a taste decision.* It matches the macOS re-consent
+  cadence the grant exists to track (§5.5, and `ConsentExplainer`'s own copy
+  says "about once a month"), so the two renewals coincide instead of
+  interleaving — a person who renews before leaving has renewed both. The
+  number is INTERPOLATED into the Settings help text from the constant that
+  enforces it, and a mutation line pins that: help text saying thirty while
+  the grant expires at forty-five is worse than no help text, because they
+  would leave the machine believing it.
+
+  *The hard external limit, which no opt-in removes:* macOS re-prompts, and
+  that prompt needs a human. So the feature degrades honestly at that moment
+  instead of failing silently. `screenRecordingDeniedMessage(unattended:)`
+  says something different in each of the three states — nothing extra when
+  the feature is off, "macOS has withdrawn access and that needs someone at
+  this Mac" when the grant is live, and "lapsed N days ago, switch it back on
+  to renew" when it is not — and `DiagnosticsBundle` records the grant beside
+  the three OS permissions, because "screenRecording: granted" next to
+  "unattendedRecording: lapsed 3 days ago" says something neither line says
+  alone.
+
+  *What did not change:* §5.3's indicator for the whole duration, the session
+  cap, the kill switch, and the global opt-in staying off by default — the new
+  grant is SUBORDINATE to it, composed rather than stored, so turning agent
+  recording off withdraws unattended recording with no second value that could
+  be left disagreeing. No recording that worked before this now needs the new
+  opt-in; a lapsed grant means the feature is off until renewed, not that
+  agent recording is blocked. And it is Settings-only, with no status-item
+  toggle: the menu is the fast path, and a grant renewed monthly after reading
+  what it costs is the opposite of one.
 
 - **D94 — an on-device generated title for a recording.** Name a bundle after
   what is IN it, instead of `Snitt-1789163327.snitt`. Deferred 2026-09-12 after
@@ -1722,7 +1768,7 @@ window-relative overlay. **Zoom + follow-mouse is per *segment*, and segments do
 | D92 | **MPL-2.0, with a CLA** — file-level copyleft, plus contributor terms that keep relicensing possible | Product-owner decision, 2026-09-09, answering "open source, but I don't want commercial competitors taking the code and charging for it". **The tension named first, because it is real**: OSI open source REQUIRES permitting commercial use and sale, so no open-source licence delivers "nobody may charge for it" — that needs a source-available licence (FSL, PolyForm), which forfeits the word. GPL-3.0 was recommended as the strongest deterrent that stays open source: a competitor may sell it but must publish their whole derivative's source, which kills the proprietary fork. **MPL was chosen over it deliberately, and the reason is Mac App Store distribution** — Apple's terms impose restrictions GPL forbids (the VLC case), and §13's M8 keeps that half alive on §4.3's own terms. AGPL was rejected as dead weight: its teeth are the network clause, and D62 puts transcription ON DEVICE precisely so there is no service for it to bite. **The CLA is what makes this reversible, and that is the point of the pair.** MPL is the weakest of the four against the stated worry — a competitor may wrap Snitt in a closed product and publish only their edits to Snitt's own files — so the licence is the option-preserving choice and the CLA is the escape hatch: contributors licence their work broadly enough that the project can relicense later, which is impossible once contributions arrive under terms needing unanimous permission to change. Not a copyright assignment; contributors keep their copyright. **Default MPL, no Exhibit B**, so the code stays GPL-compatible — other open projects using it was never the threat. **The file-level boundary is a mechanical property and therefore guarded**: MPL obligations attach to "Covered Software" and Exhibit A is how a file declares itself covered, so a new file without the notice silently leaves the licence's protection. `LicenseHeaderTests` fails the build on a missing notice, and on a `LICENSE` that does not match what the notices point at. **The strongest anti-clone tool is not the licence at all** — a fork can copy the code but cannot call itself Snitt | §13, D54, D66; `LICENSE`, `CLA.md`, `CONTRIBUTING.md`, `LicenseHeaderTests.swift` | Decided (applied) | no-open-licence-can-stop-a-competitor-so-keep-the-right-to-change-it |
 | D93 | **Recording a voiceover after the fact, in the editor** — queued, not ranked | Product-owner direction, 2026-09-12. Recorded because a decision-log entry alone is invisible to planning (§13's queued section exists for exactly this). **Not "another mic track", and that is the whole cost.** §4.5 makes `capture.mov` immutable, so a voiceover cannot be mixed into it — it is a new asset beside the existing tracks, and `AudioTrackOrder.canonical` is a fixed `[systemAudio, microphone]` order that `MicrophoneTrackExtractor` indexes BY NAME, so a third track must join that vocabulary or transcription silently reads the wrong one. The genuinely new problem is time: a voiceover is spoken against OUTPUT time while every other track lives in SOURCE time, so a later cut has to decide whether the narration moves with the picture or stays where it was said — the first case in `Timebase` with no obvious right answer. It also lands on `PassthroughEligibility` (an added track means an audio mix, so exports stop copying samples) and forces transcription to choose between two spoken tracks. **What it unblocks is the reason to want it**: an agent-made recording can never have narration today, and this is the only route to one | §4.5, §7, D64, D83, D89, D91; `AudioTrackOrder`, `MicrophoneTrackExtractor`, `PassthroughEligibility` | Queued (not ranked) | narration-is-a-new-track-in-output-time-not-a-second-mic |
 | D94 | **An on-device generated title for a recording** — queued, deferred after measurement | Panel proposal (2026-09-12 refinement), built as far as a probe and then stopped on the numbers. `FoundationModels` is genuinely available — `SystemLanguageModel.default.availability` reports `.available`, 23 languages, on macOS 26.5.2 — and a `@Generable` title over a real transcript took 6.65s alone, 10.83s with git context, returning "SoundCloud Song Search" against a bare "SoundCloud" depending on how much context it was given. **Deferred because the floor is already earned without it**: D77's macOS 26 requirement is paid for by the `SpeechAnalyzer` port, which deleted 132 lines and found six more words, so this no longer has to justify the platform floor and can be judged on its own merits. On those merits it is not ready. A confidently wrong title is WORSE than the timestamp it replaces, because a timestamp is not trusted and a name is — so it needs a transcript-length floor or a confidence gate first. It is also the first non-reproducible artifact in a format whose §7 pitch is that everything re-derives from immutable inputs, so the result has to be stored in `meta.json` rather than recomputed, and ~10s cannot sit on the stop path. Recorded rather than dropped: the capability is real and the measurements are the expensive part of deciding | §5, §7, §4.6, D62, D77, D91; `FoundationModels`, `RecordingMetadata`, `BundleNaming` | Queued (deferred) | a-confidently-wrong-name-is-worse-than-a-timestamp |
-| D95 | **An opt-in allowing agent recording with nobody at the keyboard** — queued, not designed | Product-owner request, 2026-09-13, for remote-control sessions where an agent works an unattended machine and the recording is how anyone sees what it did. **The capability is already built**: D42 routes every target through `PickerTargetResolver` unconditionally, but `CachedTargetResolver` still constructs an `SCContentFilter` by enumerating `SCShareableContent` with no picker, and `CaptureTarget`'s deprecation text names it "the bypass path (§5.2)" for headless callers. So this is a consent decision, not a feature to invent. **It partially reopens §5.4** and must be read against it: that section deleted a persistent per-application grant, and its staleness objection still holds — a standing grant cannot know what the target shows six weeks later, which is §5.1's incidental-leak class, and unattended is exactly when nobody is watching. Its spoofing objection is now answerable, since the automation socket reads the caller's signing identity (2026-09-12), so a grant can bind to a signature rather than a bundle id — which is the "access-control grounds" §5.4 itself said such scoping would need. **The limit no opt-in removes**: macOS re-prompts for Screen Recording periodically and that prompt needs a human, so the feature must degrade honestly at that moment rather than fail silently mid-session. §5.3's indicator, the default-off global opt-in, the session cap and the kill switch all stay | §5.1, §5.3, §5.4, §5.5, D42, D91; `CachedTargetResolver`, `PeerIdentity`, `ConsentPolicy` | Queued (not designed) | the-picker-is-policy-not-capability |
+| D95 | **An opt-in allowing agent recording with nobody at the keyboard, as an EXPIRING grant** | Product-owner request, 2026-09-13, for remote-control sessions where an agent works an unattended machine and the recording is how anyone sees what it did. Reading the agent path found exactly ONE thing on it needing a person: Screen Recording is requested lazily, at first record, and macOS re-confirms it periodically for anything on the bypass path (§5.2, §5.5). So the mechanism is confirmation, not a new permission — turning the setting on is the one moment a person is guaranteed to be present, and `UnattendedRecordingToggle` spends it running §4.10's `PermissionLadder` against `.screenRecording`. **§5.4's staleness objection is what shaped it**: a standing grant "cannot know what the target is showing six weeks later", so this one EXPIRES after `UnattendedRecordingGrant.renewalDays` and renewing means switching it off and on again in front of the machine. Thirty days matches the OS re-consent cadence it tracks, so the two renewals coincide; the number is interpolated into the help text from the constant, with a mutation line pinning that. §5.4's spoofing objection is separately answerable now that the socket reads the caller's signing identity. The grant is subordinate to §5.3's global opt-in and COMPOSED from it rather than stored, so the two cannot disagree | §5.1, §5.3, §5.4, §5.5, D42, D91; `UnattendedRecordingGrant`, `UnattendedRecordingToggle`, `PermissionLadder`, `PeerIdentity` | Decided and built 2026-09-13 | the-picker-is-policy-not-capability |
 | D96 | **Estimate a GIF's size by encoding ~10 sampled frames and extrapolating** — queued, not designed | Product-owner request, 2026-09-13. `ExportEstimator` refuses GIF today and says why — GIF size tracks how much the picture MOVES rather than how long it runs — so the sheet shows no estimate for the one format whose size is hardest to guess. Sampling is the same move `exportSlice` already makes for mp4 ("so a size can be MEASURED rather than modelled"), and spreading the samples captures average motion instead of one quiet second. **The obvious objection does not apply, and that was checked**: scattered frames would normally compress worse than consecutive ones and bias the estimate high, but `EstimateError`'s own text records that these frames "carry no interframe compression", so per-frame cost is roughly independent of neighbours. **The objection that does apply** is the global colour map — ImageIO fits ONE palette across every frame, the same fact behind the 2026-09-13 GIF crash, so a palette fitted to ten frames suits each better than one covering three hundred and the sample will likely under-report. That is a calibration factor to MEASURE against real exports, not to reason out: the direction is predictable, the magnitude is not. The sample must also be encoded at the post-`GIFExporter.maximumWidth` scale, or it describes a different file, and must stay bounded — GIF encoding is what crashed the app | §8, D91; `ExportEstimator`, `GIFExporter`, `ExportPreflight` | Queued (not designed) | measure-a-sample-then-calibrate-the-palette-effect |
 
 `conformance: 2026-09-07` (post-D66 refinement pass)

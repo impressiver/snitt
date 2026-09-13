@@ -282,3 +282,19 @@ FoldSelectionTests :: Sources/SnittApp/TimelineView.swift :: if activeFoldClick 
 GIFDimensionCapTests :: Sources/SnittExport/GIFExporter.swift :: guard sourceWidth > maximumWidth else { return 1.0 } :: return 1.0
 GIFDimensionCapTests :: Sources/SnittExport/MovieExporter.swift :: scale *= GIFExporter.maximumWidth / probeWidth :: scale = GIFExporter.maximumWidth / probeWidth
 ExportForDestinationTests :: Sources/SnittApp/ExportSheet.swift :: self.drawSubtitles = drawSubtitles :: self.drawSubtitles = false
+
+# D95 — an unattended grant that never expires is §5.4's deleted design back
+# again, and the failure is silent: everything keeps working, for six weeks,
+# on a machine nobody is watching.
+UnattendedRecordingGrantTests :: Sources/SnittAutomation/UnattendedRecordingGrant.swift :: if now < expiresAt { :: if true {
+UnattendedRecordingGrantTests :: Sources/SnittAutomation/UnattendedRecordingGrant.swift :: guard agentRecordingEnabled, enabled, let expiresAt else { return .off } :: guard enabled, let expiresAt else { return .off }
+# `.lapsed` is also not `.off`, so the negative test reads correct and treats an
+# expired grant as a live one — on the checkbox a person trusts before leaving.
+UnattendedSettingsRowTests :: Sources/SnittApp/SettingsWindowController.swift :: isOn: status.isActive, :: isOn: status != .off,
+# The renewal period must be interpolated, never a literal: help text that says
+# thirty while the grant expires at forty-five is worse than none at all.
+UnattendedSettingsRowTests :: Sources/SnittApp/SettingsWindowController.swift :: + "re-confirm about every \(UnattendedRecordingGrant.renewalDays) days and that " :: + "re-confirm about every 99 days and that "
+# The whole mechanism: a toggle that stores the flag and forgets the stamp
+# confirms no permission and produces a grant that reads `.off` forever.
+UnattendedRecordingToggleTests :: Sources/SnittApp/UnattendedRecordingToggle.swift :: settings.unattendedConfirmedAt = newValue ? now() : nil :: settings.unattendedConfirmedAt = nil
+UnattendedSettingsRowTests :: Sources/SnittApp/SettingsWindowController.swift :: + "\(UnattendedRecordingGrant.renewalDays) days until you renew it." :: + "99 days until you renew it."

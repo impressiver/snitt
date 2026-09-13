@@ -7,6 +7,7 @@
 import Foundation
 import AppKit
 import os
+import SnittAutomation
 import SnittCapture
 import SnittDocument
 import SnittExport
@@ -129,6 +130,13 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     /// passed vacuously otherwise — which is the same class of hole as the
     /// bugs they were written for.
     private let ensureAccess: @MainActor @Sendable () -> Bool
+    /// D95's grant, read FRESH at record time — never a value `init` captured.
+    ///
+    /// Same reasoning as `outputDirectorySettings` just above, plus one that is
+    /// specific to this: the grant EXPIRES, so a value read at launch is wrong
+    /// by definition on any machine left running for a month, which is exactly
+    /// the machine this feature is for.
+    private let unattendedStatus: @Sendable () -> UnattendedRecordingGrant.Status
 
     private var active: Recorder?
 
@@ -182,13 +190,16 @@ public actor RecordingCoordinator: AgentRecordingControlling {
                     = { OutputDirectorySettings.load() },
                 focuser: WindowFocuser = .system,
                 ensureAccess: @escaping @MainActor @Sendable () -> Bool
-                    = { ScreenRecordingAccess.ensureGranted() }) {
+                    = { ScreenRecordingAccess.ensureGranted() },
+                unattendedStatus: @escaping @Sendable () -> UnattendedRecordingGrant.Status
+                    = { AgentSettings.load().unattendedGrant.status(now: Date()) }) {
         self.pickerResolver = pickerResolver
         self.cachedResolverFactory = cachedResolverFactory
         self.store = store
         self.outputDirectorySettings = outputDirectorySettings
         self.focuser = focuser
         self.ensureAccess = ensureAccess
+        self.unattendedStatus = unattendedStatus
     }
 
     /// The hotkey ALWAYS presents the system picker.
@@ -480,7 +491,8 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         // socket, which is a thing it can act on.
         let granted = await MainActor.run { ensureAccess() }
         guard granted else {
-            return .failed(Self.screenRecordingDeniedMessage, reason: .permissionDenied)
+            return .failed(Self.screenRecordingDeniedMessage(unattended: unattendedStatus()),
+                           reason: .permissionDenied)
         }
 
         // Read fresh, not a value `init` captured — see
@@ -737,6 +749,42 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     /// the app is RELAUNCHED. Saying so is the difference between a user who
     /// succeeds and one who toggles the switch, sees it still fail, and concludes
     /// the app is broken.
+    /// The denial, plus what an UNATTENDED setup needs to hear about it (D95).
+    ///
+    /// This is the moment the feature's promise breaks, and D95 requires it to
+    /// "degrade honestly at that moment rather than fail silently mid-session".
+    /// The base instructions are the same in all three cases — someone still
+    /// has to approve Screen Recording in System Settings — but a machine that
+    /// was left recording unattended needs one more fact, and it is a different
+    /// fact depending on whether the grant is still live or has run out.
+    static func screenRecordingDeniedMessage(
+        unattended: UnattendedRecordingGrant.Status
+    ) -> String {
+        switch unattended {
+        case .off:
+            return screenRecordingDeniedMessage
+        case .active:
+            // The hard external limit D95 records: macOS withdrew access on
+            // its own schedule, and nothing in Snitt's grant can put it back.
+            return screenRecordingDeniedMessage + """
+
+
+                Unattended agent recording is on, but macOS has withdrawn Screen Recording \
+                access. That needs someone at this Mac — it is not something Snitt can \
+                restore on its own.
+                """
+        case .lapsed(let daysAgo):
+            let ago = daysAgo == 0 ? "today" : "\(daysAgo) \(daysAgo == 1 ? "day" : "days") ago"
+            return screenRecordingDeniedMessage + """
+
+
+                Unattended agent recording lapsed \(ago). macOS re-confirms Screen Recording \
+                about every \(UnattendedRecordingGrant.renewalDays) days, so after approving \
+                it above, switch unattended recording back on in Snitt's settings to renew.
+                """
+        }
+    }
+
     static let screenRecordingDeniedMessage = """
         Snitt needs permission to record the screen.
 
