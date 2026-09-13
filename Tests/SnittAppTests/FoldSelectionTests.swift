@@ -99,4 +99,78 @@ struct FoldSelectionTests {
         state.deleteSelection()
         #expect(state.edl.cuts.count == 2, "Delete removed a fold the user was not looking at")
     }
+    // MARK: - Selecting a cut LINE, so Delete can remove one
+
+    @Test("Right-clicking a cut selects it, without expanding it")
+    func rightClickSelectsTheCutLine() async throws {
+        // The gap this closes. `FoldPalette` has drawn a `collapsedSelected`
+        // appearance since M5f and `deleteSelection` has removed a selected fold
+        // for just as long — but `onSelectFold` was declared, wired to the state,
+        // and called by NO gesture. A cut line could not be selected at all, so
+        // Delete could never remove one: the only way in was a double-click, which
+        // expands the fold first.
+        let cut = Cut(range: TimeRange(start: 10, end: 12))
+        let state = try await makeState(cuts: [cut])
+        let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 140))
+        view.onSelectFold = { state.selectFold(id: $0) }
+        view.update(duration: 20, cuts: [cut], markerPoints: [], playhead: 0)
+
+        let geometry = TimelineGeometry(
+            width: 800,
+            timebase: Timebase(sourceDuration: 20, edl: EditDecisionList(cuts: [cut])))
+        _ = view.contextMenu(at: NSPoint(x: CGFloat(geometry.x(atFold: cut)), y: 70))
+
+        #expect(state.selectedFoldID == cut.id, "right-clicking the cut did not select it")
+        #expect(state.selection != nil, "nothing was highlighted, so Delete stays disabled")
+        // Collapsed, deliberately: expanding on right-click would move the
+        // timeline under the menu that is about to appear.
+        #expect(!state.expandedCutIDs.contains(cut.id),
+                "right-click expanded the fold; only double-click should do that")
+    }
+
+    @Test("Delete then removes the cut line that was right-clicked")
+    func deleteRemovesARightClickedCutLine() async throws {
+        // The end the request names: select a cut line, hit Delete, it is gone.
+        // Driven through the same seam a right-click uses rather than by calling
+        // `selectFold` directly — the model half was already tested and already
+        // worked; the gesture was the missing piece.
+        let cut = Cut(range: TimeRange(start: 4, end: 6))
+        let state = try await makeState(cuts: [cut])
+        let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 140))
+        view.onSelectFold = { state.selectFold(id: $0) }
+        view.update(duration: 20, cuts: [cut], markerPoints: [], playhead: 0)
+
+        let geometry = TimelineGeometry(
+            width: 800,
+            timebase: Timebase(sourceDuration: 20, edl: EditDecisionList(cuts: [cut])))
+        _ = view.contextMenu(at: NSPoint(x: CGFloat(geometry.x(atFold: cut)), y: 70))
+        state.deleteSelection()
+
+        #expect(state.edl.cuts.isEmpty, "Delete did not remove the selected cut line")
+    }
+
+    @Test("A selected cut line draws as selected, collapsed")
+    func collapsedSelectedIsReachable() {
+        // `collapsedSelected` existed and nothing could produce it — the appearance
+        // was designed, drawn, and unreachable. Asserted against the palette rather
+        // than the pixels, which the headless host cannot see.
+        #expect(FoldPalette.appearance(expanded: false, selected: true) == .collapsedSelected)
+        #expect(FoldPalette.appearance(expanded: false, selected: false) == .collapsed)
+        #expect(FoldPalette.appearance(expanded: true, selected: true) == .expandedSelected)
+    }
+
+    @Test("Right-clicking away from a cut selects nothing")
+    func rightClickOffACutSelectsNothing() async throws {
+        // Selecting on any right-click would clear a range the user had just
+        // dragged, which is a silent edit to what Delete will do next.
+        let cut = Cut(range: TimeRange(start: 10, end: 12))
+        let state = try await makeState(cuts: [cut])
+        let view = TimelineView(frame: NSRect(x: 0, y: 0, width: 800, height: 140))
+        view.onSelectFold = { state.selectFold(id: $0) }
+        view.update(duration: 20, cuts: [cut], markerPoints: [], playhead: 0)
+
+        #expect(view.contextMenu(at: NSPoint(x: 5, y: 70)) == nil)
+        #expect(state.selectedFoldID == nil, "a right-click off the cut selected it anyway")
+    }
+
 }
