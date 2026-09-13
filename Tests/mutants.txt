@@ -277,3 +277,8 @@ FoldSelectionTests :: Sources/SnittApp/TimelineView.swift :: onSelectFold(cut.id
 FoldSelectionTests :: Sources/SnittApp/EditorWindowController.swift :: if let id = selectedFoldID { :: if false, let id = selectedFoldID {
 FoldSelectionTests :: Sources/SnittApp/TimelineView.swift :: activeFoldClick = cut.id :: activeFoldClick = nil
 FoldSelectionTests :: Sources/SnittApp/TimelineView.swift :: if activeFoldClick != nil { :: if false {
+
+# GIF export must stay small enough for ImageIO to quantise at all.
+GIFDimensionCapTests :: Sources/SnittExport/GIFExporter.swift :: guard sourceWidth > maximumWidth else { return 1.0 } :: return 1.0
+GIFDimensionCapTests :: Sources/SnittExport/MovieExporter.swift :: scale *= GIFExporter.maximumWidth / probeWidth :: scale = GIFExporter.maximumWidth / probeWidth
+ExportForDestinationTests :: Sources/SnittApp/ExportSheet.swift :: self.drawSubtitles = drawSubtitles :: self.drawSubtitles = false

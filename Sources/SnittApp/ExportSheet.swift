@@ -15,6 +15,11 @@ struct ExportRequest: Equatable {
     var resolution: ExportResolution = .source
     var destination: URL
     var drawClicks: Bool = false
+    /// Burn the transcript in as captions. Defaults from the document's
+    /// `showSubtitles`, so the sheet opens agreeing with the editor.
+    var drawSubtitles: Bool = false
+    /// Burn each marker in as a top-left banner.
+    var drawMarkers: Bool = false
     /// A ceiling the export must fit under, or nil for none.
     ///
     /// The sheet does not offer this — a person picking a resolution by hand
@@ -26,9 +31,13 @@ struct ExportRequest: Equatable {
     /// `drawClicks` defaults off so the previews and tests that construct a
     /// request directly are unaffected; the editor passes Playback ▸ Show
     /// Clicks through, so the sheet opens agreeing with the menu.
-    init(destination: URL, drawClicks: Bool = false, maxSizeBytes: Int? = nil) {
+    init(destination: URL, drawClicks: Bool = false,
+         drawSubtitles: Bool = false, drawMarkers: Bool = false,
+         maxSizeBytes: Int? = nil) {
         self.destination = destination
         self.drawClicks = drawClicks
+        self.drawSubtitles = drawSubtitles
+        self.drawMarkers = drawMarkers
         self.maxSizeBytes = maxSizeBytes
     }
 
@@ -43,13 +52,17 @@ struct ExportRequest: Equatable {
     /// say which one is the small one.
     static func forDestination(_ destination: ExportDestination,
                                basedOn url: URL,
-                               drawClicks: Bool) -> ExportRequest {
+                               drawClicks: Bool,
+                               drawSubtitles: Bool = false,
+                               drawMarkers: Bool = false) -> ExportRequest {
         let stem = url.deletingPathExtension().lastPathComponent
         let named = url.deletingLastPathComponent()
             .appendingPathComponent("\(stem)-\(destination.id)")
             .appendingPathExtension(destination.format)
         var request = ExportRequest(destination: named,
                                     drawClicks: drawClicks,
+                                    drawSubtitles: drawSubtitles,
+                                    drawMarkers: drawMarkers,
                                     maxSizeBytes: destination.maxSizeBytes)
         request.resolution = destination.resolution
         request.setFormat(destination.format)
@@ -105,6 +118,7 @@ struct ExportSheet: View {
             VStack(alignment: .leading, spacing: 16) {
                 format
                 resolution
+                overlays
                 headline
                 destination
             }
@@ -295,11 +309,34 @@ struct ExportSheet: View {
         }
     }
 
+    /// What gets drawn ON the recording, as its own section.
+    ///
+    /// "Draw clicks" used to sit alone beside the Export button, which was
+    /// tolerable for one checkbox and stops being so at three: the row a
+    /// person's eye goes to for "am I done" is not where a decision about the
+    /// content belongs. Subtitles and markers join it here, grouped under a
+    /// heading like Format and Resolution above.
+    ///
+    /// Each defaults from the DOCUMENT — the Playback ▸ Show toggles — so the
+    /// sheet opens agreeing with what the editor was showing, and each stays
+    /// overridable for this one export.
+    private var overlays: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Overlays").font(.caption).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                Toggle("Draw subtitles", isOn: $request.drawSubtitles)
+                    .help("Burn the transcript into the video as captions")
+                Toggle("Draw markers", isOn: $request.drawMarkers)
+                    .help("Burn each marker in as a banner at the top left")
+                Toggle("Draw clicks", isOn: $request.drawClicks)
+                    .help("Mark clicks on the exported video")
+            }
+            .toggleStyle(.checkbox)
+        }
+    }
+
     private var footer: some View {
         HStack {
-            Toggle("Draw clicks", isOn: $request.drawClicks)
-                .toggleStyle(.checkbox)
-                .help("Mark reported clicks on the exported video")
             Spacer()
             Button("Cancel", role: .cancel, action: onCancel)
                 .keyboardShortcut(.cancelAction)

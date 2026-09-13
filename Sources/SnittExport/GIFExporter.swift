@@ -69,6 +69,38 @@ public enum GIFExporter {
         return context.makeImage() ?? image
     }
 
+    /// The widest GIF this will produce, in pixels.
+    ///
+    /// **A cap, because the format has no streaming write.** ImageIO builds
+    /// ONE global colour map across EVERY frame — `GIFWritePlugin::
+    /// writeAllFramesWithGlobalColorMap` — inside `CGImageDestinationFinalize`,
+    /// so the whole animation is quantised at once rather than frame by frame.
+    ///
+    /// Snitt records at native Retina resolution: 4112x2580 is an ordinary
+    /// capture here. Fifteen frames a second of that for twenty seconds is
+    /// about 300 frames of 42 megapixels, and quantising them together asks
+    /// for tens of gigabytes. It does not fail gracefully — a real export
+    /// crashed the app with SIGSEGV inside `ColorQuantization::hist3d`
+    /// (2026-09-13), which is a crash in the one path §11 calls out as worst.
+    ///
+    /// 1280 because a GIF is something you paste into a chat or an issue, and
+    /// every destination that accepts one re-scales it anyway. Nothing is
+    /// gained by handing them a 4K animation that cannot be encoded.
+    public static let maximumWidth: Double = 1280
+
+    /// The scale that keeps `sourceWidth` within `maximumWidth`, never
+    /// enlarging.
+    ///
+    /// Applied when the composition is BUILT rather than by downscaling
+    /// generated frames: `AVAssetImageGenerator.maximumSize` was already
+    /// rejected here for producing 160x120 from a 0.5 scale, and building
+    /// smaller also avoids generating the huge frames in the first place —
+    /// which is the memory the crash was made of.
+    public static func fittingScale(forSourceWidth sourceWidth: Double) -> Double {
+        guard sourceWidth > maximumWidth else { return 1.0 }
+        return maximumWidth / sourceWidth
+    }
+
     public static func write(_ built: BuiltComposition,
                              to url: URL,
                              framesPerSecond: Double,

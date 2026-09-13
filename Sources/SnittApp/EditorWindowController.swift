@@ -1720,7 +1720,9 @@ struct EditorContentView: View {
             // export. Still overridable in the sheet — this is the default,
             // not a lock.
             exportRequest = ExportRequest(destination: state.defaultExportURL,
-                                          drawClicks: state.showClicks)
+                                          drawClicks: state.showClicks,
+                                          drawSubtitles: state.showSubtitles,
+                                          drawMarkers: state.showMarkers)
             exportOptions = []
             measuringExport = true
             showingExport = true
@@ -2352,7 +2354,9 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     func exportFor(_ destination: ExportDestination) {
         let request = ExportRequest.forDestination(destination,
                                                    basedOn: state.defaultExportURL,
-                                                   drawClicks: state.edl.showClicks)
+                                                   drawClicks: state.edl.showClicks,
+                                                   drawSubtitles: state.edl.showSubtitles,
+                                                   drawMarkers: state.edl.showMarkers)
         Task { @MainActor in
             do {
                 try await performExport(request, pasteboard: .general)
@@ -2429,8 +2433,16 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     private func performExport(_ request: ExportRequest,
                                pasteboard: NSPasteboard) async throws {
         let bundle = try SnittBundle(opening: bundleURL)
+        // The sheet's overlay toggles override the document's for this one
+        // export. They are seeded FROM the document when the sheet opens, so
+        // leaving them alone exports what the editor was showing — but a
+        // person who unticks "Draw subtitles" here must get a file without
+        // them, not one that quietly follows Playback ▸ Show instead.
+        var edl = state.edl
+        edl.showSubtitles = request.drawSubtitles
+        edl.showMarkers = request.drawMarkers
         _ = try await MovieExporter.export(
-            bundle: bundle, edl: state.edl, scale: 1.0,
+            bundle: bundle, edl: edl, scale: 1.0,
             to: request.destination, format: request.format,
             maxSizeBytes: request.maxSizeBytes,
             resolution: request.resolution, clicks: request.drawClicks)
