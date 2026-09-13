@@ -1054,6 +1054,38 @@ D84 and D86 left this section on 2026-09-09 once their real cost was measured.
   `CompositionBuilder`, `TimelineView`, `TranscriptPane`,
   `EditorWindowController`, `AutomationHost` and `RecordingIcon` all still read
   `KeptRanges` directly. `absent: GainEnvelope` (D91).
+- **D94 — an on-device generated title for a recording.** Name a bundle after
+  what is IN it, instead of `Snitt-1789163327.snitt`. Deferred 2026-09-12 after
+  being built as far as a measurement and then stopped.
+
+  *Measured, not estimated* (`FoundationModels`, macOS 26.5.2, 2026-09-12):
+  `SystemLanguageModel.default.availability` is `.available` with 23 supported
+  languages, and a `@Generable` title over a real transcript took **6.65s**
+  from the transcript alone and **10.83s** with the git branch added. Quality
+  tracked the context: "SoundCloud Song Search" with the branch, bare
+  "SoundCloud" without.
+
+  *Why it was stopped rather than shipped:* three edges, in the order they
+  bite. (1) **Confabulation on a thin transcript is worse than a timestamp** —
+  a wrong-but-confident name is trusted, so the recording becomes harder to
+  find than the number it replaced; this needs a floor on transcript length or
+  a confidence gate before it is safe. (2) **It is the first non-reproducible
+  thing in this format.** §7's whole pitch is that everything re-derives from
+  immutable inputs, and the same bundle re-analysed yields a different title —
+  so the result must be STORED, never recomputed, which is a change to
+  `meta.json` rather than a display detail. (3) **~10s cannot sit on the stop
+  path**; it has to run in the background and update the name when it lands,
+  which means the editor has to tolerate its own document being renamed under
+  it.
+
+  *And one that only bites if it grows:* if it ever emits chapters as well as a
+  title, `EventSource` has no case for a model-generated event — neither
+  `observed` nor `reported` is true — so it needs a third case rather than a
+  reuse of `reported`, or `autoTrimRange` and `InspectReport.inputEventCount`
+  will count invented events as input. §5 also makes a generated title a new
+  artifact derived from speech, so the audit record should say a model produced
+  it. `absent: GeneratedTitle` (D91).
+
 - **D93 — record a voiceover after the fact, in the editor.** Narrate over a
   recording you have already made, rather than deciding to speak before you
   start. Requested 2026-09-12.
@@ -1618,6 +1650,7 @@ window-relative overlay. **Zoom + follow-mouse is per *segment*, and segments do
 
 | D92 | **MPL-2.0, with a CLA** — file-level copyleft, plus contributor terms that keep relicensing possible | Product-owner decision, 2026-09-09, answering "open source, but I don't want commercial competitors taking the code and charging for it". **The tension named first, because it is real**: OSI open source REQUIRES permitting commercial use and sale, so no open-source licence delivers "nobody may charge for it" — that needs a source-available licence (FSL, PolyForm), which forfeits the word. GPL-3.0 was recommended as the strongest deterrent that stays open source: a competitor may sell it but must publish their whole derivative's source, which kills the proprietary fork. **MPL was chosen over it deliberately, and the reason is Mac App Store distribution** — Apple's terms impose restrictions GPL forbids (the VLC case), and §13's M8 keeps that half alive on §4.3's own terms. AGPL was rejected as dead weight: its teeth are the network clause, and D62 puts transcription ON DEVICE precisely so there is no service for it to bite. **The CLA is what makes this reversible, and that is the point of the pair.** MPL is the weakest of the four against the stated worry — a competitor may wrap Snitt in a closed product and publish only their edits to Snitt's own files — so the licence is the option-preserving choice and the CLA is the escape hatch: contributors licence their work broadly enough that the project can relicense later, which is impossible once contributions arrive under terms needing unanimous permission to change. Not a copyright assignment; contributors keep their copyright. **Default MPL, no Exhibit B**, so the code stays GPL-compatible — other open projects using it was never the threat. **The file-level boundary is a mechanical property and therefore guarded**: MPL obligations attach to "Covered Software" and Exhibit A is how a file declares itself covered, so a new file without the notice silently leaves the licence's protection. `LicenseHeaderTests` fails the build on a missing notice, and on a `LICENSE` that does not match what the notices point at. **The strongest anti-clone tool is not the licence at all** — a fork can copy the code but cannot call itself Snitt | §13, D54, D66; `LICENSE`, `CLA.md`, `CONTRIBUTING.md`, `LicenseHeaderTests.swift` | Decided (applied) | no-open-licence-can-stop-a-competitor-so-keep-the-right-to-change-it |
 | D93 | **Recording a voiceover after the fact, in the editor** — queued, not ranked | Product-owner direction, 2026-09-12. Recorded because a decision-log entry alone is invisible to planning (§13's queued section exists for exactly this). **Not "another mic track", and that is the whole cost.** §4.5 makes `capture.mov` immutable, so a voiceover cannot be mixed into it — it is a new asset beside the existing tracks, and `AudioTrackOrder.canonical` is a fixed `[systemAudio, microphone]` order that `MicrophoneTrackExtractor` indexes BY NAME, so a third track must join that vocabulary or transcription silently reads the wrong one. The genuinely new problem is time: a voiceover is spoken against OUTPUT time while every other track lives in SOURCE time, so a later cut has to decide whether the narration moves with the picture or stays where it was said — the first case in `Timebase` with no obvious right answer. It also lands on `PassthroughEligibility` (an added track means an audio mix, so exports stop copying samples) and forces transcription to choose between two spoken tracks. **What it unblocks is the reason to want it**: an agent-made recording can never have narration today, and this is the only route to one | §4.5, §7, D64, D83, D89, D91; `AudioTrackOrder`, `MicrophoneTrackExtractor`, `PassthroughEligibility` | Queued (not ranked) | narration-is-a-new-track-in-output-time-not-a-second-mic |
+| D94 | **An on-device generated title for a recording** — queued, deferred after measurement | Panel proposal (2026-09-12 refinement), built as far as a probe and then stopped on the numbers. `FoundationModels` is genuinely available — `SystemLanguageModel.default.availability` reports `.available`, 23 languages, on macOS 26.5.2 — and a `@Generable` title over a real transcript took 6.65s alone, 10.83s with git context, returning "SoundCloud Song Search" against a bare "SoundCloud" depending on how much context it was given. **Deferred because the floor is already earned without it**: D77's macOS 26 requirement is paid for by the `SpeechAnalyzer` port, which deleted 132 lines and found six more words, so this no longer has to justify the platform floor and can be judged on its own merits. On those merits it is not ready. A confidently wrong title is WORSE than the timestamp it replaces, because a timestamp is not trusted and a name is — so it needs a transcript-length floor or a confidence gate first. It is also the first non-reproducible artifact in a format whose §7 pitch is that everything re-derives from immutable inputs, so the result has to be stored in `meta.json` rather than recomputed, and ~10s cannot sit on the stop path. Recorded rather than dropped: the capability is real and the measurements are the expensive part of deciding | §5, §7, §4.6, D62, D77, D91; `FoundationModels`, `RecordingMetadata`, `BundleNaming` | Queued (deferred) | a-confidently-wrong-name-is-worse-than-a-timestamp |
 
 `conformance: 2026-09-07` (post-D66 refinement pass)
 
