@@ -133,6 +133,37 @@ compares component-wise, so the first component decides: a build numbered
 `141` outranks `0.4.0` because 141 > 0. Installed copies of every previous
 release are therefore offered the next one as normal.
 
+## The Homebrew tap
+
+`Casks/snitt.rb` lives in this repo and `release.sh` step 10 rewrites its
+version and hash on every release, so it cannot go stale. What it is NOT
+is a tap: Homebrew resolves `brew tap <user>/<name>` to a repository
+literally named `homebrew-<name>`, so the cask has to be copied into
+`impressiver/homebrew-snitt` before anyone can install from it.
+
+That repo does not exist yet, and creating it is deliberately left out of
+this runbook — it is a public repository, which is a decision rather than
+a step, and it is pointless before this repo is public anyway (the cask's
+download URL 404s while releases are private).
+
+When it is time:
+
+```sh
+gh repo create impressiver/homebrew-snitt --public \
+  --description "Homebrew tap for Snitt"
+# then, per release, copy Casks/snitt.rb into that repo's Casks/ directory
+```
+
+After which the install line is:
+
+```sh
+brew tap impressiver/snitt && brew install --cask snitt
+```
+
+A personal tap rather than a homebrew-cask submission, on purpose: a tap
+is one repo and one file with no review queue, and it can be promoted to
+homebrew-cask later once there is adoption to point at.
+
 ## The path, in order
 
 Bump `AppVersion.marketing` in `Sources/SnittDocument/AppVersion.swift`

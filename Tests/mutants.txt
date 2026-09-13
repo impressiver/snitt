@@ -240,3 +240,16 @@ ExportDestinationTests :: Sources/SnittExport/ExportDestination.swift :: maxSize
 ExportForDestinationTests :: Sources/SnittApp/ExportSheet.swift :: maxSizeBytes: destination.maxSizeBytes) :: maxSizeBytes: nil)
 ExportForDestinationTests :: Sources/SnittApp/ExportSheet.swift :: request.setFormat(destination.format) :: let _ = destination.format
 ExportDestinationTests :: Sources/SnittExport/ExportDestination.swift :: return seconds > limit :: return false
+
+# The Homebrew cask, and the release step that keeps it current.
+# The release stops updating the cask, which then installs the PREVIOUS version
+# for everyone, silently, because the download still works.
+HomebrewCaskTests :: Scripts/release.sh :: CASK_SOURCE="Casks/snitt.rb" :: CASK_SOURCE=""
+# Homebrew is no longer told the app self-updates, so `brew upgrade` reinstalls
+# an older build over a newer one Sparkle already installed.
+HomebrewCaskTests :: Casks/snitt.rb ::   auto_updates true ::   auto_updates false
+# Note for whoever adds the next mutant here: the spec's field separator is
+# ` *:: *`, so leading whitespace in an anchor is stripped and cannot be used
+# to disambiguate. An anchor that also appears in a COMMENT mutates the comment
+# — `replace(..., 1)` takes the first match — and reports a surviving mutant
+# when the test was correct all along. Both happened while writing these two.
