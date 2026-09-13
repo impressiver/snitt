@@ -37,9 +37,13 @@ let package = Package(
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6"),
     ],
     targets: [
+        // Brand colours, depending on nothing, so any layer that draws can
+        // reach them — including SnittExport, where a burned-in overlay makes
+        // a colour permanent.
+        .target(name: "SnittBrand"),
         .target(name: "SnittDocument"),
         .target(name: "SnittCapture", dependencies: ["SnittDocument"]),
-        .target(name: "SnittExport", dependencies: ["SnittDocument"]),
+        .target(name: "SnittExport", dependencies: ["SnittBrand", "SnittDocument"]),
         // Depends on SnittDocument ONLY — never SnittCapture. §4.9 forbids any
         // frontend from calling ScreenCaptureKit, because macOS attributes the
         // capture grant to the responsible process — a capturing CLI
@@ -60,7 +64,8 @@ let package = Package(
         .executableTarget(
             name: "SnittApp",
             dependencies: [
-                "SnittCapture", "SnittDocument", "SnittExport", "SnittAutomation",
+                "SnittBrand", "SnittCapture", "SnittDocument", "SnittExport",
+                "SnittAutomation",
                 .product(name: "Sparkle", package: "Sparkle"),
             ]
         ),

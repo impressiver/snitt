@@ -4,6 +4,7 @@
 //
 // Copyright © 2026 Ian White.
 
+import SnittBrand
 import Testing
 import Foundation
 @testable import SnittApp

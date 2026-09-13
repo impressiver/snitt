@@ -4,6 +4,7 @@
 //
 // Copyright © 2026 Ian White.
 
+import SnittBrand
 import AppKit
 
 /// How a cut looks in each of the four states it can be in.
