@@ -1031,6 +1031,20 @@ public final class TimelineView: NSView {
         if event.clickCount == 2 {
             if let cut = foldHit(atX: point.x) {
                 onExpandAndSelectFold(cut.id)
+                // Claim the gesture, or `mouseUp` undoes it a moment later.
+                //
+                // Without this the trailing `mouseUp` finds no active fold
+                // click, falls through to the plain-click path, and calls
+                // `onSelect(nil)` — which clears `selectedFoldID`. On screen
+                // the fold highlighted and then deselected itself instantly,
+                // so an expanded fold could not be selected at all.
+                //
+                // The single-click branch below has always done this; the
+                // double-click branch returned early and never did. The
+                // existing test drove `mouseDown` with `clickCount: 2` and
+                // stopped there, so it asserted the selection that IS made
+                // and never the `mouseUp` that took it away.
+                activeFoldClick = cut.id
                 return
             }
             // Empty marker lane only. A double-click ON a marker never

@@ -275,3 +275,5 @@ TextOverlayRenderTests :: Sources/SnittExport/TextOverlayComposition.swift :: re
 FoldSelectionTests :: Sources/SnittApp/TimelineView.swift :: onSelectFold(cut.id) :: let _ = cut.id
 FoldSelectionTests :: Sources/SnittApp/TimelineView.swift :: onSelectFold(cut.id) :: onExpandAndSelectFold(cut.id)
 FoldSelectionTests :: Sources/SnittApp/EditorWindowController.swift :: if let id = selectedFoldID { :: if false, let id = selectedFoldID {
+FoldSelectionTests :: Sources/SnittApp/TimelineView.swift :: activeFoldClick = cut.id :: activeFoldClick = nil
+FoldSelectionTests :: Sources/SnittApp/TimelineView.swift :: if activeFoldClick != nil { :: if false {
