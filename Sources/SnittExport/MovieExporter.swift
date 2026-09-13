@@ -109,7 +109,9 @@ public enum MovieExporter {
                                    clicks: [ClickMark] = [],
                                    resolution: ExportResolution = .source,
                                    edl: EditDecisionList? = nil,
-                                   scale: Double = 1.0) async throws {
+                                   scale: Double = 1.0,
+                                   cues: [SubtitleCue] = [],
+                                   banners: [MarkerBanner] = []) async throws {
         // Copy the samples when nothing in this export would change a pixel.
         // Measured on a real 4112x2580 capture: 1.112s to re-encode, 0.023s to
         // copy, and the decoded frames match. See `PassthroughEligibility`.
@@ -136,8 +138,14 @@ public enum MovieExporter {
         // whole point; setting an audioMix on a passthrough session is refused
         // outright. Eligibility already established that both would be no-ops.
         if !canCopy {
-            session.videoComposition = ClickOverlay.exportComposition(
+            // Clicks first, then text over them, so a caption is never drawn
+            // underneath a ring. Each returns nil when it has nothing to add,
+            // and the fallbacks chain so a composition is built once whichever
+            // overlays are on.
+            let withClicks = ClickOverlay.exportComposition(
                 from: built.videoComposition, marks: clicks) ?? built.videoComposition
+            session.videoComposition = TextOverlayComposition.composition(
+                from: withClicks, cues: cues, banners: banners) ?? withClicks
             // The mix lives on the export session, not the player item (M4's
             // preview layer) — §9's whole point is that the two paths cannot
             // apply the mix differently, and putting it here is what
@@ -210,6 +218,8 @@ public enum MovieExporter {
     /// distinguishable.
     private static func exportGIF(bundle: SnittBundle,
                                   clickEvents: [LoggedEvent] = [],
+                                  transcriptWords: [TranscriptWord] = [],
+                                  bannerEvents: [LoggedEvent] = [],
                                   edl: EditDecisionList,
                                   scale: Double,
                                   to outputURL: URL,
@@ -219,8 +229,11 @@ public enum MovieExporter {
             // No target: one GIF at the base frame rate and the requested
             // scale, no ladder walked at all.
             let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: scale)
+            let overlays = textOverlays(for: built, words: transcriptWords,
+                                        markerEvents: bannerEvents)
             try await GIFExporter.write(built, to: outputURL, framesPerSecond: defaultGIFFrameRate,
-                                        clicks: clickMarks(for: built, events: clickEvents))
+                                        clicks: clickMarks(for: built, events: clickEvents),
+                                        cues: overlays.cues, banners: overlays.banners)
             let byteSize = try fileByteSize(at: outputURL)
             return (built, scale, defaultGIFFrameRate, byteSize, false)
         }
@@ -241,7 +254,11 @@ public enum MovieExporter {
                     // Recomputed for THIS rung: a smaller scale is a different
                     // render transform, and a mark placed for the full-size
                     // frame lands somewhere else on a scaled one.
-                    clicks: clickMarks(for: rungBuilt, events: clickEvents))
+                    clicks: clickMarks(for: rungBuilt, events: clickEvents),
+                    cues: textOverlays(for: rungBuilt, words: transcriptWords,
+                                       markerEvents: bannerEvents).cues,
+                    banners: textOverlays(for: rungBuilt, words: transcriptWords,
+                                          markerEvents: bannerEvents).banners)
             } catch {
                 // Same contract as the mp4 ladder: a rung that fails to
                 // encode does not abort the whole export, it just isn't
@@ -316,10 +333,22 @@ public enum MovieExporter {
         // wrong and this shrugged.
         let clickEvents = clicks ? try readBundleEvents(bundle) : []
 
+        // The two burned-in overlays, from the EDL rather than a parameter:
+        // they are a property of the document, set in the editor and carried
+        // into every export, exactly as `showClicks` is. Events are read once
+        // and reused; the transcript only when captions are actually wanted,
+        // since reading it costs a file open for a recording that may have none.
+        let bannerEvents = edl.showMarkers ? try readBundleEvents(bundle) : []
+        let transcriptWords: [TranscriptWord] = edl.showSubtitles
+            ? ((try? Transcript.read(from: bundle))?.words ?? [])
+            : []
+
         if format == "gif" {
             var fps: Double
             (built, effectiveScale, fps, byteSize, sizeMet) = try await exportGIF(
-                bundle: bundle, clickEvents: clickEvents, edl: edl, scale: scale,
+                bundle: bundle, clickEvents: clickEvents,
+                transcriptWords: transcriptWords, bannerEvents: bannerEvents,
+                edl: edl, scale: scale,
                 to: outputURL, maxSizeBytes: maxSizeBytes)
             effectiveFPS = fps
         } else {
@@ -343,7 +372,11 @@ public enum MovieExporter {
                             // recomputes: this rung is a different scale and
                             // therefore a different render transform.
                             clicks: clickMarks(for: rungBuilt, events: clickEvents),
-                            resolution: resolution, edl: edl, scale: rungScale)
+                            resolution: resolution, edl: edl, scale: rungScale,
+                            cues: textOverlays(for: rungBuilt, words: transcriptWords,
+                                               markerEvents: bannerEvents).cues,
+                            banners: textOverlays(for: rungBuilt, words: transcriptWords,
+                                                  markerEvents: bannerEvents).banners)
                     } catch {
                         // The session may throw rather than produce a
                         // best-effort file when the limit is impossible. Either
@@ -380,7 +413,11 @@ public enum MovieExporter {
                     try await exportMovie(built, to: outputURL, maxSizeBytes: nil,
                                           clicks: clickMarks(for: built, events: clickEvents),
                                           resolution: resolution, edl: edl,
-                                          scale: smallestScale)
+                                          scale: smallestScale,
+                                          cues: textOverlays(for: built, words: transcriptWords,
+                                                             markerEvents: bannerEvents).cues,
+                                          banners: textOverlays(for: built, words: transcriptWords,
+                                                                markerEvents: bannerEvents).banners)
                     byteSize = try fileByteSize(at: outputURL)
                     sizeMet = byteSize <= maxSizeBytes
                 }
@@ -388,7 +425,11 @@ public enum MovieExporter {
                 try await exportMovie(built, to: outputURL, maxSizeBytes: nil,
                                           clicks: clickMarks(for: built, events: clickEvents),
                                           resolution: resolution, edl: edl,
-                                          scale: effectiveScale)
+                                          scale: effectiveScale,
+                                          cues: textOverlays(for: built, words: transcriptWords,
+                                                             markerEvents: bannerEvents).cues,
+                                          banners: textOverlays(for: built, words: transcriptWords,
+                                                                markerEvents: bannerEvents).banners)
                 byteSize = try fileByteSize(at: outputURL)
             }
         }
@@ -466,6 +507,20 @@ public enum MovieExporter {
     /// Takes the composition rather than a precomputed list because both size
     /// ladders rebuild at smaller scales, and a mark's position comes from the
     /// render transform — so marks belong to a build, not to an export.
+    /// Captions and banners for one built composition, in OUTPUT time.
+    ///
+    /// Takes the composition for the same reason `clickMarks` does: the size
+    /// ladder rebuilds at smaller scales, and the overlays are laid out
+    /// against the render size, so they belong to a build rather than to an
+    /// export.
+    static func textOverlays(for built: BuiltComposition,
+                             words: [TranscriptWord],
+                             markerEvents: [LoggedEvent])
+        -> (cues: [SubtitleCue], banners: [MarkerBanner]) {
+        (SubtitleCues.cues(words: words, keptRanges: built.keptRanges),
+         MarkerBanners.banners(events: markerEvents, keptRanges: built.keptRanges))
+    }
+
     private static func clickMarks(for built: BuiltComposition,
                                    events: [LoggedEvent]) -> [ClickMark] {
         guard !events.isEmpty else { return [] }

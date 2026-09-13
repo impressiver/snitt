@@ -72,7 +72,9 @@ public enum GIFExporter {
     public static func write(_ built: BuiltComposition,
                              to url: URL,
                              framesPerSecond: Double,
-                             clicks: [ClickMark] = []) async throws {
+                             clicks: [ClickMark] = [],
+                             cues: [SubtitleCue] = [],
+                             banners: [MarkerBanner] = []) async throws {
         let renderSize = built.videoComposition.renderSize
         // MUST precede the assignment below. Not a defensive nicety: the
         // ObjC exception this avoids cannot be caught from Swift, so the
@@ -137,11 +139,21 @@ public enum GIFExporter {
                 // worked for mp4 and silently did nothing for GIF is the
                 // failure mode worth avoiding — the caller asked for clicks and
                 // would get a file without them.
-                let frame = clicks.isEmpty
+                // Captions and banners draw here for the same reason the
+                // rings do, and the comment above applies to them unchanged:
+                // this path is `AVAssetImageGenerator`, which ignores the
+                // animation tool the mp4 burn-in uses.
+                let seconds = CMTimeGetSeconds(requested)
+                var frame = clicks.isEmpty
                     ? image
-                    : drawClicks(clicks, on: image,
-                                 atOutputTime: CMTimeGetSeconds(requested),
+                    : drawClicks(clicks, on: image, atOutputTime: seconds,
                                  renderSize: renderSize)
+                // Text over rings, matching the mp4 layer order, so a caption
+                // is never drawn underneath a ring.
+                if !cues.isEmpty || !banners.isEmpty {
+                    frame = TextOverlayFrame.draw(cues: cues, banners: banners, on: frame,
+                                                  atOutputTime: seconds, renderSize: renderSize)
+                }
                 CGImageDestinationAddImage(destination, frame, frameProperties)
             case .failure(requestedTime: let time, error: let error):
                 // Per-frame failures are DELIVERED, not thrown. Skipping them
