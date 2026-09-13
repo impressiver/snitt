@@ -211,9 +211,19 @@ correct and is itself worth seeing.
 
 **B1 — the two human-only checks carried since M5f.** Press the record hotkey:
 **no window should open** (§4.11 — the editor-on-stop half is tested, this half
-never has been). Pick a target with the microphone ON, and confirm the mic band
-is not flat afterwards. Mic capture has only ever been verified through the
-agent path.
+never has been). ~~Pick a target with the microphone ON, and confirm the mic band is not flat
+afterwards.~~ **Mic capture: DONE 2026-09-12.** Verified through the human path
+across four recordings, measured off the tracks rather than the health block:
+`capture.mov` carries two audio tracks in `AudioTrackOrder.canonical` order, and
+the microphone track reads −49.6 to −26.5 dBFS RMS with peaks at −16.9 to
+−2.8 dBFS — not flat. Transcription of that track is confirmed separately by a
+recording that produced 14 words.
+
+One thing measured along the way that is worth not re-deriving: four of those
+recordings transcribed to ZERO words, which looks exactly like a broken
+transcriber and is not one — nobody spoke in them. Mic RMS alone cannot tell
+speech from a keystroke or a chair, and a −16.9 dBFS peak is reachable by
+either. The health block's `micRMS` is a liveness signal, not a speech one.
 
 **B2 — is system audio captured at all?** Every one of the five recordings on
 disk has `systemAudioRMS` exactly 0. That is plausible — none of them obviously

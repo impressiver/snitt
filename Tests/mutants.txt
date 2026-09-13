@@ -216,3 +216,8 @@ PassthroughEligibilityTests :: Sources/SnittExport/PassthroughEligibility.swift 
 PassthroughEligibilityTests :: Sources/SnittExport/PassthroughEligibility.swift :: if scale != 1.0 { return .scaled } :: if false { return .scaled }
 PassthroughEligibilityTests :: Sources/SnittExport/PassthroughEligibility.swift :: if !clicks.isEmpty { return .clickOverlay } :: if false { return .clickOverlay }
 CropTests :: Sources/SnittExport/MovieExporter.swift :: } ?? false :: } ?? true
+# The transcript pane tells the truth about which state it is in.
+TranscriptPanePresentationTests :: Sources/SnittApp/TranscriptPanePresentation.swift :: return wordCount == 0 ? .noSpeechFound : .transcript :: return .transcript
+TranscriptPanePresentationTests :: Sources/SnittApp/TranscriptPanePresentation.swift :: return wordCount == 0 ? .noSpeechFound : .transcript :: return .noSpeechFound
+TranscriptPanePresentationTests :: Sources/SnittApp/TranscriptPanePresentation.swift :: guard hasTranscript else { return .unavailable } :: if false { return .unavailable }
+TranscriptPanePresentationTests :: Sources/SnittApp/TranscriptPanePresentation.swift :: case .failed(let message): return .failed(message) :: case .failed: return .failed("")

@@ -34,8 +34,11 @@ struct TranscriptPane: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            switch state.transcriptionStatus {
-            case .needsPermission:
+            switch TranscriptPanePresentation.decide(
+                status: state.transcriptionStatus,
+                hasTranscript: state.transcript != nil,
+                wordCount: state.transcript?.words.count ?? 0) {
+            case .permissionPrompt:
                 // The §4.10 rung: the dialog appears when THIS is clicked, so
                 // it has a visible cause.
                 VStack(alignment: .leading, spacing: 8) {
@@ -47,7 +50,7 @@ struct TranscriptPane: View {
                     Button("Transcribe") { state.requestTranscriptionPermission() }
                 }
                 .padding(8)
-            case .transcribing:
+            case .working:
                 HStack(spacing: 6) {
                     ProgressView().controlSize(.small)
                     Text("Transcribing…").font(.caption).foregroundStyle(.secondary)
@@ -58,14 +61,44 @@ struct TranscriptPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(8)
-            case .none:
+            case .unavailable:
                 EmptyView()
-            case .ready:
+            case .noSpeechFound:
+                noSpeechFound
+            case .transcript:
                 if let transcript = state.transcript {
                     transcriptBody(transcript)
                 }
             }
         }
+    }
+
+    /// Transcription ran and heard nothing.
+    ///
+    /// The pane used to render an empty list here, under a header reading
+    /// "0 words". That is indistinguishable from still working, from a broken
+    /// transcriber, and from a recording whose audio went somewhere else — so
+    /// the one state the user cannot act on was the one that said nothing.
+    ///
+    /// The second line is the part worth having. Transcription reads the
+    /// MICROPHONE track only (`MicrophoneTrackExtractor` indexes `microphone`
+    /// out of `AudioTrackOrder.canonical`), so a screen recording of a video
+    /// call — where every voice arrived as system audio — transcribes to
+    /// nothing at all, correctly, and looks broken. Saying which track is
+    /// listened to is the difference between "this is broken" and "oh, I need
+    /// the mic on".
+    private var noSpeechFound: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("No speech found")
+                .font(.headline)
+            Text("Snitt transcribes the microphone track. System audio — a call, "
+                 + "a video, anything playing on your Mac — is recorded but not "
+                 + "transcribed.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(8)
     }
 
     @ViewBuilder
