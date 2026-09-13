@@ -265,3 +265,9 @@ MarkerBannersTests :: Sources/SnittExport/MarkerBanners.swift :: guard !label.is
 PassthroughEligibilityTests :: Sources/SnittExport/PassthroughEligibility.swift :: if edl.showSubtitles || edl.showMarkers { return .burnedInText } :: if false { return .burnedInText }
 PassthroughEligibilityTests :: Sources/SnittExport/PassthroughEligibility.swift :: if edl.showSubtitles || edl.showMarkers { return .burnedInText } :: if edl.showSubtitles { return .burnedInText }
 ShowClicksMenuTests :: Sources/SnittDocument/EditDecisionList.swift :: if showMarkers { try container.encode(true, forKey: .showMarkers) } :: if showSubtitles { try container.encode(true, forKey: .showMarkers) }
+
+# Burned-in captions and marker banners reaching the actual pixels.
+TextOverlayRenderTests :: Sources/SnittExport/TextOverlayComposition.swift :: for cue in cues { parent.addSublayer(captionLayer(for: cue, picture: picture)) } :: let _ = cues
+TextOverlayRenderTests :: Sources/SnittExport/TextOverlayComposition.swift :: for banner in banners { parent.addSublayer(bannerLayer(for: banner, picture: picture)) } :: let _ = banners
+TextOverlayRenderTests :: Sources/SnittExport/GIFExporter.swift :: if !cues.isEmpty || !banners.isEmpty { :: if false {
+TextOverlayRenderTests :: Sources/SnittExport/TextOverlayComposition.swift :: restingX = box.minX :: layer.frame = box; restingX = box.minX
