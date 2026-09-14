@@ -59,8 +59,6 @@ struct MarkerPane: View {
         let chapters = state.chapters
         let currentID = state.currentChapterID(atOutputSeconds: playhead)
         VStack(alignment: .leading, spacing: 0) {
-            header(count: chapters.count)
-            Divider()
             if chapters.isEmpty {
                 empty
             } else {
@@ -69,20 +67,24 @@ struct MarkerPane: View {
         }
     }
 
-    private func header(count: Int) -> some View {
-        HStack(spacing: 6) {
-            Text("Markers").font(.headline)
-            Spacer()
-            Button {
-                state.addMarker(atOutput: playhead)
-            } label: {
-                Image(systemName: "plus")
-            }
-            .buttonStyle(.borderless)
-            .help("Add a marker at the playhead")
+    /// The "add a marker" button, for the accordion header to place.
+    ///
+    /// It moved OUT of this view when the rail became an accordion: the
+    /// section header is the only header now, and a pane drawing a second one
+    /// underneath it was two titles for one list. Still built here, because it
+    /// needs `state` and the playhead and nothing else does.
+    ///
+    /// Marked `static`-ish in spirit but not in fact — it closes over the
+    /// pane's own bindings, which is the whole reason it did not simply move
+    /// to the call site.
+    var addButton: some View {
+        Button {
+            state.addMarker(atOutput: playhead)
+        } label: {
+            Image(systemName: "plus")
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
+        .buttonStyle(.borderless)
+        .help("Add a marker at the playhead")
     }
 
     private var empty: some View {

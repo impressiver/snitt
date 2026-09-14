@@ -105,14 +105,19 @@ struct EditorToolbar: View {
                 // every Mac app puts its inspector toggle, and being there is
                 // most of what tells you what it does.
                 Divider().frame(height: 16)
+                // Governs the whole side panel now — markers AND transcript,
+                // as an accordion — rather than the transcript alone. The icon
+                // never changed: `sidebar.trailing` is what it always was, and
+                // the panel moving to the trailing edge is what finally makes
+                // it true.
                 Toggle(isOn: $showTranscript) {
-                    Label("Transcript", systemImage: "sidebar.trailing")
+                    Label("Panel", systemImage: "sidebar.trailing")
                 }
                 .toggleStyle(.button)
                 .labelStyle(.iconOnly)
-                .help(showTranscript ? "Hide the transcript panel"
-                                     : "Show the transcript panel")
-                .accessibilityLabel("Transcript panel")
+                .help(showTranscript ? "Hide the markers and transcript panel"
+                                     : "Show the markers and transcript panel")
+                .accessibilityLabel("Markers and transcript panel")
                 .accessibilityAddTraits(showTranscript ? [.isSelected] : [])
             }
         }

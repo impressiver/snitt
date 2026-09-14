@@ -329,3 +329,8 @@ NavigationOriginTests :: Sources/SnittApp/EditorWindowController.swift :: if dec
 PhraseSelectionTests :: Sources/SnittApp/TimelineView.swift :: activePhraseClick = true :: activePhraseClick = false
 # A phrase click must select the whole utterance, not just land on its start.
 PhraseSelectionTests :: Sources/SnittApp/TimelineView.swift :: selection = Selection(range: TimeRange(start: phrase.start, end: phrase.end)) :: selection = Selection(range: TimeRange(start: phrase.start, end: phrase.start))
+
+# The rail's two sections are read TOGETHER — an either/or accordion would make
+# comparing a marker with what was said there a pair of clicks.
+RailLayoutTests :: Sources/SnittApp/RailLayout.swift :: return markersExpanded ? .fixed(stored) : .fill :: return markersExpanded ? .fill : .fixed(stored)
+RailLayoutTests :: Sources/SnittApp/RailLayout.swift :: markersExpanded && transcriptExpanded :: markersExpanded || transcriptExpanded
