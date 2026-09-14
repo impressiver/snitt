@@ -881,7 +881,11 @@ struct SettingsRowTests {
 
         let rows = stack.arrangedSubviews
         let ruleIndexes = rows.indices.filter { rows[$0] is NSBox }
-        #expect(ruleIndexes.count == 2, "expected a rule per group, found \(ruleIndexes.count)")
+        // Five groups, four rules: the first heading sits at the top of the
+        // window with nothing above it to divide from. Counted rather than
+        // assumed, because a `leadingRule` flag defaulting the wrong way is
+        // invisible in a screenshot of the middle of the window.
+        #expect(ruleIndexes.count == 4, "expected a rule between groups, found \(ruleIndexes.count)")
 
         for index in ruleIndexes {
             // Top-down: arrangedSubviews[0] is highest, so the gap ABOVE a
@@ -895,7 +899,7 @@ struct SettingsRowTests {
         }
     }
 
-    @Test("Nothing says 'Save recordings to' twice")
+    @Test("Nothing says the default-path caption twice")
     func theSaveGroupSaysItOnce() throws {
         // The group header was added above a row that already carried its own
         // caption, so the window shipped the phrase twice, one line apart.
