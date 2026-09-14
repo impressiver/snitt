@@ -1203,6 +1203,51 @@ D84 and D86 left this section on 2026-09-09 once their real cost was measured.
   artifact derived from speech, so the audit record should say a model produced
   it. `absent: GeneratedTitle` (D91).
 
+- **D98 — replace the CLA with a DCO plus an Apache-2.0 additional grant.**
+  Requested 2026-09-14, ranked after the voiceover work.
+
+  *Both of the CLA's stated reasons are dead, which is the finding rather than
+  the friction.* `CONTRIBUTING.md` justifies it as existing "so the project can
+  relicense in future (a Mac App Store build, or a commercial licence beside
+  the free one)". The second was killed by D66 — "there is no licence to
+  enforce and no subscription to gate", and free-and-open-source is named as
+  part of the differentiator. The first is simply not true: **MPL-2.0 already
+  ships on the App Store.** Brave is MPL-2.0 on iOS and Collabora Online is
+  MPLv2 on iOS, iPadOS and macOS; Mozilla's own tracking bug on Apple's terms
+  notes "it's lucky we aren't GPLed", because the conflict is with the GPL's
+  whole-work conditions rather than the MPL's file-scoped ones. Snitt's actual
+  App Store blockers are `CGEventTap` and the agent surface (see §13's M8
+  bullet), and neither is a licensing problem.
+
+  *DCO alone cannot do it, and that is the usual mistake.* A DCO sets inbound
+  equal to outbound and grants nothing extra, so a DCO-only project cannot
+  relicense without unanimous permission — exactly what the CLA was avoiding.
+  What works is the DCO's own wording: it certifies the right to submit "under
+  the open source license indicated in the file", so the project declares that
+  licence as a DUAL grant. Rust's formula is the precedent: "any contribution
+  intentionally submitted for inclusion in the work by you shall be dual
+  licensed as above, without any additional terms or conditions."
+
+  *What it buys, and what it does not.* An Apache-2.0 additional grant means
+  the project can ship under other terms without asking anyone, at near-zero
+  contributor friction. It is **not exclusive**: everyone gets the same
+  permissive rights, not only the maintainer. A CLA is the only instrument that
+  makes a closed fork the maintainer's alone — which is a real difference and
+  the thing to decide on, not a detail.
+
+  *Scope.* `CONTRIBUTING.md` declares the dual inbound licence, the PR template
+  asks for `git commit -s` instead of CLA agreement, and `CLA.md` is retired
+  with a pointer explaining what replaced it and why. It binds only FUTURE
+  contributions; work already signed under the CLA is covered more broadly
+  already, and the maintainer's own code was never in question, so there is
+  nothing to reconcile.
+
+  *No absence marker (D91).* The change creates no symbol — it is three
+  documents — and a marker naming a file would be checked by
+  `PlanClaimsTests.isDeclared`, which greps Swift declarations under
+  `Sources/`. It would therefore pass for ever without ever having been true,
+  which is worse than no marker at all.
+
 - **D97 — one title row, and the side panel treated the way Xcode treats
   its inspector.** Requested 2026-09-14 with Finder and Xcode as the reference.
 
@@ -1273,6 +1318,21 @@ D84 and D86 left this section on 2026-09-09 once their real cost was measured.
   than §4.3 knew**: visible clicks and visible keystrokes (D64, D67) both read
   the `CGEventTap`, so an App Store variant would ship without them. Zoom,
   follow-mouse and crop are unaffected — they need no input data at all.
+
+  **Two further costs, found 2026-09-14 and larger than the input one.** D66
+  names agentic support FIRST in the combination that differentiates this
+  project, and the sandbox breaks it in two places: `snitt setup --apply`
+  writes into an agent's own config file outside the container, which a
+  sandboxed app cannot do without the user picking that file every time; and
+  the CLI ships at `Contents/Helpers/snitt` expecting to reach a `PATH`, which
+  an App Store app may not install into. The socket itself would likely survive
+  — it lives under Application Support and a process running as the same user
+  can reach a container path. **Auto-trim goes too**, since it needs the event
+  log to tell thinking from an empty room. What is left is a screen recorder
+  with transcript editing, no agent integration and no input-derived features:
+  a different product from the one D66 describes rather than a second channel
+  for the same one. **The licence is NOT among the blockers** (D98): MPL-2.0
+  already ships on the App Store.
 
 
 ### Why signing moved into M2
@@ -1789,6 +1849,7 @@ window-relative overlay. **Zoom + follow-mouse is per *segment*, and segments do
 | D95 | **An opt-in allowing agent recording with nobody at the keyboard, as an EXPIRING grant** | Product-owner request, 2026-09-13, for remote-control sessions where an agent works an unattended machine and the recording is how anyone sees what it did. Reading the agent path found exactly ONE thing on it needing a person: Screen Recording is requested lazily, at first record, and macOS re-confirms it periodically for anything on the bypass path (§5.2, §5.5). So the mechanism is confirmation, not a new permission — turning the setting on is the one moment a person is guaranteed to be present, and `UnattendedRecordingToggle` spends it running §4.10's `PermissionLadder` against `.screenRecording`. **§5.4's staleness objection is what shaped it**: a standing grant "cannot know what the target is showing six weeks later", so this one EXPIRES after `UnattendedRecordingGrant.renewalDays` and renewing means switching it off and on again in front of the machine. Thirty days matches the OS re-consent cadence it tracks, so the two renewals coincide; the number is interpolated into the help text from the constant, with a mutation line pinning that. §5.4's spoofing objection is separately answerable now that the socket reads the caller's signing identity. The grant is subordinate to §5.3's global opt-in and COMPOSED from it rather than stored, so the two cannot disagree | §5.1, §5.3, §5.4, §5.5, D42, D91; `UnattendedRecordingGrant`, `UnattendedRecordingToggle`, `PermissionLadder`, `PeerIdentity` | Decided and built 2026-09-13 | the-picker-is-policy-not-capability |
 | D96 | **Estimate a GIF's size by encoding ~10 sampled frames and extrapolating** — queued, not designed | Product-owner request, 2026-09-13. `ExportEstimator` refuses GIF today and says why — GIF size tracks how much the picture MOVES rather than how long it runs — so the sheet shows no estimate for the one format whose size is hardest to guess. Sampling is the same move `exportSlice` already makes for mp4 ("so a size can be MEASURED rather than modelled"), and spreading the samples captures average motion instead of one quiet second. **The obvious objection does not apply, and that was checked**: scattered frames would normally compress worse than consecutive ones and bias the estimate high, but `EstimateError`'s own text records that these frames "carry no interframe compression", so per-frame cost is roughly independent of neighbours. **The objection that does apply** is the global colour map — ImageIO fits ONE palette across every frame, the same fact behind the 2026-09-13 GIF crash, so a palette fitted to ten frames suits each better than one covering three hundred and the sample will likely under-report. That is a calibration factor to MEASURE against real exports, not to reason out: the direction is predictable, the magnitude is not. The sample must also be encoded at the post-`GIFExporter.maximumWidth` scale, or it describes a different file, and must stay bounded — GIF encoding is what crashed the app | §8, D91; `ExportEstimator`, `GIFExporter`, `ExportPreflight` | Queued (not designed) | measure-a-sample-then-calibrate-the-palette-effect |
 | D97 | **QUEUED, not built: one title row, and an Xcode-style side panel** — the editor's toolbar becomes a real `NSToolbar` and the rail an inspector-style split item | Product-owner direction 2026-09-14, with Finder and Xcode screenshots as the reference. **The shape is already right**: the window is `.fullSizeContentView` with a hidden title, so the toolbar row IS the titlebar, and `EditorToolbar` already puts title-over-subtitle at the leading edge and the panel toggle at the trailing one. What it is not is an `NSToolbar`, and that is the whole cost — a hand-built `HStack` gets no traffic-light inset (so the first 78pt are dead space the window's own buttons sit in), no overflow chevron (a narrow window clips controls instead), none of the material, separator or scroll-edge effect the system draws under a real titlebar, and no trailing accessory position, which is exactly where Xcode's inspector toggle lives. **The panel half** wants `NSSplitViewController` with an inspector item: its own background material and hard separator are what make Xcode's inspector read as a compartment rather than as content, and it brings the divider behaviour and collapse animation `ResizableDivider` currently reimplements. **Not small**: the toolbar is SwiftUI inside an `NSHostingView` and `NSToolbar` is AppKit, so this reworks how the editor window is ASSEMBLED rather than how it is painted | §4.14, D45, D58, D59, D91; `EditorChrome.swift`, `EditorWindowController.makeWindow`, `ResizableDivider.swift` | Queued (not built) | the-titlebar-is-a-toolbar-or-it-is-a-strip-of-buttons |
+| D98 | **QUEUED, not built: replace the CLA with a DCO plus an Apache-2.0 additional grant** | Product-owner request 2026-09-14, ranked after the voiceover work. **Both of the CLA's stated reasons are dead.** `CONTRIBUTING.md` justifies it as enabling a future relicence for "a Mac App Store build, or a commercial licence beside the free one" — D66 killed the second ("there is no licence to enforce and no subscription to gate"), and the first is not true: MPL-2.0 already ships on the App Store (Brave on iOS, Collabora Online on iOS/iPadOS/macOS), because Apple's terms conflict with the GPL's whole-work conditions rather than the MPL's file-scoped ones. Snitt's real App Store blockers are `CGEventTap` and the agent surface, neither of which is a licensing problem. **A DCO alone cannot replace it** — a DCO sets inbound equal to outbound and grants nothing extra, so a DCO-only project needs unanimous permission to relicense. The working form is the DCO's own wording, which certifies the right to submit "under the open source license indicated in the file": declare that as a DUAL grant, per Rust's formula. **It is not exclusive** — everyone gets the same permissive rights, not only the maintainer, and a CLA remains the only instrument that makes a closed fork the maintainer's alone. Binds future contributions only | §4.3, D66, D91, D97; `CONTRIBUTING.md`, `CLA.md`, `.github/pull_request_template.md` | Queued (not built) | a-dco-grants-nothing-extra-so-the-grant-has-to-be-declared |
 
 `conformance: 2026-09-07` (post-D66 refinement pass)
 
