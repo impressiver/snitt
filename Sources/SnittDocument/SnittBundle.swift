@@ -31,6 +31,11 @@ public struct SnittBundle: Sendable {
     public var posterURL: URL { url.appendingPathComponent("poster.png") }
     /// Word-level transcript (D62), written the first time transcription runs.
     public var transcriptURL: URL { url.appendingPathComponent("transcript.json") }
+    /// Narration recorded in the editor (D93). Beside `capture.mov`, never
+    /// inside it: §4.5 makes the capture immutable, and mixing narration in
+    /// would make the one file that is meant to be the untouched original the
+    /// one file an edit had rewritten.
+    public var voiceoverURL: URL { url.appendingPathComponent("voiceover.m4a") }
 
     /// Where agent screenshots land (M5e, D53).
     ///

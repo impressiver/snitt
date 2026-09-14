@@ -307,6 +307,37 @@ public enum CompositionBuilder {
             cursor = CMTimeAdd(cursor, timeRange.duration)
         }
 
+        // D93's narration, appended AFTER the captured tracks so the audio
+        // track order stays `AudioTrackOrder.canonical` — index 2, which is
+        // free because `AssetWriterSink` writes both capture audio inputs
+        // whether or not the microphone was on.
+        //
+        // Inserted span by span rather than as one block. A voiceover is
+        // anchored to the FOOTAGE (D93): each stretch of narration plays over
+        // the frames it was spoken about, so a cut made afterwards takes the
+        // narration over it and leaves the rest where it belongs.
+        // `VoiceoverPlacement` decides that; this only places what it returns.
+        if let voiceover = edl.voiceover {
+            let voiceoverURL = bundle.url.appendingPathComponent(voiceover.filename)
+            let voiceoverAsset = AVURLAsset(url: voiceoverURL)
+            if let narration = try? await voiceoverAsset.loadTracks(withMediaType: .audio).first,
+               let destination = composition.addMutableTrack(
+                   withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                for span in VoiceoverPlacement.outputSpans(of: voiceover, keptRanges: kept) {
+                    let source = CMTimeRange(
+                        start: CMTime(seconds: span.voiceoverStart, preferredTimescale: 600),
+                        duration: CMTime(seconds: span.durationSeconds, preferredTimescale: 600))
+                    // `try?`: a span past the end of the recorded audio is a
+                    // rounding artefact at the tail, not a reason to fail an
+                    // export. Losing a few milliseconds of narration beats
+                    // losing the file.
+                    try? destination.insertTimeRange(
+                        source, of: narration,
+                        at: CMTime(seconds: span.outputStart, preferredTimescale: 600))
+                }
+            }
+        }
+
         let naturalSize = try await sourceVideo.load(.naturalSize)
         let preferredTransform = try await sourceVideo.load(.preferredTransform)
         // Crop is a view onto the source, applied as a translation plus a

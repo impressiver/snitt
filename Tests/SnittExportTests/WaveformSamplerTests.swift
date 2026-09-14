@@ -64,7 +64,10 @@ struct WaveformSamplerTests {
         let url = try await movie(audioTracks: 2, content: .tone)
         defer { try? FileManager.default.removeItem(at: url) }
         let samples = try await WaveformSampler.sample(movieAt: url)
-        #expect(samples.map(\.track) == AudioTrackOrder.canonical)
+        // `captured`, not `canonical`: this samples `capture.mov`, which holds
+        // only what the recorder wrote. A voiceover is a composition-only
+        // track and has no waveform in this file to find.
+        #expect(samples.map(\.track) == AudioTrackOrder.captured)
     }
 
     @Test("A movie with no audio yields no waveforms rather than failing")

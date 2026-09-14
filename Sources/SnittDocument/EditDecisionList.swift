@@ -224,10 +224,22 @@ public struct EditDecisionList: Codable, Sendable {
     public var showSubtitles: Bool
     /// Whether marker banners are drawn.
     public var showMarkers: Bool
+    /// Narration recorded in the editor (D93), or nil for a recording with
+    /// none — which is nearly all of them.
+    ///
+    /// In the EDL rather than in `meta.json` because it is an EDIT: it is made
+    /// after the recording, it is undoable, and a cut changes where it plays.
+    /// `meta.json` describes what was captured, and a voiceover was not.
+    ///
+    /// Additive, like `crop` and the three `show` flags: absent decodes to
+    /// nil and nil writes no key, so the schema version does not move and an
+    /// older build reading a newer document loses the narration rather than
+    /// refusing the file.
+    public var voiceover: VoiceoverTrack?
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, cuts, trackStates, crop, showClicks
-        case showSubtitles, showMarkers
+        case showSubtitles, showMarkers, voiceover
     }
 
     public init(schemaVersion: Int = EditDecisionList.currentSchemaVersion,
@@ -236,7 +248,8 @@ public struct EditDecisionList: Codable, Sendable {
                 crop: CropRect? = nil,
                 showClicks: Bool = false,
                 showSubtitles: Bool = false,
-                showMarkers: Bool = false) {
+                showMarkers: Bool = false,
+                voiceover: VoiceoverTrack? = nil) {
         self.schemaVersion = schemaVersion
         self.cuts = cuts
         self.trackStates = trackStates
@@ -244,6 +257,7 @@ public struct EditDecisionList: Codable, Sendable {
         self.showClicks = showClicks
         self.showSubtitles = showSubtitles
         self.showMarkers = showMarkers
+        self.voiceover = voiceover
     }
 
     /// Custom rather than synthesized so `schemaVersion` can be checked
@@ -276,6 +290,7 @@ public struct EditDecisionList: Codable, Sendable {
         self.showClicks = try container.decodeIfPresent(Bool.self, forKey: .showClicks) ?? false
         self.showSubtitles = try container.decodeIfPresent(Bool.self, forKey: .showSubtitles) ?? false
         self.showMarkers = try container.decodeIfPresent(Bool.self, forKey: .showMarkers) ?? false
+        self.voiceover = try container.decodeIfPresent(VoiceoverTrack.self, forKey: .voiceover)
     }
 
     /// Custom rather than synthesized so a WRITE always declares the version
@@ -317,6 +332,7 @@ public struct EditDecisionList: Codable, Sendable {
         if showClicks { try container.encode(true, forKey: .showClicks) }
         if showSubtitles { try container.encode(true, forKey: .showSubtitles) }
         if showMarkers { try container.encode(true, forKey: .showMarkers) }
+        try container.encodeIfPresent(voiceover, forKey: .voiceover)
     }
 
     /// The default EDL for a fresh recording: nothing cut, nothing muted.
