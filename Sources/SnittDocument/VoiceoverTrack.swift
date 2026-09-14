@@ -125,6 +125,26 @@ public enum VoiceoverPlacement {
         return result
     }
 
+    /// A moment in the recorded audio, as a SOURCE instant — or nil when that
+    /// part of the narration sits over footage no longer in the document.
+    ///
+    /// The transcript needs this and nothing else does: narration is
+    /// recognised against `voiceover.m4a`, so every word comes back timed from
+    /// the start of that FILE, while every other word in the transcript is
+    /// timed against the capture. Left unmapped, narration would appear at the
+    /// beginning of the recording and drift further from the picture the later
+    /// it was spoken.
+    public static func sourceTime(ofVoiceoverTime time: Double,
+                                  in track: VoiceoverTrack) -> Double? {
+        for segment in track.segments {
+            // Half-open, so a word landing exactly on a boundary belongs to
+            // the segment it starts rather than the one it ends.
+            guard time >= segment.voiceoverStart, time < segment.voiceoverEnd else { continue }
+            return segment.sourceStart + (time - segment.voiceoverStart)
+        }
+        return nil
+    }
+
     /// Where a segment plays in the CURRENT output timeline, or nil when the
     /// footage under it has since been cut.
     ///

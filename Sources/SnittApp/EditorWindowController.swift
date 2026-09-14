@@ -1210,6 +1210,21 @@ final class EditorTimelineState: ObservableObject {
     }
 
     @Published var transcript: Transcript?
+
+    /// The transcript minus anything on a muted track.
+    ///
+    /// A muted track is not in the exported file, so its speech is not in the
+    /// recording anyone will watch — and a transcript still showing it invites
+    /// editing against something that is not there: cutting a phrase to remove
+    /// speech already silenced, or reading narration nobody will hear as part
+    /// of the piece.
+    ///
+    /// Every surface reads THIS rather than `transcript.words`, so the pane,
+    /// the timeline lane and anything added later cannot disagree about what
+    /// is audible.
+    var audibleWords: [TranscriptWord] {
+        AudibleTranscript.audible(transcript?.words ?? [], trackStates: edl.trackStates)
+    }
     @Published var transcriptionStatus: TranscriptionStatus = .none
 
     /// Words currently removed by the EDL, for striking through.
@@ -1305,11 +1320,29 @@ final class EditorTimelineState: ObservableObject {
     private func startTranscription(vocabulary: [String]? = nil) {
         transcriptionStatus = .transcribing
         let bundle = controller.snittBundle
+        let voiceover = edl.voiceover
         Task { [weak self] in
             do {
-                guard let result = try await Transcriber.transcribe(
-                    bundle: bundle, vocabulary: vocabulary) else {
-                    // No mic track — a normal recording, not a failure.
+                let spoken = try await Transcriber.transcribe(
+                    bundle: bundle, vocabulary: vocabulary)
+                // A SECOND pass over a second file. The microphone and the
+                // narration are different audio recorded at different times,
+                // so one analyzer cannot be given both — they merge after.
+                //
+                // Run even when the microphone pass found nothing: a recording
+                // made with the mic off and narrated afterwards has a
+                // transcript consisting entirely of narration, and gating this
+                // on the first result would leave it empty.
+                let narrated: [TranscriptWord]
+                if let voiceover {
+                    narrated = try await Transcriber.transcribeVoiceover(
+                        bundle: bundle, track: voiceover, vocabulary: vocabulary)
+                } else {
+                    narrated = []
+                }
+                guard let result = Transcriber.merge(spoken, voiceover: narrated) else {
+                    // No mic track and no narration — a normal recording, not
+                    // a failure.
                     await MainActor.run { self?.transcriptionStatus = .none }
                     return
                 }
@@ -1678,9 +1711,9 @@ struct TimelineViewRepresentable: NSViewRepresentable {
         // 0.6pt each on a ten-minute recording against the 40pt they need to
         // be clickable. Grouped through the SAME pause rule the reading pane
         // uses, so a chip boundary always agrees with a paragraph break.
-        nsView.update(phrases: state.transcript.map {
-            TranscriptPhrases.phrases(from: $0.words)
-        } ?? [])
+        // `audibleWords`, not `transcript.words`: muting a track takes its
+        // speech out of the lane as well as out of the file.
+        nsView.update(phrases: TranscriptPhrases.phrases(from: state.audibleWords))
     }
 }
 
@@ -1738,7 +1771,11 @@ struct EditorContentView: View {
                 .frame(maxHeight: RailLayout.markersHeight(markersExpanded: markersExpanded)
                        .maxHeight(fillIsInfinite: true))
             if hasTranscript {
-                Divider()
+                // ONE line between the sections, whichever kind it is.
+                // `ResizableDivider` draws its own rule, so a plain `Divider`
+                // above it put two hairlines and a gap between the markers
+                // list and the Transcript heading — a seam that read as a
+                // layout mistake rather than as a division.
                 if RailLayout.showsDivider(markersExpanded: markersExpanded,
                                            transcriptExpanded: transcriptExpanded) {
                     ResizableDivider(axis: .horizontal, direction: -1) { delta in
@@ -1749,6 +1786,11 @@ struct EditorContentView: View {
                         dragStartWidth = nil
                         paneWidths.save()
                     }
+                } else {
+                    // No handle to draw when only one section is open — see
+                    // `RailLayout.showsDivider` — but the two headings still
+                    // need separating.
+                    Divider()
                 }
                 AccordionSection(title: "Transcript",
                                  subtitle: state.transcript.map { "\($0.words.count) words" },

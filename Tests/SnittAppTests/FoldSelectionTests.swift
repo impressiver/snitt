@@ -61,7 +61,7 @@ struct FoldSelectionTests {
         // and a mutant that re-gated the menu survived a test written that
         // way. Deep in the audio bands, far below the fold lane.
         let menu = view.contextMenu(at: NSPoint(x: foldX, y: 130))
-        #expect(menu?.items.first?.title == "Remove Cut")
+        #expect(menu?.items.contains { $0.title == "Remove Cut" } == true)
         // And still nothing where there is no fold at all.
         #expect(view.contextMenu(at: NSPoint(x: 10, y: 130)) == nil)
     }

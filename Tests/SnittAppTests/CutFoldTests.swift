@@ -403,9 +403,12 @@ struct CutFoldTimelineViewTests {
         let view = TimelineView(frame: NSRect(x: 0, y: 0, width: width, height: 40))
         view.update(duration: duration, cuts: [cut], markerPoints: [], playhead: 0)
 
-        let menu = view.menu(for: .synthetic(at: NSPoint(x: foldX, y: 20), in: view))
-        let item = try #require(menu?.items.first, "no context menu near the fold")
-        #expect(item.title == "Remove Cut")
+        let menu = try #require(view.menu(for: .synthetic(at: NSPoint(x: foldX, y: 20),
+                                                          in: view)),
+                                "no context menu near the fold")
+        // Presence, not position: "Remove Cut" sits below Expand/Collapse now,
+        // and this test is about right-click REACHING the fold.
+        let item = try #require(menu.items.first { $0.title == "Remove Cut" })
         #expect(item.representedObject as? UUID == cut.id)
     }
 

@@ -23,12 +23,57 @@ public struct TranscriptWord: Codable, Equatable, Sendable, Identifiable {
     /// and a transcript that hides how sure it is invites trusting the wrong
     /// words.
     public var confidence: Double
+    /// Which audio track this word was heard on — `"microphone"` or
+    /// `"voiceover"`, the same names `TrackState` and `AudioTrackOrder` use.
+    ///
+    /// Defaults to the microphone, which is what every transcript written
+    /// before narration existed contains. Additive on the wire: absent decodes
+    /// to `"microphone"`, so an older `transcript.json` reads correctly
+    /// instead of producing words attributed to nothing.
+    ///
+    /// Stored per WORD rather than per transcript because the two sources
+    /// interleave: narration is spoken over footage that already has speech in
+    /// it, so a recording has one transcript with words from two tracks, at
+    /// overlapping times.
+    public var track: String
 
     public var end: Double { start + duration }
 
+    private enum CodingKeys: String, CodingKey {
+        case id, text, start, duration, confidence, track
+    }
+
+    /// Hand-written ONLY for `track`'s default. The synthesised decoder would
+    /// throw `keyNotFound` on every transcript written before narration
+    /// existed — which is all of them — and D60's version gate would not catch
+    /// it, because the schema version did not move for an additive field.
+    public init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        text = try container.decode(String.self, forKey: .text)
+        start = try container.decode(Double.self, forKey: .start)
+        duration = try container.decode(Double.self, forKey: .duration)
+        confidence = try container.decode(Double.self, forKey: .confidence)
+        track = try container.decodeIfPresent(String.self, forKey: .track) ?? "microphone"
+    }
+
+    /// Written only when it is NOT the microphone, so a recording with no
+    /// narration produces the same bytes it always did.
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(id, forKey: .id)
+        try container.encode(text, forKey: .text)
+        try container.encode(start, forKey: .start)
+        try container.encode(duration, forKey: .duration)
+        try container.encode(confidence, forKey: .confidence)
+        if track != "microphone" { try container.encode(track, forKey: .track) }
+    }
+
     public init(id: UUID = UUID(), text: String, start: Double,
-                duration: Double, confidence: Double) {
+                duration: Double, confidence: Double,
+                track: String = "microphone") {
         self.id = id
+        self.track = track
         self.text = text
         self.start = start
         self.duration = duration

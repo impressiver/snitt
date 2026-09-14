@@ -406,3 +406,12 @@ VoiceoverWaveformLoadTests :: Sources/SnittApp/EditorWindowController.swift :: l
 # Two waveform loads over two files: a plain assignment wipes whichever
 # finished first, so the voiceover lane drew empty depending on a race.
 WaveformMergeTests :: Sources/SnittApp/EditorWindowController.swift :: self?.waveforms = (samples ?? []) + voiceover :: self?.waveforms = (samples ?? [])
+
+# Narration and recorded speech interleave: appending one list to the other
+# puts every narrated word after every recorded one, however early it was said.
+VoiceoverTranscriptTests :: Sources/SnittApp/Transcriber.swift :: merged.words = (transcript.words + voiceover).sorted { $0.start < $1.start } :: merged.words = transcript.words + voiceover
+# A muted track is not in the exported file, so its speech must leave the
+# transcript too — in BOTH surfaces, from one derivation.
+AudibleTranscriptTests :: Sources/SnittDocument/AudibleTranscript.swift :: return words.filter { !muted.contains($0.track) } :: return words
+# Escape means "put that back" — toggling a COLLAPSED fold opens it instead.
+FoldMenuTests :: Sources/SnittApp/TimelineView.swift :: guard let id = selectedFoldID, expandedCutIDs.contains(id) else { :: guard let id = selectedFoldID, true else {
