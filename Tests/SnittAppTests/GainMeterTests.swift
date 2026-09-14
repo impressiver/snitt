@@ -162,7 +162,7 @@ struct GainMeterAppearanceTests {
         // measuring the same track. Identity, not "some warm colour": the
         // meter and the waveform must agree about what a loud microphone
         // looks like.
-        let view = GainMeterView(title: "Mic", gain: 2.0, muted: false,
+        let view = GainMeterView(title: "Mic", track: "microphone", gain: 2.0, muted: false,
                                  onGain: { _ in }, onToggleMute: {})
         #expect(srgb(view.colourForTesting(0)) == srgb(SnittPalette.Swatch.signal),
                 "a lit segment is not brand amber")
@@ -181,9 +181,9 @@ struct GainMeterAppearanceTests {
         // Stated this way because the first version asserted the lit colour
         // dimmed when muted, which cannot happen and so passed against an
         // implementation with no dimming at all.
-        let muted = GainMeterView(title: "Mic", gain: 2.0, muted: true,
+        let muted = GainMeterView(title: "Mic", track: "microphone", gain: 2.0, muted: true,
                                   onGain: { _ in }, onToggleMute: {})
-        let unmuted = GainMeterView(title: "Mic", gain: 2.0, muted: false,
+        let unmuted = GainMeterView(title: "Mic", track: "microphone", gain: 2.0, muted: false,
                                     onGain: { _ in }, onToggleMute: {})
         let mutedAlpha = srgb(muted.colourForTesting(0)).alphaComponent
         #expect(mutedAlpha < srgb(unmuted.colourForTesting(0)).alphaComponent,
@@ -193,7 +193,7 @@ struct GainMeterAppearanceTests {
 
     @Test("An unlit segment is ink, not a system grey")
     func unlitIsInk() {
-        let view = GainMeterView(title: "Mic", gain: 0.1, muted: false,
+        let view = GainMeterView(title: "Mic", track: "microphone", gain: 0.1, muted: false,
                                  onGain: { _ in }, onToggleMute: {})
         #expect(srgb(view.colourForTesting(GainMeter.segmentCount - 1))
                 == srgb(SnittPalette.Swatch.ink3))

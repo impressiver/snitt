@@ -6,6 +6,7 @@
 
 import CoreGraphics
 import Foundation
+import SnittDocument
 
 /// A lane the timeline can show.
 public enum TimelineLane: Equatable, Sendable {
@@ -123,7 +124,7 @@ public enum TimelineLaneBudget {
     /// filmstrip made the waveforms enormous instead of making the picture
     /// bigger.
     public static func timelineHeight(forWindowHeight window: Double,
-                                      audioTracks: [String] = ["microphone", "systemAudio"],
+                                      audioTracks: [String] = AudioTrackOrder.captured,
                                       hasTranscript: Bool = false) -> Double {
         let wanted = naturalHeight(audioTracks: audioTracks,
                                    hasTranscript: hasTranscript)

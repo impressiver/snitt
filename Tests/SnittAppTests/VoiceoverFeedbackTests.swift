@@ -28,12 +28,14 @@ struct VoiceoverFeedbackTests {
         // Without a `TrackState` named "voiceover" the band never appears, so
         // the narration is in the file, in the export, and invisible in the
         // editor.
-        let states = [TrackState(track: "systemAudio"), TrackState(track: "microphone")]
-        #expect(TimelineTrackLayout.audioTracks(in: states) == ["microphone", "systemAudio"])
+        // Deliberately handed in an order the answer must NOT preserve, so a
+        // version that simply returned its input would fail here.
+        let states = [TrackState(track: "microphone"), TrackState(track: "systemAudio")]
+        #expect(TimelineTrackLayout.audioTracks(in: states) == ["systemAudio", "microphone"])
 
         let withVoiceover = states + [TrackState(track: "voiceover")]
         #expect(TimelineTrackLayout.audioTracks(in: withVoiceover)
-                == ["microphone", "systemAudio", "voiceover"],
+                == ["systemAudio", "microphone", "voiceover"],
                 "narration must come last: it is added under the recording, not a source it was made from")
     }
 

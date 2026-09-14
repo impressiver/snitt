@@ -109,7 +109,10 @@ struct AudioGainTests {
     func audioTracksAreDerived() async throws {
         let (state, bundle) = try await makeState()
         defer { try? FileManager.default.removeItem(at: bundle.url) }
-        #expect(state.audioTracks.map(\.track) == ["microphone", "systemAudio"])
+        // Composition order — system audio is track 0 — via
+        // `TimelineTrackLayout`, so the gain controls come out in the same
+        // order as the lanes they sit beside.
+        #expect(state.audioTracks.map(\.track) == ["systemAudio", "microphone"])
         #expect(!state.audioTracks.contains { $0.track == "video" },
                 "video is not an audio track and must not get a gain slider")
     }

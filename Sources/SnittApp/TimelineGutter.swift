@@ -45,6 +45,7 @@ struct TimelineGutter: View {
             if let state = trackStates.first(where: { $0.track == track }) {
                 GainMeterView(
                     title: TransportBar.name(of: track),
+                    track: track,
                     gain: state.gain,
                     muted: state.muted,
                     onGain: { onGain(track, $0) },
@@ -71,6 +72,11 @@ struct TimelineGutter: View {
 /// are looking at is the level you are adjusting.
 struct GainMeterView: View {
     let title: String
+    /// The track this ladder controls, which decides its colour. Separate from
+    /// `title`, which is what a HUMAN calls the track — a display string is
+    /// the wrong key for a palette lookup, and translating one would put the
+    /// colour at the mercy of the wording.
+    let track: String
     let gain: Double
     let muted: Bool
     let onGain: (Double) -> Void
@@ -118,7 +124,7 @@ struct GainMeterView: View {
               : "\(title): \(GainMeter.label(forGain: gain)) — drag to adjust, double-click to mute")
     }
 
-    /// Brand ink, brand amber, brand red (rev 5, W13).
+    /// Brand ink, the TRACK's own colour, brand red (rev 5, W13).
     ///
     /// The ladder used `Color.accentColor` for a lit segment — the user's
     /// selection colour, which on a blue-accented Mac put a blue meter beside
@@ -131,14 +137,20 @@ struct GainMeterView: View {
         guard index < lit else { return SnittPalette.Swatch.ink3.opacity(muted ? 0.28 : 1) }
         // Hot at and above unity, because that is where amplification — and so
         // clipping — begins, which is the one thing a meter exists to warn
-        // about. Red, and the same red a clipped waveform column draws in.
+        // about. Red REGARDLESS of track: clipping is damage rather than
+        // identity, and a teal "hot" would be a warning that only some tracks
+        // get to give.
+        //
         // No muted variant here, deliberately: `lit` is 0 while muted, so a
         // muted ladder never reaches this branch at all. A `muted ? …` here
         // looked symmetrical and was unreachable — the mutation gate found it
         // by removing it and nothing failing.
-        return GainMeter.isHot(segment: index)
-            ? SnittPalette.Swatch.recordRed
-            : SnittPalette.Swatch.signal
+        if GainMeter.isHot(segment: index) { return SnittPalette.Swatch.recordRed }
+        // Below unity, the ladder is the SAME colour as the waveform beside
+        // it, because it is measuring that waveform. Amber for a recorded
+        // source, teal for narration — one lookup, shared with the lane and
+        // with the transcript's words.
+        return SnittPalette.Swatch.track(track)
     }
 }
 
@@ -172,17 +184,20 @@ struct GainMeterView: View {
         .background(EditorChromePalette.timelineSurface)
 }
 
-#Preview("Gain meter — boosted, unity, cut, muted") {
-    // Four ladders side by side, because the segment count is the whole
-    // control and one ladder alone gives nothing to read it against.
+#Preview("Gain meter — boosted, unity, cut, muted, narration") {
+    // Five ladders side by side, because the segment count is the whole
+    // control and one ladder alone gives nothing to read it against. The last
+    // is a voiceover, which is the only one that should not be amber.
     HStack(spacing: 8) {
-        GainMeterView(title: "Mic", gain: 2.0, muted: false,
+        GainMeterView(title: "Mic", track: "microphone", gain: 2.0, muted: false,
                       onGain: { _ in }, onToggleMute: {})
-        GainMeterView(title: "Mic", gain: 1.0, muted: false,
+        GainMeterView(title: "Mic", track: "microphone", gain: 1.0, muted: false,
                       onGain: { _ in }, onToggleMute: {})
-        GainMeterView(title: "Sys", gain: 0.35, muted: false,
+        GainMeterView(title: "Sys", track: "systemAudio", gain: 0.35, muted: false,
                       onGain: { _ in }, onToggleMute: {})
-        GainMeterView(title: "Sys", gain: 1.0, muted: true,
+        GainMeterView(title: "Sys", track: "systemAudio", gain: 1.0, muted: true,
+                      onGain: { _ in }, onToggleMute: {})
+        GainMeterView(title: "Voiceover", track: "voiceover", gain: 1.4, muted: false,
                       onGain: { _ in }, onToggleMute: {})
     }
     .frame(height: 70)
