@@ -298,3 +298,10 @@ UnattendedSettingsRowTests :: Sources/SnittApp/SettingsWindowController.swift ::
 # confirms no permission and produces a grant that reads `.off` forever.
 UnattendedRecordingToggleTests :: Sources/SnittApp/UnattendedRecordingToggle.swift :: settings.unattendedConfirmedAt = newValue ? now() : nil :: settings.unattendedConfirmedAt = nil
 UnattendedSettingsRowTests :: Sources/SnittApp/SettingsWindowController.swift :: + "\(UnattendedRecordingGrant.renewalDays) days until you renew it." :: + "99 days until you renew it."
+
+# "Allow unattended" is subordinate to "Allow recording": an enabled-looking
+# checkbox that authorizes nothing would run the whole Screen Recording ladder
+# and ask a person for a permission that grants nothing.
+UnattendedSettingsRowTests :: Sources/SnittApp/SettingsWindowController.swift :: checkbox(titled: Self.unattendedRecordingTitle)?.isEnabled = settings.agentRecordingEnabled :: checkbox(titled: Self.unattendedRecordingTitle)?.isEnabled = true
+# The indent is what says "sub-option" rather than "second permission".
+SettingsWindowLayoutTests :: Sources/SnittApp/SettingsWindowController.swift :: return Self.indenting(row, by: Self.subOptionIndent) :: return row

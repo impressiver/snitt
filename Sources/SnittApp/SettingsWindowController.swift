@@ -367,6 +367,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.delegate = self
         let content = makeContentView()
         window.contentView = content
+        // One place decides whether the sub-option is live, and this is the
+        // call that makes the WINDOW AS BUILT agree with it. `unattendedRow`
+        // sets the checkmark from the same grant, but `isEnabled` depends on
+        // the parent opt-in, and a row that only learned that on the next
+        // toggle would open fully clickable over a permission it cannot grant.
+        // It has to run here rather than inside `makeContentView`, because
+        // `checkbox(titled:)` searches `window.contentView` and that is the
+        // line above.
+        refreshUnattendedStatus()
         // Fit the window to the rows, then centre — in that order, or it
         // centres the wrong size and jumps.
         let fitted = content.fittingSize
@@ -738,7 +747,37 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                 label.widthAnchor.constraint(lessThanOrEqualToConstant: Self.contentWidth - 60),
             ])
         }
-        return row
+        // Indented under "Allow recording", because it is subordinate to it
+        // rather than beside it: `AgentSettings.unattendedGrant` composes the
+        // two, so this one authorizes nothing on its own. Two checkboxes at
+        // the same indent read as two independent permissions, which is the
+        // one thing this pair is not.
+        return Self.indenting(row, by: Self.subOptionIndent)
+    }
+
+    /// How far a sub-option sits in from its parent.
+    ///
+    /// Aligned with the parent's own explanation text, which hangs 20pt in
+    /// from the checkbox — so the child lines up with the sentence explaining
+    /// what it is a child OF, rather than at some indent of its own.
+    static let subOptionIndent: Double = 20
+
+    /// `row`, shifted right, without touching the constraints inside it.
+    ///
+    /// A wrapper rather than `edgeInsets` on the row itself: the rows here
+    /// pin their own subviews to their own `leadingAnchor`, and an inset would
+    /// leave those constraints fighting the stack's layout for the same edge —
+    /// ambiguous rather than wrong, which is the kind that renders fine until
+    /// it does not.
+    private static func indenting(_ row: NSView, by inset: Double) -> NSView {
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.widthAnchor.constraint(equalToConstant: inset).isActive = true
+        let wrapper = NSStackView(views: [spacer, row])
+        wrapper.orientation = .horizontal
+        wrapper.alignment = .top
+        wrapper.spacing = 0
+        return wrapper
     }
 
     @objc private func toggleUnattendedRecording(_ sender: NSButton) {
@@ -755,8 +794,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     private func refreshUnattendedStatus() {
-        let status = AgentSettings.load(defaults).unattendedGrant.status(now: Date())
+        let settings = AgentSettings.load(defaults)
+        let status = settings.unattendedGrant.status(now: Date())
         unattendedStatusLabel?.stringValue = Self.unattendedStatusText(for: status)
+        // DISABLED when the parent opt-in is off, not merely unchecked. An
+        // enabled-looking checkbox that cannot be turned on is a control that
+        // lies about what it will do — and turning this on while agent
+        // recording is off would run the whole Screen Recording ladder, ask a
+        // person for a permission, and then authorize nothing.
+        unattendedStatusLabel?.isHidden = !settings.agentRecordingEnabled
+        checkbox(titled: Self.unattendedRecordingTitle)?.isEnabled = settings.agentRecordingEnabled
         checkbox(titled: Self.unattendedRecordingTitle)?.state = status.isActive ? .on : .off
     }
 
