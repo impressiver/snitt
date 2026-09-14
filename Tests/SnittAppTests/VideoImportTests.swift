@@ -300,6 +300,72 @@ struct EmptyDocumentTests {
         #expect(script.contains("<key>CFBundleTypeRole</key><string>Viewer</string>"))
     }
 
+    @Test("New from Clipboard is dead when the clipboard holds no video")
+    func clipboardItemIsDisabledWithoutMedia() throws {
+        // An item named for the clipboard that works without one has a title
+        // that is not true, and the failure it produces — nothing happens — is
+        // indistinguishable from a broken app.
+        let delegate = AppDelegate()
+        let item = NSMenuItem(title: "New from Clipboard",
+                              action: #selector(AppDelegate.newDocument(_:)),
+                              keyEquivalent: "")
+
+        NSPasteboard.general.clearContents()
+        #expect(delegate.validateMenuItem(item) == false)
+
+        // And live again the moment a video is on the board. Asked at
+        // validation time rather than cached, because the clipboard changes
+        // while the app is running and AppKit calls this each time the menu
+        // opens.
+        let video = FileManager.default.temporaryDirectory
+            .appendingPathComponent("clip-\(UUID().uuidString).mov")
+        try Data([0]).write(to: video)
+        defer {
+            try? FileManager.default.removeItem(at: video)
+            NSPasteboard.general.clearContents()
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([video as NSURL])
+        #expect(delegate.validateMenuItem(item))
+    }
+
+    @Test("Empty New is a SEPARATE item, so it is reachable when the other is dead")
+    func emptyNewHasItsOwnItem() throws {
+        // The consequence of letting the clipboard item be disabled: it can no
+        // longer be the only route to an empty document, because half the time
+        // it is not a route at all.
+        let file = try #require(AppShell.buildMainMenu().items
+            .first { $0.title == "File" }?.submenu)
+        let empty = try #require(file.items.first { $0.title == "New" },
+                                 "File has no plain New item")
+        #expect(empty.action == #selector(AppDelegate.newEmptyDocument(_:)))
+        // Different key from the clipboard one, or one of them is unreachable.
+        let clipboard = try #require(file.items.first { $0.title == "New from Clipboard" })
+        #expect(empty.keyEquivalentModifierMask != clipboard.keyEquivalentModifierMask)
+        // ⌘N stays on the clipboard item, as Preview binds it.
+        #expect(clipboard.keyEquivalent == "n")
+        #expect(clipboard.keyEquivalentModifierMask == [.command])
+    }
+
+    @Test("New from Clipboard carries the symbol Preview uses for the same command")
+    func newFromClipboardMatchesPreview() throws {
+        // Read out of `Preview.app`'s MainMenu nib, where `document.on.clipboard`
+        // sits immediately beside the string "New from Clipboard" — not guessed
+        // from the glyph. `doc.on.clipboard` also exists and is the older
+        // spelling, so both resolve and picking the wrong one is a difference
+        // nobody notices until the two apps are side by side.
+        let file = try #require(AppShell.buildMainMenu().items
+            .first { $0.title == "File" }?.submenu)
+        let item = try #require(file.items.first { $0.title == "New from Clipboard" })
+        #expect(item.image != nil, "the menu item has no icon")
+        #expect(AppShell.newFromClipboardSymbol == "document.on.clipboard")
+        // And it actually resolves on this system. A symbol name that does not
+        // is not an error — `NSImage(systemSymbolName:)` returns nil and the
+        // item simply renders without an icon.
+        #expect(NSImage(systemSymbolName: AppShell.newFromClipboardSymbol,
+                        accessibilityDescription: nil) != nil)
+    }
+
     @Test("An editor showing video does NOT accept a dropped video")
     func editorsWithVideoRefuseDrops() throws {
         // The scope line, asserted rather than left to a comment. A drop that

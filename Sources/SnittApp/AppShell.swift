@@ -87,17 +87,44 @@ enum AppShell {
         return item
     }
 
+    /// Preview's own symbol for File ▸ New from Clipboard.
+    ///
+    /// Named rather than inlined so the test that pins it does not have to
+    /// re-derive the string, and so the source of the choice survives: it was
+    /// read out of `Preview.app`'s MainMenu nib, where it sits immediately
+    /// beside the menu title.
+    static let newFromClipboardSymbol = "document.on.clipboard"
+
     private static func fileMenuItem() -> NSMenuItem {
         let item = NSMenuItem(title: "File", action: nil, keyEquivalent: "")
         let menu = NSMenu(title: "File")
 
-        // ⌘N opens whatever video is on the clipboard, which is the fastest
-        // route from "somebody sent me a screen recording" to editing it. With
-        // nothing importable on the board it asks for a file — see
-        // `AppDelegate.newDocument(_:)` for why it does not make an empty one.
+        // TWO items, because one cannot do both jobs once "New from
+        // Clipboard" is allowed to be disabled. The name promises a clipboard,
+        // so it must be dead when there is nothing on it — and an item that
+        // then silently opened an empty window instead would be doing
+        // something its title does not describe. So the empty document gets
+        // its own entry.
+        //
+        // ⌘N on the clipboard one, matching Preview, which binds it the same
+        // way for the same command.
+        let empty = NSMenuItem(title: "New",
+                               action: #selector(AppDelegate.newEmptyDocument(_:)),
+                               keyEquivalent: "n")
+        empty.keyEquivalentModifierMask = [.command, .shift]
+        menu.addItem(empty)
+
         let new = NSMenuItem(title: "New from Clipboard",
                              action: #selector(AppDelegate.newDocument(_:)),
                              keyEquivalent: "n")
+        // The symbol Preview uses for the same command, taken from Preview's
+        // own nib rather than guessed: its MainMenu carries
+        // `document.on.clipboard` directly beside the string "New from
+        // Clipboard". NOT `doc.on.clipboard`, which also exists and is the
+        // older spelling — both resolve, so picking the wrong one is a
+        // difference nobody would notice until the two apps sat side by side.
+        new.image = NSImage(systemSymbolName: Self.newFromClipboardSymbol,
+                            accessibilityDescription: nil)
         menu.addItem(new)
 
         let open = NSMenuItem(title: "Open…",
