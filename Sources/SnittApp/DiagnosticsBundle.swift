@@ -73,13 +73,26 @@ public enum DiagnosticsBundle {
     /// then gate only the assignment) would still be a privacy defect even
     /// though `crashReports` would come out identical; making the read
     /// itself the thing under test is what catches that shape of mistake.
+    /// One line for the support bundle: what D95's grant was doing at export
+    /// time. Carries the NUMBER in both live cases — "active" alone cannot
+    /// tell a reader whether the machine was two days from going quiet.
+    static func describe(_ status: UnattendedRecordingGrant.Status) -> String {
+        switch status {
+        case .off: return "off"
+        case .active(let daysRemaining): return "active, \(daysRemaining) days remaining"
+        case .lapsed(let daysAgo): return "lapsed \(daysAgo) days ago"
+        }
+    }
+
     public static func write(
         to url: URL,
         auditLogURL: URL,
         sinceMinutes: Int,
         crashReportSettings: CrashReportSettings = .load(),
         crashReportsDirectory: URL = CrashReportCollector.defaultDirectory(),
-        collectCrashReports: (URL) -> [CrashReportSummary] = { CrashReportCollector.recent(in: $0) }
+        collectCrashReports: (URL) -> [CrashReportSummary] = { CrashReportCollector.recent(in: $0) },
+        unattendedStatus: UnattendedRecordingGrant.Status = AgentSettings.load()
+            .unattendedGrant.status(now: Date())
     ) throws -> DiagnosticsReport {
         let sessions = try AuditLog.recent(sessionLimit, from: auditLogURL)
         let logLines = try recentLogLines(sinceMinutes: sinceMinutes)
@@ -88,6 +101,14 @@ public enum DiagnosticsBundle {
             "screenRecording": ScreenRecordingAccess.isGranted() ? "granted" : "not granted",
             "inputMonitoring": InputMonitoringAccess.isGranted() ? "granted" : "not granted",
             "microphone": MicrophoneAccess.isGranted() ? "granted" : "not granted",
+            // D95. Not an OS permission, which is exactly why it belongs here:
+            // "screenRecording: granted" and "unattendedRecording: lapsed"
+            // together say a recording COULD have happened and was not
+            // authorized to, and neither line says that alone. §5.5 already
+            // asks diagnostics to tell an expected consent event apart from a
+            // regression at a glance; this is the same distinction for the one
+            // grant Snitt itself owns the clock for.
+            "unattendedRecording": Self.describe(unattendedStatus),
         ]
 
         // §12's opt-in: crash reports are collected only when the setting is

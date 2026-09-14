@@ -7,6 +7,7 @@
 import Foundation
 import AppKit
 import Carbon.HIToolbox
+import SnittAutomation
 
 /// The Settings window (§4.14, Command-comma).
 ///
@@ -17,6 +18,14 @@ import Carbon.HIToolbox
 /// `UpdateSettings`, `CrashReportSettings`). A settings window with its own
 /// storage would be two settings wearing one name: the menu says off, the
 /// window says on, and the user cannot tell which one the app obeys.
+///
+/// D95 adds a sixth checkbox — unattended agent recording — with NO status-item
+/// equivalent, deliberately. The menu is the fast path, and this is the
+/// opposite of a fast path: it is a grant a person renews about once a month,
+/// after reading what it costs. Putting it one click from the menu bar would
+/// make a deliberate decision feel like a preference. The single-store
+/// discipline still applies — it reads and writes the same `AgentSettings` the
+/// menu's agent-recording toggle does.
 ///
 /// D55 (M5f Task 7) adds two `HotkeyRecorderButton`s alongside those five
 /// checkboxes, for the record and marker hotkeys. They read/write
@@ -47,16 +56,19 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let onChange: (() -> Void)?
     private let eventLoggingToggle: (Bool, UserDefaults) -> Bool
     private let microphoneToggle: (Bool, UserDefaults) -> Bool
+    private let unattendedToggle: (Bool, UserDefaults) -> Bool
     private let hotkeyConflictAlert: @MainActor (HotkeyAction, HotkeyCombination) -> Void
     private let outputDirectoryUnwritableAlert: @MainActor (URL) -> Void
     private var hotkeyButtons: [HotkeyAction: HotkeyRecorderButton] = [:]
     private var outputDirectoryLabel: NSTextField?
+    private var unattendedStatusLabel: NSTextField?
 
     /// Wide enough for an explanation to be a sentence rather than a column
     /// of two-word lines. The 420pt window predated the explanations.
     static let contentWidth: Double = 520
 
     static let agentRecordingTitle = "Allow agent recording"
+    static let unattendedRecordingTitle = "Allow unattended agent recording"
     static let eventLoggingTitle = "Log input events"
     static let microphoneTitle = "Record voiceover"
     static let automaticUpdatesTitle = "Check for updates automatically"
@@ -71,6 +83,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     static let agentRecordingDetail = "Lets Claude Code or Codex start a recording "
         + "without you at the keyboard. Every agent-initiated recording is disclosed "
         + "in the UI and logged."
+    // D95. The renewal period is INTERPOLATED, never typed as a literal: the
+    // number is the whole point of this sentence — a person plans around it —
+    // and a help text that says thirty while the grant expires at forty-five
+    // is worse than no help text, because they would leave the machine
+    // believing it.
+    static let unattendedRecordingDetail = "Confirms Screen Recording now, while you are "
+        + "here, so an agent can keep recording after you leave. macOS makes Snitt "
+        + "re-confirm about every \(UnattendedRecordingGrant.renewalDays) days and that "
+        + "prompt needs a person, so this switches itself off after "
+        + "\(UnattendedRecordingGrant.renewalDays) days until you renew it."
     static let eventLoggingDetail = "Records which keys and clicks happened, so "
         + "auto-trim can tell working from idle. Keystrokes are stored as "
         + "content-free beats — never the characters."
@@ -81,6 +103,28 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     static let crashReportsDetail = "Attaches recent crash logs when you export a "
         + "diagnostics bundle. Nothing is sent anywhere — the bundle is a file you "
         + "choose to share."
+    /// The line under the unattended checkbox saying where the grant stands.
+    ///
+    /// Pure and static so the wording is testable without building a window —
+    /// and separate from `unattendedRecordingDetail` because the two answer
+    /// different questions: the detail says what the setting DOES and never
+    /// changes, this says what it is doing RIGHT NOW and changes daily.
+    ///
+    /// Empty for `.off`: a status line under an unchecked box would be
+    /// describing a grant that does not exist.
+    static func unattendedStatusText(for status: UnattendedRecordingGrant.Status) -> String {
+        switch status {
+        case .off:
+            return ""
+        case .active(let daysRemaining):
+            return "Confirmed. Renew within \(daysRemaining) "
+                 + "\(daysRemaining == 1 ? "day" : "days"), while you are at the keyboard."
+        case .lapsed(let daysAgo):
+            let when = daysAgo == 0 ? "today" : "\(daysAgo) \(daysAgo == 1 ? "day" : "days") ago"
+            return "Renewal overdue — it lapsed \(when). Switch it back on to renew."
+        }
+    }
+
     static let outputDirectoryCaption = "Save recordings to"
     static let outputDirectoryButtonTitle = "Choose…"
 
@@ -149,6 +193,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// against the real `PermissionOnboarding`/`MicrophoneAccess`; a test
     /// substitutes a fake for the same reason.
     ///
+    /// `unattendedToggle` mirrors both (D95): production forwards to
+    /// `UnattendedRecordingToggle.apply`, which runs the real Screen Recording
+    /// ladder — a real modal and real per-machine TCC state. A test
+    /// substitutes a fake, because a headless runner does not fail on
+    /// `NSAlert.runModal()`, it HANGS.
+    ///
     /// `outputDirectoryUnwritableAlert` is also test-only, mirroring
     /// `hotkeyConflictAlert` immediately above: production always uses the
     /// default, which raises a real `NSAlert` naming the folder that was
@@ -165,6 +215,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                       },
                       microphoneToggle: @escaping (Bool, UserDefaults) -> Bool = {
                           MicrophoneToggle.apply($0, defaults: $1)
+                      },
+                      unattendedToggle: @escaping (Bool, UserDefaults) -> Bool = {
+                          UnattendedRecordingToggle.apply($0, defaults: $1)
                       },
                       hotkeyConflictAlert: @escaping @MainActor (HotkeyAction, HotkeyCombination) -> Void =
                           SettingsWindowController.presentHotkeyConflictAlert,
@@ -184,6 +237,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                                                   hotkeyRegistrar: hotkeyRegistrar, onChange: onChange,
                                                   eventLoggingToggle: eventLoggingToggle,
                                                   microphoneToggle: microphoneToggle,
+                                                  unattendedToggle: unattendedToggle,
                                                   hotkeyConflictAlert: hotkeyConflictAlert,
                                                   outputDirectoryUnwritableAlert: outputDirectoryUnwritableAlert)
         shared = controller
@@ -240,6 +294,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                 onChange: (() -> Void)?,
                 eventLoggingToggle: @escaping (Bool, UserDefaults) -> Bool,
                 microphoneToggle: @escaping (Bool, UserDefaults) -> Bool,
+                unattendedToggle: @escaping (Bool, UserDefaults) -> Bool,
                 hotkeyConflictAlert: @escaping @MainActor (HotkeyAction, HotkeyCombination) -> Void,
                 outputDirectoryUnwritableAlert: @escaping @MainActor (URL) -> Void) {
         self.updater = updater
@@ -248,6 +303,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         self.onChange = onChange
         self.eventLoggingToggle = eventLoggingToggle
         self.microphoneToggle = microphoneToggle
+        self.unattendedToggle = unattendedToggle
         self.hotkeyConflictAlert = hotkeyConflictAlert
         self.outputDirectoryUnwritableAlert = outputDirectoryUnwritableAlert
         // Height 0: `sizeToFitContent` below replaces it with what the
@@ -303,6 +359,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
             settingRow(title: Self.agentRecordingTitle, detail: Self.agentRecordingDetail,
                        isOn: AgentSettings.load(defaults).agentRecordingEnabled,
                        action: #selector(toggleAgentRecording(_:))),
+            unattendedRow(),
             settingRow(title: Self.eventLoggingTitle, detail: Self.eventLoggingDetail,
                        isOn: EventLoggingSettings.load(defaults).enabled,
                        action: #selector(toggleEventLogging(_:))),
@@ -584,10 +641,67 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         outputDirectoryLabel?.stringValue = OutputDirectorySettings.load(defaults).directory.path
     }
 
+    /// D95's row: the standard checkbox-plus-explanation, with a third line
+    /// underneath saying where the grant stands today.
+    ///
+    /// The checkbox reads the STATUS, not the stored flag. A grant that has
+    /// lapsed shows unchecked, because it is authorizing nothing — the same
+    /// rule `EventLoggingToggle`'s history states for a refused grant: a
+    /// checkmark on a feature that cannot produce anything is the lie. The
+    /// status line underneath is what stops that reading as the setting having
+    /// forgotten itself.
+    private func unattendedRow() -> NSView {
+        let status = AgentSettings.load(defaults).unattendedGrant.status(now: Date())
+        let row = settingRow(title: Self.unattendedRecordingTitle,
+                             detail: Self.unattendedRecordingDetail,
+                             isOn: status.isActive,
+                             action: #selector(toggleUnattendedRecording(_:)))
+
+        let label = NSTextField(wrappingLabelWithString: Self.unattendedStatusText(for: status))
+        label.font = .systemFont(ofSize: 12, weight: .medium)
+        label.textColor = .secondaryLabelColor
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.preferredMaxLayoutWidth = Self.contentWidth - 60
+        unattendedStatusLabel = label
+
+        if let stack = row as? NSStackView {
+            stack.addArrangedSubview(label)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: stack.leadingAnchor, constant: 20),
+                label.widthAnchor.constraint(lessThanOrEqualToConstant: Self.contentWidth - 60),
+            ])
+        }
+        return row
+    }
+
+    @objc private func toggleUnattendedRecording(_ sender: NSButton) {
+        // Through the ladder, exactly like event logging and the microphone —
+        // and for a reason specific to this one: turning it on is the ONLY
+        // moment a person is guaranteed to be present, so it is the only
+        // moment the Screen Recording grant can be confirmed. `apply` returns
+        // the state actually reached, which is `false` whenever the grant is
+        // refused, and the checkbox is set back to match.
+        let applied = unattendedToggle(sender.state == .on, defaults)
+        sender.state = applied ? .on : .off
+        refreshUnattendedStatus()
+        onChange?()
+    }
+
+    private func refreshUnattendedStatus() {
+        let status = AgentSettings.load(defaults).unattendedGrant.status(now: Date())
+        unattendedStatusLabel?.stringValue = Self.unattendedStatusText(for: status)
+        checkbox(titled: Self.unattendedRecordingTitle)?.state = status.isActive ? .on : .off
+    }
+
     @objc private func toggleAgentRecording(_ sender: NSButton) {
         var settings = AgentSettings.load(defaults)
         settings.agentRecordingEnabled = (sender.state == .on)
         settings.save(to: defaults)
+        // §5.3's opt-in is what D95's grant hangs off, so turning it off
+        // withdraws unattended recording as well. Only the DISPLAY is updated
+        // here: `unattendedGrant` composes the two flags, so there is no second
+        // stored value that could be left disagreeing with this one.
+        refreshUnattendedStatus()
         onChange?()
     }
 
@@ -628,7 +742,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         onChange?()
     }
 
-    /// Re-reads all five checkbox settings, both hotkeys, and the output
+    /// Re-reads all six checkbox settings, both hotkeys, and the output
     /// directory from the store (whole-branch review F7).
     ///
     /// `refreshStatusItemFromSettings` syncs window → menu; there was no
@@ -641,6 +755,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     func refreshFromStore() {
         checkbox(titled: Self.agentRecordingTitle)?.state =
             AgentSettings.load(defaults).agentRecordingEnabled ? .on : .off
+        // Reads the STATUS, not the stored flag — a grant that lapsed while
+        // this window sat open must come back unchecked, and the line under it
+        // must say why.
+        refreshUnattendedStatus()
         checkbox(titled: Self.eventLoggingTitle)?.state =
             EventLoggingSettings.load(defaults).enabled ? .on : .off
         checkbox(titled: Self.microphoneTitle)?.state =

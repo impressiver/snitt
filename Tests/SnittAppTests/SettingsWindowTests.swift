@@ -30,6 +30,7 @@ struct SettingsWindowTests {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         #expect(AgentSettings.load(defaults).agentRecordingEnabled == false)
+        #expect(AgentSettings.load(defaults).unattendedRecordingEnabled == false)
         #expect(EventLoggingSettings.load(defaults).enabled == false)
         #expect(MicrophoneSettings.load(defaults).enabled == false)
         #expect(UpdateSettings.load(defaults).automaticChecksEnabled == false)

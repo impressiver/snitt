@@ -368,3 +368,55 @@ func targetHashesAreSaltedPerExport() throws {
     #expect(targetsA[0] != b.recentSessions[0].target,
             "a target hash must not be reproducible in another export")
 }
+
+/// D95's grant in the support bundle.
+///
+/// It belongs next to the three OS permissions precisely because it is NOT one:
+/// "screenRecording: granted" beside "unattendedRecording: lapsed 3 days ago"
+/// says a recording could have happened and was not authorized to, and neither
+/// line says that on its own.
+@Suite(.serialized)
+@MainActor
+struct DiagnosticsUnattendedGrantTests {
+
+    private func report(_ status: UnattendedRecordingGrant.Status) throws -> DiagnosticsReport {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "diagunattended-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        return try DiagnosticsBundle.write(
+            to: root.appending(path: "report.json"),
+            auditLogURL: root.appending(path: "audit.jsonl"),
+            sinceMinutes: 1,
+            crashReportSettings: CrashReportSettings(enabled: false),
+            crashReportsDirectory: root,
+            collectCrashReports: { _ in [] },
+            unattendedStatus: status)
+    }
+
+    @Test("The bundle records the grant alongside the OS permissions")
+    func grantAppearsInPermissions() throws {
+        let off = try report(.off)
+        #expect(off.permissions["unattendedRecording"] == "off")
+        // The three OS permissions are still there — a new key must not have
+        // replaced the map it was added to.
+        #expect(off.permissions["screenRecording"] != nil)
+        #expect(off.permissions["inputMonitoring"] != nil)
+        #expect(off.permissions["microphone"] != nil)
+    }
+
+    @Test("A live grant carries the days remaining, not just 'active'")
+    func activeCarriesTheNumber() throws {
+        // "active" alone cannot tell a support reader whether the machine was
+        // two days from going quiet — which is the question a bundle from an
+        // unattended machine exists to answer.
+        #expect(try report(.active(daysRemaining: 2)).permissions["unattendedRecording"]
+                == "active, 2 days remaining")
+    }
+
+    @Test("A lapsed grant says how long ago")
+    func lapsedCarriesTheAge() throws {
+        #expect(try report(.lapsed(daysAgo: 3)).permissions["unattendedRecording"]
+                == "lapsed 3 days ago")
+    }
+}
