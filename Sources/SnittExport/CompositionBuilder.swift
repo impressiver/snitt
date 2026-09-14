@@ -317,12 +317,20 @@ public enum CompositionBuilder {
         // the frames it was spoken about, so a cut made afterwards takes the
         // narration over it and leaves the rest where it belongs.
         // `VoiceoverPlacement` decides that; this only places what it returns.
+        // Every audio track the MIX has to cover, which is not the same list
+        // as the capture's. `audioTrackPairs` exists to pair sources with
+        // destinations for the insert loop above and holds only the tracks
+        // `capture.mov` had; a voiceover is a destination with no source in
+        // that asset, so it has to join this one explicitly.
+        var mixTracks = audioTrackPairs.map(\.destination)
+
         if let voiceover = edl.voiceover {
             let voiceoverURL = bundle.url.appendingPathComponent(voiceover.filename)
             let voiceoverAsset = AVURLAsset(url: voiceoverURL)
             if let narration = try? await voiceoverAsset.loadTracks(withMediaType: .audio).first,
                let destination = composition.addMutableTrack(
                    withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
+                mixTracks.append(destination)
                 for span in VoiceoverPlacement.outputSpans(of: voiceover, keptRanges: kept) {
                     let source = CMTimeRange(
                         start: CMTime(seconds: span.voiceoverStart, preferredTimescale: 600),
@@ -393,7 +401,16 @@ public enum CompositionBuilder {
         ]
         let videoComposition = AVVideoComposition(configuration: compositionConfig)
 
-        let mix = audioMix(for: audioTrackPairs.map(\.destination), states: edl.trackStates)
+        // `mixTracks`, NOT `audioTrackPairs`. Built from the pairs alone, the
+        // mix covered only the capture's own tracks and the voiceover got no
+        // `AVMutableAudioMixInputParameters` at all — so muting or gaining
+        // narration did nothing to an EXPORT.
+        //
+        // It worked in the preview the whole time, which is what made it
+        // dangerous: `PreviewController.applyAudioMix` builds from the
+        // composition's own tracks and therefore saw all three. Adjust the
+        // level, hear it change, export a file where it did not.
+        let mix = audioMix(for: mixTracks, states: edl.trackStates)
 
         return BuiltComposition(composition: composition,
                                 videoComposition: videoComposition,

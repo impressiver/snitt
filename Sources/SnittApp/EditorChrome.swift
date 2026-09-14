@@ -378,6 +378,11 @@ struct TransportBar: View {
         switch track {
         case "microphone": return "Microphone"
         case "systemAudio": return "System audio"
+        case "voiceover": return "Voiceover"
+        // The fallback returns the RAW name, so a track this does not know
+        // labels its lane "voiceover" in lower case rather than not at all.
+        // That is why the omission was invisible: the lane appeared, the meter
+        // worked, and only the capitalisation said nobody had thought about it.
         default: return track
         }
     }
