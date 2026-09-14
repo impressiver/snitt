@@ -318,15 +318,43 @@ func bundleOmitsErrorFilePaths() async throws {
     }
 
     let out = tempURL(); defer { try? FileManager.default.removeItem(at: out) }
-    _ = try DiagnosticsBundle.write(to: out, auditLogURL: auditLogURL, sinceMinutes: 5,
-        crashReportSettings: CrashReportSettings(enabled: false),
-        crashReportsDirectory: neverCreatedCrashDirectory())
 
-    let written = try String(contentsOf: out, encoding: .utf8)
+    // Written more than once, until the log entry it is looking for has
+    // landed. The diagnosis half of this test reads `OSLogStore`, and a log
+    // write is ASYNCHRONOUS — the entry exists when `os_log` returns, but not
+    // necessarily where `OSLogStore.getEntries` can see it yet. Under a full
+    // parallel suite that gap is wide enough to matter: this test failed on
+    // two separate gate runs (2026-09-13), took forty seconds on each, and
+    // passed alone three times in a row and on every re-run.
+    //
+    // Polling rather than sleeping a fixed amount: a sleep long enough to be
+    // safe on a loaded machine is time every green run pays, and one short
+    // enough to be cheap is the flake again. The FIRST write usually suffices.
+    //
+    // What is NOT relaxed is the assertion. Waiting for the log makes the test
+    // able to see the leak it exists to catch; weakening `contains` would have
+    // made it green by no longer looking.
+    var written = ""
+    for attempt in 0..<20 {
+        if attempt > 0 { try await Task.sleep(nanoseconds: 100_000_000) }
+        _ = try DiagnosticsBundle.write(to: out, auditLogURL: auditLogURL, sinceMinutes: 5,
+            crashReportSettings: CrashReportSettings(enabled: false),
+            crashReportsDirectory: neverCreatedCrashDirectory())
+        written = try String(contentsOf: out, encoding: .utf8)
+        if written.contains("NSCocoaErrorDomain") { break }
+    }
+
+    // The privacy assertion is checked against the LAST bundle written, which
+    // is the one that carries the error — checking an earlier, error-free
+    // bundle for a leak would be asserting against a file that never had the
+    // chance to leak anything.
     #expect(!written.contains(sentinel),
             "a failed audit append's file path must not reach an exported support bundle")
     // And the diagnosis survives: domain and code identify the fault exactly.
-    #expect(written.contains("NSCocoaErrorDomain"))
+    // A miss here means the audit append may have SUCCEEDED, which would make
+    // the privacy assertion above vacuous — there would be no path to leak.
+    #expect(written.contains("NSCocoaErrorDomain"),
+            "no NSCocoaErrorDomain after 2s of polling")
 }
 
 @MainActor
