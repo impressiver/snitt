@@ -1018,6 +1018,15 @@ final class EditorTimelineState: ObservableObject {
     /// Levels captured so far in the current take, for the lane drawn while it
     /// runs. Empty when nothing is recording.
     @Published private(set) var voiceoverLevels: [Float] = []
+    /// The timeline's zoom, mirrored so the slider re-renders when a scroll or
+    /// a pinch changes it.
+    ///
+    /// The control used to read `timelineView.zoomFraction` directly, which is
+    /// a plain property on an `NSView` and publishes nothing — so the slider
+    /// followed the ± keys (they route through SwiftUI) and ignored the mouse.
+    /// It only looked right during playback, where the 20Hz playhead poll was
+    /// re-rendering the transport anyway.
+    @Published var timelineZoomFraction: Double = 0
     /// Where in OUTPUT time the current take began, so the live lane knows
     /// where to start drawing.
     @Published private(set) var voiceoverStartedAt: Double = 0
@@ -1684,6 +1693,7 @@ struct TimelineViewRepresentable: NSViewRepresentable {
         // here first and deleted — that is the fourth duplicate this session
         // that existed because the existing one was not looked for.
         view.onCreateMarker = { [weak state] in state?.addMarker(atOutput: $0) }
+        view.onZoomChanged = { [weak state] in state?.timelineZoomFraction = $0 }
         view.onRemoveCut = { [weak state] in state?.removeCut(id: $0) }
         // D50/D56 (M5f Task 6): a marker drag reports the OUTPUT time it was
         // dropped at, converted back to SOURCE time by `moveMarker` itself
@@ -1970,8 +1980,11 @@ struct EditorContentView: View {
                 currentTime: RecordingState.clock(playhead),
                 totalTime: RecordingState.clock(state.displayState(playhead: playhead).duration),
                 currentMark: state.currentMarkLabel,
+                // Reads the PUBLISHED mirror, writes through to the view. The
+                // getter used to read the view directly, which is why a scroll
+                // moved the timeline and left the slider behind.
                 zoomFraction: Binding(
-                    get: { state.timelineView?.zoomFraction ?? 0 },
+                    get: { state.timelineZoomFraction },
                     set: { state.timelineView?.setZoomFraction($0) }),
                 isScrollable: state.timelineView?.isScrollable ?? false,
                 visibleFraction: state.timelineView?.visibleFraction ?? 1,

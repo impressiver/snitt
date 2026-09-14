@@ -415,3 +415,10 @@ VoiceoverTranscriptTests :: Sources/SnittApp/Transcriber.swift :: merged.words =
 AudibleTranscriptTests :: Sources/SnittDocument/AudibleTranscript.swift :: return words.filter { !muted.contains($0.track) } :: return words
 # Escape means "put that back" — toggling a COLLAPSED fold opens it instead.
 FoldMenuTests :: Sources/SnittApp/TimelineView.swift :: guard let id = selectedFoldID, expandedCutIDs.contains(id) else { :: guard let id = selectedFoldID, true else {
+
+# The zoom slider reads a published mirror; without the notification a scroll
+# or a pinch moves the timeline and leaves the control behind.
+TimelineZoomSyncTests :: Sources/SnittApp/TimelineView.swift :: onZoomChanged(zoomFraction) :: _ = zoomFraction
+# Narration is drawn in the colour its WORDS are. Amber says "one of the
+# recorded tracks", which is the one thing it is not.
+VoiceoverLaneColourTests :: Sources/SnittApp/TimelineView.swift :: guard track == "voiceover" else { return muted ? waveformMuted : waveform } :: guard false else { return muted ? waveformMuted : waveform }
