@@ -305,3 +305,7 @@ UnattendedSettingsRowTests :: Sources/SnittApp/SettingsWindowController.swift ::
 UnattendedSettingsRowTests :: Sources/SnittApp/SettingsWindowController.swift :: checkbox(titled: Self.unattendedRecordingTitle)?.isEnabled = settings.agentRecordingEnabled :: checkbox(titled: Self.unattendedRecordingTitle)?.isEnabled = true
 # The indent is what says "sub-option" rather than "second permission".
 SettingsWindowLayoutTests :: Sources/SnittApp/SettingsWindowController.swift :: return Self.indenting(row, by: Self.subOptionIndent) :: return row
+
+# The folder setting governs where RECORDINGS land and nothing else — export
+# lands beside its own bundle, which is what made a broader name look true.
+SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: static let outputDirectoryCaption = "Recordings folder" :: static let outputDirectoryCaption = "Default path"
