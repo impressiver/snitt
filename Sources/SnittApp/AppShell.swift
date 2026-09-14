@@ -110,23 +110,12 @@ enum AppShell {
                                 keyEquivalent: "e")
         menu.addItem(export)
 
-        // "Export for…" — one click to a file the destination will actually
-        // accept, copied to the clipboard, with no sheet in between. The sheet
-        // above is for choosing; this is for the case where the choice is
-        // already made by where it is going.
-        let forItem = NSMenuItem(title: "Export for", action: nil, keyEquivalent: "")
-        let forMenu = NSMenu(title: "Export for")
-        for destination in ExportDestination.all {
-            let entry = NSMenuItem(title: destination.name,
-                                   action: #selector(AppDelegate.exportForDestination(_:)),
-                                   keyEquivalent: "")
-            // The id, not the index: a menu that reordered would otherwise
-            // export to a different place than the one that was clicked.
-            entry.representedObject = destination.id
-            forMenu.addItem(entry)
-        }
-        forItem.submenu = forMenu
-        menu.addItem(forItem)
+        // "Export for" is NOT here any more. It was a submenu that exported
+        // the moment you picked a destination, with no dialog and no chance to
+        // see what it had decided — so getting it wrong meant exporting again
+        // rather than adjusting. It is a picker at the top of the export sheet
+        // now, where choosing a destination fills the settings in and the
+        // Export button is still the only thing that writes a file.
 
         // A SUBMENU of destinations, exactly as QuickTime's File ▸ Share is —
         // not a flat item that exports first and then raises a picker. See

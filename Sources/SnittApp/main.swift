@@ -509,25 +509,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// File ▸ Share ▸ <destination> — exports, then hands the file over.
     ///
-    /// Resolved from the sender's `representedObject`, the same rule
-    /// `exportForDestination` follows and for the same reason: the menu is
-    /// rebuilt on every open, so a title or an index would be a handle to
-    /// whatever happened to be in that position this time.
+    /// Resolved from the sender's `representedObject` rather than its title:
+    /// the menu is rebuilt on every open, so a title or an index would be a
+    /// handle to whatever happened to be in that position this time.
     @objc func shareToService(_ sender: Any?) {
         guard let service = (sender as? NSMenuItem)?.representedObject as? NSSharingService,
               let editor = focusedEditor else { return }
         editor.share(via: service)
-    }
-
-    /// File ▸ Export for ▸ <destination>.
-    ///
-    /// Resolved from the sender's `representedObject` rather than its title,
-    /// so renaming a menu entry cannot silently retarget the export.
-    @objc func exportForDestination(_ sender: Any?) {
-        guard let id = (sender as? NSMenuItem)?.representedObject as? String,
-              let destination = ExportDestination.named(id),
-              let editor = focusedEditor else { return }
-        editor.exportFor(destination)
     }
 
     @objc func exportDocument(_ sender: Any?) {
@@ -727,12 +715,11 @@ extension AppDelegate: NSMenuItemValidation {
             menuItem.state = (editor.map(reads) ?? false) ? .on : .off
             return editor != nil
         }
-        // Export, Export for, and Share all resolve their editor from the KEY
-        // window and all do nothing without one. Grouped rather than repeated:
-        // three copies of this rule is three places for one of them to drift
-        // into offering an action it then silently declines.
+        // Export and Share both resolve their editor from the KEY window and
+        // both do nothing without one. Grouped rather than repeated: two
+        // copies of this rule is two places for one of them to drift into
+        // offering an action it then silently declines.
         if menuItem.action == #selector(exportDocument(_:))
-            || menuItem.action == #selector(exportForDestination(_:))
             || menuItem.action == #selector(shareToService(_:)) {
             return EditorWindowController.openEditors.contains { $0.window == NSApp.keyWindow }
         }

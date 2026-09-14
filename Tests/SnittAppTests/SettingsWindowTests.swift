@@ -893,10 +893,22 @@ struct SettingsRowTests {
             let above = rows[index - 1].frame.minY - rows[index].frame.maxY
             let below = rows[index].frame.minY - rows[index + 1].frame.maxY
             #expect(above >= 12, "only \(above)pt above a rule — it is crowding the row before it")
-            #expect(below >= 6, "only \(below)pt below a rule — it is crowding its own heading")
-            #expect(above > below,
-                    "a rule with \(above)pt above and \(below)pt below reads as belonging to the wrong group — a heading belongs to what follows it")
+            #expect(below >= 12, "only \(below)pt below a rule — it is crowding its own heading")
+            // EVEN, which reverses what this asserted before. It required
+            // `above > below` on the reasoning that a heading belongs to what
+            // follows it; laid out, that meant 18pt above and 8pt below, and
+            // the rule visibly sat twice as far from the content above it as
+            // from the heading under it. One constant now feeds both sides.
+            #expect(abs(above - below) < 0.5,
+                    "uneven margins: \(above)pt above the rule, \(below)pt below")
         }
+
+        // And every rule has the SAME margins as every other, not merely
+        // symmetric ones. Four dividers each evenly spaced at a different
+        // value would satisfy the loop above and still look arbitrary.
+        let margins = ruleIndexes.map { rows[$0 - 1].frame.minY - rows[$0].frame.maxY }
+        #expect(margins.allSatisfy { abs($0 - margins[0]) < 0.5 },
+                "the dividers do not share one margin: \(margins)")
     }
 
     @Test("The folder setting is named for the only thing it governs")

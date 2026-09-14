@@ -345,3 +345,12 @@ SparkleVersionFieldTests :: Scripts/make-appcast.sh :: sparkle:version="${BUILD_
 # the only rights notice that ships in the bundle, and it read "All rights
 # reserved" through five releases.
 BundleLayoutTests :: Scripts/make-app.sh :: <key>NSHumanReadableCopyright</key><string>Copyright © 2026 Ian White. Licensed under the Mozilla Public License 2.0. Source: https://github.com/impressiver/snitt</string> :: <key>NSHumanReadableCopyright</key><string>Copyright (c) 2026 impressiver LLC. All rights reserved.</string>
+
+# Settings dividers must have the SAME air on both sides. They had 18 above and
+# 8 below, so every rule visibly belonged to the group beneath it.
+SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: stack.setCustomSpacing(Self.ruleMargin, after: rule) :: stack.setCustomSpacing(8, after: rule)
+# "Manual edit means Custom" has to be derived, not remembered. A preset that
+# survives a hand-picked resolution shows a menu claiming settings it no longer has.
+ExportPresetSelectionTests :: Sources/SnittApp/ExportSheet.swift :: maxSizeBytes = nil :: maxSizeBytes = maxSizeBytes.map { $0 }
+# Suffixes must not stack: demo-github-slack-x.mp4 names the wrong preset.
+ExportPresetSelectionTests :: Sources/SnittApp/ExportSheet.swift :: for known in ExportDestination.all where stem.hasSuffix("-\(known.id)") { :: for known in [ExportDestination]() where stem.hasSuffix("-\(known.id)") {

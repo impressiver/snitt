@@ -1817,6 +1817,7 @@ struct EditorContentView: View {
                 title: state.documentTitle,
                 options: exportOptions,
                 isMeasuring: measuringExport,
+                durationSeconds: state.displayState(playhead: playhead).duration,
                 request: $exportRequest,
                 onCancel: { showingExport = false },
                 onExport: {
@@ -2447,48 +2448,6 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
 
     private func endSharePreparation(_ sheet: NSWindow) {
         window.endSheet(sheet)
-    }
-
-    /// File ▸ Export for ▸ <destination>: export to a file that place will
-    /// accept, and put it on the clipboard.
-    ///
-    /// No save panel. The sheet exists for choosing settings, and here the
-    /// settings are already decided by where it is going — asking again would
-    /// be a dialog whose every field is already answered.
-    ///
-    /// A recording longer than the destination allows is exported ANYWAY and
-    /// reported. Trimming to fit would destroy content to satisfy somebody
-    /// else's policy, and the person would find out by watching their own demo
-    /// stop mid-sentence; a file that is too long is at least a file they can
-    /// look at and decide about.
-    func exportFor(_ destination: ExportDestination) {
-        let request = ExportRequest.forDestination(destination,
-                                                   basedOn: state.defaultExportURL,
-                                                   drawClicks: state.edl.showClicks,
-                                                   drawSubtitles: state.edl.showSubtitles,
-                                                   drawMarkers: state.edl.showMarkers)
-        Task { @MainActor in
-            do {
-                try await performExport(request, pasteboard: .general)
-                if destination.exceedsDuration(self.controller.durationSeconds) {
-                    self.presentDurationWarning(for: destination)
-                } else {
-                    self.presentExportSuccess()
-                }
-            } catch {
-                self.presentExportFailure(error)
-            }
-        }
-    }
-
-    private func presentDurationWarning(for destination: ExportDestination) {
-        let limit = Int((destination.maxDurationSeconds ?? 0).rounded())
-        let allowed = "\(limit / 60)m \(limit % 60)s"
-        AppDelegate.presentMessage(
-            "Exported and copied — but this recording is longer than "
-            + "\(destination.name) accepts (\(allowed)).\n\n"
-            + "Snitt did not shorten it. Trim it yourself and export again, "
-            + "or post it somewhere without that limit.")
     }
 
     func performExport(_ request: ExportRequest) {
