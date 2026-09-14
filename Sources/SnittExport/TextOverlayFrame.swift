@@ -41,9 +41,12 @@ enum TextOverlayFrame {
             with: available, options: [.usesLineFragmentOrigin, .usesFontLeading])
         // Padded, so the shadow is not clipped at the edges of the bitmap.
         let pad = OverlayLayout.captionShadowBlur(fontSize: size) * 2
+        // Lifted by its ROW, so a caption sharing the frame sits above the one
+        // it is sharing with rather than on top of it.
         let box = CGRect(x: picture.minX + inset,
                          y: picture.maxY - ceil(measured.height) - pad * 2
-                            - OverlayLayout.captionBottomInset(pictureHeight: picture.height),
+                            - OverlayLayout.captionBottomInset(pictureHeight: picture.height,
+                                                               row: cue.row),
                          width: available.width,
                          height: ceil(measured.height) + pad * 2)
         guard let image = render(size: box.size, { _ in
@@ -77,7 +80,9 @@ enum TextOverlayFrame {
 
     private static func captionText(_ cue: SubtitleCue, fontSize: Double) -> NSAttributedString {
         let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
+        // Ragged rather than centred once there are two of them, so the pair
+        // is offset the way film subtitles offset two speakers.
+        paragraph.alignment = OverlayLayout.captionAlignment(cue.placement)
         paragraph.lineSpacing = OverlayLayout.captionLineSpacing(fontSize: fontSize)
         let shadow = NSShadow()
         shadow.shadowColor = SnittPalette.ink0.withAlphaComponent(0.9)
@@ -85,7 +90,7 @@ enum TextOverlayFrame {
         shadow.shadowOffset = NSSize(width: 0, height: -1)
         return NSAttributedString(string: cue.text, attributes: [
             .font: NSFont.systemFont(ofSize: fontSize, weight: .medium),
-            .foregroundColor: NSColor.white,
+            .foregroundColor: SnittPalette.caption(for: cue.track),
             .paragraphStyle: paragraph,
             .shadow: shadow,
         ])
@@ -126,9 +131,9 @@ enum TextOverlayFrame {
     static func draw(cues: [SubtitleCue], banners: [MarkerBanner],
                      on image: CGImage, atOutputTime outputTime: Double,
                      renderSize: CGSize) -> CGImage {
-        let cue = SubtitleCues.cue(at: outputTime, in: cues)
+        let visible = SubtitleCues.visible(at: outputTime, in: cues)
         let banner = MarkerBanners.banner(at: outputTime, in: banners)
-        guard cue != nil || banner != nil else { return image }
+        guard !visible.isEmpty || banner != nil else { return image }
 
         guard let space = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(
@@ -151,7 +156,9 @@ enum TextOverlayFrame {
         if let banner, let look = MarkerBanners.appearance(of: banner, at: outputTime) {
             drawBanner(banner, look: look, picture: picture, context: context)
         }
-        if let cue {
+        // All of them. This drew ONE, so a moment with two voices lost
+        // whichever the singular accessor did not return.
+        for cue in visible {
             drawCaption(cue, picture: picture, context: context)
         }
 

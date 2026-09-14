@@ -45,7 +45,7 @@ final class OverlayTextView: NSView {
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
     private func isShowingAnything(at time: Double) -> Bool {
-        SubtitleCues.cue(at: time, in: cues) != nil
+        !SubtitleCues.visible(at: time, in: cues).isEmpty
             || MarkerBanners.banner(at: time, in: banners) != nil
     }
 
@@ -96,14 +96,21 @@ final class OverlayTextView: NSView {
         text.draw(at: CGPoint(x: box.minX + padding, y: box.minY + padding * 0.45))
     }
 
-    // MARK: - Captions, bottom centre
+    // MARK: - Captions, bottom centre — or two lines when two voices overlap
 
     private func drawCaption(in picture: CGRect) {
-        guard let cue = SubtitleCues.cue(at: currentTime, in: cues) else { return }
+        // All of them, not the last one. Narration is spoken OVER footage that
+        // already has speech in it, so two simultaneous captions is the normal
+        // case here rather than an edge one.
+        for cue in SubtitleCues.visible(at: currentTime, in: cues) {
+            drawCaption(cue, in: picture)
+        }
+    }
 
+    private func drawCaption(_ cue: SubtitleCue, in picture: CGRect) {
         let size = OverlayLayout.captionFontSize(pictureHeight: picture.height)
         let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
+        paragraph.alignment = OverlayLayout.captionAlignment(cue.placement)
         paragraph.lineSpacing = OverlayLayout.captionLineSpacing(fontSize: size)
 
         // A shadow rather than a plate: captions sit over the middle of the
@@ -116,7 +123,7 @@ final class OverlayTextView: NSView {
 
         let text = NSAttributedString(string: cue.text, attributes: [
             .font: NSFont.systemFont(ofSize: size, weight: .medium),
-            .foregroundColor: NSColor.white,
+            .foregroundColor: SnittPalette.caption(for: cue.track),
             .paragraphStyle: paragraph,
             .shadow: shadow,
         ])
@@ -130,7 +137,8 @@ final class OverlayTextView: NSView {
                          // frame is the first thing a video player's own
                          // controls cover.
                          y: picture.maxY - measured.height
-                            - OverlayLayout.captionBottomInset(pictureHeight: picture.height),
+                            - OverlayLayout.captionBottomInset(pictureHeight: picture.height,
+                                                               row: cue.row),
                          width: available.width,
                          height: measured.height)
         text.draw(with: box, options: [.usesLineFragmentOrigin, .usesFontLeading])

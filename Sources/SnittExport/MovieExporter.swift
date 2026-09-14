@@ -357,8 +357,14 @@ public enum MovieExporter {
         // and reused; the transcript only when captions are actually wanted,
         // since reading it costs a file open for a recording that may have none.
         let bannerEvents = edl.showMarkers ? try readBundleEvents(bundle) : []
+        // Filtered through `AudibleTranscript`, like every other surface that
+        // shows transcript words. A muted track contributes no audio to this
+        // file, so burning its speech in would caption something the viewer
+        // cannot hear — and a viewer has no way to tell that from a
+        // transcription error.
         let transcriptWords: [TranscriptWord] = edl.showSubtitles
-            ? ((try? Transcript.read(from: bundle))?.words ?? [])
+            ? AudibleTranscript.audible((try? Transcript.read(from: bundle))?.words ?? [],
+                                        trackStates: edl.trackStates)
             : []
 
         if format == "gif" {
