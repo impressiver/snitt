@@ -12,8 +12,24 @@ import SwiftUI
 /// because a 1pt drag target is a target you have to aim at. The same reason
 /// the timeline's lanes carry a 24pt floor.
 struct ResizableDivider: View {
-    /// Which way a rightward drag moves the width — `+1` when the pane being
-    /// resized is to the LEFT of the divider, `-1` when it is to the right.
+    /// Which edge the divider divides, and therefore which way it drags.
+    ///
+    /// Added when the transcript moved under the markers rail: the two panes
+    /// there are stacked, so the divider between them is horizontal and
+    /// resizes a HEIGHT. Everything else — the hit slop, the hover tint, the
+    /// cursor push/pop balance that took two goes to get right — is identical,
+    /// which is why this is a parameter rather than a second view.
+    enum Axis {
+        /// Side by side; the divider is a vertical rule and drags horizontally.
+        case vertical
+        /// Stacked; the divider is a horizontal rule and drags vertically.
+        case horizontal
+    }
+
+    var axis: Axis = .vertical
+    /// Which way a drag AWAY FROM THE ORIGIN moves the measurement — `+1` when
+    /// the pane being resized is to the LEFT of (or ABOVE) the divider, `-1`
+    /// when it is to the right of (or below) it.
     let direction: Double
     let onDrag: (Double) -> Void
     let onCommit: () -> Void
@@ -33,8 +49,10 @@ struct ResizableDivider: View {
     var body: some View {
         Rectangle()
             .fill(hovering ? Color.accentColor.opacity(0.5) : Color(nsColor: .separatorColor))
-            .frame(width: hovering ? 2 : 1)
-            .frame(width: 8)
+            .frame(width: axis == .vertical ? (hovering ? 2 : 1) : nil,
+                   height: axis == .horizontal ? (hovering ? 2 : 1) : nil)
+            .frame(width: axis == .vertical ? 8 : nil,
+                   height: axis == .horizontal ? 8 : nil)
             .contentShape(Rectangle())
             .onHover { hovering = $0 }
             .onContinuousHover { phase in
@@ -45,7 +63,11 @@ struct ResizableDivider: View {
                 if case .active = phase { inside = true } else { inside = false }
                 guard inside != owningCursor else { return }
                 owningCursor = inside
-                if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                if inside {
+                    (axis == .vertical ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).push()
+                } else {
+                    NSCursor.pop()
+                }
             }
             // A divider can vanish while the pointer is over it — the
             // transcript pane closes, the window resizes past a pane's
@@ -56,7 +78,10 @@ struct ResizableDivider: View {
             }
             .gesture(
                 DragGesture(coordinateSpace: .global)
-                    .onChanged { onDrag($0.translation.width * direction) }
+                    .onChanged {
+                        let travel = axis == .vertical ? $0.translation.width : $0.translation.height
+                        onDrag(travel * direction)
+                    }
                     .onEnded { _ in onCommit() })
     }
 }

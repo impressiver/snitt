@@ -6,6 +6,7 @@
 
 import AppKit
 import SwiftUI
+import SnittBrand
 import SnittDocument
 
 /// The transcript as an editing surface (D62).
@@ -111,18 +112,18 @@ struct TranscriptPane: View {
         let paragraphs = TranscriptParagraphs.split(transcript.words)
         ScrollViewReader { proxy in
             ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
+                // A list of rows, divided, with a time column — the marker
+                // rail's shape, because the two now sit one above the other
+                // and a reader moves between them. Two indexes of the same
+                // recording that are laid out differently read as two
+                // unrelated tools sharing a rail.
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(paragraphs) { paragraph in
-                        WrappingLayout(spacing: 3) {
-                            ForEach(paragraph.words) { word in
-                                wordView(word, isCut: cutIDs.contains(word.id),
-                                         isCurrent: word.id == currentID)
-                                    .id(word.id)
-                            }
-                        }
+                        phraseRow(paragraph, cutIDs: cutIDs, currentID: currentID)
+                            .id(paragraph.id)
+                        Divider()
                     }
                 }
-                .padding(8)
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
             // Follows only while PLAYING. Scrolling the text while someone is
@@ -199,6 +200,45 @@ struct TranscriptPane: View {
                 .font(.caption)
         }
         .onAppear { state.loadVocabulary() }
+    }
+
+    /// One phrase: when it was said, and what was said.
+    ///
+    /// The time is on the LEFT in its own column so the column reads down the
+    /// rail, the same way the marker list's does. It is a real control, not a
+    /// label: clicking it goes there, which is the cheapest possible way to
+    /// reach a moment you can see but have not selected.
+    @ViewBuilder
+    private func phraseRow(_ paragraph: TranscriptParagraph,
+                           cutIDs: Set<UUID>, currentID: UUID?) -> some View {
+        let start = TranscriptParagraphs.outputStart(of: paragraph,
+                                                     keptRanges: state.controller.keptRanges)
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            // Amber, because a timecode is time — the same reasoning, and the
+            // same swatch, as the marker rail's. A phrase cut away entirely
+            // has no output time at all and shows a dash: there is nowhere to
+            // click to, and an invented number would say otherwise.
+            Text(start.map(MarkerPane.timestamp) ?? "—")
+                .font(.system(.caption, design: .monospaced).weight(.medium))
+                .monospacedDigit()
+                .foregroundStyle(start == nil
+                                 ? AnyShapeStyle(.tertiary)
+                                 : AnyShapeStyle(SnittPalette.Swatch.amberText))
+                .frame(width: 44, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { if let start { state.seek(toOutput: start) } }
+
+            WrappingLayout(spacing: 3) {
+                ForEach(paragraph.words) { word in
+                    wordView(word, isCut: cutIDs.contains(word.id),
+                             isCurrent: word.id == currentID)
+                        .id(word.id)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     @ViewBuilder

@@ -20,23 +20,41 @@ import Foundation
 /// back usable instead of stranding the window in a state you cannot drag out
 /// of.
 public struct PaneWidths: Sendable, Equatable {
+    /// The left rail's width. It carries BOTH indexes now — the markers list
+    /// and, under it, the transcript — so one width governs both.
     public var markers: Double
+    /// The transcript's HEIGHT within that rail, the markers list taking
+    /// whatever is left.
+    ///
+    /// It was a width, when the transcript was a third column on the right.
+    /// Stored under its own key rather than reusing that one: 340 was a
+    /// perfectly ordinary width and is a perfectly ordinary height, so a
+    /// reused key would silently reinterpret a stored value as a measurement
+    /// of a different thing and look entirely plausible doing it.
     public var transcript: Double
 
     /// Below this a pane is a sliver, and its content is unreadable rather
     /// than merely small.
-    public static let minimumMarkers: Double = 180
-    public static let minimumTranscript: Double = 260
+    /// Raised from 180 when the transcript joined this rail: a phrase with a
+    /// time column beside it is unreadable much below this, and the rail is
+    /// now the only place the transcript has.
+    public static let minimumMarkers: Double = 260
+    public static let minimumTranscript: Double = 140
     /// A pane wider than this is competing with the recording rather than
     /// supporting it.
     public static let maximumMarkers: Double = 460
-    public static let maximumTranscript: Double = 640
+    public static let maximumTranscript: Double = 560
 
     public static let defaultMarkers: Double = 260
-    public static let defaultTranscript: Double = 340
+    public static let defaultTranscript: Double = 300
 
     private static let markersKey = "com.impressiver.snitt.paneWidth.markers"
-    private static let transcriptKey = "com.impressiver.snitt.paneWidth.transcript"
+    /// `...paneHeight...`, not `...paneWidth...` — see `transcript` above for
+    /// why the old key is not reused. The old one is REMOVED on save rather
+    /// than left behind: a stale key that nothing reads is a value a later
+    /// reader can find and believe.
+    private static let transcriptKey = "com.impressiver.snitt.paneHeight.transcript"
+    private static let retiredTranscriptWidthKey = "com.impressiver.snitt.paneWidth.transcript"
 
     public init(markers: Double = PaneWidths.defaultMarkers,
                 transcript: Double = PaneWidths.defaultTranscript) {
@@ -66,5 +84,6 @@ public struct PaneWidths: Sendable, Equatable {
     public func save(to defaults: UserDefaults = .standard) {
         defaults.set(markers, forKey: Self.markersKey)
         defaults.set(transcript, forKey: Self.transcriptKey)
+        defaults.removeObject(forKey: Self.retiredTranscriptWidthKey)
     }
 }

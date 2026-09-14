@@ -1621,13 +1621,35 @@ struct EditorContentView: View {
             Divider()
 
             HStack(alignment: .top, spacing: 0) {
-                // The chapter index, always present rather than conditional on
-                // there being markers: it is the only way to CREATE one
-                // outside of recording, so hiding it when the list is empty
-                // would hide the affordance exactly when it is needed.
-                MarkerPane(state: state, playhead: playhead,
-                           onEditMarker: { editingMarkerID = $0 })
-                    .frame(width: paneWidths.markers)
+                // One rail, two indexes of the same recording, stacked. They
+                // were a left column and a right column, which put the two
+                // things you READ on opposite sides of the picture and left
+                // the transcript competing with it for width.
+                VStack(spacing: 0) {
+                    // The chapter index, always present rather than
+                    // conditional on there being markers: it is the only way
+                    // to CREATE one outside of recording, so hiding it when
+                    // the list is empty would hide the affordance exactly
+                    // when it is needed.
+                    MarkerPane(state: state, playhead: playhead,
+                               onEditMarker: { editingMarkerID = $0 })
+                        .frame(maxHeight: .infinity)
+                    if showTranscript, state.transcriptionStatus != .none {
+                        // `direction: -1` — the transcript is BELOW its
+                        // divider, so dragging down makes it shorter.
+                        ResizableDivider(axis: .horizontal, direction: -1) { delta in
+                            let base = dragStartWidth ?? paneWidths.transcript
+                            if dragStartWidth == nil { dragStartWidth = base }
+                            paneWidths.transcript = PaneWidths.clampTranscript(base + delta)
+                        } onCommit: {
+                            dragStartWidth = nil
+                            paneWidths.save()
+                        }
+                        TranscriptPane(state: state, playhead: playhead)
+                            .frame(height: paneWidths.transcript)
+                    }
+                }
+                .frame(width: paneWidths.markers)
                 ResizableDivider(direction: 1) { delta in
                     let base = dragStartWidth ?? paneWidths.markers
                     if dragStartWidth == nil { dragStartWidth = base }
@@ -1652,22 +1674,6 @@ struct EditorContentView: View {
                                 box: $cropBox)
                         }
                     }
-                // A reflowing split, not an overlay: the pane takes width from
-                // the picture and the rail rather than covering the recording.
-                if showTranscript, state.transcriptionStatus != .none {
-                    // `direction: -1` — this pane is to the RIGHT of its
-                    // divider, so dragging right makes it narrower.
-                    ResizableDivider(direction: -1) { delta in
-                        let base = dragStartWidth ?? paneWidths.transcript
-                        if dragStartWidth == nil { dragStartWidth = base }
-                        paneWidths.transcript = PaneWidths.clampTranscript(base + delta)
-                    } onCommit: {
-                        dragStartWidth = nil
-                        paneWidths.save()
-                    }
-                    TranscriptPane(state: state, playhead: playhead)
-                        .frame(width: paneWidths.transcript)
-                }
             }
 
             // The seam is deliberate. Appearance-following chrome meets a

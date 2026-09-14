@@ -69,10 +69,35 @@ struct PaneWidthsTests {
         let (store, cleanup) = defaults()
         defer { cleanup() }
         store.set(9000.0, forKey: "com.impressiver.snitt.paneWidth.markers")
-        store.set(1.0, forKey: "com.impressiver.snitt.paneWidth.transcript")
+        store.set(1.0, forKey: "com.impressiver.snitt.paneHeight.transcript")
         let loaded = PaneWidths.load(store)
         #expect(loaded.markers == PaneWidths.maximumMarkers)
         #expect(loaded.transcript == PaneWidths.minimumTranscript)
+    }
+
+    @Test("A transcript WIDTH left by an older build is not read back as a height")
+    func retiredWidthKeyIsNotReused() {
+        // The transcript used to be a column on the right and its width was
+        // stored. It is a stacked pane now and the number means a height. 340
+        // is a perfectly ordinary width AND a perfectly ordinary height, so
+        // reusing the key would silently reinterpret one as the other and look
+        // entirely plausible doing it — the pane would simply open at a size
+        // nobody chose.
+        let (store, cleanup) = defaults()
+        defer { cleanup() }
+        store.set(340.0, forKey: "com.impressiver.snitt.paneWidth.transcript")
+        #expect(PaneWidths.load(store).transcript == PaneWidths.defaultTranscript)
+    }
+
+    @Test("Saving clears the retired width key rather than leaving it behind")
+    func savingRetiresTheOldKey() {
+        // A stale key nothing reads is a value a later reader can find and
+        // believe.
+        let (store, cleanup) = defaults()
+        defer { cleanup() }
+        store.set(340.0, forKey: "com.impressiver.snitt.paneWidth.transcript")
+        PaneWidths(markers: 300, transcript: 300).save(to: store)
+        #expect(store.object(forKey: "com.impressiver.snitt.paneWidth.transcript") == nil)
     }
 
     @Test("Saving does not touch the real preference domain")
