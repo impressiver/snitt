@@ -46,14 +46,24 @@ struct SettingsWindowLayoutTests {
             // returned nil, and quietly dropped that row from the outline
             // entirely — an assertion about order with one of the rows missing
             // from both sides of it.
-            func leadingName(_ view: NSView) -> String? {
-                if let button = view as? NSButton { return button.title }
-                if let label = view as? NSTextField { return label.stringValue }
+            // A sub-option is wrapped with a bare spacer in front of it, so
+            // the outline reports it INDENTED — the nesting is the thing being
+            // asserted, and a reader that silently unwrapped it would make a
+            // sub-option and a sibling look identical here.
+            func leadingName(_ view: NSView) -> (name: String, depth: Int)? {
+                if let button = view as? NSButton { return (button.title, 0) }
+                if let label = view as? NSTextField { return (label.stringValue, 0) }
                 guard let stack = view as? NSStackView,
                       let first = stack.arrangedSubviews.first else { return nil }
+                if type(of: first) == NSView.self, stack.arrangedSubviews.count > 1 {
+                    guard let inner = leadingName(stack.arrangedSubviews[1]) else { return nil }
+                    return (inner.name, inner.depth + 1)
+                }
                 return leadingName(first)
             }
-            return leadingName(view).map { "- \($0)" }
+            return leadingName(view).map {
+                "\(String(repeating: "  ", count: $0.depth))- \($0.name)"
+            }
         }
     }
 
@@ -84,7 +94,8 @@ struct SettingsWindowLayoutTests {
             "- \(SettingsWindowController.eventLoggingTitle)",
             "## \(SettingsWindowController.agentSectionTitle)",
             "- \(SettingsWindowController.agentRecordingTitle)",
-            "- \(SettingsWindowController.unattendedRecordingTitle)",
+            // Indented: subordinate to the opt-in above it, not beside it.
+            "  - \(SettingsWindowController.unattendedRecordingTitle)",
             "## \(SettingsWindowController.updatesSectionTitle)",
             "- \(SettingsWindowController.automaticUpdatesTitle)",
             "- \(SettingsWindowController.crashReportsTitle)",
