@@ -285,6 +285,9 @@ func generatedFeedIsWellFormedXML() throws {
     let enclosures = try document.nodes(forXPath: "/rss/channel/item/enclosure")
     let enclosure = try #require(enclosures.first as? XMLElement)
     #expect(enclosure.attribute(forName: "url")?.stringValue == "https://example.test/S.zip")
+    // Both are the human version ONLY because this fixture is plain bytes with
+    // no readable Info.plist, so the documented fallback applies. The test that
+    // pins the real rule is `sparkleVersionIsTheBuildNumberNotTheHumanVersion`.
     #expect(enclosure.attribute(forName: "sparkle:version")?.stringValue == "3.4.5")
     #expect(enclosure.attribute(forName: "sparkle:shortVersionString")?.stringValue == "3.4.5")
     #expect(enclosure.attribute(forName: "sparkle:edSignature")?.stringValue == "xyz")
@@ -383,14 +386,19 @@ func outputWriteNeverTruncatesOnFailure() throws {
 /// `PlistBuddy` cross-check has a genuine archive to inspect — not the
 /// plain-bytes fixture the other tests use, which this check silently
 /// (and correctly) declines to open.
-private func makeArchiveWithAppInfoPlist(bundleShortVersion: String) throws -> URL {
+private func makeArchiveWithAppInfoPlist(bundleShortVersion: String,
+                                         bundleVersion: String? = nil) throws -> URL {
     let workDir = FileManager.default.temporaryDirectory
         .appendingPathComponent("snitt-appcast-archive-src-\(UUID().uuidString)")
     let appContents = workDir.appendingPathComponent("Placeholder.app/Contents")
     try FileManager.default.createDirectory(at: appContents, withIntermediateDirectories: true)
     defer { try? FileManager.default.removeItem(at: workDir) }
 
-    let plist: [String: Any] = ["CFBundleShortVersionString": bundleShortVersion]
+    var plist: [String: Any] = ["CFBundleShortVersionString": bundleShortVersion]
+    // The two keys are DISJOINT in a real Snitt build — the human version and
+    // the commit count — which is the whole reason `sparkle:version` cannot be
+    // the human one.
+    if let bundleVersion { plist["CFBundleVersion"] = bundleVersion }
     let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
     try data.write(to: appContents.appendingPathComponent("Info.plist"))
 
@@ -423,6 +431,11 @@ func archiveVersionMismatchIsRefused() throws {
 
     let matching = runScript(["2.0.0", zip.path, "https://example.test/S.zip", "sig"])
     #expect(matching.status == 0)
+    // This archive carries no CFBundleVersion, so the script falls back to the
+    // human version AND says so. The warning is the assertion: silently
+    // emitting a `sparkle:version` Sparkle cannot use is the defect that
+    // shipped through five releases.
+    #expect(matching.stderr.contains("could not read CFBundleVersion"))
 }
 
 /// Builds an archive shaped like a REAL Snitt release, not the flat
@@ -449,7 +462,8 @@ private func makeArchiveWithNestedXPCBundle(
     let outerContents = workDir.appendingPathComponent("SnittFixture.app/Contents")
     try FileManager.default.createDirectory(at: outerContents, withIntermediateDirectories: true)
     let outerPlistData = try PropertyListSerialization.data(
-        fromPropertyList: ["CFBundleShortVersionString": outerVersion],
+        fromPropertyList: ["CFBundleShortVersionString": outerVersion,
+                           "CFBundleVersion": "777"],
         format: .xml, options: 0
     )
     try outerPlistData.write(to: outerContents.appendingPathComponent("Info.plist"))
@@ -459,7 +473,8 @@ private func makeArchiveWithNestedXPCBundle(
     let nestedContents = workDir.appendingPathComponent(nestedRelativePath)
     try FileManager.default.createDirectory(at: nestedContents, withIntermediateDirectories: true)
     let nestedPlistData = try PropertyListSerialization.data(
-        fromPropertyList: ["CFBundleShortVersionString": nestedXPCVersion],
+        fromPropertyList: ["CFBundleShortVersionString": nestedXPCVersion,
+                           "CFBundleVersion": "111"],
         format: .xml, options: 0
     )
     try nestedPlistData.write(to: nestedContents.appendingPathComponent("Info.plist"))
@@ -524,6 +539,14 @@ func archiveVersionMismatchReadsTheOuterAppNotANestedXPCBundle() throws {
     let matchingOuter = runScript(["9.9.9", zip.path, "https://example.test/S.zip", "sig"])
     #expect(matchingOuter.status == 0)
     #expect(matchingOuter.stderr.isEmpty)
+    // R38 applies to the BUILD NUMBER too, and this is the only fixture with
+    // a nested bundle to catch it: `sparkle:version` must come from the outer
+    // app, not from Sparkle's own embedded XPC service. Both plists now carry
+    // a CFBundleVersion precisely so the wrong one is a value, not an absence
+    // — an unset key would fall back and look like a pass.
+    #expect(matchingOuter.stdout.contains("<sparkle:version>777</sparkle:version>"))
+    #expect(!matchingOuter.stdout.contains("111"),
+            "the build number came from the nested XPC bundle")
 
     // And a version that matches the NESTED bundle but not the outer app
     // is still correctly refused — confirming this isn't "skip the check
@@ -1040,4 +1063,75 @@ func theSignatureIsCryptographicallyValid() throws {
     try Data(repeating: 0x42, count: 4096).write(to: tamperedZip)
     defer { try? FileManager.default.removeItem(at: tamperedZip) }
     #expect(signUpdateVerify(seedFile: seedFile, artifact: tamperedZip, signature: emittedSignature) != 0)
+}
+
+// MARK: - What Sparkle actually compares
+
+/// `sparkle:version` is the app's CFBundleVersion, NOT its marketing version.
+///
+/// From Sparkle's own `SUAppcastItem.h`, on `versionString`: "Sparkle uses this
+/// property to compare update items… This corresponds to the application
+/// update's CFBundleVersion."
+///
+/// This project keeps CFBundleVersion (the commit count) deliberately DISJOINT
+/// from CFBundleShortVersionString, so the two are never interchangeable. Every
+/// release up to and including v0.5.0 advertised the marketing version here —
+/// e.g. `sparkle:version="0.5.0"` against an installed CFBundleVersion of 163 —
+/// so Sparkle read the installed build as newer and offered nothing. A broken
+/// update check looks exactly like no update being available, which is why it
+/// survived five releases.
+///
+/// The old test asserted both fields equalled the version argument, which is
+/// the wrong rule stated as a guarantee: it would have failed against the fix.
+@Suite(.serialized)
+struct SparkleVersionFieldTests {
+
+    @Test("sparkle:version is the build number and shortVersionString is the human one")
+    func sparkleVersionIsTheBuildNumberNotTheHumanVersion() throws {
+        let zip = try makeArchiveWithAppInfoPlist(bundleShortVersion: "0.5.0",
+                                                  bundleVersion: "163")
+        defer { try? FileManager.default.removeItem(at: zip) }
+
+        let result = runScript(["0.5.0", zip.path, "https://example.test/S.zip", "sig"])
+        #expect(result.status == 0, "\(result.stderr)")
+        let document = try XMLDocument(xmlString: result.stdout, options: [])
+
+        // The element form and the enclosure attribute both carry it. Sparkle
+        // reads either, so an appcast where they disagree is one that behaves
+        // differently depending on which the framework happens to consult.
+        let element = try #require(
+            (try document.nodes(forXPath: "/rss/channel/item/sparkle:version")).first)
+        #expect(element.stringValue == "163")
+        let enclosure = try #require(
+            (try document.nodes(forXPath: "/rss/channel/item/enclosure")).first as? XMLElement)
+        #expect(enclosure.attribute(forName: "sparkle:version")?.stringValue == "163")
+
+        // And the human version is still the human version, in both places.
+        let short = try #require(
+            (try document.nodes(forXPath: "/rss/channel/item/sparkle:shortVersionString")).first)
+        #expect(short.stringValue == "0.5.0")
+        #expect(enclosure.attribute(forName: "sparkle:shortVersionString")?.stringValue == "0.5.0")
+
+        // The one that would have passed before the fix and must never pass
+        // again: the two fields carrying the same value.
+        #expect(enclosure.attribute(forName: "sparkle:version")?.stringValue
+                != enclosure.attribute(forName: "sparkle:shortVersionString")?.stringValue)
+    }
+
+    @Test("An unreadable archive falls back loudly rather than silently")
+    func fallbackIsAnnounced() throws {
+        // The pre-fix behaviour, kept for fixtures and machines without
+        // unzip/PlistBuddy — but never silent, because for a real release it
+        // is exactly the defect above. `release.sh` turns it into a hard
+        // failure, which is checked by `ReleaseScriptTests`.
+        let zip = FileManager.default.temporaryDirectory
+            .appendingPathComponent("not-an-archive-\(UUID().uuidString).zip")
+        try Data("not a zip".utf8).write(to: zip)
+        defer { try? FileManager.default.removeItem(at: zip) }
+
+        let result = runScript(["0.5.0", zip.path, "https://example.test/S.zip", "sig"])
+        #expect(result.status == 0)
+        #expect(result.stderr.contains("could not read CFBundleVersion"))
+        #expect(result.stderr.contains("silently breaks updates"))
+    }
 }

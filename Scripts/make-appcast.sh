@@ -7,17 +7,34 @@
 #
 # Usage: Scripts/make-appcast.sh <version> <zip> <release-url> [signature] [--output <path>]
 #
-# <version>       Must match CFBundleShortVersionString (and
-#                 CFBundleVersion — Task 1/3 keep both equal, driven from
-#                 the single AppVersion.fallback source; see
-#                 Scripts/make-app.sh) of the build the zip contains.
-#                 Sparkle compares appcast items against the INSTALLED
-#                 app's CFBundleShortVersionString to decide whether an
-#                 update is newer. Cross-checked against the zip's own
-#                 Contents/Info.plist below when that's readable — a wrong
-#                 <version> is exactly the kind of drift that makes
-#                 Sparkle silently never offer the update, or offer one
-#                 that installs and still reports the old version.
+# <version>       The HUMAN version — CFBundleShortVersionString of the
+#                 build the zip contains. It becomes
+#                 <sparkle:shortVersionString>, which Sparkle DISPLAYS.
+#                 Cross-checked against the zip's own Contents/Info.plist
+#                 below when that is readable.
+#
+#                 It is NOT what Sparkle compares. `sparkle:version` is,
+#                 and that one is read out of the zip — see below.
+#
+# WHICH KEY SPARKLE COMPARES, from its own header rather than from memory.
+# `Sparkle.framework/Headers/SUAppcastItem.h`, on `versionString`:
+#
+#   Sparkle uses this property to compare update items and determine the
+#   best available update item in the SUAppcast.
+#   This corresponds to the application update's CFBundleVersion
+#   This is extracted from the <sparkle:version> element, or the
+#   sparkle:version attribute from the <enclosure> element.
+#
+# This file used to assert the opposite — "Sparkle compares appcast items
+# against the INSTALLED app's CFBundleShortVersionString" — and emitted the
+# marketing version into `sparkle:version` accordingly. That was true while
+# make-app.sh kept both plist keys equal ("Task 1/3 keep both equal", which
+# this comment still claimed long after it stopped being so). Once
+# CFBundleVersion became the commit count and the two were deliberately made
+# DISJOINT, every appcast shipped advertising a `sparkle:version` of, say,
+# "0.5.0" against an installed CFBundleVersion of "163" — so Sparkle read the
+# installed build as the newer one and offered nothing. Found on 2026-09-13,
+# after v0.5.0 shipped; v0.4.0 and earlier carry the same defect.
 # <zip>           Path to the already-built, signed (and, in real use,
 #                 notarized) update archive. Read to measure its byte
 #                 length for the enclosure's `length` attribute and, when
@@ -282,6 +299,12 @@ if command -v unzip >/dev/null 2>&1 && command -v /usr/libexec/PlistBuddy >/dev/
     VERIFY_DIR="$(mktemp -d -t snitt-appcast-verify)"
     if unzip -p "$ZIP" "$ARCHIVE_INFO_PLIST_ENTRY" > "$VERIFY_DIR/Info.plist" 2>/dev/null; then
       ARCHIVE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$VERIFY_DIR/Info.plist" 2>/dev/null || true)"
+      # The number Sparkle actually compares, taken from the archive that
+      # will be INSTALLED rather than from anything this script was told.
+      # The zip is the only ground truth here: a build number passed on the
+      # command line could disagree with the app inside it, and the whole
+      # class of defect being fixed is exactly that kind of drift.
+      BUILD_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$VERIFY_DIR/Info.plist" 2>/dev/null || true)"
       if [ -n "$ARCHIVE_VERSION" ] && [ "$ARCHIVE_VERSION" != "$VERSION" ]; then
         rm -rf "$VERIFY_DIR"
         echo "error: <version> ($VERSION) does not match CFBundleShortVersionString found inside $ZIP ($ARCHIVE_VERSION)" >&2
@@ -304,7 +327,23 @@ xml_escape() {
   printf '%s' "$s"
 }
 
+# Falls back to the human version ONLY when the zip could not be inspected —
+# a plain-bytes fixture, or a machine without unzip/PlistBuddy. That is the
+# pre-fix behaviour and it is wrong for a real release, so it says so on
+# stderr. `release.sh` turns this into a hard failure for an actual release
+# (it knows the CFBundleVersion it just built and checks the emitted appcast
+# against it), which is the right place for that check: this script cannot
+# tell a test fixture from a broken release, and the release script can.
+if [ -z "${BUILD_VERSION:-}" ]; then
+  BUILD_VERSION="$VERSION"
+  echo "warning: could not read CFBundleVersion from $ZIP; sparkle:version" >&2
+  echo "         falls back to '$VERSION'. Sparkle compares this against the" >&2
+  echo "         INSTALLED app's CFBundleVersion, so for a real release this" >&2
+  echo "         silently breaks updates." >&2
+fi
+
 VERSION_ESCAPED="$(xml_escape "$VERSION")"
+BUILD_VERSION_ESCAPED="$(xml_escape "$BUILD_VERSION")"
 RELEASE_URL_ESCAPED="$(xml_escape "$RELEASE_URL")"
 SIGNATURE_ESCAPED="$(xml_escape "$SIGNATURE")"
 
@@ -321,11 +360,11 @@ DOCUMENT="$(cat <<APPCAST
     <item>
       <title>Version ${VERSION_ESCAPED}</title>
       <pubDate>${PUB_DATE}</pubDate>
-      <sparkle:version>${VERSION_ESCAPED}</sparkle:version>
+      <sparkle:version>${BUILD_VERSION_ESCAPED}</sparkle:version>
       <sparkle:shortVersionString>${VERSION_ESCAPED}</sparkle:shortVersionString>
       <enclosure
         url="${RELEASE_URL_ESCAPED}"
-        sparkle:version="${VERSION_ESCAPED}"
+        sparkle:version="${BUILD_VERSION_ESCAPED}"
         sparkle:shortVersionString="${VERSION_ESCAPED}"
         length="${LENGTH}"
         type="application/octet-stream"

@@ -334,3 +334,9 @@ PhraseSelectionTests :: Sources/SnittApp/TimelineView.swift :: selection = Selec
 # comparing a marker with what was said there a pair of clicks.
 RailLayoutTests :: Sources/SnittApp/RailLayout.swift :: return markersExpanded ? .fixed(stored) : .fill :: return markersExpanded ? .fill : .fixed(stored)
 RailLayoutTests :: Sources/SnittApp/RailLayout.swift :: markersExpanded && transcriptExpanded :: markersExpanded || transcriptExpanded
+
+# `sparkle:version` is the app's CFBundleVersion, not its marketing version.
+# Getting this wrong shipped through five releases, because a broken update
+# check looks exactly like no update being available.
+SparkleVersionFieldTests :: Scripts/make-appcast.sh :: <sparkle:version>${BUILD_VERSION_ESCAPED}</sparkle:version> :: <sparkle:version>${VERSION_ESCAPED}</sparkle:version>
+SparkleVersionFieldTests :: Scripts/make-appcast.sh :: sparkle:version="${BUILD_VERSION_ESCAPED}" :: sparkle:version="${VERSION_ESCAPED}"
