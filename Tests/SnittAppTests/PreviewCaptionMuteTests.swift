@@ -90,6 +90,45 @@ struct PreviewCaptionMuteTests {
         #expect(state.subtitleCues.allSatisfy { $0.placement == .alone })
     }
 
+    @Test("The pane marks its lanes only when there are two of them")
+    func narrationIsAnnouncedOnlyWhenPresent() async throws {
+        // The transcript pane draws a lane rule down each row in the track's
+        // colour. On a recording with one voice that rule distinguishes
+        // nothing and is just chrome, so it is conditioned on this.
+        let (both, bundleA) = try await makeState(words: bothVoices, muting: [])
+        defer { try? FileManager.default.removeItem(at: bundleA.url) }
+        #expect(both.hasNarration)
+
+        let micOnly = [TranscriptWord(text: "recorded", start: 1.0, duration: 0.4,
+                                      confidence: 1)]
+        let (one, bundleB) = try await makeState(words: micOnly, muting: [])
+        defer { try? FileManager.default.removeItem(at: bundleB.url) }
+        #expect(!one.hasNarration)
+    }
+
+    @Test("Muting the voiceover puts the pane back to its single-voice look")
+    func mutedNarrationIsNotAnnounced() async throws {
+        // Derived from what is AUDIBLE rather than from `trackStates`, so a
+        // muted voiceover does not leave a lane rule on every row marking a
+        // distinction that is no longer on screen.
+        let (state, bundle) = try await makeState(words: bothVoices, muting: ["voiceover"])
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        #expect(!state.hasNarration)
+    }
+
+    @Test("The pane's rows are single-voiced")
+    func paneRowsAreSplitByVoice() async throws {
+        // What the pane actually lays out. Asserting on `TranscriptParagraphs`
+        // alone would leave the surface free to feed it a comingled list, which
+        // is the shape of defect this project keeps finding.
+        let (state, bundle) = try await makeState(words: bothVoices, muting: [])
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let rows = TranscriptParagraphs.split(state.audibleWords)
+        #expect(rows.count == 2)
+        #expect(rows.allSatisfy { Set($0.words.map(\.track)).count == 1 })
+        #expect(Set(rows.map(\.track)) == ["microphone", "voiceover"])
+    }
+
     @Test("Captions still respect the subtitle toggle")
     func togglingSubtitlesOffStillWins() async throws {
         // The mute filter is an ADDITIONAL gate, not a replacement for the

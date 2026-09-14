@@ -216,7 +216,22 @@ struct TranscriptPane: View {
                            cutIDs: Set<UUID>, currentID: UUID?) -> some View {
         let start = TranscriptParagraphs.outputStart(of: paragraph,
                                                      keptRanges: state.controller.keptRanges)
+        let isNarration = paragraph.track == "voiceover"
         HStack(alignment: .firstTextBaseline, spacing: 8) {
+            // The lane this line belongs to, as a rule down its leading edge,
+            // in the SAME colour the timeline draws that lane and the VU meter
+            // beside it. A row is one voice now, so its identity is a property
+            // of the row rather than of each word in it — and a rule reads at
+            // a glance while a per-word colour has to be noticed.
+            //
+            // Only when there IS a second voice: a rail down every row of a
+            // recording with one speaker is chrome that distinguishes nothing.
+            Rectangle()
+                .fill(Color(nsColor: SnittPalette.track(paragraph.track)))
+                .frame(width: 2)
+                .opacity(state.hasNarration ? 1 : 0)
+                .accessibilityHidden(true)
+
             // Amber, because a timecode is time — the same reasoning, and the
             // same swatch, as the marker rail's. A phrase cut away entirely
             // has no output time at all and shows a dash: there is nowhere to
@@ -238,10 +253,24 @@ struct TranscriptPane: View {
                         .id(word.id)
                 }
             }
+            // Narration reads in the brand's cool teal against recorded speech
+            // in the ordinary text colour. Set on the ROW, because the row is
+            // one voice: this used to be decided per word, which was the only
+            // thing telling a reader that a line saying "so and here that we
+            // fails" was two people rather than one confused one.
+            .foregroundStyle(isNarration
+                             ? AnyShapeStyle(Color(nsColor: SnittPalette.voiceover))
+                             : AnyShapeStyle(.primary))
         }
-        .padding(.horizontal, 10)
+        .padding(.leading, 8)
+        .padding(.trailing, 10)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .contain)
+        // Said rather than implied by colour, which a screen reader cannot
+        // see and which is the one cue this design leans on.
+        .accessibilityLabel(state.hasNarration
+                            ? (isNarration ? "Voiceover" : "Recorded") : "")
     }
 
     @ViewBuilder
@@ -262,14 +291,9 @@ struct TranscriptPane: View {
         } else {
         Text(word.text)
             .font(.callout)
-            // Narration reads in the brand's cool teal against recorded speech
-            // in the ordinary text colour. The two INTERLEAVE — narration is
-            // spoken over footage that already has speech in it — so the
-            // transcript alternates between them line by line, and telling
-            // them apart has to be possible without reading either.
-            .foregroundStyle(AudibleTranscript.isVoiceover(word)
-                             ? AnyShapeStyle(Color(nsColor: SnittPalette.voiceover))
-                             : AnyShapeStyle(.primary))
+            // Colour comes from the ROW now — see `phraseRow`. A word no
+            // longer decides which voice it is, because a line is no longer
+            // able to contain two.
             // Struck through when the EDL cuts it — undoing the cut un-strikes
             // it with no bookkeeping, because cutWordIDs is derived.
             .strikethrough(isCut, color: .red)
