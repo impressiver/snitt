@@ -88,6 +88,9 @@ public final class TimelineView: NSView {
     /// panel's "+" and then typing a time, which is three steps to say
     /// "this moment".
     public var onCreateMarker: (Double) -> Void = { _ in }
+    /// Raised whenever the zoom changes from ANY route — the slider, the ±
+    /// keys, a scroll, a pinch. See `setZoom`.
+    public var onZoomChanged: (Double) -> Void = { _ in }
 
     /// Double-click a fold: reveal what it removed AND select it, so the
     /// segment can be acted on rather than merely looked at.
@@ -873,6 +876,13 @@ public final class TimelineView: NSView {
     /// never be skipped by a new caller.
     private func setZoom(_ factor: Double, anchoredAtOutput anchor: Double) {
         zoomFactor = min(max(factor, Self.minZoomFactor), Self.maxZoomFactor)
+        // The slider reads `zoomFraction` off this view, which is a plain
+        // property on an NSView and publishes nothing — so a scroll or a pinch
+        // moved the timeline and left the control where it was. It only
+        // appeared to work during PLAYBACK, where the 20Hz playhead poll was
+        // re-rendering the transport for unrelated reasons; paused, the
+        // control simply lied about the zoom.
+        onZoomChanged(zoomFraction)
         zoomAnchorOutput = anchor
         // Hand the viewport back to the anchor: zooming should keep what you
         // were looking at under the cursor, not restore where you had
@@ -1394,7 +1404,7 @@ public final class TimelineView: NSView {
         let kept = KeptRanges.compute(duration: duration, cuts: cuts.map(\.range))
         let midY = rect.midY
         let halfHeight = (rect.height - 2) / 2
-        let normal = muted ? Palette.waveformMuted : Palette.waveform
+        let normal = Palette.waveform(for: samples.track, muted: muted)
         // Clipping stays visible on a muted track: muting is an edit decision,
         // clipping is damage, and hiding the damage because the track is
         // currently silent is how it survives to the export.
@@ -1551,6 +1561,24 @@ public final class TimelineView: NSView {
         static let playhead = SnittPalette.playheadInk
         static let waveform = SnittPalette.signal
         static let waveformMuted = SnittPalette.signal.withAlphaComponent(0.28)
+        /// Narration, in the SAME teal its words are drawn in. A lane in the
+        /// brand's amber said "this is one of the recorded tracks", which is
+        /// the one thing it is not — and the transcript was already colouring
+        /// the same audio differently two panes away.
+        static let voiceoverWaveform = SnittPalette.voiceover
+        static let voiceoverWaveformMuted = SnittPalette.voiceover.withAlphaComponent(0.28)
+
+        /// The waveform colour for a named track.
+        ///
+        /// Asked by NAME rather than by lane index, because the lane order is
+        /// a display choice (`TimelineTrackLayout.audioTracks` puts the
+        /// microphone first) while the composition's order is not — and an
+        /// index-based answer is the defect that once gave system audio the
+        /// state named "video".
+        static func waveform(for track: String, muted: Bool) -> NSColor {
+            guard track == "voiceover" else { return muted ? waveformMuted : waveform }
+            return muted ? voiceoverWaveformMuted : voiceoverWaveform
+        }
         /// Word and phrase chips: `ink2`, per the rev 5 style sheet.
         static let chip = SnittPalette.ink2
         /// Marks are time, and time is amber. This was `NSColor.systemYellow`
