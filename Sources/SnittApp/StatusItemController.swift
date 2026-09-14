@@ -239,14 +239,20 @@ final class StatusItemController: NSObject {
         // keeping it correct. The window is a persistent thing and still
         // refreshes itself.
         let menu = NSMenu()
-        let agentItem = NSMenuItem(title: "Allow agent recording",
+        let agentItem = NSMenuItem(title: SettingsWindowController.agentRecordingAccessibilityLabel,
                                    action: #selector(toggleAgentRecording),
                                    keyEquivalent: "")
         agentItem.target = self
         agentItem.state = AgentSettings.load(defaults).agentRecordingEnabled ? .on : .off
         menu.addItem(agentItem)
 
-        let eventsItem = NSMenuItem(title: "Log input events",
+        // Titles come from `SettingsWindowController` so one setting cannot
+        // end up with two names. The window's are short because a section
+        // header supplies the missing noun; the menu has no headers, so the two
+        // AGENT items keep their fully-qualified accessibility spelling as
+        // their visible title here — a menu item reading "Allow unattended"
+        // among "Record microphone" says nothing about what it permits.
+        let eventsItem = NSMenuItem(title: SettingsWindowController.eventLoggingTitle,
                                     action: #selector(toggleEventLogging),
                                     keyEquivalent: "")
         eventsItem.target = self
@@ -257,7 +263,7 @@ final class StatusItemController: NSObject {
         // someone deliberately turns this on. Read at record time (not
         // cached at launch) by `RecordingCoordinator.humanCaptureOptions`,
         // mirroring `eventsItem` above exactly.
-        let microphoneItem = NSMenuItem(title: "Record voiceover",
+        let microphoneItem = NSMenuItem(title: SettingsWindowController.microphoneTitle,
                                         action: #selector(toggleMicrophone),
                                         keyEquivalent: "")
         microphoneItem.target = self

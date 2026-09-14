@@ -59,7 +59,7 @@ struct StatusItemMenuTests {
         // one was added, so a count or an any-match passes against a menu with
         // the divider in entirely the wrong place.
         let items = shape()
-        let voiceover = try #require(items.firstIndex(of: "Record voiceover"))
+        let voiceover = try #require(items.firstIndex(of: SettingsWindowController.microphoneTitle))
         let updates = try #require(items.firstIndex(of: "Check for Updates…"))
         #expect(voiceover < updates)
         #expect(items[voiceover..<updates].contains("---"),
@@ -94,11 +94,29 @@ struct StatusItemMenuTests {
         // §4.11 makes this menu the fast path, so what it must still offer is
         // worth stating rather than leaving to whoever reads the diff.
         let items = shape()
-        for expected in ["Allow agent recording", "Log input events", "Record voiceover",
+        for expected in [SettingsWindowController.agentRecordingAccessibilityLabel, SettingsWindowController.eventLoggingTitle, SettingsWindowController.microphoneTitle,
                          "Check for Updates…", "Automatically check for updates",
                          "Quit Snitt"] {
             #expect(items.contains(expected), "the menu lost \(expected)")
         }
+    }
+
+    @Test("The menu takes its titles from the window, so one setting has one name")
+    func menuNamesMatchTheWindow() {
+        // Two surfaces over one `UserDefaults` key is the discipline this menu
+        // and the Settings window were built on; two NAMES over one key is the
+        // same defect worn differently — somebody turns off "Record voiceover"
+        // here and goes looking for it as "Record microphone" there.
+        //
+        // The agent items are the deliberate exception and are asserted as
+        // such rather than skipped: the window shortened those titles because
+        // a section header now supplies the noun, and this menu has no
+        // headers, so it shows the fully-qualified spelling.
+        let items = shape()
+        #expect(!items.contains("Record voiceover"), "the menu kept the old name")
+        #expect(!items.contains("Log input events"), "the menu kept the old name")
+        #expect(!items.contains(SettingsWindowController.agentRecordingTitle),
+                "\"Allow recording\" alone says nothing in a menu with no Agent heading")
     }
 
     @Test("Every actionable item can actually be picked")
@@ -161,9 +179,9 @@ struct StatusItemMenuStateTests {
         updates.automaticChecksEnabled = true
         updates.save(to: defaults)
 
-        #expect(state(of: "Allow agent recording", in: defaults) == .on)
-        #expect(state(of: "Log input events", in: defaults) == .on)
-        #expect(state(of: "Record voiceover", in: defaults) == .on)
+        #expect(state(of: SettingsWindowController.agentRecordingAccessibilityLabel, in: defaults) == .on)
+        #expect(state(of: SettingsWindowController.eventLoggingTitle, in: defaults) == .on)
+        #expect(state(of: SettingsWindowController.microphoneTitle, in: defaults) == .on)
         #expect(state(of: "Automatically check for updates", in: defaults) == .on)
     }
 
@@ -179,12 +197,12 @@ struct StatusItemMenuStateTests {
 
         let controller = StatusItemController(defaults: defaults)
         #expect(controller.contextMenu().items
-            .first { $0.title == "Record voiceover" }?.state == .off)
+            .first { $0.title == SettingsWindowController.microphoneTitle }?.state == .off)
 
         MicrophoneSettings(enabled: true).save(to: defaults)
 
         #expect(controller.contextMenu().items
-            .first { $0.title == "Record voiceover" }?.state == .on,
+            .first { $0.title == SettingsWindowController.microphoneTitle }?.state == .on,
                 "the menu showed stale state after the store changed")
         withExtendedLifetime(controller) {}
     }
