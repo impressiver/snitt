@@ -154,4 +154,44 @@ public enum MarkerBanners {
                               in banners: [MarkerBanner]) -> MarkerBanner? {
         banners.last { $0.appearsAt <= outputTime && outputTime < $0.endsAt }
     }
+
+    /// Where to seek so a marker's banner is actually ON SCREEN — which is
+    /// NOT the marker's own moment.
+    ///
+    /// At `appearsAt` exactly, `appearance` returns opacity 0 and slide 1: the
+    /// banner has not begun arriving. So "click a marker, see the marker"
+    /// landed on the one frame of its own window where it is invisible, and
+    /// worked only when the seek happened to settle a few tens of
+    /// milliseconds late — which is what "sometimes" meant in the report.
+    ///
+    /// `animateInSeconds` later it is at rest: full opacity, no offset. That
+    /// is what somebody asking to look at a marker means by it.
+    ///
+    /// - Parameter banners: in `appearsAt` order, as `banners(events:
+    ///   keptRanges:)` returns them. Empty when the Show Markers toggle is off,
+    ///   which correctly makes this the identity — there is no preview to aim
+    ///   at, so the playhead lands exactly where it was asked to.
+    public static func previewTime(forMarkerAt outputTime: Double,
+                                   in banners: [MarkerBanner]) -> Double {
+        guard let index = banners.firstIndex(where: {
+            abs($0.appearsAt - outputTime) < 1e-6
+        }) else {
+            // An unlabelled marker draws no banner at all, so there is nothing
+            // to wait for and nudging would just move the playhead off the
+            // thing that was clicked.
+            return outputTime
+        }
+        let resting = banners[index].appearsAt + animateInSeconds
+        guard index + 1 < banners.count else { return resting }
+
+        // Never AT or past the next banner. `banner(at:)` answers with the
+        // last match, so a nudge that crossed one would quietly preview the
+        // following marker — the wrong one, with no sign anything had gone
+        // wrong. Two markers closer together than the animation is long make
+        // that reachable; halfway between them is the best available answer
+        // there, and still far more visible than the first frame.
+        let next = banners[index + 1].appearsAt
+        guard resting >= next else { return resting }
+        return (banners[index].appearsAt + next) / 2
+    }
 }
