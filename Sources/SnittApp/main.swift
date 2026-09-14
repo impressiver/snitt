@@ -507,9 +507,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppDelegate.presentMessage(KeyboardShortcutRegistry.helpText)
     }
 
-    /// File ▸ Share… — hands the exported recording to macOS's share sheet.
-    @objc func shareDocument(_ sender: Any?) {
-        focusedEditor?.share()
+    /// File ▸ Share ▸ <destination> — exports, then hands the file over.
+    ///
+    /// Resolved from the sender's `representedObject`, the same rule
+    /// `exportForDestination` follows and for the same reason: the menu is
+    /// rebuilt on every open, so a title or an index would be a handle to
+    /// whatever happened to be in that position this time.
+    @objc func shareToService(_ sender: Any?) {
+        guard let service = (sender as? NSMenuItem)?.representedObject as? NSSharingService,
+              let editor = focusedEditor else { return }
+        editor.share(via: service)
     }
 
     /// File ▸ Export for ▸ <destination>.
@@ -726,7 +733,7 @@ extension AppDelegate: NSMenuItemValidation {
         // into offering an action it then silently declines.
         if menuItem.action == #selector(exportDocument(_:))
             || menuItem.action == #selector(exportForDestination(_:))
-            || menuItem.action == #selector(shareDocument(_:)) {
+            || menuItem.action == #selector(shareToService(_:)) {
             return EditorWindowController.openEditors.contains { $0.window == NSApp.keyWindow }
         }
         guard menuItem.action == #selector(cutTimelineSelection(_:)) else { return true }

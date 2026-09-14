@@ -128,10 +128,18 @@ enum AppShell {
         forItem.submenu = forMenu
         menu.addItem(forItem)
 
-        // macOS's own share sheet, beside Export, as QuickTime has it.
-        let share = NSMenuItem(title: "Share…",
-                               action: #selector(AppDelegate.shareDocument(_:)),
-                               keyEquivalent: "")
+        // A SUBMENU of destinations, exactly as QuickTime's File ▸ Share is —
+        // not a flat item that exports first and then raises a picker. See
+        // `ShareMenu` for why the list can be instant when the export is not.
+        //
+        // Populated by `ShareMenuController.shared` on open rather than here:
+        // share extensions are installed and enabled while an app is running,
+        // and `NSMenu.delegate` is WEAK, so the controller has to be the
+        // long-lived one.
+        let share = NSMenuItem(title: "Share", action: nil, keyEquivalent: "")
+        let shareMenu = NSMenu(title: "Share")
+        shareMenu.delegate = ShareMenuController.shared
+        share.submenu = shareMenu
         menu.addItem(share)
         menu.addItem(.separator())
 

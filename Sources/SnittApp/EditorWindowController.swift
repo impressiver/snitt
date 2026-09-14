@@ -2340,38 +2340,74 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// what anyone means by "share this". Since a source export copies its
     /// samples rather than re-encoding, that is fast enough not to feel like a
     /// step.
-    func share() {
+    func share(via service: NSSharingService) {
         let stem = state.defaultExportURL.deletingPathExtension().lastPathComponent
         let temporary = FileManager.default.temporaryDirectory
             .appendingPathComponent(stem)
-            .appendingPathExtension("mp4")
+            .appendingPathExtension(ShareMenu.exportedType.preferredFilenameExtension ?? "mp4")
         var request = ExportRequest(destination: temporary,
                                     drawClicks: state.edl.showClicks)
         request.resolution = .source
 
+        // A sheet, because the export takes seconds and the old version showed
+        // NOTHING while it ran — the reported "about 10s to load, with no
+        // indication anything is happening". Attached to the window rather
+        // than free-floating, so it is obvious WHICH recording is being
+        // prepared when several editors are open.
+        let progress = beginSharePreparation(named: service.menuItemTitle)
         Task { @MainActor in
+            defer { endSharePreparation(progress) }
             do {
                 // Shares the EDITED recording, and copies it too, so the
                 // clipboard and the share sheet cannot disagree about what
                 // "this recording" currently means.
                 try await performExport(request, pasteboard: .general)
-                self.presentSharePicker(for: temporary)
+                // The service presents its OWN interface — AirDrop's window,
+                // Mail's compose sheet. Nothing here anchors anything, which
+                // is what fixes the sheet appearing in a corner of the editor:
+                // the old code positioned an `NSSharingServicePicker` against
+                // a rectangle it computed in the content view.
+                service.perform(withItems: [temporary])
             } catch {
                 self.presentExportFailure(error)
             }
         }
     }
 
-    private func presentSharePicker(for url: URL) {
-        guard let anchor = window.contentView else { return }
-        NSApp.activate()
-        let picker = NSSharingServicePicker(items: [url])
-        // Anchored under the top-trailing corner, where the toolbar's own
-        // controls sit — the place a share sheet comes from in every other
-        // Mac app, so it does not appear to belong to the timeline.
-        let rect = NSRect(x: anchor.bounds.maxX - 60, y: anchor.bounds.maxY - 8,
-                          width: 1, height: 1)
-        picker.show(relativeTo: rect, of: anchor, preferredEdge: .minY)
+    /// Shows "Preparing to share…" on this window, and returns the sheet so it
+    /// can be taken down again.
+    ///
+    /// Indeterminate deliberately: `MovieExporter` reports no progress, and a
+    /// bar that advanced on a timer of its own would be a fiction about how
+    /// far along the export is. A spinner says "working" and claims nothing
+    /// more than that.
+    private func beginSharePreparation(named destination: String) -> NSWindow {
+        let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 100),
+                             styleMask: [.titled], backing: .buffered, defer: false)
+        // The same over-release trap `SettingsWindowController` documents: a
+        // programmatically created NSWindow defaults `isReleasedWhenClosed` to
+        // true, which frees it out from under the reference held here.
+        sheet.isReleasedWhenClosed = false
+
+        let spinner = NSProgressIndicator()
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.startAnimation(nil)
+        let label = NSTextField(labelWithString: "Preparing to share with \(destination)…")
+
+        let row = NSStackView(views: [spinner, label])
+        row.orientation = .horizontal
+        row.spacing = 10
+        row.edgeInsets = NSEdgeInsets(top: 20, left: 24, bottom: 20, right: 24)
+        sheet.contentView = row
+        sheet.setContentSize(row.fittingSize)
+
+        window.beginSheet(sheet)
+        return sheet
+    }
+
+    private func endSharePreparation(_ sheet: NSWindow) {
+        window.endSheet(sheet)
     }
 
     /// File ▸ Export for ▸ <destination>: export to a file that place will
