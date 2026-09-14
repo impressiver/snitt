@@ -1203,6 +1203,42 @@ D84 and D86 left this section on 2026-09-09 once their real cost was measured.
   artifact derived from speech, so the audit record should say a model produced
   it. `absent: GeneratedTitle` (D91).
 
+- **D97 — one title row, and the side panel treated the way Xcode treats
+  its inspector.** Requested 2026-09-14 with Finder and Xcode as the reference.
+
+  *What is already true, so the gap is narrower than it looks.* The editor
+  window is already `.fullSizeContentView` with `titleVisibility = .hidden`, so
+  the toolbar row IS the titlebar rather than a second deck under it, and
+  `EditorToolbar` already stacks a document title over a subtitle at the
+  leading edge with the panel toggle at the trailing one. The shape is right;
+  what it is not is a `NSToolbar`.
+
+  *What that costs, and it is the whole of the request.* A hand-built `HStack`
+  standing in for a toolbar does not get the traffic-light inset, so the title
+  starts wherever the row starts and the first 78pt are dead space that the
+  window's own buttons sit in. It does not get overflow, so a narrow window
+  clips controls instead of collecting them into a chevron. It does not get
+  the material, the separator, or the scroll-edge effect the system draws under
+  a real titlebar, which is most of why Finder's single row reads as one
+  surface rather than as a strip of buttons. And it cannot put an item in the
+  trailing accessory position, which is where Xcode's inspector toggle lives —
+  attached to the panel it opens rather than merely near it.
+
+  *The side panel half.* Xcode's inspector has its own background material and
+  a hard separator, and its toggle sits directly above it in the titlebar, so
+  the panel reads as a compartment of the window. Snitt's rail is a plain
+  `VStack` of accordion sections against the window background, which is why
+  it reads as content rather than as chrome. `NSSplitViewController` with an
+  `.inspector`-style item is the system route to that, and it also brings the
+  divider behaviour and the collapse animation `ResizableDivider` currently
+  reimplements.
+
+  *Why it is not a small change.* The toolbar is a SwiftUI view inside an
+  `NSHostingView`, and an `NSToolbar` is AppKit — so this is either SwiftUI's
+  `.toolbar` with a `WindowGroup` the app does not use, or a real `NSToolbar`
+  whose items host the existing SwiftUI controls. Both rework how the editor
+  window is assembled rather than how it is painted. `absent: EditorWindowToolbar` (D91).
+
 - *(D93 — record a voiceover after the fact — was BUILT on 2026-09-14. Its
   entry in the decision table records what was decided; the absence marker is
   retired because `VoiceoverTrack` now exists.)*
@@ -1752,6 +1788,7 @@ window-relative overlay. **Zoom + follow-mouse is per *segment*, and segments do
 | D94 | **An on-device generated title for a recording** — queued, deferred after measurement | Panel proposal (2026-09-12 refinement), built as far as a probe and then stopped on the numbers. `FoundationModels` is genuinely available — `SystemLanguageModel.default.availability` reports `.available`, 23 languages, on macOS 26.5.2 — and a `@Generable` title over a real transcript took 6.65s alone, 10.83s with git context, returning "SoundCloud Song Search" against a bare "SoundCloud" depending on how much context it was given. **Deferred because the floor is already earned without it**: D77's macOS 26 requirement is paid for by the `SpeechAnalyzer` port, which deleted 132 lines and found six more words, so this no longer has to justify the platform floor and can be judged on its own merits. On those merits it is not ready. A confidently wrong title is WORSE than the timestamp it replaces, because a timestamp is not trusted and a name is — so it needs a transcript-length floor or a confidence gate first. It is also the first non-reproducible artifact in a format whose §7 pitch is that everything re-derives from immutable inputs, so the result has to be stored in `meta.json` rather than recomputed, and ~10s cannot sit on the stop path. Recorded rather than dropped: the capability is real and the measurements are the expensive part of deciding | §5, §7, §4.6, D62, D77, D91; `FoundationModels`, `RecordingMetadata`, `BundleNaming` | Queued (deferred) | a-confidently-wrong-name-is-worse-than-a-timestamp |
 | D95 | **An opt-in allowing agent recording with nobody at the keyboard, as an EXPIRING grant** | Product-owner request, 2026-09-13, for remote-control sessions where an agent works an unattended machine and the recording is how anyone sees what it did. Reading the agent path found exactly ONE thing on it needing a person: Screen Recording is requested lazily, at first record, and macOS re-confirms it periodically for anything on the bypass path (§5.2, §5.5). So the mechanism is confirmation, not a new permission — turning the setting on is the one moment a person is guaranteed to be present, and `UnattendedRecordingToggle` spends it running §4.10's `PermissionLadder` against `.screenRecording`. **§5.4's staleness objection is what shaped it**: a standing grant "cannot know what the target is showing six weeks later", so this one EXPIRES after `UnattendedRecordingGrant.renewalDays` and renewing means switching it off and on again in front of the machine. Thirty days matches the OS re-consent cadence it tracks, so the two renewals coincide; the number is interpolated into the help text from the constant, with a mutation line pinning that. §5.4's spoofing objection is separately answerable now that the socket reads the caller's signing identity. The grant is subordinate to §5.3's global opt-in and COMPOSED from it rather than stored, so the two cannot disagree | §5.1, §5.3, §5.4, §5.5, D42, D91; `UnattendedRecordingGrant`, `UnattendedRecordingToggle`, `PermissionLadder`, `PeerIdentity` | Decided and built 2026-09-13 | the-picker-is-policy-not-capability |
 | D96 | **Estimate a GIF's size by encoding ~10 sampled frames and extrapolating** — queued, not designed | Product-owner request, 2026-09-13. `ExportEstimator` refuses GIF today and says why — GIF size tracks how much the picture MOVES rather than how long it runs — so the sheet shows no estimate for the one format whose size is hardest to guess. Sampling is the same move `exportSlice` already makes for mp4 ("so a size can be MEASURED rather than modelled"), and spreading the samples captures average motion instead of one quiet second. **The obvious objection does not apply, and that was checked**: scattered frames would normally compress worse than consecutive ones and bias the estimate high, but `EstimateError`'s own text records that these frames "carry no interframe compression", so per-frame cost is roughly independent of neighbours. **The objection that does apply** is the global colour map — ImageIO fits ONE palette across every frame, the same fact behind the 2026-09-13 GIF crash, so a palette fitted to ten frames suits each better than one covering three hundred and the sample will likely under-report. That is a calibration factor to MEASURE against real exports, not to reason out: the direction is predictable, the magnitude is not. The sample must also be encoded at the post-`GIFExporter.maximumWidth` scale, or it describes a different file, and must stay bounded — GIF encoding is what crashed the app | §8, D91; `ExportEstimator`, `GIFExporter`, `ExportPreflight` | Queued (not designed) | measure-a-sample-then-calibrate-the-palette-effect |
+| D97 | **QUEUED, not built: one title row, and an Xcode-style side panel** — the editor's toolbar becomes a real `NSToolbar` and the rail an inspector-style split item | Product-owner direction 2026-09-14, with Finder and Xcode screenshots as the reference. **The shape is already right**: the window is `.fullSizeContentView` with a hidden title, so the toolbar row IS the titlebar, and `EditorToolbar` already puts title-over-subtitle at the leading edge and the panel toggle at the trailing one. What it is not is an `NSToolbar`, and that is the whole cost — a hand-built `HStack` gets no traffic-light inset (so the first 78pt are dead space the window's own buttons sit in), no overflow chevron (a narrow window clips controls instead), none of the material, separator or scroll-edge effect the system draws under a real titlebar, and no trailing accessory position, which is exactly where Xcode's inspector toggle lives. **The panel half** wants `NSSplitViewController` with an inspector item: its own background material and hard separator are what make Xcode's inspector read as a compartment rather than as content, and it brings the divider behaviour and collapse animation `ResizableDivider` currently reimplements. **Not small**: the toolbar is SwiftUI inside an `NSHostingView` and `NSToolbar` is AppKit, so this reworks how the editor window is ASSEMBLED rather than how it is painted | §4.14, D45, D58, D59, D91; `EditorChrome.swift`, `EditorWindowController.makeWindow`, `ResizableDivider.swift` | Queued (not built) | the-titlebar-is-a-toolbar-or-it-is-a-strip-of-buttons |
 
 `conformance: 2026-09-07` (post-D66 refinement pass)
 

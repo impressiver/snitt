@@ -445,21 +445,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// File ▸ New (⌘N) — opens whatever video is on the clipboard.
     ///
-    /// With nothing importable on the board it opens an EMPTY document —
-    /// a window that takes a drop, or offers a file chooser, and becomes a
-    /// real editor as soon as it has a video. See `EmptyDocumentWindow` for
-    /// why that is its own window rather than an editor with nothing in it.
+    /// Disabled when the clipboard holds no video — see `validateMenuItem`.
+    /// An item named for the clipboard that works without one is an item whose
+    /// title is not true, and the failure it produces (nothing happens) is
+    /// indistinguishable from a broken app.
     @objc func newDocument(_ sender: Any?) {
-        if let clipboard = ClipboardMedia.video() {
-            openURLs([clipboard])
-            return
-        }
-        // Nothing importable on the board, so open an empty document: a
-        // window that takes a drop and becomes a real editor the moment it has
-        // a video. Not an EditorWindowController with no video in it —
-        // `CompositionBuilder` refuses to build without a video track, so that
-        // would be a window whose every control addresses something that does
-        // not exist.
+        guard let clipboard = ClipboardMedia.video() else { return }
+        openURLs([clipboard])
+    }
+
+    /// File ▸ New (⇧⌘N) — an empty document: a window that takes a drop, or
+    /// offers a file chooser, and becomes a real editor as soon as it has a
+    /// video.
+    ///
+    /// Its own command rather than a fallback inside the one above, because
+    /// that one is now allowed to be DISABLED. A menu item that is dead half
+    /// the time cannot also be the only route to something that always works.
+    /// See `EmptyDocumentWindow` for why this is its own window rather than an
+    /// editor with nothing in it.
+    @objc func newEmptyDocument(_ sender: Any?) {
         EmptyDocumentWindow.show { [weak self] urls in self?.openURLs(urls) }
     }
 
@@ -801,6 +805,13 @@ extension AppDelegate: NSMenuItemValidation {
         // both do nothing without one. Grouped rather than repeated: two
         // copies of this rule is two places for one of them to drift into
         // offering an action it then silently declines.
+        // Greyed out when the clipboard holds nothing Snitt can open. Asked
+        // at VALIDATION time, not cached: the clipboard changes while the app
+        // is running, and AppKit calls this each time the menu opens, which is
+        // exactly when the answer has to be current.
+        if menuItem.action == #selector(newDocument(_:)) {
+            return ClipboardMedia.video() != nil
+        }
         // Save is offered only where it does something. An always-enabled
         // ⌘S that explains it has nothing to do is a dialog nobody asked for;
         // a greyed-out one says the same thing without interrupting.

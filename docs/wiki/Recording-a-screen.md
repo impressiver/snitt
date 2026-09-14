@@ -54,8 +54,10 @@ recorded**:
 
 Snitt edits footage it did not record. **File ▸ Open** takes an `.mp4` or
 `.mov` as readily as a `.snitt`, **File ▸ New from Clipboard** (⌘N) opens
-whatever video you last copied, and you can drop a video on Snitt's Dock icon
-or open it with Snitt from the Finder.
+whatever video you last copied — greyed out when there is none — and you can
+drop a video on Snitt's Dock icon or open it with Snitt from the Finder.
+
+**File ▸ New** (⇧⌘N) opens an empty document you can drop a video onto.
 
 The file is **copied** into a new recording, so the original is left exactly
 where it is and nothing is re-encoded. After that there is no difference

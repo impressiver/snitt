@@ -369,3 +369,11 @@ ImportedDocumentSaveTests :: Sources/SnittApp/EditorWindowController.swift :: co
 # An import COPIES. Moving would delete somebody else's file as a side effect
 # of opening it.
 VideoImportTests :: Sources/SnittApp/VideoImporter.swift :: try FileManager.default.copyItem(at: url, to: bundle.captureURL) :: try FileManager.default.moveItem(at: url, to: bundle.captureURL)
+
+# Preview's symbol for the same command is `document.on.clipboard`, read from
+# its own nib. `doc.on.clipboard` also resolves, so the wrong one renders fine.
+EmptyDocumentTests :: Sources/SnittApp/AppShell.swift :: static let newFromClipboardSymbol = "document.on.clipboard" :: static let newFromClipboardSymbol = "doc.on.clipboard"
+
+# "New from Clipboard" must be dead without a clipboard video: an item whose
+# title is not true fails by doing nothing, which reads as a broken app.
+EmptyDocumentTests :: Sources/SnittApp/main.swift :: return ClipboardMedia.video() != nil :: return true
