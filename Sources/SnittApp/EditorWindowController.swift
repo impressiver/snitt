@@ -74,8 +74,13 @@ final class EditorTimelineState: ObservableObject {
     /// transcribed. Derived rather than stored, so a cut re-flows them the
     /// same way it re-flows the click marks.
     var subtitleCues: [SubtitleCue] {
-        guard showSubtitles, let transcript else { return [] }
-        return SubtitleCues.cues(words: transcript.words, keptRanges: controller.keptRanges)
+        guard showSubtitles, transcript != nil else { return [] }
+        // `audibleWords`, not `transcript.words`. Muting a track takes its
+        // audio out of the export, and a caption for audio nobody can hear is
+        // a subtitle of silence — the pane and the timeline lane have hidden
+        // muted words since narration arrived, and this surface was reading
+        // around them.
+        return SubtitleCues.cues(words: audibleWords, keptRanges: controller.keptRanges)
     }
 
     var markerBanners: [MarkerBanner] {

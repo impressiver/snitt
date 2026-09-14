@@ -4,6 +4,7 @@
 //
 // Copyright © 2026 Ian White.
 
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -44,6 +45,43 @@ public enum OverlayLayout {
     }
 
     public static func captionLineSpacing(fontSize: Double) -> Double { fontSize * 0.15 }
+
+    /// How far a caption is lifted for each line ABOVE the bottom one.
+    ///
+    /// A fixed two-line allowance rather than "however tall the caption below
+    /// happens to be". Three renderers compute this, and a height that depends
+    /// on the other caption's content is a height they will eventually
+    /// disagree about — while a fixed step is the same arithmetic everywhere
+    /// and cannot collide, since `maximumLines` is the most either can be.
+    ///
+    /// The cost is a small gap when the lower caption is one line. That is
+    /// worth paying: a gap reads as two speakers, and an overlap reads as a
+    /// broken renderer.
+    public static func captionRowHeight(fontSize: Double) -> Double {
+        Double(SubtitleCues.maximumLines) * (fontSize + captionLineSpacing(fontSize: fontSize))
+    }
+
+    /// The bottom inset for a caption on `row`, counting up from zero.
+    public static func captionBottomInset(pictureHeight: Double, row: Int) -> Double {
+        captionBottomInset(pictureHeight: pictureHeight)
+            + Double(max(0, row))
+            * captionRowHeight(fontSize: captionFontSize(pictureHeight: pictureHeight))
+    }
+
+    /// How a caption's own text is aligned inside its box.
+    ///
+    /// Centred when it is alone, ragged when it is not: the recorded voice
+    /// hugs the left and narration hugs the right, so the two lines are offset
+    /// from each other the way film subtitles offset two speakers. Alignment
+    /// rather than a narrower box, so a long line still gets the full width
+    /// instead of being wrapped for a symmetry nobody asked for.
+    public static func captionAlignment(_ placement: SubtitleCue.Placement) -> NSTextAlignment {
+        switch placement {
+        case .alone: return .center
+        case .recorded: return .left
+        case .narration: return .right
+        }
+    }
     public static func captionShadowBlur(fontSize: Double) -> Double { fontSize * 0.35 }
 
     // MARK: - Marker banner

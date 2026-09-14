@@ -431,3 +431,23 @@ TrackColourTests :: Sources/SnittApp/TimelineGutter.swift :: return SnittPalette
 # Lanes read in composition order. The old hardcoded list put the microphone
 # first, disagreeing with the only order that is load-bearing.
 AudioLaneOrderTests :: Sources/SnittApp/TimelineTrackLayout.swift :: let order = AudioTrackOrder.canonical :: let order = ["microphone", "systemAudio", "voiceover"]
+# A cue is ONE VOICE. Without the split, two people talking at once come out as
+# their sentences shuffled together in time order.
+SpeakerSeparationTests :: Sources/SnittExport/SubtitleCues.swift :: let recorded = words.filter { !AudibleTranscript.isVoiceover($0) } :: let recorded = words
+# Sharing the frame moves a caption off the centre line.
+SpeakerSeparationTests :: Sources/SnittExport/SubtitleCues.swift :: overlaps($0, narration) ? $0.placed(.recorded) : $0 :: $0
+# The lookup is plural. A singular one silently drops a caption at the draw
+# site, in all three renderers, none of which can tell a second one existed.
+SpeakerSeparationTests :: Sources/SnittExport/SubtitleCues.swift :: cues.filter { $0.start <= outputTime && outputTime < $0.end } :: cues.filter { $0.start <= outputTime && outputTime < $0.end }.suffix(1)
+# The upper line must clear the lower one, or both become unreadable.
+SpeakerSeparationTests :: Sources/SnittExport/OverlayLayout.swift :: + Double(max(0, row)) :: + Double(0 * max(0, row))
+# Left/right offset is what says "two speakers". Centring either half satisfies
+# "the alignments differ" and is not an offset pair at all.
+SpeakerSeparationTests|TwoCaptionRenderTests :: Sources/SnittExport/OverlayLayout.swift :: case .recorded: return .left :: case .recorded: return .center
+SpeakerSeparationTests|TwoCaptionRenderTests :: Sources/SnittExport/OverlayLayout.swift :: case .narration: return .right :: case .narration: return .center
+# White for the principal voice, teal for the second — the teletext convention.
+SpeakerSeparationTests :: Sources/SnittBrand/SnittPalette.swift :: track == "voiceover" ? voiceover : .white :: .white
+# A muted track is not captioned, in the exported file...
+MutedCaptionExportTests :: Sources/SnittExport/MovieExporter.swift :: trackStates: edl.trackStates) :: trackStates: [])
+# ...nor in the player.
+PreviewCaptionMuteTests :: Sources/SnittApp/EditorWindowController.swift :: return SubtitleCues.cues(words: audibleWords, keptRanges: controller.keptRanges) :: return SubtitleCues.cues(words: transcript?.words ?? [], keptRanges: controller.keptRanges)

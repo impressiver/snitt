@@ -126,11 +126,11 @@ struct SubtitleCuesTests {
     func lookupAtATime() {
         let cues = SubtitleCues.cues(
             words: words([("one", 0.0, 0.3), ("two", 4.0, 0.3)]), keptRanges: whole)
-        #expect(SubtitleCues.cue(at: 0.1, in: cues)?.text == "one")
+        #expect(SubtitleCues.visible(at: 0.1, in: cues).map(\.text) == ["one"])
         // The gap between two cues shows nothing — a caption that lingered
         // until the next one would be on screen while nobody is speaking.
-        #expect(SubtitleCues.cue(at: 3.5, in: cues) == nil)
-        #expect(SubtitleCues.cue(at: 4.1, in: cues)?.text == "two")
+        #expect(SubtitleCues.visible(at: 3.5, in: cues).isEmpty)
+        #expect(SubtitleCues.visible(at: 4.1, in: cues).map(\.text) == ["two"])
     }
 
     @Test("Reading speed is shared with the sidecar, not a second copy")

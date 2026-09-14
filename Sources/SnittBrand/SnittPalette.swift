@@ -134,6 +134,22 @@ public enum SnittPalette {
         track == "voiceover" ? voiceover : signal
     }
 
+    /// The colour a track's words are drawn in ON THE PICTURE.
+    ///
+    /// Deliberately NOT `track(_:)`, whose default is amber. A caption sits on
+    /// video pixels nobody chose — a screen recording of a white IDE, a dark
+    /// terminal, a photograph — and white with a shadow is the only base that
+    /// survives all of them. Amber is a colour for chrome, where the backdrop
+    /// is ours.
+    ///
+    /// Narration keeps its teal, which is both the app's own voiceover colour
+    /// and the broadcast convention: subtitling has used white for the
+    /// principal voice and cyan for a second one since teletext, so a viewer
+    /// who has never seen Snitt still reads it as "somebody else is talking".
+    public static func caption(for track: String) -> NSColor {
+        track == "voiceover" ? voiceover : .white
+    }
+
     /// The playhead line and its caret — the brightest thing on the
     /// instrument, because it outranks everything it crosses. Replaces
     /// `grey(0.97)`.
