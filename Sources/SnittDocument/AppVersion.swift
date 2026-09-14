@@ -39,7 +39,7 @@ public enum AppVersion {
     /// claims a version that has already shipped. On a release commit it is
     /// the bare version. Bump it and the plist follows; there is nowhere
     /// else to edit.
-    public static let marketing = "0.5.0-dev"
+    public static let marketing = "0.5.0"
 
     /// The old name. Kept so `make-app.sh`, `release.sh` and their tests
     /// keep matching on one spelling while the meaning is documented above.
