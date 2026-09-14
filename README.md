@@ -109,6 +109,12 @@ read and change an edit without going near the GUI.
 - **No analytics, no telemetry.** The only network call Snitt makes is Sparkle
   checking for updates.
 
+## Documentation
+
+The [wiki](https://github.com/impressiver/snitt/wiki) covers installing,
+recording, editing, exporting, privacy and the agent surface in more depth than
+this page does.
+
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md), and
@@ -136,3 +142,11 @@ certainly says.
 [Mozilla Public License 2.0](LICENSE). File-level copyleft: changes to Snitt's
 own files stay open, while a larger work that uses Snitt may carry its own
 terms.
+
+The source for every released build is this repository, and every release is
+tagged. That sentence is the MPL §3.2 obligation being met rather than a
+courtesy: distributing the app in executable form requires telling you where
+the source is, and the same notice is in the About box.
+
+Snitt bundles one third-party component, Sparkle, under the MIT licence. See
+[`THIRD-PARTY-NOTICES.md`](THIRD-PARTY-NOTICES.md).

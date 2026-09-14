@@ -1,0 +1,22 @@
+# `false` on purpose: without a template, a bug report arrives with no macOS
+# version, no Snitt version and no reproduction, and the first reply is always
+# the same three questions. The forms below ask them once.
+blank_issues_enabled: false
+
+contact_links:
+  # FIRST, deliberately. A security report filed as a public issue cannot be
+  # unfiled, and the person filing it usually does not realise that until it is
+  # done. Putting the private route above the bug form is the only moment this
+  # choice is cheap.
+  - name: Report a security vulnerability (private)
+    url: https://github.com/impressiver/snitt/security/advisories/new
+    about: >-
+      Never open a public issue for a vulnerability. This form is private
+      between you and the maintainer. See SECURITY.md.
+
+  - name: Question, idea, or "is this a bug?"
+    url: https://github.com/impressiver/snitt/discussions
+    about: >-
+      Not sure it is a bug, or want to talk about a direction before anyone
+      writes code? Start here. A discussion can become an issue; an issue that
+      turns out to be a question cannot become a discussion.
