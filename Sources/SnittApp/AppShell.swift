@@ -91,6 +91,15 @@ enum AppShell {
         let item = NSMenuItem(title: "File", action: nil, keyEquivalent: "")
         let menu = NSMenu(title: "File")
 
+        // ⌘N opens whatever video is on the clipboard, which is the fastest
+        // route from "somebody sent me a screen recording" to editing it. With
+        // nothing importable on the board it asks for a file — see
+        // `AppDelegate.newDocument(_:)` for why it does not make an empty one.
+        let new = NSMenuItem(title: "New from Clipboard",
+                             action: #selector(AppDelegate.newDocument(_:)),
+                             keyEquivalent: "n")
+        menu.addItem(new)
+
         let open = NSMenuItem(title: "Open…",
                               action: #selector(AppDelegate.openDocument(_:)),
                               keyEquivalent: "o")
@@ -99,6 +108,17 @@ enum AppShell {
         let recent = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
         recent.submenu = RecentDocuments.buildMenu()
         menu.addItem(recent)
+        menu.addItem(.separator())
+
+        // Only an IMPORTED document has anything to do here: a recording Snitt
+        // made is written to the recordings folder as it stops, and every edit
+        // since has been saved as it happened. The item is present rather than
+        // hidden because ⌘S is a reflex, and a menu with no Save reads as an
+        // app that cannot save.
+        let save = NSMenuItem(title: "Save",
+                              action: #selector(AppDelegate.saveDocument(_:)),
+                              keyEquivalent: "s")
+        menu.addItem(save)
         menu.addItem(.separator())
 
         // Task 8: the missing half of record → trim → share. Nil target —

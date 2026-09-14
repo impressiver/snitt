@@ -85,7 +85,10 @@ public class PreviewController {
     /// both to call `CompositionBuilder.build` again — the controller has no
     /// other source for them, since `BuiltComposition` itself doesn't carry
     /// them back out.
-    private let bundle: SnittBundle
+    /// `var` for exactly one reason: the first save of an IMPORTED document
+    /// moves the bundle out of its scratch directory, and every later write
+    /// goes through this reference. See `relocateBundle(to:)`.
+    private var bundle: SnittBundle
     /// The unedited recording, for sampling waveforms and filmstrips. Those are
     /// taken against the SOURCE, never the trimmed composition, so an edit is a
     /// lookup rather than a re-read.
@@ -93,6 +96,24 @@ public class PreviewController {
     /// The whole bundle, for sidecars beyond capture.mov — transcript.json's
     /// read/write path (D62).
     var snittBundle: SnittBundle { bundle }
+
+    /// Re-points this controller at a bundle that has MOVED.
+    ///
+    /// Only the first save of an imported document does this: the bundle is
+    /// created in a scratch directory and relocated once somebody chooses
+    /// where it belongs. Every later write — `edit.json`, `events.json`, the
+    /// voiceover — goes through this reference, so leaving it on the scratch
+    /// path would write edits to a directory that no longer exists, silently,
+    /// because those writes are fire-and-forget.
+    ///
+    /// The MEDIA is not reloaded. `AVURLAsset` holds an open file reference
+    /// that survives the move, so the player keeps playing and the playhead
+    /// stays where it was — which is the whole reason saving relocates the
+    /// document rather than reopening it.
+    func relocateBundle(to url: URL) {
+        guard let moved = try? SnittBundle(opening: url) else { return }
+        bundle = moved
+    }
     private let scale: Double
 
     public init(built: BuiltComposition, jumpPoints: [JumpPoint],

@@ -427,7 +427,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func openDocument(_ sender: Any?) {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [UTType("com.impressiver.snitt.recording")].compactMap { $0 }
+        // Recordings AND plain video. Opening a video imports it into a new
+        // document, so auto-trim, cutting, markers, transcription and
+        // voiceover all work on footage Snitt did not make — the whole point
+        // of the import being that there is no difference afterwards.
+        panel.allowedContentTypes =
+            [UTType("com.impressiver.snitt.recording")].compactMap { $0 }
+            + ImportableMedia.types
         panel.allowsMultipleSelection = true
         // A .snitt is a package: without this the panel descends into it
         // instead of letting it be selected — the same class of bug as
@@ -435,6 +441,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.treatsFilePackagesAsDirectories = false
         guard panel.runModal() == .OK else { return }
         openURLs(panel.urls)
+    }
+
+    /// File ▸ New (⌘N) — opens whatever video is on the clipboard.
+    ///
+    /// With nothing importable on the board it opens an EMPTY document —
+    /// a window that takes a drop, or offers a file chooser, and becomes a
+    /// real editor as soon as it has a video. See `EmptyDocumentWindow` for
+    /// why that is its own window rather than an editor with nothing in it.
+    @objc func newDocument(_ sender: Any?) {
+        if let clipboard = ClipboardMedia.video() {
+            openURLs([clipboard])
+            return
+        }
+        // Nothing importable on the board, so open an empty document: a
+        // window that takes a drop and becomes a real editor the moment it has
+        // a video. Not an EditorWindowController with no video in it —
+        // `CompositionBuilder` refuses to build without a video track, so that
+        // would be a window whose every control addresses something that does
+        // not exist.
+        EmptyDocumentWindow.show { [weak self] urls in self?.openURLs(urls) }
+    }
+
+    /// File ▸ Save (⌘S). Only an imported document has anything to do here —
+    /// see `EditorWindowController.save()`.
+    @objc func saveDocument(_ sender: Any?) {
+        focusedEditor?.save()
     }
 
     @objc func openRecentDocument(_ sender: NSMenuItem) {
@@ -668,13 +700,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return .terminateLater
     }
 
+    /// A video dropped on an editor window.
+    ///
+    /// Opens as its OWN document rather than splicing into the one it landed
+    /// on. Internal and named rather than routed through `openURLs` directly,
+    /// so the drop path is one call site that can grow a different behaviour
+    /// later without every other opener following it.
+    func openDroppedVideos(_ urls: [URL]) {
+        openURLs(urls.filter(ImportableMedia.canOpen))
+    }
+
     private func openURLs(_ urls: [URL]) {
         for url in urls {
             let id = UUID()
             openTasks[id] = Task { @MainActor [weak self] in
                 defer { self?.openTasks[id] = nil }
                 do {
-                    _ = try await DocumentOpener.open(bundleURL: url)
+                    // One entry point, two kinds of file. Asked of
+                    // `ImportableMedia` rather than by extension here, so
+                    // File ▸ Open, the clipboard and a drop cannot disagree
+                    // about what Snitt accepts.
+                    if ImportableMedia.canOpen(url) {
+                        _ = try await DocumentOpener.importVideo(at: url)
+                    } else {
+                        _ = try await DocumentOpener.open(bundleURL: url)
+                    }
                 } catch {
                     // Privacy: the bundle filename comes from the git branch
                     // (BundleNaming), so it can name a customer or an
@@ -751,6 +801,12 @@ extension AppDelegate: NSMenuItemValidation {
         // both do nothing without one. Grouped rather than repeated: two
         // copies of this rule is two places for one of them to drift into
         // offering an action it then silently declines.
+        // Save is offered only where it does something. An always-enabled
+        // ⌘S that explains it has nothing to do is a dialog nobody asked for;
+        // a greyed-out one says the same thing without interrupting.
+        if menuItem.action == #selector(saveDocument(_:)) {
+            return focusedEditor?.isUnsaved ?? false
+        }
         if menuItem.action == #selector(exportDocument(_:))
             || menuItem.action == #selector(shareToService(_:)) {
             return EditorWindowController.openEditors.contains { $0.window == NSApp.keyWindow }

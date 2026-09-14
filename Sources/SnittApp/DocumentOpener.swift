@@ -60,6 +60,24 @@ enum DocumentOpener {
     /// there is no moment in which one document has no representative.
     private static var inFlight: [URL: Task<EditorWindowController, Error>] = [:]
 
+    /// Imports a plain video file and opens it as an unsaved document.
+    ///
+    /// The import is a COPY into a scratch bundle, so the source file is
+    /// untouched and nothing appears in the recordings folder until somebody
+    /// saves. After this returns there is no difference between an imported
+    /// document and a recorded one — which is the whole feature: auto-trim,
+    /// cutting, markers, transcription and voiceover are all written against
+    /// `capture.mov`, and now there is one.
+    static func importVideo(at url: URL) async throws -> EditorWindowController {
+        let bundle = try await VideoImporter.makeBundle(from: url)
+        let editor = try await open(bundle: bundle)
+        // AFTER the open, not before: `open` is what registers the window, and
+        // a flag set on a controller that then failed to open would be set on
+        // nothing. The first ⌘S is where this document's home is decided.
+        editor.markUnsaved()
+        return editor
+    }
+
     static func open(bundle: SnittBundle) async throws -> EditorWindowController {
         // Before the composition, not after: building it first wastes the
         // work and can leave a half-built preview behind on the reuse path.
