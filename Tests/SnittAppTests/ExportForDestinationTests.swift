@@ -121,20 +121,27 @@ struct ExportForDestinationTests {
         }
     }
 
-    @Test("Share sits beside Export and uses the system sheet")
+    @Test("Share is a SUBMENU beside Export, as QuickTime has it")
     func shareIsInTheFileMenu() throws {
-        // QuickTime's arrangement, and the reason it is the system picker
-        // rather than a list Snitt keeps: whatever the person has set up is
-        // already there and stays right without Snitt tracking it.
+        // It was a flat "Share…" that exported first and then raised a picker.
+        // A submenu is what makes the destinations appear instantly, so the
+        // shape is the fix rather than a presentation preference — asserting
+        // only that an item called Share exists would pass against the version
+        // that hung for ten seconds.
         let file = try #require(AppShell.buildMainMenu().items
             .first { $0.title == "File" }?.submenu)
-        let share = try #require(file.items.first { $0.title == "Share…" },
+        let share = try #require(file.items.first { $0.title == "Share" },
                                  "File has no Share item")
-        #expect(share.action == #selector(AppDelegate.shareDocument(_:)))
+        #expect(share.submenu != nil, "Share is still a flat item, not a submenu")
+        // NOT `action == nil`: AppKit installs `submenuAction:` on any item
+        // that is given a submenu, so nil is a state this item cannot be in.
+        // What matters is that clicking the parent does not itself share.
+        #expect(share.action != #selector(AppDelegate.shareToService(_:)),
+                "the submenu's parent also acts — two gestures on one item")
 
         // Beside Export, not somewhere else in the menu.
         let exportIndex = try #require(file.items.firstIndex { $0.title == "Export…" })
-        let shareIndex = try #require(file.items.firstIndex { $0.title == "Share…" })
+        let shareIndex = try #require(file.items.firstIndex { $0.title == "Share" })
         #expect(shareIndex > exportIndex)
         #expect(shareIndex - exportIndex <= 2,
                 "Share drifted away from Export in the File menu")
@@ -149,7 +156,7 @@ struct ExportForDestinationTests {
         let delegate = AppDelegate()
         for selector in [#selector(AppDelegate.exportDocument(_:)),
                          #selector(AppDelegate.exportForDestination(_:)),
-                         #selector(AppDelegate.shareDocument(_:))] {
+                         #selector(AppDelegate.shareToService(_:))] {
             let item = NSMenuItem(title: "x", action: selector, keyEquivalent: "")
             #expect(delegate.validateMenuItem(item) == false,
                     "\(selector) stayed enabled with no editor in front")
