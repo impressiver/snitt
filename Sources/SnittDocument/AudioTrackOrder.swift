@@ -14,5 +14,20 @@
 /// layering, enforced by the thin-client guard), so the exporter cannot ask
 /// the recorder what it wrote.
 public enum AudioTrackOrder {
-    public static let canonical = ["systemAudio", "microphone"]
+    /// The two tracks `capture.mov` always carries, plus the one the editor
+    /// can add afterwards.
+    ///
+    /// **"voiceover" is third because it is appended third**, and that is safe
+    /// for a reason worth writing down rather than assuming: `AssetWriterSink`
+    /// adds BOTH audio inputs unconditionally, whether or not the microphone
+    /// was on, so a capture always has exactly two audio tracks and index 2 is
+    /// always free. Verified against a real recording (2026-09-14) rather than
+    /// inferred — if the sink ever skipped a silent mic input, a voiceover
+    /// would land at index 1 and be governed by the microphone's mute and
+    /// gain.
+    public static let canonical = ["systemAudio", "microphone", "voiceover"]
+
+    /// The tracks that come from `capture.mov`. Everything after these is a
+    /// composition-only track the recorder never wrote.
+    public static let captured = ["systemAudio", "microphone"]
 }

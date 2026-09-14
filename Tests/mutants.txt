@@ -354,3 +354,11 @@ SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: stack.
 ExportPresetSelectionTests :: Sources/SnittApp/ExportSheet.swift :: maxSizeBytes = nil :: maxSizeBytes = maxSizeBytes.map { $0 }
 # Suffixes must not stack: demo-github-slack-x.mp4 names the wrong preset.
 ExportPresetSelectionTests :: Sources/SnittApp/ExportSheet.swift :: for known in ExportDestination.all where stem.hasSuffix("-\(known.id)") { :: for known in [ExportDestination]() where stem.hasSuffix("-\(known.id)") {
+
+# D93 — narration is anchored to the FOOTAGE. A voiceover that ignores the
+# kept ranges plays over whatever slid under it after the next cut.
+VoiceoverPlacementTests :: Sources/SnittDocument/VoiceoverTrack.swift :: sourceStart: range.start + (enterAtOutput - outputCursor), :: sourceStart: enterAtOutput,
+VoiceoverPlacementTests :: Sources/SnittDocument/VoiceoverTrack.swift :: let overlapEnd = min(segment.sourceEnd, range.end) :: let overlapEnd = segment.sourceEnd
+# Passthrough copies encoded samples; narration has none to copy, so an
+# "eligible" export ships the picture and no voiceover at all — silently.
+VoiceoverTests :: Sources/SnittExport/PassthroughEligibility.swift :: if edl.voiceover != nil { return .voiceover } :: if false { return .voiceover }

@@ -980,6 +980,59 @@ final class EditorTimelineState: ObservableObject {
         applyAndSave()
     }
 
+    /// Whether narration is being recorded right now (D93).
+    @Published private(set) var isRecordingVoiceover = false
+    private let voiceoverRecorder = VoiceoverRecorder()
+
+    /// Starts narrating over the edit, from the playhead.
+    ///
+    /// Playback is STARTED, not left paused. A voiceover is spoken against
+    /// what is on screen, and narrating over a still frame produces narration
+    /// anchored to one instant — which the placement model would then spread
+    /// across whatever footage happened to follow it.
+    func startVoiceover() -> VoiceoverRecorder.StartFailure? {
+        let start = currentOutputSeconds
+        if let failure = voiceoverRecorder.start(writingTo: controller.snittBundle.voiceoverURL,
+                                                 fromOutputSeconds: start) {
+            return failure
+        }
+        isRecordingVoiceover = true
+        controller.play()
+        return nil
+    }
+
+    /// Ends the take and writes it into the EDL.
+    ///
+    /// The whole-EDL snapshot undo every other edit uses, so narration is as
+    /// undoable as a cut — and because the audio file is left on disk, an undo
+    /// followed by a redo does not have to re-record anything.
+    func stopVoiceover() {
+        guard let duration = voiceoverRecorder.stop() else { return }
+        isRecordingVoiceover = false
+        controller.pause()
+        guard duration > 0.05 else {
+            // A take shorter than a syllable is a mis-click, not narration.
+            // Recorded as nothing rather than as a segment nobody can hear.
+            return
+        }
+        let previous = edl
+        undoManager?.registerUndo(withTarget: self) { target in
+            target.restore(previous)
+        }
+        // Resolved to SOURCE spans HERE, once, against the edit that was in
+        // force while it was spoken. Re-deriving later would need that edit,
+        // which the document does not keep — see `VoiceoverTrack.segments`.
+        let segments = VoiceoverPlacement.segments(
+            outputStart: voiceoverRecorder.startedAtOutput,
+            duration: duration,
+            keptRanges: controller.keptRanges)
+        edl.voiceover = VoiceoverTrack(
+            filename: controller.snittBundle.voiceoverURL.lastPathComponent,
+            durationSeconds: duration,
+            segments: segments)
+        applyAndSave()
+    }
+
     /// Applies a crop drawn over the preview.
     ///
     /// `sub` is expressed in the coordinates of the frame CURRENTLY on screen,
@@ -2341,6 +2394,13 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
 
     public func togglePlayback() { state.togglePlayback() }
     public func rewindToStart() { state.rewind() }
+    /// D93. Forwarded rather than reached through `state`, matching every
+    /// other command the menu drives: the window controller is the surface the
+    /// app delegate talks to.
+    public var isRecordingVoiceover: Bool { state.isRecordingVoiceover }
+    public func startVoiceover() -> VoiceoverRecorder.StartFailure? { state.startVoiceover() }
+    public func stopVoiceover() { state.stopVoiceover() }
+
     public func goToPreviousMark() { state.goToPreviousMark() }
     public func goToNextMark() { state.goToNextMark() }
     /// Whether there is a mark to step to, so the menu items can disable

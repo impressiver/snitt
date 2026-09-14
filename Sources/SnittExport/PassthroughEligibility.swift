@@ -40,6 +40,7 @@ public enum PassthroughEligibility {
         case audioMix
         case scaled
         case burnedInText
+        case voiceover
     }
 
     /// Nil when the samples can be copied; otherwise the first reason they cannot.
@@ -85,6 +86,12 @@ public enum PassthroughEligibility {
         // changed. Both asked separately rather than as one flag: the reason
         // an export re-encoded is worth being able to state.
         if edl.showSubtitles || edl.showMarkers { return .burnedInText }
+        // A voiceover is a track `capture.mov` does not contain, so there are
+        // no encoded samples to copy for it. Checked BEFORE `hasAudioMix`
+        // because it is a different fact with a different remedy: a mix means
+        // the levels changed, this means a whole track would be missing from
+        // the file.
+        if edl.voiceover != nil { return .voiceover }
         if hasAudioMix { return .audioMix }
         return nil
     }
@@ -119,8 +126,14 @@ public enum PassthroughEligibility {
     ///   items first, because an empty transcript still means the caption
     ///   layer runs, and a predicate that waved that through would depend on
     ///   whether anyone happened to speak.
+    /// - `voiceover` — a THIRD audio track the capture does not contain, so
+    ///   there are no samples to copy for it. Passthrough copies what is
+    ///   already encoded; narration recorded afterwards is not. Exporting it
+    ///   as eligible would produce a file with the picture and the original
+    ///   audio and no narration at all, which is the silent-wrong-output
+    ///   failure this predicate exists to prevent.
     public static let consideredEDLFields: Set<String> = [
         "schemaVersion", "cuts", "trackStates", "crop", "showClicks",
-        "showSubtitles", "showMarkers",
+        "showSubtitles", "showMarkers", "voiceover",
     ]
 }

@@ -518,6 +518,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editor.share(via: service)
     }
 
+    /// Playback ▸ Record Voiceover (D93), and the same item stops it.
+    ///
+    /// One selector for both, because the menu item is one item: two would
+    /// have to be enabled and disabled against each other, and the state that
+    /// decides is already on the editor.
+    @objc func toggleVoiceover(_ sender: Any?) {
+        guard let editor = focusedEditor else { return }
+        if editor.isRecordingVoiceover {
+            editor.stopVoiceover()
+        } else if let failure = editor.startVoiceover() {
+            AppDelegate.presentMessage(AppDelegate.voiceoverFailureMessage(failure))
+        }
+    }
+
+    /// What to say when narration could not start.
+    ///
+    /// Static and pure so the wording is testable: the failures are a refused
+    /// TCC grant and an AVFoundation error, neither of which a unit test can
+    /// produce on demand.
+    static func voiceoverFailureMessage(_ failure: VoiceoverRecorder.StartFailure) -> String {
+        switch failure {
+        case .microphoneDenied:
+            return "Snitt needs the microphone to record a voiceover.\n\n"
+                 + "Turn it on in System Settings ▸ Privacy & Security ▸ Microphone, "
+                 + "then try again."
+        case .alreadyRecording:
+            return "A voiceover is already being recorded."
+        case .failed(let reason):
+            return "The voiceover could not start.\n\n\(reason)"
+        }
+    }
+
     @objc func exportDocument(_ sender: Any?) {
         guard let editor = EditorWindowController.openEditors.first(where: {
             $0.window == NSApp.keyWindow
