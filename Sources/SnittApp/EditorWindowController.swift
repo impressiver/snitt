@@ -351,10 +351,10 @@ final class EditorTimelineState: ObservableObject {
     func onScrub(_ time: Double) {
         guard let trimmedTime = TimeRangeMapping.nearestTrimmedTime(
             toSourceTime: time, keptRanges: controller.keptRanges) else { return }
-        // A scrub is the user saying where to be, which supersedes a mark jump
-        // still in flight. `jump(toMarkAt:)` re-arms it immediately after, so
-        // navigation keeps its own intention and loses everybody else's.
-        pendingMarkJump = nil
+        // A scrub is the user saying where to be, and where they are saying
+        // is the new target — not "no target", which is what this used to
+        // record and what left navigation reading a stale clock.
+        pendingSeekTarget = trimmedTime
         controller.pause()
         Task { await controller.seek(toSeconds: trimmedTime) }
     }
@@ -370,9 +370,10 @@ final class EditorTimelineState: ObservableObject {
     /// `keptRanges`: zero in OUTPUT time is the start of the edit whatever is
     /// cut, so there is nothing to resolve.
     func rewind() {
-        // Abandons any in-flight mark jump: rewinding is a decision about
-        // where to be that outranks one already asked for.
-        pendingMarkJump = nil
+        // Outranks anything already asked for, and is itself a destination:
+        // pressing Next straight after a rewind must step from zero, not from
+        // wherever the playhead had not yet left.
+        pendingSeekTarget = 0
         Task { await controller.seek(toSeconds: 0) }
     }
 
@@ -404,35 +405,46 @@ final class EditorTimelineState: ObservableObject {
 
     /// Where mark-to-mark navigation reasons FROM.
     ///
-    /// **Not the player's clock, while a jump is still in flight.** `onScrub`
-    /// hands the seek to a `Task`, so `player.currentTime()` still reports the
-    /// old position for a beat after a jump is requested. Pressing Next twice
-    /// in that beat read the same position twice, found the same "next" mark
-    /// twice, and seeked to it again — so Next advanced once and then appeared
-    /// stuck, which is exactly what it does today.
+    /// **Not the player's clock, while a seek is still in flight.** Every seek
+    /// in this editor hands the work to a `Task`, so `player.currentTime()`
+    /// still reports the OLD position for a beat afterwards. Navigating in
+    /// that beat reads a stale position, finds the same "next" mark again, and
+    /// seeks to where it is already going — which on screen is a button press
+    /// that did nothing.
     ///
-    /// The pending target is dropped as soon as the player reaches it, so a
-    /// scrub or a play that moves the head elsewhere takes over immediately
-    /// rather than navigating from a stale intention.
+    /// The pending target is dropped as soon as the player reaches it, so
+    /// playback moving the head elsewhere takes over immediately rather than
+    /// leaving navigation reasoning from a stale intention.
     private var navigationOrigin: Double {
         let decision = MarkerNavigation.origin(live: currentOutputSeconds,
-                                               pending: pendingMarkJump)
-        if decision.dropPending { pendingMarkJump = nil }
+                                               pending: pendingSeekTarget)
+        if decision.dropPending { pendingSeekTarget = nil }
         return decision.seconds
     }
 
-    /// The mark jump this editor has asked for and not yet seen land.
-    private var pendingMarkJump: Double?
-
-    /// Jump, and remember where we asked to be until we are there.
+    /// Where this editor has asked the playhead to be and not yet seen it
+    /// arrive — for ANY deliberate seek, not only a mark jump.
     ///
-    /// The order matters: `seek` routes through `onScrub`, which abandons any
-    /// pending jump because a scrub is the user overriding one. Arming after
-    /// the call is what lets navigation keep its own intention while still
-    /// losing to everybody else's.
+    /// It used to be armed by `jump(toMarkAt:)` alone, and every other seek
+    /// CLEARED it: a scrub, a rewind, a timecode typed into the transport, a
+    /// click on a marker row or a transcript word. So navigation was protected
+    /// from its own in-flight seek and from nothing else, and pressing Next
+    /// straight after any of those reasoned from wherever the player had been
+    /// before — reliably finding the mark it was already travelling to, and
+    /// looking like a click that did not register.
+    ///
+    /// Reported after the marker pane started nudging its seek past the marker
+    /// (so a stale read now lands on the wrong side of a mark boundary more
+    /// often), but the hole is older than that and is not specific to it.
+    private var pendingSeekTarget: Double?
+
+    /// Test-only: what the editor believes it is seeking to.
+    var pendingSeekTargetForTesting: Double? { pendingSeekTarget }
+
     private func jump(toMarkAt seconds: Double) {
+        // No re-arming here any more: `seek(toOutput:)` records its own
+        // destination, so a mark jump is simply a seek like every other.
         seek(toOutput: seconds)
-        pendingMarkJump = seconds
     }
 
     /// The mark the playhead is inside, for the transport's readout — the
@@ -896,9 +908,11 @@ final class EditorTimelineState: ObservableObject {
     }
 
     func seek(toOutput seconds: Double) {
-        // A deliberate destination supersedes a mark jump still in flight;
-        // `jump(toMarkAt:)` re-arms its own immediately after calling this.
-        pendingMarkJump = nil
+        // The destination is RECORDED, not cleared. This is the one line the
+        // reported defect turned on: navigation reads `pendingSeekTarget` when
+        // the player's clock has not caught up yet, and a nil here sent it back
+        // to that stale clock.
+        pendingSeekTarget = seconds
         controller.pause()
         Task { await controller.seek(toSeconds: seconds) }
     }
