@@ -309,3 +309,9 @@ SettingsWindowLayoutTests :: Sources/SnittApp/SettingsWindowController.swift :: 
 # The folder setting governs where RECORDINGS land and nothing else — export
 # lands beside its own bundle, which is what made a broader name look true.
 SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: static let outputDirectoryCaption = "Recordings folder" :: static let outputDirectoryCaption = "Default path"
+# Marker pane preview — a banner is INVISIBLE at its own moment, so a seek
+# that lands there shows nothing and looks like a flaky render.
+MarkerPreviewTimeTests :: Sources/SnittExport/MarkerBanners.swift :: let resting = banners[index].appearsAt + animateInSeconds :: let resting = banners[index].appearsAt
+# `banner(at:)` answers with the LAST match, so an unclamped nudge previews the
+# following marker with the right row still highlighted.
+MarkerPreviewTimeTests :: Sources/SnittExport/MarkerBanners.swift :: guard resting >= next else { return resting } :: return resting

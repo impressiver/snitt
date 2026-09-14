@@ -880,6 +880,21 @@ final class EditorTimelineState: ObservableObject {
     ///
     /// Seeks the composition directly, exactly as `rewind()` does and for the
     /// same stated reason: the composition's clock IS output time.
+    /// Seeks so a marker's BANNER is on screen, not merely so the playhead is
+    /// at the marker (D51).
+    ///
+    /// The distinction is the whole of the fix: `MarkerBanners.appearance`
+    /// returns opacity 0 at a banner's own moment, because that is the first
+    /// frame of its arrival, so "click a marker in the pane and see it" landed
+    /// on the one instant in its window where there is nothing to see.
+    ///
+    /// Reads `markerBanners`, which is empty whenever Show Markers is off — so
+    /// with the preview off this is exactly `seek(toOutput:)`, and the playhead
+    /// still lands precisely on the marker.
+    func seekToMarker(atOutput seconds: Double) {
+        seek(toOutput: MarkerBanners.previewTime(forMarkerAt: seconds, in: markerBanners))
+    }
+
     func seek(toOutput seconds: Double) {
         // A deliberate destination supersedes a mark jump still in flight;
         // `jump(toMarkAt:)` re-arms its own immediately after calling this.

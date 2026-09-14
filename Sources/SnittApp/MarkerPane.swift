@@ -212,7 +212,19 @@ struct MarkerPane: View {
             }
         }
         .onTapGesture(count: 2) { beginRename(chapter) }
-        .onTapGesture { state.seek(toOutput: chapter.outputTime) }
+        // `simultaneousGesture`, not a second `onTapGesture`. Two tap gestures
+        // of different counts on one view make the single-tap one WAIT for the
+        // double-tap one to fail before it can fire — the reported "half a
+        // second before the playhead moves" is that timeout, not the seek,
+        // which only pauses and hands an async seek to the player.
+        //
+        // Recognising simultaneously removes the wait. A double click then
+        // both seeks and renames, in that order, which is what it should
+        // already have done: renaming a marker without going to it is how you
+        // rename the wrong one.
+        .simultaneousGesture(TapGesture().onEnded {
+            state.seekToMarker(atOutput: chapter.outputTime)
+        })
         .contextMenu {
             Button("Rename") { beginRename(chapter) }
             Button("Edit Details…") { onEditMarker(chapter.id) }
