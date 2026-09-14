@@ -322,3 +322,10 @@ MarkerPreviewTimeTests :: Sources/SnittExport/MarkerBanners.swift :: guard resti
 NavigationOriginTests :: Sources/SnittApp/EditorWindowController.swift :: pendingSeekTarget = seconds :: pendingSeekTarget = nil
 NavigationOriginTests :: Sources/SnittApp/EditorWindowController.swift :: pendingSeekTarget = trimmedTime :: pendingSeekTarget = nil
 NavigationOriginTests :: Sources/SnittApp/EditorWindowController.swift :: if decision.dropPending { pendingSeekTarget = nil } :: if false { pendingSeekTarget = nil }
+
+# A press that resolves in mouseDown must CLAIM the gesture, or the trailing
+# mouseUp reads it as a bare click: it clears the selection and re-scrubs to
+# the pointer, both between one press and its own release.
+PhraseSelectionTests :: Sources/SnittApp/TimelineView.swift :: activePhraseClick = true :: activePhraseClick = false
+# A phrase click must select the whole utterance, not just land on its start.
+PhraseSelectionTests :: Sources/SnittApp/TimelineView.swift :: selection = Selection(range: TimeRange(start: phrase.start, end: phrase.end)) :: selection = Selection(range: TimeRange(start: phrase.start, end: phrase.start))

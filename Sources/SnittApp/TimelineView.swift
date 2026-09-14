@@ -681,8 +681,36 @@ public final class TimelineView: NSView {
         // NEAR the phrase, which is what the timeline already did before this
         // lane existed — landing AT it is the whole difference.
         onScrub(phrase.start)
+        // And the utterance is SELECTED, so the timeline highlights exactly
+        // what Delete (or right-click ▸ Cut Selection) would remove. A phrase
+        // is already a span with a start and an end; making a click report it
+        // is the difference between a lane you can read and a lane you can
+        // edit from.
+        //
+        // SOURCE time, which is what `phrase.start`/`phrase.end` already are
+        // (`drawPhraseChips` maps them through `geometry.x(atSource:)`) and
+        // what `Selection.range` means — `mouseUp`'s drag path converts its
+        // own output range with `sourceRange(ofOutput:)` for the same reason.
+        selection = Selection(range: TimeRange(start: phrase.start, end: phrase.end))
+        onSelect(selection)
+        // Claims the gesture, exactly as the fold branch does. Without it the
+        // trailing `mouseUp` finds nothing active, falls through to the
+        // plain-click path, and does two things that undo this one: it calls
+        // `onSelect(nil)`, clearing what was just selected, and it scrubs to
+        // the MOUSE position — which is the reported "jumps to the start of
+        // the phrase, then immediately jumps to the mouse".
+        activePhraseClick = true
+        needsDisplay = true
         return true
     }
+
+    /// Whether `mouseDown` resolved into a phrase selection.
+    ///
+    /// The sibling of `activeFoldClick`, and it exists for the identical
+    /// reason — see that property. A press that resolves during `mouseDown`
+    /// without beginning a gesture has to say so, or `mouseUp` reads it as a
+    /// bare click on empty timeline.
+    private var activePhraseClick = false
 
     func phraseHitForTesting(at point: NSPoint) -> TranscriptPhrase? { phraseHit(at: point) }
     @discardableResult
@@ -1076,6 +1104,7 @@ public final class TimelineView: NSView {
         // both already tested — and neither competes with anything, because
         // no lane assigns them a meaning at a cut's x.
         activeFoldClick = nil
+        activePhraseClick = false
         let output = time(for: event)
         gesture.began(atTime: output.seconds)
         // `onScrub`'s contract is SOURCE time (see
@@ -1095,7 +1124,7 @@ public final class TimelineView: NSView {
             needsDisplay = true
             return
         }
-        guard activeFoldClick == nil else { return }
+        guard activeFoldClick == nil, !activePhraseClick else { return }
         gesture.moved(toTime: time(for: event).seconds)
         needsDisplay = true
     }
@@ -1128,6 +1157,14 @@ public final class TimelineView: NSView {
             // scrubs and clears `selection`. See `activeFoldClick`'s doc
             // comment.
             activeFoldClick = nil
+            return
+        }
+        if activePhraseClick {
+            // Same rule, same reason — and this branch is the whole of the
+            // reported defect: without it the phrase's selection was cleared
+            // and the playhead re-seeked to the pointer, both between one
+            // press and its own release.
+            activePhraseClick = false
             return
         }
         let output = time(for: event)
