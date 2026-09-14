@@ -1,0 +1,55 @@
+name: Feature request
+description: Something Snitt should be able to do
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Snitt has a written decision log:
+        [`docs/superpowers/specs/2026-09-02-snitt-design.md`](https://github.com/impressiver/snitt/blob/main/docs/superpowers/specs/2026-09-02-snitt-design.md).
+        Several things that look missing were considered and declined for a
+        recorded reason, and several more are queued with the reasoning already
+        written down. Worth a search before writing: if a decision is there and
+        you think it is wrong, argue with it directly. That is a much stronger
+        request than a fresh one.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do?
+      description: >-
+        The problem, not the solution. "I need to show a colleague which button
+        I clicked" leads somewhere; "add a click counter" has already picked an
+        answer and hidden the question.
+    validations:
+      required: true
+
+  - type: textarea
+    id: today
+    attributes:
+      label: What do you do today instead?
+      description: >-
+        The workaround, however ugly. A feature that replaces a real workaround
+        is one somebody already wants; one that replaces nothing may be one
+        nobody has needed yet.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you want it to do? (optional)
+      description: If you have a shape in mind, describe it.
+
+  - type: checkboxes
+    id: constraints
+    attributes:
+      label: Does it fit what Snitt is?
+      description: >-
+        Not a gate, and answering "no" does not disqualify anything. These are
+        the constraints that have shaped the app so far, and saying which one
+        your idea presses on saves a round trip.
+      options:
+        - label: It works with no account, no server, and no network
+        - label: Nothing is recorded without the person at the machine agreeing to it
+        - label: It does not need the recording to leave the Mac

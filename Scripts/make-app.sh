@@ -114,7 +114,18 @@ cat > "$APP/Contents/Info.plist" <<PLIST
        it records it for is a developer or an agent acting for one (D66).
        Change it here if that ever stops being true. -->
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
-  <key>NSHumanReadableCopyright</key><string>Copyright (c) 2026 impressiver LLC. All rights reserved.</string>
+  <!-- MPL-2.0 SECTION 3.2, and the reason this is not "All rights reserved".
+       Distributing an executable obliges the distributor to "inform recipients
+       of the Executable Form how they can obtain a copy of such Source Code
+       Form by reasonable means in a timely manner", and to include that notice
+       "conspicuously ... in any notice in an Executable version, related
+       documentation or collateral in which You describe recipients' rights".
+
+       The About box IS that notice for a Mac app: it is the one place a person
+       looks to find out whose software this is. It previously read "All rights
+       reserved", which is the opposite of what the licence says and was the
+       only rights statement shipped in the binary. -->
+  <key>NSHumanReadableCopyright</key><string>Copyright © 2026 Ian White. Licensed under the Mozilla Public License 2.0. Source: https://github.com/impressiver/snitt</string>
   <key>CFBundleShortVersionString</key><string>$APP_VERSION</string>
   <!-- Sparkle's SUHost.validVersion reads ONLY CFBundleVersion (not
        CFBundleShortVersionString above). Without it, SPUUpdater's own

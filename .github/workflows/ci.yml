@@ -3,26 +3,55 @@ name: CI
 # Runs on every pull request, and on main after a merge. Main is checked
 # separately rather than trusted: PR checks run against the merge candidate,
 # and two PRs that each pass alone can still break main together.
+#
+# `pull_request`, NEVER `pull_request_target`. The difference is the whole of
+# this workflow's security posture now that anyone can fork:
+#
+#   - `pull_request` runs the contributor's code with a read-only GITHUB_TOKEN
+#     and NO access to repository secrets. A fork can change a build script, a
+#     test, or a dependency hook, and still reach nothing.
+#   - `pull_request_target` would run in the BASE repository's context, with
+#     secrets available. Combined with checking out the fork's code — which is
+#     what people reach for when they want secrets in a fork PR — it hands the
+#     contributor those secrets. GitHub's own guidance is to inspect
+#     pull-request code as data under that trigger and never execute it.
+#
+# This workflow needs no secrets, so the safe trigger costs nothing. If a job
+# here ever DOES need one, the answer is a separate workflow gated on a
+# maintainer action, not a trigger change.
 on:
   push:
     branches: [main]
   pull_request:
+  # So a maintainer can re-run the gate against a branch without pushing an
+  # empty commit, which is the usual workaround and pollutes the history.
+  workflow_dispatch:
 
-# A new push supersedes the run in flight. macOS minutes bill at 10x on a
-# private repository, so a superseded run is money spent on an answer nobody
-# will read.
+# A new push supersedes the run in flight. Cheap insurance against a busy
+# pull request queueing three runs deep, and it keeps the feedback a
+# contributor sees pinned to their latest push rather than an earlier one.
+#
+# (This was written when the repo was private and macOS minutes billed at 10x.
+# Public repositories get Actions free, including the macOS runners — which is
+# why this workflow can now actually run at all. Every run before the repo went
+# public failed in about six seconds with no steps executed, because the
+# spending limit blocked it.)
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Read-only, at the top level, so every job inherits it and a new job cannot
+# quietly acquire write access by omission. Nothing here publishes anything.
 permissions:
   contents: read
 
 jobs:
   hygiene:
     name: Hygiene
-    # Ubuntu on purpose: none of these need Swift or macOS, and macOS minutes
-    # cost 10x on a private repo. Everything requiring a compiler is below.
+    # Ubuntu on purpose: none of these need Swift or macOS, and it starts in
+    # seconds where a macOS runner takes a minute. A contributor who has broken
+    # a whitespace rule learns it almost immediately instead of after the build.
+    # Everything requiring a compiler is below.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -156,8 +185,8 @@ jobs:
   release-build:
     name: Release build
     # Main only. A release build catches what only the optimiser sees, and
-    # costs a second macOS job — worth paying once per merge rather than on
-    # every push to every branch.
+    # costs a second macOS job: worth paying once per merge rather than on
+    # every push to every branch, including every push to every fork.
     if: github.event_name == 'push'
     runs-on: macos-26
     timeout-minutes: 40

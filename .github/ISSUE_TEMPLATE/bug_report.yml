@@ -1,0 +1,88 @@
+name: Bug report
+description: Something Snitt does that it should not, or does not do that it should
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Do not paste anything private.** A Snitt recording is a video of your
+        screen, and a diagnostics bundle contains recent log lines. Both can
+        carry things you did not mean to publish. Everything in this form is
+        public and cannot be unpublished.
+
+        Found a security problem? Close this and use
+        [private reporting](https://github.com/impressiver/snitt/security/advisories/new)
+        instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+      placeholder: |
+        Clicked a marker in the panel. The playhead moved there, then jumped
+        back to the mouse a moment later.
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: >-
+        Numbered, starting from a freshly launched Snitt. The step that matters
+        is usually the one that feels too obvious to write down.
+      placeholder: |
+        1. Record any window for ten seconds, pressing the marker key twice
+        2. Open the recording in the editor
+        3. Click the second marker in the panel
+    validations:
+      required: true
+
+  - type: input
+    id: snitt-version
+    attributes:
+      label: Snitt version
+      description: >-
+        Snitt ▸ About Snitt. Both numbers, please: the version and the build.
+        The build number is what identifies the exact commit.
+      placeholder: "0.5.0 (163)"
+    validations:
+      required: true
+
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version
+      description: " ▸ About This Mac. Include the chip (Apple silicon or Intel)."
+      placeholder: "26.5.2, M2 Pro"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: how-installed
+    attributes:
+      label: How did you install it?
+      description: >-
+        Asked because a build from source is unsigned, and macOS treats it
+        differently: permissions are granted per signature, so a rebuild can
+        silently lose Screen Recording access. That failure looks like a bug
+        in Snitt and is not one.
+      options:
+        - DMG from the Releases page
+        - Homebrew cask
+        - Built from source
+        - Other or not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics bundle (optional)
+      description: >-
+        `snitt diagnostics export` writes a JSON file with recent log lines,
+        permission states and redacted session metadata. Window titles and file
+        paths are stripped. READ IT BEFORE ATTACHING and remove anything you
+        would not post publicly.
+      render: text

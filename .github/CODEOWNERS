@@ -1,0 +1,25 @@
+# One maintainer, so this is not about routing. It is about the review never
+# being skipped by accident on the parts where a mistake is expensive and
+# invisible.
+*                           @impressiver
+
+# Consent and capture. Section 5 of the spec is the promise the app makes about
+# what is recorded and when; a change here can weaken it without any test
+# noticing, because the tests assert the rules as written.
+/Sources/SnittCapture/      @impressiver
+/Sources/SnittAutomation/   @impressiver
+
+# Signing, notarization and the update channel. These install code on other
+# people's machines.
+/Scripts/release.sh         @impressiver
+/Scripts/notarize.sh        @impressiver
+/Scripts/make-app.sh        @impressiver
+/Scripts/make-appcast.sh    @impressiver
+
+# The decision log. Reversing a decision is allowed; doing it silently leaves
+# every later reader working from a premise that is no longer true.
+/docs/superpowers/specs/    @impressiver
+
+# CI runs on pull requests from forks. A workflow change is a change to what
+# runs against untrusted code.
+/.github/                   @impressiver

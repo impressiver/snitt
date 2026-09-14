@@ -1005,6 +1005,36 @@ func infoPlistCarriesStandardKeys() throws {
     }
 }
 
+@Test("The rights notice in the binary matches the licence the project ships under")
+func copyrightNoticeSatisfiesMPLSection32() throws {
+    // MPL-2.0 §3.2 obliges whoever distributes an executable to "inform
+    // recipients of the Executable Form how they can obtain a copy of such
+    // Source Code Form", and to do it "conspicuously ... in any notice in an
+    // Executable version, related documentation or collateral in which You
+    // describe recipients' rights". For a Mac app the About box is that
+    // notice: it is the one place a person looks to find out whose software
+    // this is, and `NSHumanReadableCopyright` is the only rights statement
+    // that ships inside the bundle at all.
+    //
+    // It read "All rights reserved" until 2026-09-14 — the opposite of what
+    // LICENSE says, shipped in every release. The existing test above checks
+    // only that the KEY is present, which that wrong value satisfied.
+    let source = try String(contentsOf: makeAppScript, encoding: .utf8)
+    let line = try #require(
+        source.split(separator: "\n")
+            .first { $0.contains("<key>NSHumanReadableCopyright</key>") }
+            .map(String.init))
+
+    #expect(!line.lowercased().contains("all rights reserved"),
+            "the binary claims all rights reserved over MPL-2.0 software: \(line)")
+    #expect(line.contains("Mozilla Public License"),
+            "the notice does not name the licence: \(line)")
+    // The §3.2 obligation is specifically to say WHERE the source is. A notice
+    // naming the licence and not the source satisfies the easy half.
+    #expect(line.contains("https://github.com/impressiver/snitt"),
+            "the notice does not say where to get the source: \(line)")
+}
+
 // MARK: - The two version keys, deliberately disjoint
 
 @Test("CFBundleVersion is a plain number, and is NOT the marketing version",

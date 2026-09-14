@@ -30,6 +30,15 @@ relicense in future (a Mac App Store build, or a commercial licence beside the
 free one), which is impossible once contributions arrive under terms that cannot
 be changed without unanimous permission.
 
+## Conduct, and reporting something dangerous
+
+By taking part you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
+
+**Found a security problem? Do not open an issue.** Use
+[private vulnerability reporting](https://github.com/impressiver/snitt/security/advisories/new),
+which is visible only to you and the maintainer. [`SECURITY.md`](SECURITY.md)
+says what is in scope and what to expect.
+
 ## Before you open a pull request
 
 Read [`docs/DEVELOPING.md`](docs/DEVELOPING.md) for environment setup, building
@@ -52,6 +61,29 @@ Two project-specific traps:
   movies, or open windows. Run the full unfiltered `swift test` locally before
   proposing anything that touches export, composition, the editor or the
   timeline.
+
+### Continuous integration
+
+CI runs on every pull request, including from a fork. It uses the
+`pull_request` trigger with a read-only token and no repository secrets, so
+nothing you push can reach anything — which is also why no job here can sign,
+notarize or publish.
+
+Three jobs: hygiene checks on Ubuntu, then build-and-test and a release build on
+macOS 26. The macOS runner matches `Package.swift`'s floor deliberately, so an
+API newer than the floor fails here rather than shipping and trapping on a
+supported machine.
+
+If this is your first contribution, a maintainer has to approve the workflow run
+before it starts. That is a GitHub setting for public repositories, not a
+judgement about you.
+
+### Documentation
+
+User-facing documentation is the [wiki](https://github.com/impressiver/snitt/wiki),
+and its source is [`docs/wiki/`](docs/wiki/) in this repository. Edit it here, in
+a pull request, and a maintainer publishes with `Scripts/publish-wiki.sh`. A
+wiki has no review; this way the copy people read went through some.
 
 ### Scope
 

@@ -340,3 +340,8 @@ RailLayoutTests :: Sources/SnittApp/RailLayout.swift :: markersExpanded && trans
 # check looks exactly like no update being available.
 SparkleVersionFieldTests :: Scripts/make-appcast.sh :: <sparkle:version>${BUILD_VERSION_ESCAPED}</sparkle:version> :: <sparkle:version>${VERSION_ESCAPED}</sparkle:version>
 SparkleVersionFieldTests :: Scripts/make-appcast.sh :: sparkle:version="${BUILD_VERSION_ESCAPED}" :: sparkle:version="${VERSION_ESCAPED}"
+
+# MPL-2.0 §3.2: the executable must say where the source is. The About box is
+# the only rights notice that ships in the bundle, and it read "All rights
+# reserved" through five releases.
+BundleLayoutTests :: Scripts/make-app.sh :: <key>NSHumanReadableCopyright</key><string>Copyright © 2026 Ian White. Licensed under the Mozilla Public License 2.0. Source: https://github.com/impressiver/snitt</string> :: <key>NSHumanReadableCopyright</key><string>Copyright (c) 2026 impressiver LLC. All rights reserved.</string>
