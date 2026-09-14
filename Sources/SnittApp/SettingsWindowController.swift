@@ -149,17 +149,20 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     static let updatesSectionTitle = "Updates & Diagnostics"
     static let shortcutsSectionTitle = "Keyboard Shortcuts"
 
-    /// "Default path" rather than "Save recordings to", so it reads as the
-    /// app's folder rather than one feature's.
+    /// Named for exactly what it governs.
     ///
-    /// Worth knowing what it actually governs TODAY, because the name is
-    /// broader than the behaviour: `RecordingCoordinator` is its only consumer,
-    /// so this is where recordings land. Export deliberately does not consult
-    /// it — `defaultExportURL(forBundle:)` puts an export beside the bundle it
-    /// came from, "because a `.snitt` bundle already lives where its owner put
-    /// it". With the default path unchanged the two coincide; they diverge only
-    /// for a bundle that has been moved out of it.
-    static let outputDirectoryCaption = "Default path"
+    /// It was briefly "Default path", which read as the app's one folder for
+    /// everything. It is not: `RecordingCoordinator` is its only consumer, so
+    /// this is where RECORDINGS land and nothing else. Export deliberately
+    /// does not consult it — `defaultExportURL(forBundle:)` puts an export
+    /// beside the bundle it came from, "because a `.snitt` bundle already
+    /// lives where its owner put it". With this folder unchanged the two
+    /// coincide, which is what made the broader name look true.
+    ///
+    /// A noun phrase, like every other heading on this window, rather than the
+    /// original "Save recordings to" — a sentence fragment left hanging over a
+    /// path and a button.
+    static let outputDirectoryCaption = "Recordings folder"
     static let outputDirectoryButtonTitle = "Choose…"
 
     /// - Parameters:

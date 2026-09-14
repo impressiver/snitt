@@ -899,6 +899,27 @@ struct SettingsRowTests {
         }
     }
 
+    @Test("The folder setting is named for the only thing it governs")
+    func folderCaptionNamesRecordings() {
+        // Every other test here reaches this label through the constant, so
+        // the constant could say anything at all and they would still pass.
+        // This is the one that reads it.
+        //
+        // It briefly said "Default path", which sounds like the app's one
+        // folder for everything and is not: `RecordingCoordinator` is its only
+        // consumer. Export deliberately lands beside the bundle it came from,
+        // so with this folder unchanged the two coincide — which is exactly
+        // what made the broader name look true, and why nothing noticed.
+        let caption = SettingsWindowController.outputDirectoryCaption
+        #expect(caption.lowercased().contains("recording"),
+                "the folder setting no longer says what it governs: \(caption)")
+        // And does not claim the things it does NOT govern.
+        for overclaim in ["export", "default path", "everything"] {
+            #expect(!caption.lowercased().contains(overclaim),
+                    "the caption claims \(overclaim), which this setting does not control: \(caption)")
+        }
+    }
+
     @Test("Nothing says the default-path caption twice")
     func theSaveGroupSaysItOnce() throws {
         // The group header was added above a row that already carried its own
