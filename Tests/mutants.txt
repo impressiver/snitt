@@ -421,4 +421,13 @@ FoldMenuTests :: Sources/SnittApp/TimelineView.swift :: guard let id = selectedF
 TimelineZoomSyncTests :: Sources/SnittApp/TimelineView.swift :: onZoomChanged(zoomFraction) :: _ = zoomFraction
 # Narration is drawn in the colour its WORDS are. Amber says "one of the
 # recorded tracks", which is the one thing it is not.
-VoiceoverLaneColourTests :: Sources/SnittApp/TimelineView.swift :: guard track == "voiceover" else { return muted ? waveformMuted : waveform } :: guard false else { return muted ? waveformMuted : waveform }
+VoiceoverLaneColourTests :: Sources/SnittApp/TimelineView.swift :: let colour = SnittPalette.track(track) :: let colour = SnittPalette.signal
+# One colour per track, and every renderer asks the same question. A palette
+# that answers "amber" for everything puts an amber ladder against a teal lane.
+TrackColourTests :: Sources/SnittBrand/SnittPalette.swift :: track == "voiceover" ? voiceover : signal :: signal
+# The ladder must ASK. Reading the token but ignoring it for the meter is the
+# state this change was reported in.
+TrackColourTests :: Sources/SnittApp/TimelineGutter.swift :: return SnittPalette.Swatch.track(track) :: return SnittPalette.Swatch.signal
+# Lanes read in composition order. The old hardcoded list put the microphone
+# first, disagreeing with the only order that is load-bearing.
+AudioLaneOrderTests :: Sources/SnittApp/TimelineTrackLayout.swift :: let order = AudioTrackOrder.canonical :: let order = ["microphone", "systemAudio", "voiceover"]

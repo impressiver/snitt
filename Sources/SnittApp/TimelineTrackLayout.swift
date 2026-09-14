@@ -26,12 +26,25 @@ enum TimelineTrackLayout {
     /// with the microphone off has no `microphone` state and must not be given
     /// an empty band implying a source that was never captured.
     static func audioTracks(in states: [TrackState]) -> [String] {
-        // "voiceover" LAST, so narration reads as something added under the
-        // recording rather than as one of the sources it was made from. It
-        // appears only once a take exists, for the same reason the microphone
-        // band does: a lane for a source that was never captured implies one.
-        ["microphone", "systemAudio", "voiceover"]
-            .filter { name in states.contains { $0.track == name } }
+        // `AudioTrackOrder.canonical`, rather than a second list that happens
+        // to agree — system audio, then the microphone, then the voiceover.
+        //
+        // THE LANES NOW READ IN THE ORDER THE TRACKS EXIST IN THE FILE. That
+        // is the order `AssetWriterSink` writes and the order an audio mix
+        // addresses, so "the second lane" and "track 1" are finally the same
+        // thing. This list used to put the microphone first, which meant the
+        // one place a human reads the track order disagreed with the only
+        // place it is load-bearing.
+        //
+        // Keeping it derived also makes "voiceover LAST" a consequence rather
+        // than a coincidence: narration is appended third, so it draws third,
+        // and it reads as something added UNDER the recording rather than as
+        // one of the sources it was made from.
+        //
+        // Filtered by what the recording actually has, because a lane for a
+        // source that was never captured implies one that was.
+        let order = AudioTrackOrder.canonical
+        return order.filter { name in states.contains { $0.track == name } }
     }
 
     /// Band rects, bottom-up in AppKit's flipped-off coordinate space, matching

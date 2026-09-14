@@ -115,6 +115,25 @@ public enum SnittPalette {
     /// all three weaker.
     public static let voiceover = NSColor(srgbRed: 0.353, green: 0.784, blue: 0.741, alpha: 1)
 
+    /// The colour that MEANS a given audio track, wherever that track is drawn.
+    ///
+    /// One answer, because a track is drawn in four places — its waveform, its
+    /// VU ladder, its transcript words, its lane — and each one used to pick a
+    /// colour for itself. The voiceover lane and the voiceover words already
+    /// disagreed once; the ladder beside that lane still glowed amber after
+    /// the lane was fixed, which is the same bug surfacing a fourth time.
+    ///
+    /// Asked by NAME rather than by index. Lane order is a display choice, and
+    /// an index-based answer is the defect that once gave system audio the
+    /// state named "video".
+    ///
+    /// Amber is the default rather than a listed case: a track this does not
+    /// know is a RECORDED source, and recorded sources are amber. A new track
+    /// with its own meaning has to come and add itself here.
+    public static func track(_ track: String) -> NSColor {
+        track == "voiceover" ? voiceover : signal
+    }
+
     /// The playhead line and its caret — the brightest thing on the
     /// instrument, because it outranks everything it crosses. Replaces
     /// `grey(0.97)`.
@@ -162,5 +181,9 @@ public enum SnittPalette {
         public static var playheadInk: Color { Color(nsColor: SnittPalette.playheadInk) }
         public static var amberText: Color { Color(nsColor: SnittPalette.amberText) }
         public static var redText: Color { Color(nsColor: SnittPalette.redText) }
+        public static var voiceover: Color { Color(nsColor: SnittPalette.voiceover) }
+        public static func track(_ track: String) -> Color {
+            Color(nsColor: SnittPalette.track(track))
+        }
     }
 }

@@ -1561,23 +1561,16 @@ public final class TimelineView: NSView {
         static let playhead = SnittPalette.playheadInk
         static let waveform = SnittPalette.signal
         static let waveformMuted = SnittPalette.signal.withAlphaComponent(0.28)
-        /// Narration, in the SAME teal its words are drawn in. A lane in the
-        /// brand's amber said "this is one of the recorded tracks", which is
-        /// the one thing it is not — and the transcript was already colouring
-        /// the same audio differently two panes away.
-        static let voiceoverWaveform = SnittPalette.voiceover
-        static let voiceoverWaveformMuted = SnittPalette.voiceover.withAlphaComponent(0.28)
 
         /// The waveform colour for a named track.
         ///
-        /// Asked by NAME rather than by lane index, because the lane order is
-        /// a display choice (`TimelineTrackLayout.audioTracks` puts the
-        /// microphone first) while the composition's order is not — and an
-        /// index-based answer is the defect that once gave system audio the
-        /// state named "video".
+        /// `SnittPalette.track` decides WHICH colour; this decides how a muted
+        /// one is dimmed. A muted track fades within its own hue rather than
+        /// becoming a muted amber, which would read as a different track being
+        /// silenced.
         static func waveform(for track: String, muted: Bool) -> NSColor {
-            guard track == "voiceover" else { return muted ? waveformMuted : waveform }
-            return muted ? voiceoverWaveformMuted : voiceoverWaveform
+            let colour = SnittPalette.track(track)
+            return muted ? colour.withAlphaComponent(0.28) : colour
         }
         /// Word and phrase chips: `ink2`, per the rev 5 style sheet.
         static let chip = SnittPalette.ink2

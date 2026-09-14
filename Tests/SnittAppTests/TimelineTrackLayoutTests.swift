@@ -27,7 +27,7 @@ struct TimelineTrackLayoutTests {
         // lane implying a source that was never captured.
         let withMic = [TrackState(track: "video"), TrackState(track: "microphone"),
                        TrackState(track: "systemAudio")]
-        #expect(TimelineTrackLayout.audioTracks(in: withMic) == ["microphone", "systemAudio"])
+        #expect(TimelineTrackLayout.audioTracks(in: withMic) == ["systemAudio", "microphone"])
 
         let withoutMic = [TrackState(track: "video"), TrackState(track: "systemAudio")]
         #expect(TimelineTrackLayout.audioTracks(in: withoutMic) == ["systemAudio"])
