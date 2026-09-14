@@ -68,9 +68,27 @@ func monitorIsReleasedAfterStop() {
     do {
         let monitor = InputEventMonitor { _, _ in }
         weakMonitor = monitor
-        let started = monitor.start()
-        #expect(started == InputMonitoringAccess.isGranted(),
-                "start() succeeds exactly when the grant is present")
+        // The return value is DELIBERATELY not compared against
+        // `InputMonitoringAccess.isGranted()`, which is what this test used to
+        // do and what made it flaky — it failed three separate full-gate runs
+        // on 2026-09-14 and passed in isolation every time.
+        //
+        // The two are not equivalent and the platform never promised they
+        // would be. `isGranted()` is `CGPreflightListenEventAccess()`, a
+        // cached answer about the CURRENT process's TCC record;
+        // `CGEventTapCreate` is a live kernel call that can succeed while the
+        // preflight still reports false — most reliably for a test binary,
+        // which is not the registered app the grant is recorded against. So
+        // the assertion was testing an agreement between two independent
+        // system calls, not anything in this file.
+        //
+        // What this test is FOR is the line below: the tap holds a +1 on the
+        // monitor, and a failed `tapCreate` that forgot to release it — or a
+        // `stop()` that forgot to — keeps the object alive for ever with no
+        // way to reach it. `deinit` never runs, so the thread and the mach
+        // port leak with it. That holds however `start()` went, which is what
+        // the test's own name says.
+        _ = monitor.start()
         monitor.stop()
     }
     #expect(weakMonitor == nil, "the tap's +1 must have been released")
