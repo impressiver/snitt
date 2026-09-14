@@ -429,6 +429,40 @@ if step 6 "Generate the appcast item"; then
     "https://github.com/$REPO/releases/download/$TAG/$ZIP" \
     "${SIGNATURE:-dry-run-signature}" \
     --output "$APPCAST"
+
+  # What Sparkle COMPARES, checked against what was actually built.
+  #
+  # `sparkle:version` corresponds to the app's CFBundleVersion (Sparkle's own
+  # SUAppcastItem.h says so), and this project keeps that DISJOINT from the
+  # human version — it is the commit count. An appcast advertising the
+  # marketing version instead is not a cosmetic error: Sparkle compares it
+  # against the installed CFBundleVersion, reads the installed build as newer,
+  # and offers nothing. That shipped in every release up to and including
+  # v0.5.0 before anyone noticed, because a broken update check looks exactly
+  # like no update being available.
+  #
+  # Checked HERE rather than inside make-appcast.sh because only this script
+  # knows the difference between a real release and a test fixture: that one
+  # warns and carries on when it cannot read the zip, and for a release that
+  # has to be fatal.
+  if [ "$DRY_RUN" -eq 0 ]; then
+    BUILT_CFBUNDLEVERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
+      build/Snitt.app/Contents/Info.plist 2>/dev/null || true)"
+    APPCAST_SPARKLE_VERSION="$(sed -nE 's:.*<sparkle:version>([^<]*)</sparkle:version>.*:\1:p' \
+      "$APPCAST" | head -1)"
+    if [ -z "$BUILT_CFBUNDLEVERSION" ] || [ -z "$APPCAST_SPARKLE_VERSION" ]; then
+      echo "error: could not read the build number from the app or the appcast." >&2
+      exit 1
+    fi
+    if [ "$APPCAST_SPARKLE_VERSION" != "$BUILT_CFBUNDLEVERSION" ]; then
+      echo "error: $APPCAST advertises sparkle:version '$APPCAST_SPARKLE_VERSION'," >&2
+      echo "       but the app it points at has CFBundleVersion" >&2
+      echo "       '$BUILT_CFBUNDLEVERSION'. Sparkle compares those, so this" >&2
+      echo "       release would never be offered to anyone." >&2
+      exit 1
+    fi
+    echo "   sparkle:version $APPCAST_SPARKLE_VERSION matches the built app"
+  fi
 fi
 
 if step 7 "Build and notarize the DMG"; then
