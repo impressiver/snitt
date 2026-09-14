@@ -1515,7 +1515,67 @@ struct EditorContentView: View {
     /// Whether the reading transcript is open. UI-only, like `croppingActive`:
     /// what is asserted elsewhere is that the transcript persists and edits,
     /// not which panes a window happens to be showing.
-    @State private var showTranscript = false
+    /// The side panel: two independently-expandable indexes of one recording.
+    ///
+    /// When BOTH are open the transcript keeps its stored height and the
+    /// markers list takes the rest, with a draggable divider between them.
+    /// When only one is open it takes the whole rail — a divider between a
+    /// section and a closed header would be a handle that resizes nothing.
+    @ViewBuilder
+    private var rail: some View {
+        let markerPane = MarkerPane(state: state, playhead: playhead,
+                                    onEditMarker: { editingMarkerID = $0 })
+        let hasTranscript = state.transcriptionStatus != .none
+        VStack(spacing: 0) {
+            AccordionSection(title: "Markers",
+                             subtitle: state.chapters.isEmpty
+                                 ? nil : "\(state.chapters.count)",
+                             isExpanded: $markersExpanded,
+                             accessory: { markerPane.addButton },
+                             content: { markerPane })
+                .frame(maxHeight: RailLayout.markersHeight(markersExpanded: markersExpanded)
+                       .maxHeight(fillIsInfinite: true))
+            if hasTranscript {
+                Divider()
+                if RailLayout.showsDivider(markersExpanded: markersExpanded,
+                                           transcriptExpanded: transcriptExpanded) {
+                    ResizableDivider(axis: .horizontal, direction: -1) { delta in
+                        let base = dragStartWidth ?? paneWidths.transcript
+                        if dragStartWidth == nil { dragStartWidth = base }
+                        paneWidths.transcript = PaneWidths.clampTranscript(base + delta)
+                    } onCommit: {
+                        dragStartWidth = nil
+                        paneWidths.save()
+                    }
+                }
+                AccordionSection(title: "Transcript",
+                                 subtitle: state.transcript.map { "\($0.words.count) words" },
+                                 isExpanded: $transcriptExpanded) {
+                    TranscriptPane(state: state, playhead: playhead)
+                }
+                // Its stored height only while sharing the rail; the whole of
+                // it when the markers list is closed. `RailLayout` owns that
+                // rule, because it has branches and this file cannot test them.
+                .frame(maxHeight: RailLayout.transcriptHeight(
+                    markersExpanded: markersExpanded,
+                    transcriptExpanded: transcriptExpanded,
+                    stored: paneWidths.transcript).maxHeight(fillIsInfinite: true))
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    /// Whether the side panel is on screen at all. Defaults to TRUE because
+    /// the markers list always used to be: the toggle now governs the whole
+    /// rail, and a rail that started hidden would take away a list nobody
+    /// asked to lose.
+    @State private var showRail = true
+    /// Which sections are open. Both can be, at once — see `AccordionSection`
+    /// for why an either/or accordion would be the wrong shape for two indexes
+    /// of the same recording. The transcript starts closed, which is the state
+    /// the old `showTranscript` toggle defaulted to.
+    @State private var markersExpanded = true
+    @State private var transcriptExpanded = false
     /// Pane widths, loaded once and written back when a drag ENDS.
     ///
     /// Not on every frame of the drag: `UserDefaults` writes during a
@@ -1606,7 +1666,7 @@ struct EditorContentView: View {
                 title: state.documentTitle,
                 subtitle: state.documentSubtitle,
                 croppingActive: $croppingActive,
-                showTranscript: $showTranscript,
+                showTranscript: $showRail,
                 hasTranscript: state.transcriptionStatus != .none,
                 canApplyCrop: cropBox != .full,
                 hasCrop: state.edl.crop != nil,
@@ -1621,43 +1681,6 @@ struct EditorContentView: View {
             Divider()
 
             HStack(alignment: .top, spacing: 0) {
-                // One rail, two indexes of the same recording, stacked. They
-                // were a left column and a right column, which put the two
-                // things you READ on opposite sides of the picture and left
-                // the transcript competing with it for width.
-                VStack(spacing: 0) {
-                    // The chapter index, always present rather than
-                    // conditional on there being markers: it is the only way
-                    // to CREATE one outside of recording, so hiding it when
-                    // the list is empty would hide the affordance exactly
-                    // when it is needed.
-                    MarkerPane(state: state, playhead: playhead,
-                               onEditMarker: { editingMarkerID = $0 })
-                        .frame(maxHeight: .infinity)
-                    if showTranscript, state.transcriptionStatus != .none {
-                        // `direction: -1` — the transcript is BELOW its
-                        // divider, so dragging down makes it shorter.
-                        ResizableDivider(axis: .horizontal, direction: -1) { delta in
-                            let base = dragStartWidth ?? paneWidths.transcript
-                            if dragStartWidth == nil { dragStartWidth = base }
-                            paneWidths.transcript = PaneWidths.clampTranscript(base + delta)
-                        } onCommit: {
-                            dragStartWidth = nil
-                            paneWidths.save()
-                        }
-                        TranscriptPane(state: state, playhead: playhead)
-                            .frame(height: paneWidths.transcript)
-                    }
-                }
-                .frame(width: paneWidths.markers)
-                ResizableDivider(direction: 1) { delta in
-                    let base = dragStartWidth ?? paneWidths.markers
-                    if dragStartWidth == nil { dragStartWidth = base }
-                    paneWidths.markers = PaneWidths.clampMarkers(base + delta)
-                } onCommit: {
-                    dragStartWidth = nil
-                    paneWidths.save()
-                }
                 PlayerLayerView(player: controller.player,
                                 clickMarks: state.clickMarks,
                                 cues: state.subtitleCues,
@@ -1674,6 +1697,22 @@ struct EditorContentView: View {
                                 box: $cropBox)
                         }
                     }
+                // The rail is on the TRAILING edge, which is where the toolbar
+                // toggle has always said it would be: that button's icon is
+                // `sidebar.trailing`, and it was opening a panel on the left.
+                if showRail {
+                    // `direction: -1` — the rail is to the RIGHT of its
+                    // divider, so dragging right makes it narrower.
+                    ResizableDivider(direction: -1) { delta in
+                        let base = dragStartWidth ?? paneWidths.markers
+                        if dragStartWidth == nil { dragStartWidth = base }
+                        paneWidths.markers = PaneWidths.clampMarkers(base + delta)
+                    } onCommit: {
+                        dragStartWidth = nil
+                        paneWidths.save()
+                    }
+                    rail.frame(width: paneWidths.markers)
+                }
             }
 
             // The seam is deliberate. Appearance-following chrome meets a

@@ -275,11 +275,22 @@ struct TranscriptPane: View {
             .background(background(isSelected: selection.contains(word.id),
                                    isCurrent: isCurrent),
                         in: RoundedRectangle(cornerRadius: 3))
-            // count: 2 registered FIRST — SwiftUI resolves simultaneous tap
-            // gestures in declaration order, and the reverse order makes the
-            // double-tap unreachable behind two single-taps.
             .onTapGesture(count: 2) { beginEdit(word) }
-            .onTapGesture { handleTap(word) }
+            // `simultaneousGesture`, not a second `onTapGesture`. Two tap
+            // gestures of different counts on one view make the single-tap one
+            // WAIT for the double-tap one to fail, and that wait IS the
+            // double-click interval — the reported half-second before a word
+            // responds, and the same defect the marker rows had.
+            //
+            // The comment this replaces said the declaration ORDER was what
+            // mattered ("count: 2 registered FIRST … the reverse order makes
+            // the double-tap unreachable"). Order does decide which gesture
+            // wins; it does nothing about the wait, because with two exclusive
+            // tap gestures there is always something to wait for. Recognising
+            // simultaneously is what removes it. A double click now selects
+            // and then opens the editor, in that order, which is what editing
+            // a word you have not selected should do anyway.
+            .simultaneousGesture(TapGesture().onEnded { handleTap(word) })
             .contextMenu {
                 Button("Edit Word…") { beginEdit(word) }
             }
