@@ -72,4 +72,34 @@ public enum TranscriptParagraphs {
         if !current.isEmpty { paragraphs.append(TranscriptParagraph(words: current)) }
         return paragraphs
     }
+
+    /// Where a paragraph sits on the OUTPUT timeline, or nil when every word
+    /// in it has been cut away.
+    ///
+    /// Output, not source, because this is a number a person reads next to the
+    /// transport's own clock and next to the marker rail's timestamps. A
+    /// source time would be right about the recording and wrong about the
+    /// edit, and it would stop agreeing with the playhead the moment anything
+    /// was trimmed — which is most of the time this app is open.
+    ///
+    /// The FIRST SURVIVING word, not simply the first. Cut words stay on
+    /// screen struck through (that is what `TranscriptPane` draws and what
+    /// `split` is fed), so a paragraph can begin with words that have no
+    /// position in the output at all. Asking `trimmedTime` about one of those
+    /// gets nil, and a paragraph that is half kept would then have no
+    /// timestamp despite being perfectly reachable.
+    ///
+    /// Nil is reserved for the case that actually has no answer: every word
+    /// gone. The pane shows no time there, which is the truth — there is
+    /// nowhere to click to.
+    public static func outputStart(of paragraph: TranscriptParagraph,
+                                   keptRanges: [TimeRange]) -> Double? {
+        for word in paragraph.words {
+            if let trimmed = TimeRangeMapping.trimmedTime(of: word.start,
+                                                          keptRanges: keptRanges) {
+                return trimmed
+            }
+        }
+        return nil
+    }
 }
