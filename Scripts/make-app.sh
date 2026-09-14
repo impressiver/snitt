@@ -182,6 +182,23 @@ cat > "$APP/Contents/Info.plist" <<PLIST
       <key>LSItemContentTypes</key>
       <array><string>com.impressiver.snitt.recording</string></array>
     </dict>
+    <!-- Plain video, so a file can be dropped on the Dock icon or opened
+         with Snitt from the Finder. Opening one IMPORTS it into a new
+         document, which is why the role is Viewer rather than Editor: Snitt
+         does not write back to somebody else's .mp4, it copies it into a
+         bundle and edits that. Declaring Editor here would offer Snitt as a
+         handler that owns the file, which it never becomes. -->
+    <dict>
+      <key>CFBundleTypeName</key><string>Video</string>
+      <key>CFBundleTypeRole</key><string>Viewer</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>public.movie</string>
+        <string>public.mpeg-4</string>
+        <string>com.apple.quicktime-movie</string>
+      </array>
+    </dict>
   </array>
   <!-- Task 5's Scripts/make-appcast.sh generates the real appcast this URL
        points at (run with --output, whose only accepted filename is

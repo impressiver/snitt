@@ -2061,7 +2061,20 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// (Task 7), two windows on one bundle means two EDLs over one document
     /// and whichever saves last wins; this identity is what `existing(for:)`
     /// keys reuse on to prevent that.
-    public let bundleURL: URL
+    /// Where the document lives. `private(set) var`, not `let`, because an
+    /// IMPORTED document moves once: it is created in a scratch directory and
+    /// relocated by the first Save. Everything else about it is identical
+    /// before and after, so moving the window to a new document would throw
+    /// away undo history and window position for no reason.
+    public private(set) var bundleURL: URL
+
+    /// Whether this document has never been saved anywhere the person chose.
+    ///
+    /// True only for imports. A recording Snitt made is written to the
+    /// recordings folder as it stops, so it has a home from the moment it
+    /// exists; an imported video is in a scratch directory until somebody says
+    /// where it belongs.
+    public private(set) var isUnsaved = false
 
     /// Looks up an already-open window for `url`, standardizing both sides
     /// of the comparison so `/tmp/x.snitt` and `/private/tmp/x.snitt` — the
@@ -2196,6 +2209,22 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// recording's real markers; making the caller write `.fullRange()` /
     /// `[]` explicitly when that's genuinely what's meant turns "I forgot"
     /// into a build error instead of a silently empty scrub bar.
+    /// Marks this document as living in a scratch directory until saved.
+    ///
+    /// Set after `init` rather than passed through it: every existing caller
+    /// opens a document that already has a home, and threading a parameter
+    /// none of them would ever set through the one initializer is how a
+    /// default ends up meaning two things.
+    public func markUnsaved() { isUnsaved = true }
+
+    /// Test-only: where the PREVIEW believes the document lives.
+    ///
+    /// Read separately from `bundleURL` on purpose. The two are set by
+    /// different objects during a save, and the failure worth catching is them
+    /// disagreeing: the window would show the new path while every write went
+    /// to the old one, silently, because those writes are fire-and-forget.
+    var previewBundleURLForTesting: URL { state.controller.snittBundle.url }
+
     public init(controller: PreviewController, title: String, bundleURL: URL,
                 edl: EditDecisionList, events: [LoggedEvent]) {
         self.controller = controller
@@ -2508,6 +2537,71 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
 
     private func endSharePreparation(_ sheet: NSWindow) {
         window.endSheet(sheet)
+    }
+
+    /// File ▸ Save (⌘S).
+    ///
+    /// A document that already has a home is saved CONTINUOUSLY — every edit
+    /// writes `edit.json` as it happens — so ⌘S on one has nothing left to do
+    /// and says so rather than flashing a panel that changes nothing.
+    ///
+    /// An imported one lives in a scratch directory and has never been put
+    /// anywhere on purpose, so the first ⌘S is where that is decided. After
+    /// the move this is an ordinary document and the branch above applies.
+    public func save() {
+        guard isUnsaved else {
+            AppDelegate.presentMessage(
+                "This recording is already saved.\n\nEvery edit is written as you "
+                + "make it, so there is nothing waiting to be saved. Use File ▸ Export "
+                + "to write a video file.")
+            return
+        }
+        let panel = NSSavePanel()
+        panel.title = "Save Recording"
+        panel.nameFieldStringValue = bundleURL.deletingPathExtension().lastPathComponent
+            // The scratch name carries a uuid to keep two imports apart; the
+            // person should never see it.
+            .components(separatedBy: "-").dropLast(5).joined(separator: "-")
+        // The app's own exported UTI (`make-app.sh`'s CFBundleDocumentTypes),
+        // resolved by identifier rather than hardcoded as an extension: the
+        // panel then appends `.snitt` itself and Finder shows the document
+        // icon in the save sheet.
+        if let type = UTType("com.impressiver.snitt.recording") {
+            panel.allowedContentTypes = [type]
+        }
+        panel.directoryURL = OutputDirectorySettings.load().directory
+        panel.canCreateDirectories = true
+
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        do {
+            try relocate(to: destination)
+        } catch {
+            AppDelegate.presentMessage(
+                "Snitt could not save there.\n\n\((error as NSError).localizedDescription)")
+        }
+    }
+
+    /// Moves the bundle and re-points this window at it, WITHOUT reopening.
+    ///
+    /// Internal so a test can drive it without a save panel.
+    func relocate(to destination: URL) throws {
+        // A save panel already asked about overwriting, and answering yes has
+        // to actually overwrite — `moveItem` refuses onto an existing path.
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try FileManager.default.removeItem(at: destination)
+        }
+        try FileManager.default.moveItem(at: bundleURL, to: destination)
+        bundleURL = Self.normalizedBundleURL(destination)
+        isUnsaved = false
+        // The preview holds its own `SnittBundle`, and every later write goes
+        // through it. Leaving it pointed at the scratch path would write edits
+        // to a directory that no longer exists — silently, because the writes
+        // are fire-and-forget.
+        controller.relocateBundle(to: bundleURL)
+        window.title = destination.deletingPathExtension().lastPathComponent
+        state.documentTitle = window.title
+        state.defaultExportURL = Self.defaultExportURL(forBundle: bundleURL)
+        RecentDocuments.note(bundleURL)
     }
 
     func performExport(_ request: ExportRequest) {

@@ -50,6 +50,29 @@ recorded**:
   typed. That timing is what lets the editor find dead air and trim it, and what
   lets the editor draw click rings. The log stays inside the recording's bundle.
 
+## Opening a video you already have
+
+Snitt edits footage it did not record. **File ▸ Open** takes an `.mp4` or
+`.mov` as readily as a `.snitt`, **File ▸ New from Clipboard** (⌘N) opens
+whatever video you last copied, and you can drop a video on Snitt's Dock icon
+or open it with Snitt from the Finder.
+
+The file is **copied** into a new recording, so the original is left exactly
+where it is and nothing is re-encoded. After that there is no difference
+between it and something Snitt recorded: auto-trim, cutting, markers,
+transcription and voiceover all work the same, because they all work on the
+recording inside the document.
+
+An opened video lives in a temporary folder until you save it. **⌘S** asks
+where it belongs, once. After that it saves continuously like any other
+recording, and ⌘S has nothing left to do.
+
+*Dropping a video onto an editor that already has one does nothing yet.* A
+`.snitt` holds a single recording, and every marker, cut and caption is a
+position in it — splicing a second video in needs the document to hold a
+sequence of clips instead, which is a change to the format rather than a
+setting.
+
 ## Where recordings go
 
 `~/Documents/Snitt` by default, changeable in **Settings ▸ Recordings folder**.

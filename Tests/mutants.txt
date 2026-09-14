@@ -362,3 +362,10 @@ VoiceoverPlacementTests :: Sources/SnittDocument/VoiceoverTrack.swift :: let ove
 # Passthrough copies encoded samples; narration has none to copy, so an
 # "eligible" export ships the picture and no voiceover at all — silently.
 VoiceoverTests :: Sources/SnittExport/PassthroughEligibility.swift :: if edl.voiceover != nil { return .voiceover } :: if false { return .voiceover }
+
+# Save relocates the PREVIEW too, or every later edit writes to a scratch
+# directory that no longer exists — silently, because the writes are async.
+ImportedDocumentSaveTests :: Sources/SnittApp/EditorWindowController.swift :: controller.relocateBundle(to: bundleURL) :: _ = bundleURL
+# An import COPIES. Moving would delete somebody else's file as a side effect
+# of opening it.
+VideoImportTests :: Sources/SnittApp/VideoImporter.swift :: try FileManager.default.copyItem(at: url, to: bundle.captureURL) :: try FileManager.default.moveItem(at: url, to: bundle.captureURL)
