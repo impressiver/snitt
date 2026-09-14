@@ -195,3 +195,63 @@ struct VoiceoverPlacementTests {
         #expect(VoiceoverPlacement.outputSpans(of: track(segments), keptRanges: []).isEmpty)
     }
 }
+
+/// Placing a narrated WORD on the capture's clock.
+///
+/// The transcript is the only consumer: narration is recognised against
+/// `voiceover.m4a`, so its words come back timed from the start of that file
+/// while every other word is timed against the capture. Unmapped, narration
+/// appears at the beginning of the recording and drifts further from the
+/// picture the later it was spoken.
+struct VoiceoverWordTimeTests {
+
+    private func track(_ segments: [VoiceoverSegment]) -> VoiceoverTrack {
+        VoiceoverTrack(filename: "voiceover.m4a", durationSeconds: 60, segments: segments)
+    }
+
+    @Test("A word's time moves from the FILE's clock to the capture's")
+    func wordMovesToSourceTime() {
+        // Narration recorded over source 30: second 0 of the file is source
+        // 30, not source 0.
+        let subject = track([VoiceoverSegment(voiceoverStart: 0, sourceStart: 30,
+                                              durationSeconds: 10)])
+        #expect(VoiceoverPlacement.sourceTime(ofVoiceoverTime: 0, in: subject) == 30)
+        #expect(VoiceoverPlacement.sourceTime(ofVoiceoverTime: 4.5, in: subject) == 34.5)
+    }
+
+    @Test("A word after a split lands over ITS footage, not the first segment's")
+    func wordAfterASplitFollowsItsSegment() {
+        // Narration spoken across a cut is continuous in the file and not in
+        // the recording. A word two-thirds of the way through belongs to the
+        // second stretch of footage, which is somewhere else entirely — the
+        // case a single offset cannot express.
+        let subject = track([
+            VoiceoverSegment(voiceoverStart: 0, sourceStart: 5, durationSeconds: 2),
+            VoiceoverSegment(voiceoverStart: 2, sourceStart: 40, durationSeconds: 3),
+        ])
+        #expect(VoiceoverPlacement.sourceTime(ofVoiceoverTime: 1, in: subject) == 6)
+        #expect(VoiceoverPlacement.sourceTime(ofVoiceoverTime: 2.5, in: subject) == 40.5)
+    }
+
+    @Test("A boundary belongs to the segment it STARTS")
+    func boundaryBelongsToTheLaterSegment() {
+        // Half-open, so one instant cannot be in two places. Closed on both
+        // ends, a word at 2.0 would resolve to the first segment's end AND the
+        // second's start, and which one won would depend on array order.
+        let subject = track([
+            VoiceoverSegment(voiceoverStart: 0, sourceStart: 5, durationSeconds: 2),
+            VoiceoverSegment(voiceoverStart: 2, sourceStart: 40, durationSeconds: 3),
+        ])
+        #expect(VoiceoverPlacement.sourceTime(ofVoiceoverTime: 2.0, in: subject) == 40)
+    }
+
+    @Test("Narration over footage that has been cut has no place, and says so")
+    func wordOverCutFootageIsNil() {
+        // Nil rather than a nearby time. A word whose footage is gone belongs
+        // nowhere, and placing it at the fold would put narration on a frame
+        // it was never spoken about.
+        let subject = track([VoiceoverSegment(voiceoverStart: 0, sourceStart: 5,
+                                              durationSeconds: 2)])
+        #expect(VoiceoverPlacement.sourceTime(ofVoiceoverTime: 9, in: subject) == nil)
+    }
+}

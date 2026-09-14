@@ -969,6 +969,20 @@ public final class TimelineView: NSView {
             zoomIn()
         case "-":
             zoomOut()
+        case "\u{1B}":
+            // Escape collapses the selected fold — the undo for having opened
+            // it, on the key that means "put that back" everywhere else.
+            //
+            // Only when one is BOTH selected and expanded. Escape with nothing
+            // selected, or with a collapsed fold selected, must fall through:
+            // swallowing it would stop it dismissing whatever else is on
+            // screen, and a key that silently does nothing is worse than one
+            // that does something else.
+            guard let id = selectedFoldID, expandedCutIDs.contains(id) else {
+                super.keyDown(with: event)
+                return
+            }
+            onToggleExpansion(id)
         default:
             super.keyDown(with: event)
         }
@@ -1269,6 +1283,25 @@ public final class TimelineView: NSView {
         // than on an invisible hit test.
         onSelectFold(cut.id)
         let menu = NSMenu()
+
+        // Expand/Collapse FIRST, and only the one that applies. Expanding was
+        // reachable only by double-clicking the fold's line, which is a
+        // gesture nothing announces — so a right-click offered to destroy the
+        // cut and gave no way to look inside it first.
+        //
+        // One item whose title follows the state, rather than two with one
+        // disabled: both would have to be kept enabled against each other, and
+        // a menu showing "Expand" greyed out next to "Collapse" says less than
+        // a menu showing the one thing that will happen.
+        let expanded = expandedCutIDs.contains(cut.id)
+        let toggle = NSMenuItem(title: expanded ? "Collapse" : "Expand",
+                                action: #selector(handleToggleFoldMenuItem(_:)),
+                                keyEquivalent: "")
+        toggle.target = self
+        toggle.representedObject = cut.id
+        menu.addItem(toggle)
+        menu.addItem(.separator())
+
         let item = NSMenuItem(title: "Remove Cut",
                               action: #selector(handleRemoveCutMenuItem(_:)),
                               keyEquivalent: "")
@@ -1276,6 +1309,12 @@ public final class TimelineView: NSView {
         item.representedObject = cut.id
         menu.addItem(item)
         return menu
+    }
+
+    /// Test seam, for the same reason `handleRemoveCutMenuItem` is one.
+    @objc func handleToggleFoldMenuItem(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        onToggleExpansion(id)
     }
 
     /// Not `private`: a test seam, exactly like `EditorWindowController`'s

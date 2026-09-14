@@ -83,7 +83,7 @@ struct GestureMatrixTests {
                           ("audio", r.bands.audio[0].rect.midY),
                           ("transcript", r.bands.transcript.midY)] {
             let menu = r.view.contextMenu(at: NSPoint(x: r.foldX, y: y))
-            #expect(menu?.items.first?.title == "Remove Cut",
+            #expect(menu?.items.contains { $0.title == "Remove Cut" } == true,
                     "right-click in the \(name) lane did not reach the fold")
         }
     }

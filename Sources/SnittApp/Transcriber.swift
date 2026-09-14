@@ -85,6 +85,28 @@ enum Transcriber {
         }
         defer { try? FileManager.default.removeItem(at: audioURL) }
 
+        guard let words = try await transcribe(audioAt: audioURL, locale: locale,
+                                               vocabulary: terms)
+        else { return nil }
+        return Transcript(words: words.sorted { $0.start < $1.start },
+                          locale: locale.identifier)
+    }
+
+    /// Recognition over ONE audio file, with no opinion about where it came
+    /// from or what clock its times are on.
+    ///
+    /// Extracted so the microphone pass and the voiceover pass are the same
+    /// code. They differ only in which file they read and what happens to the
+    /// timings afterwards, and a second copy of the analyzer setup is a second
+    /// place for the preset, the vocabulary and the collector's deadlock
+    /// avoidance to drift.
+    ///
+    /// Nil means the device cannot transcribe this locale — the same "no
+    /// transcript available" as having no audio, which the pane already has a
+    /// state for.
+    private static func transcribe(audioAt audioURL: URL,
+                                   locale: Locale,
+                                   vocabulary terms: [String]) async throws -> [TranscriptWord]? {
         // A locale the device cannot transcribe is not a failure to report —
         // it is the same "no transcript available" as having no mic track, and
         // the pane already has a state for it.
@@ -133,9 +155,55 @@ enum Transcriber {
         _ = try await analyzer.analyzeSequence(from: file)
         try await analyzer.finalizeAndFinishThroughEndOfInput()
 
-        let words = try await collector.value
-        return Transcript(words: words.sorted { $0.start < $1.start },
-                          locale: locale.identifier)
+        return try await collector.value
+    }
+
+    /// The narration's words, on the CAPTURE's clock and tagged as narration.
+    ///
+    /// A second pass over a second file, not a second recogniser: the
+    /// microphone and the voiceover are different audio, recorded at different
+    /// times, and one analyzer cannot be given both. They merge afterwards.
+    ///
+    /// Words whose footage has since been cut are DROPPED. Narration over
+    /// removed picture has no position in the recording — the same answer
+    /// `VoiceoverPlacement` gives everywhere else — and placing it at the fold
+    /// would put speech on a frame it was never spoken about.
+    static func transcribeVoiceover(bundle: SnittBundle,
+                                    track: VoiceoverTrack,
+                                    locale: Locale = Locale(identifier: "en-US"),
+                                    vocabulary: [String]? = nil) async throws -> [TranscriptWord] {
+        let url = bundle.url.appendingPathComponent(track.filename)
+        guard FileManager.default.fileExists(atPath: url.path) else { return [] }
+        let terms = resolveVocabulary(override: vocabulary, bundle: bundle)
+        guard let spoken = try await transcribe(audioAt: url, locale: locale, vocabulary: terms)
+        else { return [] }
+
+        return spoken.compactMap { word in
+            guard let source = VoiceoverPlacement.sourceTime(ofVoiceoverTime: word.start,
+                                                             in: track) else { return nil }
+            var placed = word
+            placed.start = source
+            placed.track = "voiceover"
+            return placed
+        }
+    }
+
+    /// Everything a recording has been heard to say, from every track.
+    ///
+    /// Sorted by time across BOTH sources, because they interleave: narration
+    /// is spoken over footage that already has speech in it, and a reader
+    /// moving down the transcript is moving through the recording.
+    static func merge(_ transcript: Transcript?,
+                      voiceover: [TranscriptWord]) -> Transcript? {
+        guard let transcript else {
+            guard !voiceover.isEmpty else { return nil }
+            return Transcript(words: voiceover.sorted { $0.start < $1.start },
+                              locale: Locale.current.identifier)
+        }
+        guard !voiceover.isEmpty else { return transcript }
+        var merged = transcript
+        merged.words = (transcript.words + voiceover).sorted { $0.start < $1.start }
+        return merged
     }
 
     /// The vocabulary a transcription should be biased toward (D81).

@@ -102,6 +102,19 @@ public enum SnittPalette {
     /// Lane labels, ruler timecodes, hairlines, and quiet text on ink.
     public static let slateText = NSColor(srgbRed: 0.604, green: 0.639, blue: 0.710, alpha: 1)
 
+    /// Narration, wherever it appears beside recorded speech.
+    ///
+    /// A cool teal against the brand's warm amber, because the two are read
+    /// TOGETHER and interleaved: narration is spoken over footage that already
+    /// has speech in it, so the transcript alternates between them line by
+    /// line. Two warm colours would need comparing; warm against cool
+    /// separates at a glance.
+    ///
+    /// Deliberately not red — red already means "this is being recorded" and
+    /// "this destroys something" in this app, and a third meaning would make
+    /// all three weaker.
+    public static let voiceover = NSColor(srgbRed: 0.353, green: 0.784, blue: 0.741, alpha: 1)
+
     /// The playhead line and its caret — the brightest thing on the
     /// instrument, because it outranks everything it crosses. Replaces
     /// `grey(0.97)`.

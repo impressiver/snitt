@@ -109,7 +109,10 @@ struct TranscriptPane: View {
         // Broken into lines at the speaker's own pauses. The recognizer emits
         // one undifferentiated stream; a screencast narration is not one, and
         // reading is the interface this pane exists for.
-        let paragraphs = TranscriptParagraphs.split(transcript.words)
+        // `audibleWords`, not `transcript.words`: a muted track's speech is
+        // not in the exported file, so showing it invites editing against
+        // something that is not there.
+        let paragraphs = TranscriptParagraphs.split(state.audibleWords)
         ScrollViewReader { proxy in
             ScrollView {
                 // A list of rows, divided, with a time column — the marker
@@ -143,7 +146,7 @@ struct TranscriptPane: View {
             }
             .disabled(selection.isEmpty)
             Spacer()
-            Text("\(transcript.words.count) words")
+            Text("\(state.audibleWords.count) words")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -259,6 +262,14 @@ struct TranscriptPane: View {
         } else {
         Text(word.text)
             .font(.callout)
+            // Narration reads in the brand's cool teal against recorded speech
+            // in the ordinary text colour. The two INTERLEAVE — narration is
+            // spoken over footage that already has speech in it — so the
+            // transcript alternates between them line by line, and telling
+            // them apart has to be possible without reading either.
+            .foregroundStyle(AudibleTranscript.isVoiceover(word)
+                             ? AnyShapeStyle(Color(nsColor: SnittPalette.voiceover))
+                             : AnyShapeStyle(.primary))
             // Struck through when the EDL cuts it — undoing the cut un-strikes
             // it with no bookkeeping, because cutWordIDs is derived.
             .strikethrough(isCut, color: .red)
