@@ -223,6 +223,62 @@ struct UnattendedSettingsRowTests {
                 "unattended recording stayed checked after its parent opt-in was turned off")
     }
 
+    @Test("With agent recording off, the sub-option is DISABLED, not merely unchecked")
+    func subOptionIsDisabledWithoutItsParent() throws {
+        // An enabled-looking checkbox that cannot do anything is a control
+        // that lies. Turning this on while agent recording is off would run
+        // the whole Screen Recording ladder — pre-explain sheet, TCC prompt,
+        // a person deciding — and then authorize nothing, because
+        // `unattendedGrant` composes the two flags.
+        //
+        // Unchecked is NOT enough and is the state the previous version left:
+        // `status.isActive` already reads false without the parent, so a test
+        // asserting only the checkmark passes against a fully clickable row.
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            SettingsWindowController.resetForTesting()
+        }
+        storeGrant(defaults, confirmedAt: Date(), agent: false)
+
+        SettingsWindowController.show(updater: UpdaterController(settings: UpdateSettings.load(defaults)),
+                                      defaults: defaults, activate: false,
+                                      unattendedToggle: { _, _ in true })
+        let controller = try #require(SettingsWindowController.shared)
+        let box = try #require(controller.checkbox(titled: SettingsWindowController.unattendedRecordingTitle))
+        #expect(box.isEnabled == false)
+
+        // And it comes back the moment the parent does — live, in the same
+        // window, without a reopen.
+        let agentBox = try #require(controller.checkbox(titled: SettingsWindowController.agentRecordingTitle))
+        agentBox.performClick(nil)
+        #expect(agentBox.state == .on, "fixture: the parent did not turn on")
+        #expect(box.isEnabled, "the sub-option stayed disabled after its parent was enabled")
+    }
+
+    @Test("Turning the parent off disables the sub-option in the same window")
+    func disablingTheParentDisablesTheChild() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            SettingsWindowController.resetForTesting()
+        }
+        storeGrant(defaults, confirmedAt: Date())
+
+        SettingsWindowController.show(updater: UpdaterController(settings: UpdateSettings.load(defaults)),
+                                      defaults: defaults, activate: false,
+                                      unattendedToggle: { _, _ in true })
+        let controller = try #require(SettingsWindowController.shared)
+        let box = try #require(controller.checkbox(titled: SettingsWindowController.unattendedRecordingTitle))
+        #expect(box.isEnabled)
+
+        try #require(controller.checkbox(titled: SettingsWindowController.agentRecordingTitle))
+            .performClick(nil)
+
+        #expect(box.isEnabled == false)
+        #expect(box.state == .off)
+    }
+
     @Test("A refused Screen Recording grant leaves the checkbox off and persists nothing")
     func refusedGrantRevertsTheCheckbox() throws {
         // Same shape as `eventLoggingRevertsWhenGrantRefused`, aimed at the

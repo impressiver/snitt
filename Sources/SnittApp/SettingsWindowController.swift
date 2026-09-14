@@ -67,10 +67,22 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// of two-word lines. The 420pt window predated the explanations.
     static let contentWidth: Double = 520
 
-    static let agentRecordingTitle = "Allow agent recording"
-    static let unattendedRecordingTitle = "Allow unattended agent recording"
-    static let eventLoggingTitle = "Log input events"
-    static let microphoneTitle = "Record voiceover"
+    // Short titles, because each now sits under a section header supplying
+    // the noun the old ones carried: "Allow agent recording" under a heading
+    // that already says Agent read as a stutter.
+    //
+    // The full name survives as the ACCESSIBILITY label for both agent rows. A
+    // section header is a visual grouping and nothing more — VoiceOver moving
+    // between controls announces "Allow recording" with no hint of what it
+    // permits, and for the two controls on this window that decide whether
+    // software may watch the screen, that is the disclosure failing exactly
+    // where it is needed most.
+    static let agentRecordingTitle = "Allow recording"
+    static let agentRecordingAccessibilityLabel = "Allow agent recording"
+    static let unattendedRecordingTitle = "Allow unattended"
+    static let unattendedRecordingAccessibilityLabel = "Allow unattended agent recording"
+    static let eventLoggingTitle = "Capture events"
+    static let microphoneTitle = "Record microphone"
     static let automaticUpdatesTitle = "Check for updates automatically"
     static let crashReportsTitle = "Include crash reports in diagnostics"
 
@@ -125,7 +137,32 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    static let outputDirectoryCaption = "Save recordings to"
+    /// Section headers.
+    ///
+    /// "What gets recorded" rather than "Capture", which is what this app calls
+    /// everything it does — a heading that could sit over any row on this
+    /// window is not a heading. This one names the question its two checkboxes
+    /// answer: the screen is always recorded, and these decide what goes in
+    /// alongside it.
+    static let captureSectionTitle = "What gets recorded"
+    static let agentSectionTitle = "Agent"
+    static let updatesSectionTitle = "Updates & Diagnostics"
+    static let shortcutsSectionTitle = "Keyboard Shortcuts"
+
+    /// Named for exactly what it governs.
+    ///
+    /// It was briefly "Default path", which read as the app's one folder for
+    /// everything. It is not: `RecordingCoordinator` is its only consumer, so
+    /// this is where RECORDINGS land and nothing else. Export deliberately
+    /// does not consult it — `defaultExportURL(forBundle:)` puts an export
+    /// beside the bundle it came from, "because a `.snitt` bundle already
+    /// lives where its owner put it". With this folder unchanged the two
+    /// coincide, which is what made the broader name look true.
+    ///
+    /// A noun phrase, like every other heading on this window, rather than the
+    /// original "Save recordings to" — a sentence fragment left hanging over a
+    /// path and a button.
+    static let outputDirectoryCaption = "Recordings folder"
     static let outputDirectoryButtonTitle = "Choose…"
 
     /// - Parameters:
@@ -333,6 +370,15 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.delegate = self
         let content = makeContentView()
         window.contentView = content
+        // One place decides whether the sub-option is live, and this is the
+        // call that makes the WINDOW AS BUILT agree with it. `unattendedRow`
+        // sets the checkmark from the same grant, but `isEnabled` depends on
+        // the parent opt-in, and a row that only learned that on the next
+        // toggle would open fully clickable over a permission it cannot grant.
+        // It has to run here rather than inside `makeContentView`, because
+        // `checkbox(titled:)` searches `window.contentView` and that is the
+        // line above.
+        refreshUnattendedStatus()
         // Fit the window to the rows, then centre — in that order, or it
         // centres the wrong size and jumps.
         let fitted = content.fittingSize
@@ -355,40 +401,51 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         stack.edgeInsets = NSEdgeInsets(top: 18, left: 20, bottom: 18, right: 20)
         stack.translatesAutoresizingMaskIntoConstraints = false
 
-        for row in [
-            settingRow(title: Self.agentRecordingTitle, detail: Self.agentRecordingDetail,
-                       isOn: AgentSettings.load(defaults).agentRecordingEnabled,
-                       action: #selector(toggleAgentRecording(_:))),
-            unattendedRow(),
-            settingRow(title: Self.eventLoggingTitle, detail: Self.eventLoggingDetail,
-                       isOn: EventLoggingSettings.load(defaults).enabled,
-                       action: #selector(toggleEventLogging(_:))),
+        // Application-wide, at the top with no header of their own: a heading
+        // saying "Application" over the first thing in an app's Settings
+        // window is a heading saying "Settings".
+        //
+        // The default path leads because it is the one row that is neither a
+        // permission nor a preference — it is where the app puts things, and
+        // somebody who came here looking for it is usually looking for it
+        // first.
+        // Both keep their own headings; what they do NOT get is an
+        // "Application" one above them. `leadingRule: false` on the first,
+        // because a hairline across the very top of the window is a rule
+        // dividing a heading from the title bar.
+        addGroup(to: stack, titled: Self.outputDirectoryCaption,
+                 rows: [outputDirectoryRow()], leadingRule: false)
+        addGroup(to: stack, titled: Self.shortcutsSectionTitle,
+                 rows: [HotkeyAction.record, .marker].map(hotkeyRow(for:)))
+
+        // Then the checkboxes, grouped by what the setting is ABOUT: what
+        // Snitt captures, what an agent may do, and what leaves the machine.
+        // Six ungrouped checkboxes in a column made "Allow agent recording" —
+        // the one with real consequences — look like the same sort of thing as
+        // "Check for updates automatically".
+        addGroup(to: stack, titled: Self.captureSectionTitle, rows: [
             settingRow(title: Self.microphoneTitle, detail: Self.microphoneDetail,
                        isOn: MicrophoneSettings.load(defaults).enabled,
                        action: #selector(toggleMicrophone(_:))),
+            settingRow(title: Self.eventLoggingTitle, detail: Self.eventLoggingDetail,
+                       isOn: EventLoggingSettings.load(defaults).enabled,
+                       action: #selector(toggleEventLogging(_:))),
+        ])
+        addGroup(to: stack, titled: Self.agentSectionTitle, rows: [
+            settingRow(title: Self.agentRecordingTitle, detail: Self.agentRecordingDetail,
+                       isOn: AgentSettings.load(defaults).agentRecordingEnabled,
+                       action: #selector(toggleAgentRecording(_:)),
+                       accessibilityLabel: Self.agentRecordingAccessibilityLabel),
+            unattendedRow(),
+        ])
+        addGroup(to: stack, titled: Self.updatesSectionTitle, rows: [
             settingRow(title: Self.automaticUpdatesTitle, detail: Self.automaticUpdatesDetail,
                        isOn: UpdateSettings.load(defaults).automaticChecksEnabled,
                        action: #selector(toggleAutomaticUpdates(_:))),
             settingRow(title: Self.crashReportsTitle, detail: Self.crashReportsDetail,
                        isOn: CrashReportSettings.load(defaults).enabled,
                        action: #selector(toggleCrashReports(_:))),
-        ] {
-            stack.addArrangedSubview(row)
-            stack.setCustomSpacing(14, after: row)
-        }
-        // The last toggle needs more room than the gap between two toggles,
-        // because what follows it is a rule rather than another setting.
-        if let lastToggle = stack.arrangedSubviews.last {
-            stack.setCustomSpacing(20, after: lastToggle)
-        }
-
-        // The two groups that are not toggles get headers and a rule, because
-        // a hotkey recorder and a folder picker among five checkboxes read as
-        // leftovers otherwise — which is what the screenshot showed.
-        addGroup(to: stack, titled: "Shortcuts",
-                 rows: [HotkeyAction.record, .marker].map(hotkeyRow(for:)))
-        addGroup(to: stack, titled: Self.outputDirectoryCaption,
-                 rows: [outputDirectoryRow()])
+        ])
 
         return stack
     }
@@ -399,20 +456,34 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// stack's row spacing sits almost touching the heading under it and the
     /// paragraph above it, which reads as a line that fell over rather than as
     /// a division — the screenshot that prompted this showed exactly that.
-    private func addGroup(to stack: NSStackView, titled title: String, rows: [NSView]) {
-        let rule = separator()
-        stack.addArrangedSubview(rule)
-        stack.setCustomSpacing(10, after: rule)
+    private func addGroup(to stack: NSStackView, titled title: String,
+                          rows: [NSView], leadingRule: Bool = true) {
+        if leadingRule {
+            let rule = separator()
+            stack.addArrangedSubview(rule)
+            stack.setCustomSpacing(10, after: rule)
+        }
 
         let header = groupHeader(title)
         stack.addArrangedSubview(header)
         stack.setCustomSpacing(8, after: header)
 
+        addRows(to: stack, rows)
+    }
+
+    /// Rows with no header — the top-of-window group, and the body of every
+    /// headed one, so the spacing rule lives in a single place.
+    ///
+    /// 14 between rows rather than the stack's own 2: a checkbox row is a
+    /// checkbox stacked on its own explanation, so the gap BETWEEN two settings
+    /// has to clear the gap inside one, or the explanation reads as belonging
+    /// to the box underneath it.
+    private func addRows(to stack: NSStackView, _ rows: [NSView]) {
         for row in rows {
             stack.addArrangedSubview(row)
-            stack.setCustomSpacing(6, after: row)
+            stack.setCustomSpacing(14, after: row)
         }
-        // Air before whatever comes next — another rule, or the window's edge.
+        // Air before whatever comes next — a rule, or the window's edge.
         if let last = rows.last { stack.setCustomSpacing(20, after: last) }
     }
 
@@ -458,12 +529,19 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// hierarchy. A subtitle that exists only as pixels tells a VoiceOver user
     /// nothing, which for the agent-recording row would mean the disclosure is
     /// not disclosed.
+    ///
+    /// - Parameter accessibilityLabel: what VoiceOver announces INSTEAD of the
+    ///   visible title, for rows whose titles were shortened because a section
+    ///   header now carries their noun. Nil leaves the title, which is right
+    ///   whenever the title already stands on its own.
     func settingRow(title: String, detail: String,
-                    isOn: Bool, action: Selector) -> NSView {
+                    isOn: Bool, action: Selector,
+                    accessibilityLabel: String? = nil) -> NSView {
         let button = NSButton(checkboxWithTitle: title, target: self, action: action)
         button.state = isOn ? .on : .off
         button.font = .systemFont(ofSize: 13, weight: .semibold)
         button.setAccessibilityHelp(detail)
+        if let accessibilityLabel { button.setAccessibilityLabel(accessibilityLabel) }
 
         let explanation = NSTextField(wrappingLabelWithString: detail)
         explanation.font = .systemFont(ofSize: 12)
@@ -569,9 +647,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         container.alignment = .leading
         container.spacing = 4
 
-        // No caption here: the group header above the row carries it now, and
-        // two labels reading "Save recordings to" one above the other is what
-        // the first version of this grouping shipped.
+        // No caption here: the group header above the row carries it, and two
+        // labels reading "Default path" one above the other is what the first
+        // version of this grouping shipped.
 
         let row = NSStackView()
         row.orientation = .horizontal
@@ -655,7 +733,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         let row = settingRow(title: Self.unattendedRecordingTitle,
                              detail: Self.unattendedRecordingDetail,
                              isOn: status.isActive,
-                             action: #selector(toggleUnattendedRecording(_:)))
+                             action: #selector(toggleUnattendedRecording(_:)),
+                             accessibilityLabel: Self.unattendedRecordingAccessibilityLabel)
 
         let label = NSTextField(wrappingLabelWithString: Self.unattendedStatusText(for: status))
         label.font = .systemFont(ofSize: 12, weight: .medium)
@@ -671,7 +750,37 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                 label.widthAnchor.constraint(lessThanOrEqualToConstant: Self.contentWidth - 60),
             ])
         }
-        return row
+        // Indented under "Allow recording", because it is subordinate to it
+        // rather than beside it: `AgentSettings.unattendedGrant` composes the
+        // two, so this one authorizes nothing on its own. Two checkboxes at
+        // the same indent read as two independent permissions, which is the
+        // one thing this pair is not.
+        return Self.indenting(row, by: Self.subOptionIndent)
+    }
+
+    /// How far a sub-option sits in from its parent.
+    ///
+    /// Aligned with the parent's own explanation text, which hangs 20pt in
+    /// from the checkbox — so the child lines up with the sentence explaining
+    /// what it is a child OF, rather than at some indent of its own.
+    static let subOptionIndent: Double = 20
+
+    /// `row`, shifted right, without touching the constraints inside it.
+    ///
+    /// A wrapper rather than `edgeInsets` on the row itself: the rows here
+    /// pin their own subviews to their own `leadingAnchor`, and an inset would
+    /// leave those constraints fighting the stack's layout for the same edge —
+    /// ambiguous rather than wrong, which is the kind that renders fine until
+    /// it does not.
+    private static func indenting(_ row: NSView, by inset: Double) -> NSView {
+        let spacer = NSView()
+        spacer.translatesAutoresizingMaskIntoConstraints = false
+        spacer.widthAnchor.constraint(equalToConstant: inset).isActive = true
+        let wrapper = NSStackView(views: [spacer, row])
+        wrapper.orientation = .horizontal
+        wrapper.alignment = .top
+        wrapper.spacing = 0
+        return wrapper
     }
 
     @objc private func toggleUnattendedRecording(_ sender: NSButton) {
@@ -688,8 +797,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     }
 
     private func refreshUnattendedStatus() {
-        let status = AgentSettings.load(defaults).unattendedGrant.status(now: Date())
+        let settings = AgentSettings.load(defaults)
+        let status = settings.unattendedGrant.status(now: Date())
         unattendedStatusLabel?.stringValue = Self.unattendedStatusText(for: status)
+        // DISABLED when the parent opt-in is off, not merely unchecked. An
+        // enabled-looking checkbox that cannot be turned on is a control that
+        // lies about what it will do — and turning this on while agent
+        // recording is off would run the whole Screen Recording ladder, ask a
+        // person for a permission, and then authorize nothing.
+        unattendedStatusLabel?.isHidden = !settings.agentRecordingEnabled
+        checkbox(titled: Self.unattendedRecordingTitle)?.isEnabled = settings.agentRecordingEnabled
         checkbox(titled: Self.unattendedRecordingTitle)?.state = status.isActive ? .on : .off
     }
 
