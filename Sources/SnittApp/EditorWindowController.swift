@@ -982,7 +982,71 @@ final class EditorTimelineState: ObservableObject {
 
     /// Whether narration is being recorded right now (D93).
     @Published private(set) var isRecordingVoiceover = false
+    /// Levels captured so far in the current take, for the lane drawn while it
+    /// runs. Empty when nothing is recording.
+    @Published private(set) var voiceoverLevels: [Float] = []
+    /// Where in OUTPUT time the current take began, so the live lane knows
+    /// where to start drawing.
+    @Published private(set) var voiceoverStartedAt: Double = 0
     private let voiceoverRecorder = VoiceoverRecorder()
+
+    /// Samples the finished voiceover and adds it as a third lane.
+    ///
+    /// Re-indexed onto the CAPTURE's clock by `VoiceoverWaveform`, because
+    /// `TimelineView.drawWaveform` maps every pixel column through
+    /// `KeptRanges` into source seconds — drawn unmapped, narration recorded
+    /// over source 30 would appear at the start of the recording.
+    func loadVoiceoverWaveform() {
+        guard let voiceover = edl.voiceover else { return }
+        let url = controller.snittBundle.url.appendingPathComponent(voiceover.filename)
+        let sourceDuration = controller.sourceDurationSeconds
+        Task { [weak self] in
+            let sampled = try? await WaveformSampler.sample(movieAt: url)
+            guard let first = sampled?.first else { return }
+            let aligned = VoiceoverWaveform.sourceAligned(
+                first, track: voiceover, sourceDuration: sourceDuration)
+            await MainActor.run {
+                guard let self else { return }
+                // REPLACED, not appended: re-recording produces a second
+                // waveform for one track, and `drawWaveform` takes the first
+                // match — so the lane would keep showing the take before last.
+                self.waveforms.removeAll { $0.track == "voiceover" }
+                self.waveforms.append(aligned)
+            }
+        }
+    }
+
+    /// Levels are taken at the playhead's rate, so this IS that rate.
+    static let voiceoverLevelRate: Double = 20
+
+    /// Takes one level reading and redraws the lane, on the playhead's tick.
+    ///
+    /// The live lane is an ordinary `WaveformSamples` named "voiceover",
+    /// source-aligned exactly like the finished one — so `TimelineView` draws
+    /// it with the code it already has, through the same cuts and the same
+    /// zoom. Nothing in the timeline knows a take is running.
+    func sampleVoiceoverLevel() {
+        guard isRecordingVoiceover else { return }
+        voiceoverRecorder.sampleLevel()
+        voiceoverLevels = voiceoverRecorder.levels
+        guard !voiceoverLevels.isEmpty else { return }
+
+        let duration = Double(voiceoverLevels.count) / Self.voiceoverLevelRate
+        let live = VoiceoverTrack(
+            filename: "",
+            durationSeconds: duration,
+            segments: VoiceoverPlacement.segments(outputStart: voiceoverStartedAt,
+                                                  duration: duration,
+                                                  keptRanges: controller.keptRanges))
+        let aligned = VoiceoverWaveform.sourceAligned(
+            WaveformSamples(track: "voiceover",
+                            samplesPerSecond: Self.voiceoverLevelRate,
+                            peaks: voiceoverLevels),
+            track: live,
+            sourceDuration: controller.sourceDurationSeconds)
+        waveforms.removeAll { $0.track == "voiceover" }
+        waveforms.append(aligned)
+    }
 
     /// Starts narrating over the edit, from the playhead.
     ///
@@ -997,6 +1061,19 @@ final class EditorTimelineState: ObservableObject {
             return failure
         }
         isRecordingVoiceover = true
+        voiceoverLevels = []
+        voiceoverStartedAt = start
+        // The lane appears NOW, not when the take ends. It is the only thing
+        // on screen that distinguishes recording narration from playing the
+        // recording, and waiting until the end would mean the feedback arrives
+        // exactly when it is no longer needed.
+        //
+        // Not an edit: written straight into `edl` without an undo entry or a
+        // save, because an abandoned take removes it again below. A take
+        // becomes an edit when it produces audio.
+        if !edl.trackStates.contains(where: { $0.track == "voiceover" }) {
+            edl.trackStates.append(TrackState(track: "voiceover", muted: false, gain: 1.0))
+        }
         controller.play()
         return nil
     }
@@ -1009,10 +1086,17 @@ final class EditorTimelineState: ObservableObject {
     func stopVoiceover() {
         guard let duration = voiceoverRecorder.stop() else { return }
         isRecordingVoiceover = false
+        voiceoverLevels = []
         controller.pause()
         guard duration > 0.05 else {
             // A take shorter than a syllable is a mis-click, not narration.
-            // Recorded as nothing rather than as a segment nobody can hear.
+            // Recorded as nothing rather than as a segment nobody can hear —
+            // and the lane goes with it, or the editor would keep a band for a
+            // track that holds nothing.
+            if edl.voiceover == nil {
+                edl.trackStates.removeAll { $0.track == "voiceover" }
+                waveforms.removeAll { $0.track == "voiceover" }
+            }
             return
         }
         let previous = edl
@@ -1026,11 +1110,18 @@ final class EditorTimelineState: ObservableObject {
             outputStart: voiceoverRecorder.startedAtOutput,
             duration: duration,
             keptRanges: controller.keptRanges)
+        // `startVoiceover` already added the TrackState so the lane could be
+        // drawn live; this is the point at which it becomes part of the saved
+        // document rather than a view of a take in progress.
+        if !edl.trackStates.contains(where: { $0.track == "voiceover" }) {
+            edl.trackStates.append(TrackState(track: "voiceover", muted: false, gain: 1.0))
+        }
         edl.voiceover = VoiceoverTrack(
             filename: controller.snittBundle.voiceoverURL.lastPathComponent,
             durationSeconds: duration,
             segments: segments)
         applyAndSave()
+        loadVoiceoverWaveform()
     }
 
     /// Applies a crop drawn over the preview.
@@ -1789,6 +1880,8 @@ struct EditorContentView: View {
                 canCut: state.selection != nil,
                 onRewind: { state.rewind() },
                 onPreviousMark: { state.goToPreviousMark() },
+                isRecordingVoiceover: state.isRecordingVoiceover,
+                onStopVoiceover: { state.stopVoiceover() },
                 onTogglePlay: { state.togglePlayback() },
                 onNextMark: { state.goToNextMark() },
                 onSeekToTime: { text in
@@ -1837,6 +1930,11 @@ struct EditorContentView: View {
             // needs a ten-minute recording to answer, and is in field-notes.
             let seconds = controller.player.currentTime().seconds
             playhead = seconds.isFinite ? seconds : 0
+            // The voiceover lane advances on the SAME tick as the playhead, so
+            // the two cannot drift apart: a level drawn at a position the
+            // playhead has not reached is a lane that describes a different
+            // moment than the one on screen.
+            state.sampleVoiceoverLevel()
         }
         // Raised by the toolbar button and by File ▸ Export… alike — the
         // menu no longer keeps a save panel of its own.
@@ -2158,11 +2256,25 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         return window
     }
 
+    /// The floor a Snitt window may be dragged to: 800x600, or whatever the
+    /// parts actually need if that is larger.
+    ///
+    /// **Both halves matter.** The derived figure is what the rail, the
+    /// picture, the timeline and the chrome cannot do without, and letting a
+    /// flat number override it downwards would produce a window whose contents
+    /// are clipped rather than small. The flat number is what stops the window
+    /// reaching a size where everything technically fits and nothing is
+    /// usable — narrow enough that the transport row started dropping
+    /// controls, which is where the wrapped duration was reported from.
+    static let requestedMinimumSize = NSSize(width: 800, height: 600)
+
     static var minimumContentSize: NSSize {
-        NSSize(width: chaptersRailWidth + minimumPlayerSize.width,
-               height: minimumPlayerSize.height
-                     + TimelineLaneBudget.minimumTimelineHeight
-                     + editorChromeHeight)
+        let derived = NSSize(width: chaptersRailWidth + minimumPlayerSize.width,
+                             height: minimumPlayerSize.height
+                                   + TimelineLaneBudget.minimumTimelineHeight
+                                   + editorChromeHeight)
+        return NSSize(width: max(derived.width, requestedMinimumSize.width),
+                      height: max(derived.height, requestedMinimumSize.height))
     }
 
 /// Where Export lands unless someone changes it: beside the recording,

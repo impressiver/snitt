@@ -60,12 +60,20 @@ struct EditorWindowGeometryTests {
         #expect(rect.height == 420)
     }
 
-    @Test("The window states a minimum, derived from its parts")
-    func minimumContentSizeIsDerived() {
-        // A stated minimum that nothing enforces is not a minimum, and one
-        // written as a magic number drifts the moment a part changes. This is
-        // the assertion that keeps it derived: change the rail's width or the
-        // timeline's floor and the minimum follows, or this fails.
+    @Test("The window's minimum is never below what its parts need")
+    func minimumContentSizeCoversItsParts() {
+        // This asserted EQUALITY with the derived figure until a flat 800x600
+        // floor was requested (2026-09-14). The derived size is 740x423 —
+        // everything technically fits there, and the transport row starts
+        // dropping controls, which is where a duration wrapping one character
+        // per line was reported from.
+        //
+        // So the relationship is now "at least", and that is the stronger
+        // claim anyway: it still catches a part growing past the floor, and it
+        // also catches the floor being applied in the wrong direction. A
+        // `min` instead of a `max` would clip the contents rather than make
+        // them small, and `EditorWindowMinimumSizeTests` pins the 800x600 half
+        // that this one deliberately does not.
         // Tolerance, not `==`, matching every other geometry assertion in this
         // file. `#expect(a == b)` on these operands hits ambiguous `==`
         // overload resolution — a bare `1.0 == 1.0` inside `#expect` does not
@@ -77,8 +85,8 @@ struct EditorWindowGeometryTests {
         let expectedHeight = EditorWindowController.minimumPlayerSize.height
                            + TimelineLaneBudget.minimumTimelineHeight
                            + EditorWindowController.editorChromeHeight
-        #expect(abs(minimum.width - expectedWidth) < 0.001)
-        #expect(abs(minimum.height - expectedHeight) < 0.001)
+        #expect(minimum.width >= expectedWidth - 0.001)
+        #expect(minimum.height >= expectedHeight - 0.001)
     }
 
     @Test("At the minimum size the picture still gets more room than the timeline")

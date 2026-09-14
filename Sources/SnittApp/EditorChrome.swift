@@ -163,6 +163,10 @@ struct TransportBar: View {
     let canCut: Bool
     let onRewind: () -> Void
     let onPreviousMark: () -> Void
+    /// D93. The transport becomes a stop button while a take is running, and
+    /// a recording indicator sits beside the clock.
+    var isRecordingVoiceover: Bool = false
+    var onStopVoiceover: () -> Void = {}
     let onTogglePlay: () -> Void
     let onNextMark: () -> Void
     let onSeekToTime: (String) -> Void
@@ -173,7 +177,12 @@ struct TransportBar: View {
 
     var body: some View {
         HStack(spacing: 10) {
+            // LEFT-ALIGNED, and everything that can yield yields from the
+            // right. On a narrow window the row used to squeeze whatever sat
+            // in the middle, which is how a wrapped duration ended up looking
+            // like a gap between the transport and the mark label.
             cluster
+                .layoutPriority(2)
             timeField
             if let currentMark {
                 // The agent-authored label, on screen, costing no vertical
@@ -190,7 +199,11 @@ struct TransportBar: View {
                 }
                 .font(.caption)
                 .lineLimit(1).truncationMode(.tail)
-                .frame(maxWidth: 240, alignment: .leading)
+                // `minWidth: 0` so it is the FIRST thing to give up room: a
+                // truncated mark label still says which mark you are in, and
+                // it is the only item here that degrades gracefully.
+                .frame(minWidth: 0, maxWidth: 240, alignment: .leading)
+                .layoutPriority(-1)
                 .help(currentMark)
             }
             Spacer(minLength: 8)
@@ -257,19 +270,35 @@ struct TransportBar: View {
             transportButton("backward.frame.fill",
                             Self.help("Previous mark", "Previous Mark"),
                             enabled: hasMarks, action: onPreviousMark)
-            Button(action: onTogglePlay) {
-                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+            // WHILE NARRATING THIS IS A STOP BUTTON, and it says so in red.
+            //
+            // The transport is the only control anyone looks at during a take,
+            // and it previously showed an ordinary pause — identical to
+            // playing the recording without recording anything, which is
+            // exactly how "Record Voiceover just plays the video, nothing gets
+            // recorded" gets reported about a feature that was working.
+            //
+            // Red rather than the brand's signal colour, because this is the
+            // one state in the app where the machine is capturing you.
+            Button(action: isRecordingVoiceover ? onStopVoiceover : onTogglePlay) {
+                Image(systemName: isRecordingVoiceover
+                      ? "stop.fill"
+                      : (isPlaying ? "pause.fill" : "play.fill"))
                     .frame(width: 30, height: 22)
-                    .foregroundStyle(SnittPalette.Swatch.ink0)
-                    .background(SnittPalette.Swatch.signalBright,
+                    .foregroundStyle(isRecordingVoiceover ? Color.white
+                                                          : SnittPalette.Swatch.ink0)
+                    .background(isRecordingVoiceover ? Color.red
+                                                     : SnittPalette.Swatch.signalBright,
                                 in: RoundedRectangle(cornerRadius: 5))
             }
+            .help(isRecordingVoiceover ? "Stop recording the voiceover"
+                                       : Self.help("Play or pause", "Play / Pause"))
+            .accessibilityLabel(isRecordingVoiceover ? "Stop recording voiceover" : "Play or pause")
             // Not `.borderedProminent`: that draws in the system accent, which
             // is whatever colour the user picked for selection — so the one
             // filled control on the instrument would change meaning from Mac
             // to Mac, and sit next to amber marks in an unrelated hue.
             .buttonStyle(.plain)
-            .help(Self.help("Play or pause", "Play / Pause"))
             transportButton("forward.frame.fill",
                             Self.help("Next mark", "Next Mark"),
                             enabled: hasMarks, action: onNextMark)
@@ -327,7 +356,22 @@ struct TransportBar: View {
                 .font(.system(.caption, design: .monospaced))
                 .monospacedDigit()
                 .foregroundStyle(SnittPalette.Swatch.slateText)
+                // WITHOUT THESE IT WRAPS, one character per line. Reported
+                // from a narrow window: "/ 0:32" came out as a four-row column
+                // reading "/", "0", "3", "2", and the space it took pushed
+                // everything after it sideways — read as a gap in the row
+                // rather than as text breaking.
+                //
+                // A duration is one token. `lineLimit(1)` alone would truncate
+                // it instead, which is the same information loss with a
+                // tidier shape; `fixedSize` says it does not compress, so the
+                // controls that CAN give up room are the ones that do.
+                .lineLimit(1)
+                .fixedSize()
         }
+        // The counter is the one thing here that must never be squeezed: it
+        // is the only readout of where the playhead is.
+        .layoutPriority(1)
     }
 
     static func name(of track: String) -> String {
