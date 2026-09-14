@@ -41,6 +41,31 @@ public final class VoiceoverRecorder {
     /// anchor is where it STARTED.
     public private(set) var startedAtOutput: Double = 0
 
+    /// Level per sample taken, newest last, for the lane drawn while
+    /// recording.
+    ///
+    /// Accumulated here rather than derived afterwards, because there IS no
+    /// afterwards while a take is running: the file is still being written and
+    /// cannot be decoded. Without this the only feedback that narration is
+    /// being captured is that the picture is playing, which is exactly what
+    /// playing it without recording looks like — the reason this was reported
+    /// as "nothing gets recorded".
+    public private(set) var levels: [Float] = []
+
+    /// Takes one level reading. Called by the editor's existing playhead
+    /// poll, so the lane advances at the same rate the playhead does and the
+    /// two cannot drift apart.
+    public func sampleLevel() {
+        guard let recorder, isRecording else { return }
+        recorder.updateMeters()
+        // dBFS to a 0...1 magnitude, on the same curve a waveform is drawn
+        // with. -60 dB is the floor: below that is room tone, and mapping it
+        // linearly would make silence look like quiet speech.
+        let decibels = Double(recorder.averagePower(forChannel: 0))
+        let magnitude = decibels <= -60 ? 0 : pow(10, decibels / 20)
+        levels.append(Float(magnitude))
+    }
+
     /// Begins a take, writing to `url`.
     ///
     /// - Parameter ensureMicrophone: injected so a test can exercise the
@@ -67,7 +92,12 @@ public final class VoiceoverRecorder {
             // old take is still in there" is not a behaviour worth having.
             try? FileManager.default.removeItem(at: url)
             let recorder = try AVAudioRecorder(url: url, settings: settings)
+            // Before `record()`: metering enabled afterwards returns zero
+            // until the next start, so the lane would stay flat for the whole
+            // take with nothing to explain why.
+            recorder.isMeteringEnabled = true
             guard recorder.record() else { return .failed("the recorder would not start") }
+            levels.removeAll(keepingCapacity: true)
             self.recorder = recorder
             isRecording = true
             startedAtOutput = outputStart

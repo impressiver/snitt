@@ -377,3 +377,13 @@ EmptyDocumentTests :: Sources/SnittApp/AppShell.swift :: static let newFromClipb
 # "New from Clipboard" must be dead without a clipboard video: an item whose
 # title is not true fails by doing nothing, which reads as a broken app.
 EmptyDocumentTests :: Sources/SnittApp/main.swift :: return ClipboardMedia.video() != nil :: return true
+
+# The gain fader must reach SILENCE. -24 dB is the bottom of the DISPLAY, and
+# treating it as the bottom of the range left a "muted" track at 6% volume.
+GainMeterTests :: Sources/SnittApp/GainMeter.swift :: if segment <= 0 { return 0 } :: if false { return 0 }
+# The voiceover lane must be drawn on the CAPTURE's clock, or narration
+# recorded over source 30 appears at the start of the recording.
+VoiceoverWaveformTests :: Sources/SnittExport/VoiceoverWaveform.swift :: let toBase = Int((segment.sourceStart * rate).rounded()) :: let toBase = Int((segment.voiceoverStart * rate).rounded())
+# A window that can be dragged below the requested floor drops transport
+# controls, which is where the wrapped duration was reported from.
+EditorWindowMinimumSizeTests :: Sources/SnittApp/EditorWindowController.swift :: return NSSize(width: max(derived.width, requestedMinimumSize.width), :: return NSSize(width: min(derived.width, requestedMinimumSize.width),

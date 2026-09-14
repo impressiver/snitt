@@ -69,6 +69,19 @@ public enum GainMeter {
     public static func gain(forFraction fraction: Double) -> Double {
         let clamped = min(max(fraction, 0), 1)
         let segment = (clamped * Double(segmentCount)).rounded()
+        // THE BOTTOM OF THE LADDER IS SILENCE, not −24 dB.
+        //
+        // Reported as "the gain adjustment only reduces the levels
+        // partially", and it did: dragging all the way down produced
+        // `gain(forDecibels: -24)`, which is `pow(10, -24/20)` ≈ 0.063 — six
+        // percent of the original, audible, and with the fader visibly at the
+        // floor. Nothing on screen said so, because `label(forGain:)` already
+        // prints "−∞" at gain 0 and the drag simply could not reach it.
+        //
+        // −24 dB is the bottom of the DISPLAY, chosen so unity sits usefully
+        // on the scale. Treating it as the bottom of the RANGE conflated the
+        // two: a fader that cannot reach silence is not a fader.
+        if segment <= 0 { return 0 }
         let decibels = minimumDecibels
             + (segment / Double(segmentCount)) * (maximumDecibels - minimumDecibels)
         // No snap at unity. `pow(10, 0/20)` is EXACTLY 1.0 — an earlier

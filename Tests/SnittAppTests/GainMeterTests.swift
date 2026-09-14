@@ -88,6 +88,37 @@ struct GainMeterTests {
     @Test("A drag off either end clamps rather than running away")
     func dragClamps() {
         #expect(GainMeter.gain(forFraction: -3) == GainMeter.gain(forFraction: 0))
+    }
+
+    @Test("Dragging the fader to the bottom is SILENCE, not the bottom of the scale")
+    func bottomOfTheLadderIsSilent() {
+        // Reported as "the gain adjustment only reduces the levels partially",
+        // and it did: the bottom used to produce `gain(forDecibels: -24)`,
+        // which is `pow(10, -24/20)` ≈ 0.063 — six percent of the original,
+        // clearly audible, with the fader visibly at the floor.
+        //
+        // −24 dB is the bottom of the DISPLAY, chosen so unity sits usefully
+        // on the scale. It was being treated as the bottom of the RANGE, and a
+        // fader that cannot reach silence is not a fader.
+        #expect(GainMeter.gain(forFraction: 0) == 0)
+        #expect(GainMeter.gain(forFraction: -3) == 0, "past the bottom is also silence")
+
+        // The readout already knew: it prints −∞ at gain 0 and always did.
+        // Only the drag could not get there.
+        #expect(GainMeter.label(forGain: GainMeter.gain(forFraction: 0)) == "−∞")
+        // And nothing is lit, which is what silence looks like on a ladder.
+        #expect(GainMeter.litSegments(forGain: GainMeter.gain(forFraction: 0)) == 0)
+    }
+
+    @Test("One notch up from the bottom is quiet, not silent")
+    func oneNotchUpIsAudible() {
+        // The other side of the same line. Silence is the bottom POSITION, not
+        // a dead zone at the bottom of the travel — a fader whose first few
+        // notches all meant silence would be worse than one that never reached
+        // it.
+        let notch = GainMeter.gain(forFraction: 1.0 / Double(GainMeter.segmentCount))
+        #expect(notch > 0)
+        #expect(notch < 0.2, "one notch up is \(notch), which is not quiet")
         #expect(GainMeter.gain(forFraction: 9) == GainMeter.gain(forFraction: 1))
         #expect(GainMeter.litSegments(forGain: GainMeter.gain(forFraction: 9))
                 == GainMeter.segmentCount)

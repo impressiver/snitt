@@ -26,7 +26,12 @@ enum TimelineTrackLayout {
     /// with the microphone off has no `microphone` state and must not be given
     /// an empty band implying a source that was never captured.
     static func audioTracks(in states: [TrackState]) -> [String] {
-        ["microphone", "systemAudio"].filter { name in states.contains { $0.track == name } }
+        // "voiceover" LAST, so narration reads as something added under the
+        // recording rather than as one of the sources it was made from. It
+        // appears only once a take exists, for the same reason the microphone
+        // band does: a lane for a source that was never captured implies one.
+        ["microphone", "systemAudio", "voiceover"]
+            .filter { name in states.contains { $0.track == name } }
     }
 
     /// Band rects, bottom-up in AppKit's flipped-off coordinate space, matching
