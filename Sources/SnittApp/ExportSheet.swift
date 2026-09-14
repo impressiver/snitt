@@ -69,6 +69,71 @@ struct ExportRequest: Equatable {
         return request
     }
 
+    /// The preset these settings ARE, or nil for "Custom".
+    ///
+    /// **Derived, never stored**, and that is the whole design. The
+    /// requirement is "manually adjusting settings selects Custom", and a
+    /// stored flag would have to be cleared by every control that can change a
+    /// setting — so the first control added later without that line leaves the
+    /// menu claiming a preset the settings no longer match. Asking the settings
+    /// what they are cannot drift from what they are.
+    ///
+    /// `maxSizeBytes` is the discriminator and is nil for anything chosen by
+    /// hand: the sheet offers no byte-budget control, and every manual edit
+    /// clears it (see `clearPreset`). So "custom" is not a heuristic here, it
+    /// is a fact about the request.
+    var destinationPreset: ExportDestination? {
+        guard let maxSizeBytes else { return nil }
+        return ExportDestination.all.first {
+            $0.maxSizeBytes == maxSizeBytes
+                && $0.format == format
+                && $0.resolution == resolution
+        }
+    }
+
+    /// Adopts a preset's settings. Does NOT export: the Export button does.
+    ///
+    /// Overlays and the folder are deliberately untouched. A preset says what
+    /// a place will ACCEPT — a size ceiling, a resolution, a container — and
+    /// says nothing about whether you wanted captions burned in or where you
+    /// keep your files. Overriding those would make choosing a preset undo
+    /// decisions it has no opinion about.
+    mutating func apply(_ preset: ExportDestination) {
+        maxSizeBytes = preset.maxSizeBytes
+        resolution = preset.resolution
+        setFormat(preset.format)
+        rename(suffix: preset.id)
+    }
+
+    /// Returns to "Custom": no byte budget, and no preset in the filename.
+    ///
+    /// Settings are LEFT ALONE. Someone who picked GitHub, liked 720p, and
+    /// then wanted it without the 10 MB ceiling should get exactly that, not a
+    /// silent reset to source resolution.
+    mutating func clearPreset() {
+        maxSizeBytes = nil
+        rename(suffix: nil)
+    }
+
+    /// Re-stems the filename for `suffix`, removing any preset suffix already
+    /// there.
+    ///
+    /// The removal is the part that matters. Without it, trying three presets
+    /// in a row produces `demo-github-slack-x.mp4` — and the name that carries
+    /// the wrong preset is worse than one that carries none, because the
+    /// filename is the only thing distinguishing two exports of one recording
+    /// once they are sitting in a folder together.
+    private mutating func rename(suffix: String?) {
+        let folder = destination.deletingLastPathComponent()
+        let ext = destination.pathExtension
+        var stem = destination.deletingPathExtension().lastPathComponent
+        for known in ExportDestination.all where stem.hasSuffix("-\(known.id)") {
+            stem = String(stem.dropLast(known.id.count + 1))
+        }
+        if let suffix { stem += "-\(suffix)" }
+        destination = folder.appendingPathComponent(stem).appendingPathExtension(ext)
+    }
+
     /// Changing the format renames the file, because a `.mp4` holding a GIF
     /// is a file Finder opens in the wrong app and QuickLook renders as
     /// nothing. `format` is `private(set)` so this is the only way to change
@@ -104,6 +169,13 @@ struct ExportSheet: View {
     let options: [ExportOption]
     /// Nil while the composition is still being measured.
     let isMeasuring: Bool
+    /// How long the edited recording runs, for the preset duration check.
+    ///
+    /// Zero when the caller does not know, which reads as "no warning" rather
+    /// than "under every limit" — the two are the same answer here, and
+    /// inventing a duration to compare against would be worse than staying
+    /// quiet.
+    var durationSeconds: Double = 0
     @Binding var request: ExportRequest
     let onCancel: () -> Void
     let onExport: () -> Void
@@ -116,6 +188,7 @@ struct ExportSheet: View {
             header
             Divider()
             VStack(alignment: .leading, spacing: 16) {
+                preset
                 format
                 resolution
                 overlays
@@ -150,12 +223,87 @@ struct ExportSheet: View {
         .padding(.vertical, 14)
     }
 
+    /// "Export for" — moved here out of the menu bar (D95-era `File ▸ Export
+    /// for`), where it exported immediately and gave nobody a chance to see
+    /// what it had decided.
+    ///
+    /// Selecting one SETS the settings below and stops. The Export button is
+    /// still the only thing that writes a file, so a preset is now a starting
+    /// point you can adjust rather than a command you have to get right first
+    /// time.
+    private var preset: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Export for").font(.caption).foregroundStyle(.secondary)
+            Picker("", selection: Binding(
+                get: { request.destinationPreset?.id ?? Self.customPresetID },
+                set: { id in
+                    if let destination = ExportDestination.named(id) {
+                        request.apply(destination)
+                    } else {
+                        request.clearPreset()
+                    }
+                })) {
+                Text("Custom").tag(Self.customPresetID)
+                Divider()
+                ForEach(ExportDestination.all) { destination in
+                    Text(destination.name).tag(destination.id)
+                }
+            }
+            .labelsHidden()
+            if let note = request.destinationPreset?.note {
+                Text(note)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if let overrun = Self.durationWarning(for: request.destinationPreset,
+                                                  durationSeconds: durationSeconds) {
+                Label(overrun, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// What to say when the recording is longer than the preset allows, or
+    /// nil when it is not.
+    ///
+    /// Shown HERE, while the settings are being chosen, rather than in an
+    /// alert after the export — which is where it used to be, because
+    /// `File ▸ Export for` wrote the file before there was anywhere to say it.
+    /// Knowing before you export is the point of the move.
+    ///
+    /// Snitt still does not shorten anything to fit. Trimming to satisfy
+    /// someone else's policy destroys content, and the person finds out by
+    /// watching their own demo stop mid-sentence.
+    static func durationWarning(for preset: ExportDestination?,
+                                durationSeconds: Double) -> String? {
+        guard let preset, durationSeconds > 0,
+              preset.exceedsDuration(durationSeconds) else { return nil }
+        let limit = Int((preset.maxDurationSeconds ?? 0).rounded())
+        return "Longer than \(preset.name) accepts (\(limit / 60)m \(limit % 60)s). "
+             + "It will export at full length — trim it yourself if that matters."
+    }
+
+    /// Not a destination id, and it must never collide with one — the picker's
+    /// selection is an id, so a preset called "custom" would be unreachable.
+    /// `ExportDestinationTests` pins that.
+    static let customPresetID = "__custom__"
+
     private var format: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Format").font(.caption).foregroundStyle(.secondary)
             Picker("", selection: Binding(
                 get: { request.format },
-                set: { request.setFormat($0) })) {
+                set: {
+                    request.setFormat($0)
+                    // Changing a setting by hand is what makes this Custom.
+                    // Clearing the budget here rather than asking the picker to
+                    // do it keeps the rule in ONE place: any path that changes
+                    // format goes through `setFormat`.
+                    request.clearPreset()
+                })) {
                 Text("MP4").tag("mp4")
                 Text("GIF").tag("gif")
             }
@@ -210,6 +358,11 @@ struct ExportSheet: View {
     private func row(for option: ExportOption) -> some View {
         Button {
             request.resolution = option.resolution
+            // Picking a resolution by hand is choosing QUALITY, not a byte
+            // budget — `maxSizeBytes`' own doc comment says so — and the two
+            // fight: the size ladder would walk back down from whatever was
+            // just chosen. Clearing the preset is what makes the choice stick.
+            request.clearPreset()
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: option.resolution == request.resolution

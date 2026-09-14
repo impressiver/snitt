@@ -456,12 +456,22 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// stack's row spacing sits almost touching the heading under it and the
     /// paragraph above it, which reads as a line that fell over rather than as
     /// a division — the screenshot that prompted this showed exactly that.
+    /// The space on each side of a group's rule.
+    ///
+    /// ONE constant used for both sides, so they cannot drift apart. They were
+    /// 20 above and 10 below, on the reasoning that a heading belongs to what
+    /// follows it. Measured on the laid-out window that came out as 18 and 8 —
+    /// an `NSBox` separator is 5pt tall with its hairline centred, so each gap
+    /// loses about 2pt to the box itself — and the rule visibly sat twice as
+    /// far from the content above it as from the heading below it.
+    static let ruleMargin: Double = 16
+
     private func addGroup(to stack: NSStackView, titled title: String,
                           rows: [NSView], leadingRule: Bool = true) {
         if leadingRule {
             let rule = separator()
             stack.addArrangedSubview(rule)
-            stack.setCustomSpacing(10, after: rule)
+            stack.setCustomSpacing(Self.ruleMargin, after: rule)
         }
 
         let header = groupHeader(title)
@@ -474,17 +484,21 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     /// Rows with no header — the top-of-window group, and the body of every
     /// headed one, so the spacing rule lives in a single place.
     ///
-    /// 14 between rows rather than the stack's own 2: a checkbox row is a
+    /// `rowSpacing` rather than the stack's own 2: a checkbox row is a
     /// checkbox stacked on its own explanation, so the gap BETWEEN two settings
     /// has to clear the gap inside one, or the explanation reads as belonging
     /// to the box underneath it.
+    static let rowSpacing: Double = 14
+
     private func addRows(to stack: NSStackView, _ rows: [NSView]) {
         for row in rows {
             stack.addArrangedSubview(row)
-            stack.setCustomSpacing(14, after: row)
+            stack.setCustomSpacing(Self.rowSpacing, after: row)
         }
-        // Air before whatever comes next — a rule, or the window's edge.
-        if let last = rows.last { stack.setCustomSpacing(20, after: last) }
+        // The other half of the rule's margin. The same constant as the gap
+        // below it, which is the whole point: a divider with more air on one
+        // side than the other reads as belonging to the group it sits nearer.
+        if let last = rows.last { stack.setCustomSpacing(Self.ruleMargin, after: last) }
     }
 
     /// A hairline the full width of the content, so a group reads as a group.

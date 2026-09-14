@@ -101,24 +101,25 @@ struct ExportForDestinationTests {
         #expect(ExportRequest(destination: base).maxSizeBytes == nil)
     }
 
-    @Test("The File menu offers every destination, wired to the export action")
-    func menuReachesEveryDestination() throws {
+    @Test("The File menu no longer exports the moment you pick a destination")
+    func exportForIsNotInTheMenuBar() throws {
+        // It was a submenu that exported immediately, with no dialog and no
+        // chance to see what it had decided, so getting it wrong meant
+        // exporting again rather than adjusting. It is a picker in the export
+        // sheet now.
+        //
+        // Asserted as an ABSENCE because that is the change: a test that only
+        // checked the sheet's picker would pass with both surfaces present,
+        // and two places that both claim to set the export settings is the
+        // state this removes.
         let file = try #require(AppShell.buildMainMenu().items
             .first { $0.title == "File" }?.submenu)
-        let forItem = try #require(file.items.first { $0.title == "Export for" },
-                                   "File has no Export for submenu")
-        let submenu = try #require(forItem.submenu)
-
-        #expect(submenu.items.count == ExportDestination.all.count)
-        for destination in ExportDestination.all {
-            let entry = try #require(submenu.items.first { $0.title == destination.name },
-                                     "no menu entry for \(destination.name)")
-            #expect(entry.action == #selector(AppDelegate.exportForDestination(_:)))
-            // Identified by id, not by title: the action resolves the preset
-            // from this, so a renamed entry must not silently retarget the
-            // export to a different place.
-            #expect(entry.representedObject as? String == destination.id)
-        }
+        #expect(!file.items.contains { $0.title == "Export for" },
+                "Export for is still in the File menu")
+        // Export and Share ARE still there. Removing a neighbour by accident
+        // is one keystroke away from removing the item itself.
+        #expect(file.items.contains { $0.title == "Export…" })
+        #expect(file.items.contains { $0.title == "Share" })
     }
 
     @Test("Share is a SUBMENU beside Export, as QuickTime has it")
@@ -155,7 +156,6 @@ struct ExportForDestinationTests {
         // and why the two new ones must not be the exception.
         let delegate = AppDelegate()
         for selector in [#selector(AppDelegate.exportDocument(_:)),
-                         #selector(AppDelegate.exportForDestination(_:)),
                          #selector(AppDelegate.shareToService(_:))] {
             let item = NSMenuItem(title: "x", action: selector, keyEquivalent: "")
             #expect(delegate.validateMenuItem(item) == false,
@@ -163,17 +163,20 @@ struct ExportForDestinationTests {
         }
     }
 
-    @Test("Every menu entry resolves back to a real preset")
+    @Test("Every preset the picker offers resolves back to a real destination")
     func everyEntryResolves() throws {
-        // The other half of the id indirection. An entry carrying an id that
-        // `named(_:)` cannot resolve is an item that does nothing when
-        // clicked, which looks like a broken app rather than a typo.
-        let file = try #require(AppShell.buildMainMenu().items
-            .first { $0.title == "File" }?.submenu)
-        let submenu = try #require(file.items.first { $0.title == "Export for" }?.submenu)
-        for entry in submenu.items {
-            let id = try #require(entry.representedObject as? String, "\(entry.title) carries no id")
-            #expect(ExportDestination.named(id) != nil, "\(entry.title) has unknown id \(id)")
+        // The other half of the id indirection, now that the picker's
+        // selection is an id rather than a menu item's representedObject. An
+        // id `named(_:)` cannot resolve is an entry that does nothing when
+        // chosen, which looks like a broken app rather than a typo.
+        for destination in ExportDestination.all {
+            #expect(ExportDestination.named(destination.id) != nil,
+                    "\(destination.name) has unresolvable id \(destination.id)")
         }
+        // And the sentinel the picker uses for "Custom" must not collide with
+        // a real id, or that destination would be unreachable — the picker
+        // would read the sentinel as a selection of it.
+        #expect(ExportDestination.named(ExportSheet.customPresetID) == nil,
+                "the Custom sentinel collides with a real destination id")
     }
 }
