@@ -139,3 +139,199 @@ struct EditorWindowMinimumSizeTests {
         #expect(EditorWindowController.minimumContentSize.width >= derived)
     }
 }
+
+/// The lane's label, which is the one part of a new track nothing forces you
+/// to add.
+@Suite
+struct VoiceoverLaneLabelTests {
+
+    @Test("Every audio track Snitt can have is named properly")
+    func everyTrackHasAName() {
+        // `name(of:)` falls back to the raw key, so a track it does not know
+        // renders as "voiceover" in lower case beside "Microphone" and "System
+        // audio" — the lane works, the meter works, and only the
+        // capitalisation says nobody thought about it. Driven from
+        // `AudioTrackOrder.canonical` so a fourth track cannot be added
+        // without this failing.
+        for track in AudioTrackOrder.canonical {
+            let name = TransportBar.name(of: track)
+            #expect(name != track, "\(track) has no display name")
+            #expect(name.first?.isUppercase == true, "\(name) does not read as a label")
+        }
+    }
+}
+
+/// Documents narrated before the lane existed.
+@Suite
+struct VoiceoverBackfillTests {
+
+    private func narratedWithoutATrackState() -> EditDecisionList {
+        // Exactly the shape on disk from a recording made between D93 shipping
+        // and the lane landing: `voiceover` present, `trackStates` naming only
+        // what the capture had. Verified against a real document.
+        var edl = EditDecisionList()
+        edl.trackStates = [TrackState(track: "video"),
+                           TrackState(track: "microphone"),
+                           TrackState(track: "systemAudio")]
+        edl.voiceover = VoiceoverTrack(
+            filename: "voiceover.m4a", durationSeconds: 4,
+            segments: [VoiceoverSegment(voiceoverStart: 0, sourceStart: 2, durationSeconds: 4)])
+        return edl
+    }
+
+    @Test("An older narrated document gets its lane back")
+    func backfillGivesTheOlderDocumentALane() {
+        // Reported as "I can hear it when I play, but there's no lane visible".
+        // The narration was in the file and in the mix; only the thing the
+        // timeline derives lanes from was missing.
+        var edl = narratedWithoutATrackState()
+        #expect(!TimelineTrackLayout.audioTracks(in: edl.trackStates).contains("voiceover"))
+
+        edl.backfillVoiceoverTrackState()
+        #expect(TimelineTrackLayout.audioTracks(in: edl.trackStates).contains("voiceover"))
+    }
+
+    @Test("It does not reset a voiceover somebody muted")
+    func backfillPreservesExistingState() {
+        // Reopening a document must not undo an edit. This is the assertion
+        // that makes the backfill safe to run on EVERY open rather than once.
+        var edl = narratedWithoutATrackState()
+        edl.trackStates.append(TrackState(track: "voiceover", muted: true, gain: 0.5))
+        edl.backfillVoiceoverTrackState()
+
+        let states = edl.trackStates.filter { $0.track == "voiceover" }
+        #expect(states.count == 1, "the backfill added a duplicate")
+        #expect(states[0].muted)
+        #expect(states[0].gain == 0.5)
+    }
+
+    @Test("A document with no narration gains nothing")
+    func backfillDoesNothingWithoutAVoiceover() {
+        // Otherwise every recording would grow a lane for a track it does not
+        // have — the same failure the microphone band's own guard prevents.
+        var edl = EditDecisionList()
+        edl.trackStates = [TrackState(track: "systemAudio")]
+        edl.backfillVoiceoverTrackState()
+        #expect(!edl.trackStates.contains { $0.track == "voiceover" })
+    }
+
+    @Test("Running it twice changes nothing the second time")
+    func backfillIsIdempotent() {
+        var edl = narratedWithoutATrackState()
+        edl.backfillVoiceoverTrackState()
+        let after = edl.trackStates.map(\.track)
+        edl.backfillVoiceoverTrackState()
+        #expect(edl.trackStates.map(\.track) == after)
+    }
+}
+
+/// The waveform for a document that is OPENED rather than just recorded.
+@Suite(.serialized)
+@MainActor
+struct VoiceoverWaveformLoadTests {
+    init() { _ = NSApplication.shared }
+
+    @Test("Opening a narrated document samples its voiceover, not only the capture")
+    func openingLoadsTheVoiceoverWaveform() async throws {
+        // Reported as "the lane shows up now, but there's no waveform, just an
+        // empty audio track where there definitely should be audio".
+        //
+        // `loadWaveforms` samples `capture.mov`. The voiceover is a DIFFERENT
+        // FILE, so one call cannot fetch both — and the second was only ever
+        // made when a take ended, which a document being opened never does.
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "vowave-\(UUID().uuidString).snitt")
+        let bundle = try SnittBundle(creatingAt: root)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await writeSyntheticMovie(to: bundle.captureURL, seconds: 3.0,
+                                      audioTrackCount: 2)
+        try await writeSyntheticMovie(to: bundle.voiceoverURL, seconds: 2.0,
+                                      audioTrackCount: 1)
+        try RecordingMetadata(createdAt: Date(), initiator: .human).write(to: bundle)
+
+        var edl = EditDecisionList()
+        edl.trackStates = [TrackState(track: "systemAudio"), TrackState(track: "microphone")]
+        edl.voiceover = VoiceoverTrack(
+            filename: bundle.voiceoverURL.lastPathComponent, durationSeconds: 2.0,
+            segments: [VoiceoverSegment(voiceoverStart: 0, sourceStart: 0.5,
+                                        durationSeconds: 2.0)])
+        try edl.write(to: bundle)
+
+        let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+        let controller = PreviewController(built: built, jumpPoints: [],
+                                           bundle: bundle, scale: 1.0)
+        let state = EditorTimelineState(controller: controller, edl: edl, events: [])
+
+        // AWAITED, not polled. Polling was tried twice — four seconds passed
+        // alone and timed out on the full run, and twenty seconds timed out
+        // too — so the wait was never the problem and a longer one would have
+        // been a worse test rather than a passing one.
+        await state.voiceoverWaveformLoad?.value
+
+        let reason = state.voiceoverWaveformFailure ?? "no reason recorded"
+        let waveform = try #require(state.waveforms.first { $0.track == "voiceover" },
+                                    "opening a narrated document did not sample its voiceover: \(reason)")
+        // Sized to the CAPTURE, which is the thing an unloaded lane cannot
+        // fake: the samples come from a 2s voiceover and the array spans the
+        // 3s recording, so the length is proof the re-indexing ran rather than
+        // the raw file being handed over.
+        //
+        // AMPLITUDE is deliberately not asserted here, and this is the
+        // limitation worth naming rather than working around: this target's
+        // `writeSyntheticMovie` writes SILENT audio, so a tone-carrying
+        // fixture does not exist at this level and an amplitude check would
+        // fail against correct code. That the mapping carries real values, and
+        // puts them at the right source offsets, is
+        // `VoiceoverWaveformTests` — which uses a ramp precisely so a
+        // misplacement shows up as a wrong VALUE rather than as "some numbers
+        // moved".
+        #expect(waveform.samplesPerSecond > 0)
+        let expected = Int((3.0 * waveform.samplesPerSecond).rounded(.up))
+        #expect(abs(waveform.peaks.count - expected) <= 1,
+                "the lane spans \(waveform.peaks.count) buckets, not the recording's \(expected)")
+    }
+}
+
+/// The two waveform loads are separate tasks over separate files.
+@Suite(.serialized)
+@MainActor
+struct WaveformMergeTests {
+    init() { _ = NSApplication.shared }
+
+    @Test("A late capture sample does not wipe the voiceover's")
+    func captureLoadPreservesTheVoiceover() async throws {
+        // The race that made the missing lane intermittent. `loadWaveforms`
+        // assigned the whole array, so whichever of the two decodes finished
+        // LAST won — on an idle machine the capture finished first and the
+        // voiceover survived; under a full test run it did not.
+        //
+        // Driven through the published property rather than by racing two real
+        // decodes, because the failure is the ASSIGNMENT and a test that had
+        // to win a race to see it would be the flake it is replacing.
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "wfmerge-\(UUID().uuidString).snitt")
+        let bundle = try SnittBundle(creatingAt: root)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try await writeSyntheticMovie(to: bundle.captureURL, seconds: 2.0, audioTrackCount: 2)
+        try RecordingMetadata(createdAt: Date(), initiator: .human).write(to: bundle)
+
+        let built = try await CompositionBuilder.build(
+            bundle: bundle, edl: EditDecisionList(), scale: 1.0)
+        let controller = PreviewController(built: built, jumpPoints: [],
+                                           bundle: bundle, scale: 1.0)
+        let state = EditorTimelineState(controller: controller,
+                                        edl: EditDecisionList(), events: [])
+
+        // A voiceover lane arrives first, as it does when the smaller file
+        // decodes sooner.
+        state.waveforms = [WaveformSamples(track: "voiceover",
+                                           samplesPerSecond: 10, peaks: [1, 1, 1])]
+        // Then the capture's load lands.
+        await state.captureWaveformLoadForTesting?.value
+
+        #expect(state.waveforms.contains { $0.track == "voiceover" },
+                "the capture's sample wiped the voiceover lane")
+        #expect(state.waveforms.contains { $0.track == "systemAudio" },
+                "the capture's own tracks did not arrive")
+    }
+}

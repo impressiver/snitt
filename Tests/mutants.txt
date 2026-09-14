@@ -387,3 +387,22 @@ VoiceoverWaveformTests :: Sources/SnittExport/VoiceoverWaveform.swift :: let toB
 # A window that can be dragged below the requested floor drops transport
 # controls, which is where the wrapped duration was reported from.
 EditorWindowMinimumSizeTests :: Sources/SnittApp/EditorWindowController.swift :: return NSSize(width: max(derived.width, requestedMinimumSize.width), :: return NSSize(width: min(derived.width, requestedMinimumSize.width),
+
+# The EXPORT's audio mix must cover the voiceover track. Built from
+# `audioTrackPairs` it covered only the capture's own tracks, so muting
+# narration changed the preview and not the exported file.
+VoiceoverMixTests :: Sources/SnittExport/CompositionBuilder.swift :: let mix = audioMix(for: mixTracks, states: edl.trackStates) :: let mix = audioMix(for: audioTrackPairs.map(\.destination), states: edl.trackStates)
+
+# A document narrated before the lane existed carries `voiceover` and no
+# matching TrackState — the narration plays and nothing shows it.
+VoiceoverBackfillTests :: Sources/SnittDocument/EditDecisionList.swift :: trackStates.append(TrackState(track: "voiceover")) :: return
+# The lane's label is the one part of a new track nothing forces you to add.
+VoiceoverLaneLabelTests :: Sources/SnittApp/EditorChrome.swift :: case "voiceover": return "Voiceover" :: case "voiceover": return track
+
+# A document OPENED rather than just recorded never sampled its voiceover, so
+# the lane drew empty over audio you could hear.
+VoiceoverWaveformLoadTests :: Sources/SnittApp/EditorWindowController.swift :: loadVoiceoverWaveform() :: _ = 0
+
+# Two waveform loads over two files: a plain assignment wipes whichever
+# finished first, so the voiceover lane drew empty depending on a race.
+WaveformMergeTests :: Sources/SnittApp/EditorWindowController.swift :: self?.waveforms = (samples ?? []) + voiceover :: self?.waveforms = (samples ?? [])

@@ -237,6 +237,29 @@ public struct EditDecisionList: Codable, Sendable {
     /// refusing the file.
     public var voiceover: VoiceoverTrack?
 
+    /// Adds a `TrackState` for a voiceover that has one in the document but
+    /// not in `trackStates`.
+    ///
+    /// **Documents narrated before 2026-09-14 are exactly that.** The
+    /// voiceover shipped (D93) before it had a lane, so those recordings carry
+    /// `voiceover` and no matching track state — and the timeline derives its
+    /// lanes from `trackStates`, so the narration plays and nothing shows it.
+    /// Reported that way: "this file has a recorded voiceover, I can hear it
+    /// when I play, but there's no lane visible".
+    ///
+    /// Backfilled rather than the lane derived from `voiceover != nil`
+    /// directly, because the state is not only a display flag: it is where
+    /// mute and gain live. A lane drawn without one would have a fader
+    /// attached to nothing.
+    ///
+    /// Idempotent, and it never overwrites an existing state — reopening a
+    /// document must not reset a voiceover somebody muted.
+    public mutating func backfillVoiceoverTrackState() {
+        guard voiceover != nil,
+              !trackStates.contains(where: { $0.track == "voiceover" }) else { return }
+        trackStates.append(TrackState(track: "voiceover"))
+    }
+
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, cuts, trackStates, crop, showClicks
         case showSubtitles, showMarkers, voiceover

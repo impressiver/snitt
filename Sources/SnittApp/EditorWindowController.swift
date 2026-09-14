@@ -193,11 +193,30 @@ final class EditorTimelineState: ObservableObject {
 
     init(controller: PreviewController, edl: EditDecisionList, events: [LoggedEvent]) {
         self.controller = controller
+        // Every document the editor opens comes through here, whatever the
+        // route — a recording that just stopped, File ▸ Open, a Finder
+        // double-click, an import. One place, so a document narrated before
+        // the lane existed cannot arrive without one.
+        var edl = edl
+        edl.backfillVoiceoverTrackState()
         self.edl = edl
+        // `lastSavedEDL` takes the BACKFILLED value deliberately: the added
+        // state describes what is already in the document rather than an edit
+        // somebody made, so it must not mark a freshly-opened file dirty.
         self.lastSavedEDL = edl
         self.events = events
         self.lastSavedEvents = events
         loadWaveforms()
+        // The capture's tracks and the voiceover come from DIFFERENT FILES, so
+        // one call cannot fetch both. `loadWaveforms` samples `capture.mov`;
+        // this samples `voiceover.m4a`, and without it a document that is
+        // opened rather than just recorded shows the lane with nothing in it —
+        // which is how it was reported.
+        //
+        // Both are fired here rather than lazily on first draw: a waveform
+        // that appears only after some unrelated redraw is worse than one that
+        // takes a moment, because nothing on screen says it is coming.
+        loadVoiceoverWaveform()
     }
 
     /// Peak amplitudes per audio track, empty until the read finishes.
@@ -221,12 +240,26 @@ final class EditorTimelineState: ObservableObject {
     /// Sampled ONCE per document, against the source recording. Cuts and zoom
     /// change which sample a pixel column reads (`TimelineSampleIndex`), never
     /// the samples themselves, so no edit re-triggers this.
+    /// The capture's sample, so a test can await it rather than race it.
+    private(set) var captureWaveformLoadForTesting: Task<Void, Never>?
+
     private func loadWaveforms() {
         let url = controller.captureURL
-        Task { [weak self] in
+        captureWaveformLoadForTesting = Task { [weak self] in
             let samples = try? await WaveformSampler.sample(movieAt: url)
             await MainActor.run {
-                self?.waveforms = samples ?? []
+                // MERGED, not replaced. The voiceover comes from a different
+                // file and a different task, and a plain assignment here wiped
+                // whichever of the two finished first — so the lane drew empty
+                // or not depending on which decode won a race.
+                //
+                // That is the bug reported as "there's no waveform, just an
+                // empty audio track where there definitely should be audio",
+                // and the reason it looked like a load that never happened: on
+                // an idle machine the capture won and the voiceover survived,
+                // under load it did not.
+                let voiceover = self?.waveforms.filter { $0.track == "voiceover" } ?? []
+                self?.waveforms = (samples ?? []) + voiceover
                 // Set even when the result is empty: a recording with no audio
                 // track samples to nothing, and without this flag that is
                 // indistinguishable from "still decoding" forever.
@@ -996,13 +1029,38 @@ final class EditorTimelineState: ObservableObject {
     /// `TimelineView.drawWaveform` maps every pixel column through
     /// `KeptRanges` into source seconds — drawn unmapped, narration recorded
     /// over source 30 would appear at the start of the recording.
+    /// The in-flight sample, so a test can AWAIT it rather than poll for it.
+    ///
+    /// Polling was tried and does not work here: the first version waited four
+    /// seconds, passed alone, and timed out on the full run; twenty seconds
+    /// timed out too. Whatever the contention is, a longer wait is a worse
+    /// test, not a passing one — and "assert the loader was called" would be
+    /// the adjacent-property trap this project keeps finding. Awaiting the
+    /// actual work keeps the assertion on the actual outcome.
+    private(set) var voiceoverWaveformLoad: Task<Void, Never>?
+    /// Why the voiceover lane has no waveform, when it has none.
+    private(set) var voiceoverWaveformFailure: String?
+
     func loadVoiceoverWaveform() {
         guard let voiceover = edl.voiceover else { return }
         let url = controller.snittBundle.url.appendingPathComponent(voiceover.filename)
         let sourceDuration = controller.sourceDurationSeconds
-        Task { [weak self] in
-            let sampled = try? await WaveformSampler.sample(movieAt: url)
-            guard let first = sampled?.first else { return }
+        voiceoverWaveformLoad = Task { [weak self] in
+            var sampled: [WaveformSamples] = []
+            var failure: String?
+            do { sampled = try await WaveformSampler.sample(movieAt: url) }
+            catch { failure = (error as NSError).localizedDescription }
+            guard let first = sampled.first else {
+                // Recorded rather than swallowed. A `try?` here made "the
+                // narration could not be read" and "there is no narration"
+                // the same empty lane, which is the difference between a
+                // transient failure worth retrying and nothing to draw.
+                await MainActor.run {
+                    self?.voiceoverWaveformFailure =
+                        failure ?? "no audio track in \(url.lastPathComponent)"
+                }
+                return
+            }
             let aligned = VoiceoverWaveform.sourceAligned(
                 first, track: voiceover, sourceDuration: sourceDuration)
             await MainActor.run {
