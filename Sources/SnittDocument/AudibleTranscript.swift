@@ -44,4 +44,32 @@ public enum AudibleTranscript {
     public static func isVoiceover(_ word: TranscriptWord) -> Bool {
         word.track == "voiceover"
     }
+
+    /// `words` split into one list per VOICE, in the order they should be
+    /// read: what the recording captured, then what was narrated over it.
+    ///
+    /// The rule is narration-versus-everything-else rather than one list per
+    /// track name, and that distinction is the reason this is a function
+    /// instead of a `Dictionary(grouping:by: \.track)` at each call site. A
+    /// voice is a person talking. If system audio is ever transcribed it is a
+    /// sound the recording captured — it belongs beside the microphone, not in
+    /// a third column nobody designed.
+    ///
+    /// Written once because three surfaces separate the voices: burned-in
+    /// subtitles, the reading pane, and the timeline's phrase chips. Three
+    /// copies of "is this the narration" is three places for them to start
+    /// disagreeing about what a row contains.
+    ///
+    /// Empty lists are omitted, so a recording with no narration yields ONE
+    /// stream and every caller's merge step is a no-op — which is what keeps
+    /// this from changing anything for the documents that have one voice.
+    public static func voices(_ words: [TranscriptWord])
+        -> [(track: String, words: [TranscriptWord])] {
+        let narration = words.filter(isVoiceover)
+        let recorded = words.filter { !isVoiceover($0) }
+        var streams: [(track: String, words: [TranscriptWord])] = []
+        if !recorded.isEmpty { streams.append(("microphone", recorded)) }
+        if !narration.isEmpty { streams.append(("voiceover", narration)) }
+        return streams
+    }
 }

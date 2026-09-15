@@ -451,3 +451,16 @@ SpeakerSeparationTests :: Sources/SnittBrand/SnittPalette.swift :: track == "voi
 MutedCaptionExportTests :: Sources/SnittExport/MovieExporter.swift :: trackStates: edl.trackStates) :: trackStates: [])
 # ...nor in the player.
 PreviewCaptionMuteTests :: Sources/SnittApp/EditorWindowController.swift :: return SubtitleCues.cues(words: audibleWords, keptRanges: controller.keptRanges) :: return SubtitleCues.cues(words: transcript?.words ?? [], keptRanges: controller.keptRanges)
+# A transcript LINE is one voice. Without the split, a narrator talking over
+# recorded speech gives lines that alternate word by word.
+SpeakerRowsTests :: Sources/SnittDocument/TranscriptParagraphs.swift :: let voices = AudibleTranscript.voices(words) :: let voices = words.isEmpty ? [] : [(track: "microphone", words: words)]
+# Merged back into time order, or one voice sits entirely above the other.
+SpeakerRowsTests :: Sources/SnittDocument/TranscriptParagraphs.swift :: .sorted { $0.words[0].start < $1.words[0].start } :: .self
+# A line knows which voice it is, so the pane need not look inside it.
+SpeakerRowsTests :: Sources/SnittDocument/TranscriptParagraphs.swift :: self.track = words[0].track :: self.track = "microphone"
+# Narration versus everything else — written once, for three surfaces.
+VoiceStreamTests :: Sources/SnittDocument/AudibleTranscript.swift :: let recorded = words.filter { !isVoiceover($0) } :: let recorded = words
+# Recorded first: the caption merge reads stream 0 as the lower line.
+VoiceStreamTests :: Sources/SnittDocument/AudibleTranscript.swift :: if !narration.isEmpty { streams.append(("voiceover", narration)) } :: if !narration.isEmpty { streams.insert(("voiceover", narration), at: 0) }
+# Muting the voiceover returns the pane to its single-voice appearance.
+PreviewCaptionMuteTests :: Sources/SnittApp/EditorWindowController.swift :: audibleWords.contains(where: AudibleTranscript.isVoiceover) :: (transcript?.words ?? []).contains(where: AudibleTranscript.isVoiceover)

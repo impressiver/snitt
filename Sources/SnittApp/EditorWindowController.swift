@@ -1239,6 +1239,16 @@ final class EditorTimelineState: ObservableObject {
     var audibleWords: [TranscriptWord] {
         AudibleTranscript.audible(transcript?.words ?? [], trackStates: edl.trackStates)
     }
+
+    /// Whether this recording has narration anybody can hear.
+    ///
+    /// Derived from `audibleWords` rather than from `trackStates`, so muting
+    /// the voiceover puts the pane back to its single-voice appearance instead
+    /// of leaving a lane rule on every row marking a distinction that no
+    /// longer exists on screen.
+    var hasNarration: Bool {
+        audibleWords.contains(where: AudibleTranscript.isVoiceover)
+    }
     @Published var transcriptionStatus: TranscriptionStatus = .none
 
     /// Words currently removed by the EDL, for striking through.

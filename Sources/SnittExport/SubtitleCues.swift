@@ -123,17 +123,14 @@ public enum SubtitleCues {
         // has speech in it, which makes that the normal case rather than an
         // edge one.
         //
-        // Split on narration-versus-everything-else rather than on each track
-        // name: a cue is a VOICE, and if system audio is ever transcribed it
-        // belongs with the sound the recording captured, not with the person
-        // talking over it.
-        let narration = words.filter { AudibleTranscript.isVoiceover($0) }
-        let recorded = words.filter { !AudibleTranscript.isVoiceover($0) }
-        guard !narration.isEmpty else {
-            return stream(recorded, keptRanges: keptRanges, track: "microphone")
-        }
-        return merge(recorded: stream(recorded, keptRanges: keptRanges, track: "microphone"),
-                     narration: stream(narration, keptRanges: keptRanges, track: "voiceover"))
+        // `AudibleTranscript.voices` decides what a separate voice IS, because
+        // the reading pane and the timeline's phrase chips separate them too
+        // and three copies of that rule is three places for them to disagree
+        // about what a row contains.
+        let voices = AudibleTranscript.voices(words)
+        let streams = voices.map { stream($0.words, keptRanges: keptRanges, track: $0.track) }
+        guard streams.count > 1 else { return streams.first ?? [] }
+        return merge(recorded: streams[0], narration: streams[1])
     }
 
     /// Two streams into one list, with anything that shares the frame moved

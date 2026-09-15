@@ -18,11 +18,15 @@ public struct TranscriptParagraph: Equatable, Sendable, Identifiable {
     /// unique and already stable.
     public let id: UUID
     public let words: [TranscriptWord]
+    /// The voice this line belongs to — every word in it, because a paragraph
+    /// never mixes two.
+    public let track: String
 
     /// Non-public so `words` cannot be empty: `id` reads `words[0]`.
     fileprivate init(words: [TranscriptWord]) {
         self.id = words[0].id
         self.words = words
+        self.track = words[0].track
     }
 }
 
@@ -53,9 +57,39 @@ public enum TranscriptParagraphs {
     public static let breakSeconds = 0.6
 
     /// Splits `words` wherever the silence before a word is at least
-    /// `breakSeconds` long.
+    /// `breakSeconds` long — and never across two voices.
+    ///
+    /// ONE VOICE PER LINE. The recogniser emits a single stream ordered by
+    /// time, so a narrator talking over recorded speech produced lines that
+    /// alternated between them word by word: "so and here that we fails". The
+    /// pane coloured each word to say which was which, which is a legend for a
+    /// sentence nobody can read rather than a fix.
+    ///
+    /// Each voice is paragraphed on its OWN pauses and the lines are merged
+    /// afterwards, so "so here we" stays one line even though another voice
+    /// was speaking in the gaps between its words. Splitting on a track change
+    /// instead would give one line per word exactly when the two overlap most,
+    /// which is worse than the wall of words this replaces.
+    ///
+    /// Merged by start time, so the lines still read down the recording in the
+    /// order things were said.
     public static func split(_ words: [TranscriptWord],
                              breakingAfter breakSeconds: Double = breakSeconds)
+        -> [TranscriptParagraph] {
+        let voices = AudibleTranscript.voices(words)
+        // One voice is the overwhelmingly common case and must be untouched by
+        // any of this: no merge, no re-sort, the same lines it always gave.
+        guard voices.count > 1 else {
+            return voices.first.map { paragraph($0.words, breakingAfter: breakSeconds) } ?? []
+        }
+        return voices
+            .flatMap { paragraph($0.words, breakingAfter: breakSeconds) }
+            .sorted { $0.words[0].start < $1.words[0].start }
+    }
+
+    /// The pause-splitting itself, run once per voice.
+    private static func paragraph(_ words: [TranscriptWord],
+                                  breakingAfter breakSeconds: Double)
         -> [TranscriptParagraph] {
         var paragraphs: [TranscriptParagraph] = []
         var current: [TranscriptWord] = []
