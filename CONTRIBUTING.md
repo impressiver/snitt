@@ -22,13 +22,90 @@ correctness check, not a style one. A file without the notice is arguably not
 Covered Software, which silently removes it from the protection the licence
 exists to provide.
 
-## Contributor Licence Agreement
+## Signing off, and the licence your contribution arrives under
 
-Contributions require agreeing to [`CLA.md`](CLA.md). It is short, and it is not
-a copyright assignment — you keep your copyright. It exists so the project can
-relicense in future (a Mac App Store build, or a commercial licence beside the
-free one), which is impossible once contributions arrive under terms that cannot
-be changed without unanimous permission.
+There is no CLA. Sign your commits off instead:
+
+```bash
+git commit -s        # appends a Signed-off-by line using your git identity
+```
+
+That line is your agreement to the [Developer Certificate of
+Origin](#developer-certificate-of-origin-11) below — the same one the Linux
+kernel uses. It certifies that you wrote the change or have the right to submit
+it. **It is not a copyright assignment**: you keep your copyright and remain
+free to use your work anywhere else, for anything.
+
+### The dual inbound licence
+
+The DCO certifies a right to submit "under the open source license indicated in
+the file". For this project that licence is stated here, and it is two:
+
+> Unless you state otherwise, any contribution you intentionally submit for
+> inclusion in Snitt shall be licensed **both under the Mozilla Public License
+> 2.0 and under the [Apache License, Version
+> 2.0](https://www.apache.org/licenses/LICENSE-2.0)**, at the recipient's
+> option, without any additional terms or conditions.
+
+Snitt still ships under the MPL-2.0 and there is no plan to change that. The
+second grant exists so that it *could* change — a Mac App Store build, or terms
+nobody has thought of yet — without tracking down every past contributor for
+permission, which in practice means it never happens.
+
+**This is not a grant to the maintainer alone.** Everyone who receives Snitt
+gets the same permissive rights you granted, including the right to fork it
+under other terms. A contributor licence agreement is the only instrument that
+makes a closed fork the maintainer's private option, and this project has
+deliberately given that up: near-zero friction for you, and no special
+privileges for anyone.
+
+### Developer Certificate of Origin 1.1
+
+*Reproduced verbatim from <https://developercertificate.org>. Do not edit.*
+
+```
+Developer Certificate of Origin
+Version 1.1
+
+Copyright (C) 2004, 2006 The Linux Foundation and its contributors.
+
+Everyone is permitted to copy and distribute verbatim copies of this
+license document, but changing it is not allowed.
+
+
+Developer's Certificate of Origin 1.1
+
+By making a contribution to this project, I certify that:
+
+(a) The contribution was created in whole or in part by me and I
+    have the right to submit it under the open source license
+    indicated in the file; or
+
+(b) The contribution is based upon previous work that, to the best
+    of my knowledge, is covered under an appropriate open source
+    license and I have the right under that license to submit that
+    work with modifications, whether created in whole or in part
+    by me, under the same open source license (unless I am
+    permitted to submit under a different license), as indicated
+    in the file; or
+
+(c) The contribution was provided directly to me by some other
+    person who certified (a), (b) or (c) and I have not modified
+    it.
+
+(d) I understand and agree that this project and the contribution
+    are public and that a record of the contribution (including all
+    personal information I submit with it, including my sign-off) is
+    maintained indefinitely and may be redistributed consistent with
+    this project or the open source license(s) involved.
+```
+
+### One thing the DCO does not cover
+
+If your change includes third-party code, **say so in the pull request**, with
+its source and its licence. The DCO asks you to certify you had the right to
+submit it; it does not ask you to point it out, and a reviewer cannot always
+tell.
 
 ## Conduct, and reporting something dangerous
 

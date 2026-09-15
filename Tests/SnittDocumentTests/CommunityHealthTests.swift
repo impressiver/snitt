@@ -31,8 +31,12 @@ struct CommunityHealthTests {
         // question a newcomer asks before they read any code: may I use this,
         // how do I help, what happens if I find something dangerous, and what
         // behaviour is expected.
+        // `CLA.md` is NOT in this list any more. It is a tombstone rather
+        // than a community-health file — GitHub's profile never looked for it,
+        // and listing it here said the project still had an agreement to
+        // agree to. `SignOffTests` pins what it must now contain.
         for path in ["LICENSE", "README.md", "CONTRIBUTING.md", "CODE_OF_CONDUCT.md",
-                     "SECURITY.md", "CLA.md", "THIRD-PARTY-NOTICES.md",
+                     "SECURITY.md", "THIRD-PARTY-NOTICES.md",
                      ".github/CODEOWNERS", ".github/pull_request_template.md",
                      ".github/ISSUE_TEMPLATE/config.yml",
                      ".github/ISSUE_TEMPLATE/bug_report.yml",

@@ -37,4 +37,5 @@ line. Green CI does not cover those.
 - [ ] Full `swift test` run locally if this touches export, composition, the editor or the timeline
 - [ ] UI change? Rebuilt with `Scripts/make-app.sh` and actually looked at it. Tests passing is not the same as pixels changing
 - [ ] New Swift files carry the MPL Exhibit A header (`LicenseHeaderTests` enforces this)
-- [ ] I have read and agree to [`CLA.md`](../CLA.md)
+- [ ] Commits are signed off (`git commit -s`) — see [`CONTRIBUTING.md`](../CONTRIBUTING.md#signing-off-and-the-licence-your-contribution-arrives-under)
+- [ ] Any third-party code in this change is identified above, with its source and licence
