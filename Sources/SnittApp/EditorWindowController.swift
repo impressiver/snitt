@@ -1904,6 +1904,18 @@ struct EditorContentView: View {
                     markersExpanded: markersExpanded,
                     transcriptExpanded: transcriptExpanded,
                     stored: paneWidths.transcript).maxHeight(fillIsInfinite: true))
+                // `initial: true` so a recording whose transcript was already
+                // loaded — reopening a document, or a second pass through this
+                // view — gets the same answer as one that loads it a moment
+                // later. Without it the rule only ever fires on the race it
+                // was written for.
+                .onChange(of: state.transcript?.words.count ?? 0, initial: true) { _, words in
+                    guard RailLayout.transcriptOpensItself(
+                        wordCount: words, alreadyDecided: transcriptDefaultApplied)
+                    else { return }
+                    transcriptDefaultApplied = true
+                    transcriptExpanded = true
+                }
             }
             Spacer(minLength: 0)
         }
@@ -1916,10 +1928,18 @@ struct EditorContentView: View {
     @State private var showRail = true
     /// Which sections are open. Both can be, at once — see `AccordionSection`
     /// for why an either/or accordion would be the wrong shape for two indexes
-    /// of the same recording. The transcript starts closed, which is the state
-    /// the old `showTranscript` toggle defaulted to.
+    /// of the same recording.
+    ///
+    /// The transcript starts closed and opens itself once the recording turns
+    /// out to have words — see `RailLayout.transcriptOpensItself`. Closed is
+    /// still the right STARTING state: the transcript loads after the editor
+    /// opens, so a section that began open would flash empty on every
+    /// recording that has no transcript at all.
     @State private var markersExpanded = true
     @State private var transcriptExpanded = false
+    /// Whether the open-by-default rule has already had its say. Without it,
+    /// closing the section and then editing a word would spring it open again.
+    @State private var transcriptDefaultApplied = false
     /// Pane widths, loaded once and written back when a drag ENDS.
     ///
     /// Not on every frame of the drag: `UserDefaults` writes during a
