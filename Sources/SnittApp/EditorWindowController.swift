@@ -1302,6 +1302,49 @@ final class EditorTimelineState: ObservableObject {
     /// current transcript was actually made with, not a blank box.
     @Published var vocabularyText: String = ""
 
+    /// Whether the "write a line of narration" field is showing, and what is
+    /// in it.
+    ///
+    /// ON THE MODEL, not in the pane, and that is a bug fix rather than a
+    /// preference. The `+` is drawn in the accordion's HEADER, which means
+    /// `TranscriptPane.addButton` is produced from a pane value that is never
+    /// itself installed as a view — only the `Button` it returns is. Writing
+    /// `@State` from there goes to storage nothing observes, so the button
+    /// looked correct, ran its action, and did nothing at all.
+    ///
+    /// `MarkerPane.addButton` has always worked for exactly this reason: it
+    /// calls a method on this object rather than touching view-local state.
+    /// `vocabularyText` above is the same shape — a draft string that lives
+    /// here because more than one place needs it.
+    @Published var isWritingNarration = false
+    @Published var narrationDraft = ""
+
+    /// Opens the narration field. A method rather than a setter so the two
+    /// properties cannot drift apart: a field showing yesterday's half-typed
+    /// line is worse than one that starts empty.
+    func beginWritingNarration() {
+        narrationDraft = ""
+        isWritingNarration = true
+    }
+
+    func cancelWritingNarration() {
+        narrationDraft = ""
+        isWritingNarration = false
+    }
+
+    /// Commits the draft, and reports whether it took.
+    ///
+    /// Leaves the field OPEN when it did not. The only ways to fail are an
+    /// empty line or a playhead sitting inside a cut, and both are worth
+    /// seeing rather than having the text silently swallowed.
+    @discardableResult
+    func commitWrittenNarration(atOutput output: Double) -> Bool {
+        guard addNarration(narrationDraft, atOutput: output) else { return false }
+        narrationDraft = ""
+        isWritingNarration = false
+        return true
+    }
+
     /// Testing seam: install a transcript without running the recogniser,
     /// which is TCC-gated and absent on a machine that has not granted it.
     func setTranscriptForTesting(_ value: Transcript) {

@@ -31,11 +31,10 @@ struct TranscriptPane: View {
     @State private var editingText = ""
     /// Whether the refine panel is open. UI-only, like `editingWordID`.
     @State private var refining = false
-    /// The narration line being written, and whether the field is showing.
-    /// UI-only, like the two above: what is asserted elsewhere is that
-    /// `addNarration` places and persists a line.
-    @State private var narrationDraft = ""
-    @State private var writingNarration = false
+    /// Focus for the narration field. The DRAFT itself lives on the state
+    /// object — see `EditorTimelineState.isWritingNarration` for why: the `+`
+    /// is in a header that is not part of this view, so `@State` written from
+    /// there goes nowhere.
     @FocusState private var narrationFocused: Bool
     @FocusState private var editingFocused: Bool
     /// Whether the word list holds focus, which is what lets the delete key
@@ -123,8 +122,11 @@ struct TranscriptPane: View {
             hasTranscript: state.transcript != nil,
             wordCount: state.transcript?.words.count ?? 0)
         return Button {
-            writingNarration = true
-            narrationFocused = true
+            // A method on the state object, the way `MarkerPane.addButton`
+            // calls `addMarker`. Focus is taken by the field itself when it
+            // appears, for the same reason: a `@FocusState` set from here
+            // belongs to a view that was never installed.
+            state.beginWritingNarration()
         } label: {
             Image(systemName: "plus")
         }
@@ -143,39 +145,27 @@ struct TranscriptPane: View {
     /// interface anybody would choose.
     @ViewBuilder
     private var narrationField: some View {
-        if writingNarration {
+        if state.isWritingNarration {
             HStack(spacing: 8) {
                 Text(MarkerPane.timestamp(playhead))
                     .font(.system(.caption, design: .monospaced).weight(.medium))
                     .monospacedDigit()
                     .foregroundStyle(SnittPalette.Swatch.amberText)
                     .frame(width: 44, alignment: .leading)
-                TextField("What should be said here", text: $narrationDraft)
+                TextField("What should be said here", text: $state.narrationDraft)
                     .textFieldStyle(.roundedBorder)
                     .font(.callout)
                     .focused($narrationFocused)
-                    .onSubmit { commitNarration() }
+                    // Taken here rather than at the button, because THIS view
+                    // is installed and the button's pane value is not.
+                    .onAppear { narrationFocused = true }
+                    .onSubmit { state.commitWrittenNarration(atOutput: playhead) }
                     // Esc abandons it, matching the inline word editor.
-                    .onExitCommand { cancelNarration() }
+                    .onExitCommand { state.cancelWritingNarration() }
             }
             .padding(.horizontal, 10)
             .padding(.bottom, 6)
         }
-    }
-
-    private func commitNarration() {
-        // Keeps the field open when nothing was added, rather than swallowing
-        // the text: the only ways to fail here are an empty line or a playhead
-        // sitting inside a cut, and both are worth seeing rather than guessing
-        // at.
-        guard state.addNarration(narrationDraft, atOutput: playhead) else { return }
-        narrationDraft = ""
-        writingNarration = false
-    }
-
-    private func cancelNarration() {
-        narrationDraft = ""
-        writingNarration = false
     }
 
     @ViewBuilder
