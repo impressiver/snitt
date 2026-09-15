@@ -30,6 +30,20 @@ enum TranscriptPanePresentation: Equatable {
     /// Nothing to show and no way to make one; the pane is not offered at all.
     case unavailable
 
+    /// Whether a written line of narration would be VISIBLE if one were added.
+    ///
+    /// The `+` lives in the accordion's header, which is drawn in every state
+    /// — including the ones whose body is a permission prompt or a progress
+    /// spinner. Adding a line there would place it, persist it, and show the
+    /// author nothing, which is indistinguishable from the button not working.
+    ///
+    /// `noSpeechFound` is included deliberately: a recording the recogniser
+    /// heard nothing in is a good reason to write the narration yourself, and
+    /// that state flips to `transcript` the moment the first line lands.
+    var acceptsWrittenNarration: Bool {
+        self == .transcript || self == .noSpeechFound
+    }
+
     static func decide(status: EditorTimelineState.TranscriptionStatus,
                        hasTranscript: Bool,
                        wordCount: Int) -> TranscriptPanePresentation {

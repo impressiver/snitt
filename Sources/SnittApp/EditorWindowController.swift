@@ -1467,14 +1467,85 @@ final class EditorTimelineState: ObservableObject {
         onEditRejected?(error)
     }
 
+    /// Writes a line of narration at the playhead (D100).
+    ///
+    /// SOURCE time, converted from the output time the playhead reads in,
+    /// because every word in a transcript is in source time and a phrase
+    /// anchored in output time would move whenever a cut above it changed.
+    ///
+    /// Returns whether anything was added, so a caller can keep its draft on
+    /// screen when it was not.
+    @discardableResult
+    func addNarration(_ text: String, atOutput output: Double) -> Bool {
+        guard let source = TimeRangeMapping.sourceTime(ofTrimmedTime: output,
+                                                       keptRanges: controller.keptRanges)
+        else { return false }
+        let words = AuthoredNarration.words(text, sourceStart: source)
+        guard !words.isEmpty else { return false }
+
+        // A transcript may not exist yet: writing narration is the one way to
+        // get one without running the recogniser, and refusing here would mean
+        // a recording with no speech could never be given any.
+        let current = transcript ?? Transcript(words: [], locale: Locale.current.identifier)
+        undoManager?.registerUndo(withTarget: self) { [hadTranscript = transcript != nil] target in
+            hadTranscript ? target.restoreTranscript(current) : target.discardTranscript()
+        }
+        var updated = current
+        updated.words = AuthoredNarration.inserting(words, into: current.words)
+        transcript = updated
+        applyAndSaveTranscript()
+        return true
+    }
+
+    /// Undo for the first authored line in a recording that had no transcript.
+    ///
+    /// `restoreTranscript` cannot express this: it puts back a VALUE, and the
+    /// value being restored here is the absence of one. Without it, undoing
+    /// the first line leaves an empty transcript behind — which reads as "the
+    /// recogniser ran and heard nothing", a different and discouraging claim.
+    private func discardTranscript() {
+        guard let current = transcript else { return }
+        undoManager?.registerUndo(withTarget: self) { $0.restoreTranscript(current) }
+        transcript = nil
+        try? FileManager.default.removeItem(at: controller.snittBundle.transcriptURL)
+        lastSavedTranscript = nil
+    }
+
     /// Deletes words: their spans become cuts on the SAME EDL every other edit
     /// uses (D62's payoff). Undoable through the same whole-EDL snapshot as
     /// cuts, crop and gain, so a text deletion and a drag-cut interleave on one
     /// stack.
+    ///
+    /// AUTHORED lines are removed from the transcript instead, because cutting
+    /// is the wrong verb for them. The way to unsay something somebody said is
+    /// to remove the seconds in which they said it; a written line has no
+    /// seconds behind it, so cutting there would delete whatever footage the
+    /// script happened to be anchored over — video the user never asked to
+    /// lose, at a moment they were only using as a bookmark.
+    ///
+    /// A mixed selection does both, each to its own words, rather than
+    /// refusing: a selection dragged across a written line and a spoken one is
+    /// an ordinary thing to do and has an obvious meaning.
     func deleteWords(ids: Set<UUID>) {
         guard let transcript else { return }
         let selected = transcript.words.filter { ids.contains($0.id) }
-        let ranges = TranscriptEditing.cutRanges(removing: selected, from: transcript)
+        let authored = selected.filter(\.isAuthored)
+        let spoken = selected.filter { !$0.isAuthored }
+
+        if !authored.isEmpty {
+            let removing = Set(authored.map(\.id))
+            let snapshot = transcript
+            undoManager?.registerUndo(withTarget: self) { $0.restoreTranscript(snapshot) }
+            var updated = transcript
+            updated.words.removeAll { removing.contains($0.id) }
+            self.transcript = updated
+            applyAndSaveTranscript()
+        }
+
+        // Computed against the ORIGINAL transcript, so removing an authored
+        // line in the same gesture cannot shift the spans of the spoken words
+        // beside it.
+        let ranges = TranscriptEditing.cutRanges(removing: spoken, from: transcript)
         guard !ranges.isEmpty else { return }
         let current = edl
         undoManager?.registerUndo(withTarget: self) { $0.restore(current) }
@@ -1785,6 +1856,10 @@ struct EditorContentView: View {
     private var rail: some View {
         let markerPane = MarkerPane(state: state, playhead: playhead,
                                     onEditMarker: { editingMarkerID = $0 })
+        // Built once and used for both slots, the same way `markerPane` is: two
+        // constructions would be two pieces of `@State`, so the `+` would open
+        // a field on a pane the header is not showing.
+        let transcriptPane = TranscriptPane(state: state, playhead: playhead)
         let hasTranscript = state.transcriptionStatus != .none
         VStack(spacing: 0) {
             AccordionSection(title: "Markers",
@@ -1819,9 +1894,9 @@ struct EditorContentView: View {
                 }
                 AccordionSection(title: "Transcript",
                                  subtitle: state.transcript.map { "\($0.words.count) words" },
-                                 isExpanded: $transcriptExpanded) {
-                    TranscriptPane(state: state, playhead: playhead)
-                }
+                                 isExpanded: $transcriptExpanded,
+                                 accessory: { transcriptPane.addButton },
+                                 content: { transcriptPane })
                 // Its stored height only while sharing the rail; the whole of
                 // it when the markers list is closed. `RailLayout` owns that
                 // rule, because it has branches and this file cannot test them.

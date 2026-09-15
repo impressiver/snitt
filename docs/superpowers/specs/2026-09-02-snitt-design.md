@@ -1203,6 +1203,76 @@ D84 and D86 left this section on 2026-09-09 once their real cost was measured.
   artifact derived from speech, so the audit record should say a model produced
   it. `absent: GeneratedTitle` (D91).
 
+- **D100 — narration you WRITE, from a `+` in the transcript header.**
+  Requested 2026-09-14. **Built 2026-09-14.**
+
+  *What it is.* Stand at a moment, press `+`, type what should be said there,
+  and it becomes a phrase on the voiceover track. `AuthoredNarration.words`
+  splits the line into words at `SpeechRate.wordsPerSecond`; the pane's rows,
+  the captions and the phrase chips then treat it exactly as they treat
+  narration the recogniser heard, because it carries the same `track`.
+
+  *It pays before D101 exists.* A screencast whose narration is written rather
+  than recorded still gets subtitles, still gets a transcript to edit, and
+  still shows the narration lane — and rewriting a sentence beats re-recording
+  a take to fix one.
+
+  *`isAuthored` is load-bearing, not informational.* `deleteWords` removes a
+  word by CUTTING THE FOOTAGE underneath it, which is right for speech — the
+  way to unsay something is to remove the seconds in which it was said — and is
+  nonsense for a line with no seconds behind it. Without the flag, selecting a
+  written phrase and pressing delete cuts whatever video the script happened to
+  be anchored over. Authored words are removed from the transcript instead, and
+  a mixed selection does each to its own words.
+
+  *Anchored in SOURCE time*, like every other word, so a cut above a line does
+  not drag it. *Timed at the reading speed* — an assumption a synthesiser will
+  replace with real durations, and the guess least likely to surprise, since
+  the caption is then on screen for as long as it takes to read. The constant
+  moved to `SpeechRate` in `SnittDocument` to be reachable from both layers,
+  the same move `TranscriptParagraphs.breakSeconds` already made.
+
+  *Undo of the FIRST line removes the transcript rather than emptying it*: an
+  empty transcript reads as "the recogniser ran and heard nothing", which is a
+  different and more discouraging claim than "you have not written anything
+  yet".
+
+  *Deleting is a keystroke, not a button* (requested in the same breath).
+  Select words — shift extends the range — and press delete. The range runs
+  along DISPLAY order rather than `transcript.words`, because rows are grouped
+  by voice: extending along the stored order selects words the reader can see
+  are not between the two they clicked.
+
+  *No absence marker*: this is BUILT, and `AuthoredNarration` is declared. An
+  `absent:` on a shipped decision is a claim `PlanClaimsTests` falsifies
+  immediately, which is the marker working — it caught exactly that here.
+
+- **D101 — QUEUED: speak the written narration.**
+  Requested 2026-09-02, recorded here 2026-09-14 — it had been asked for and
+  never written down, which is the failure D91 exists to prevent.
+
+  *The input already exists*, which is the point of ranking D100 first: the
+  authored phrases ARE the script, so this decision is about synthesis and
+  nothing else. `AVSpeechSynthesizer.write(_:toBufferCallback:)` renders to
+  buffers rather than to the speakers, which is what an offline render needs.
+
+  *Timings become real.* D100 times a written line at the reading speed because
+  it has nothing better; a synthesiser returns the durations it actually
+  produced, so the words should be re-timed from the render rather than left at
+  the guess. That is the one place this is not purely additive.
+
+  *It writes the third audio track*, the one `AudioTrackOrder.canonical`
+  already reserves and `VoiceoverTrack` already places — so the composition
+  side is done. What is not decided: whether a synthesised take replaces a
+  recorded one on the same track or coexists, and what happens to a written
+  line that has been left behind by an edit.
+
+  *§5 makes this a generated artifact.* A synthesised voice is a model
+  producing audio, so the audit record has to say so — the same requirement D94
+  carries for a generated title.
+
+  `absent: NarrationSynthesizer` (D91).
+
 - **D99 — select, move and scale the marker and subtitle overlays in the
   editor.** Requested 2026-09-14. Global first — one position and one scale for
   every banner, one for every caption — with per-item placement as a later
@@ -1909,6 +1979,8 @@ window-relative overlay. **Zoom + follow-mouse is per *segment*, and segments do
 | D97 | **QUEUED, not built: one title row, and an Xcode-style side panel** — the editor's toolbar becomes a real `NSToolbar` and the rail an inspector-style split item | Product-owner direction 2026-09-14, with Finder and Xcode screenshots as the reference. **The shape is already right**: the window is `.fullSizeContentView` with a hidden title, so the toolbar row IS the titlebar, and `EditorToolbar` already puts title-over-subtitle at the leading edge and the panel toggle at the trailing one. What it is not is an `NSToolbar`, and that is the whole cost — a hand-built `HStack` gets no traffic-light inset (so the first 78pt are dead space the window's own buttons sit in), no overflow chevron (a narrow window clips controls instead), none of the material, separator or scroll-edge effect the system draws under a real titlebar, and no trailing accessory position, which is exactly where Xcode's inspector toggle lives. **The panel half** wants `NSSplitViewController` with an inspector item: its own background material and hard separator are what make Xcode's inspector read as a compartment rather than as content, and it brings the divider behaviour and collapse animation `ResizableDivider` currently reimplements. **Not small**: the toolbar is SwiftUI inside an `NSHostingView` and `NSToolbar` is AppKit, so this reworks how the editor window is ASSEMBLED rather than how it is painted | §4.14, D45, D58, D59, D91; `EditorChrome.swift`, `EditorWindowController.makeWindow`, `ResizableDivider.swift` | Queued (not built) | the-titlebar-is-a-toolbar-or-it-is-a-strip-of-buttons |
 | D98 | **Replace the CLA with a DCO plus an Apache-2.0 additional grant** | Product-owner request 2026-09-14, ranked after the voiceover work. **Both of the CLA's stated reasons are dead.** `CONTRIBUTING.md` justifies it as enabling a future relicence for "a Mac App Store build, or a commercial licence beside the free one" — D66 killed the second ("there is no licence to enforce and no subscription to gate"), and the first is not true: MPL-2.0 already ships on the App Store (Brave on iOS, Collabora Online on iOS/iPadOS/macOS), because Apple's terms conflict with the GPL's whole-work conditions rather than the MPL's file-scoped ones. Snitt's real App Store blockers are `CGEventTap` and the agent surface, neither of which is a licensing problem. **A DCO alone cannot replace it** — a DCO sets inbound equal to outbound and grants nothing extra, so a DCO-only project needs unanimous permission to relicense. The working form is the DCO's own wording, which certifies the right to submit "under the open source license indicated in the file": declare that as a DUAL grant, per Rust's formula. **It is not exclusive** — everyone gets the same permissive rights, not only the maintainer, and a CLA remains the only instrument that makes a closed fork the maintainer's alone. Binds future contributions only; no third party had ever signed, so nothing needed reconciling | §4.3, D66, D91, D97; `CONTRIBUTING.md`, `README.md`, `CLA.md`, `.github/pull_request_template.md` | Built | a-dco-grants-nothing-extra-so-the-grant-has-to-be-declared |
 | D99 | **QUEUED, not built: select, move and scale the marker and subtitle overlays in the editor** — global placement first, per-item later | Product-owner direction 2026-09-14. **Most of the machinery is already right**: `OverlayLayout` is the single source the preview, the mp4 burn and the GIF burn all read their geometry from (D51), so one global offset and scale reach all three — which is what makes this a feature rather than a rewrite. **The decision is units, not dragging**: the offset must be stored in UNIT terms because `OverlayLayout` sizes everything from `picture.height`, and a position in points would put an overlay dragged over a 4K preview somewhere else in a 720p export — the exact class that type exists to prevent. The EDL gains an additive field, no schema bump, per `crop`'s pattern. **The harder half is the gesture**: the preview overlay returns nil from `hitTest` on purpose so it never takes a click meant for the player, so selection has to be live only while something is selected, the way `CropDragOverlay` already is. **Per-item placement is a different shape** and is deferred: a per-marker offset belongs on the marker, which lives in `events.json`, so it lands on the event model, undo, and the marker editor — none of which the global version touches | §9, D51, D64, D91; `OverlayLayout`, `OverlayTextView`, `TextOverlayComposition`, `TextOverlayFrame`, `CropDragOverlay` | Queued (not built) | one-layout-type-means-one-offset-reaches-every-renderer |
+| D100 | **Narration you WRITE, from a `+` in the transcript header** | Product-owner request 2026-09-14. Stand at a moment, press `+`, type what should be said; `AuthoredNarration.words` splits it at `SpeechRate.wordsPerSecond` onto the voiceover track, and the rows, captions and phrase chips treat it exactly as narration the recogniser heard. **It pays before D101 exists**: a written screencast still gets subtitles, a transcript to edit and a narration lane, and rewriting a sentence beats re-recording a take. **`isAuthored` is load-bearing** — `deleteWords` removes a word by CUTTING THE FOOTAGE under it, which is right for speech and nonsense for a line with no seconds behind it, so authored words are removed from the transcript instead and a mixed selection does each to its own. Anchored in SOURCE time so a cut above does not drag it; timed at the reading speed, an assumption D101 replaces with real durations. **Undo of the FIRST line removes the transcript rather than emptying it**: empty reads as "the recogniser heard nothing". Deleting is a keystroke, not a button, and the shift-range runs along DISPLAY order because rows are grouped by voice | D62, D93, D101; `AuthoredNarration`, `SpeechRate`, `TranscriptSelection`, `TranscriptPane` | Built | a-written-line-has-no-footage-so-deleting-it-cannot-cut |
+| D101 | **QUEUED, not built: speak the written narration** | Requested 2026-09-02 and recorded 2026-09-14 — it had been asked for and never written down, which is the failure D91 exists to prevent. **The input already exists**: D100's authored phrases ARE the script, so this decision is about synthesis alone. `AVSpeechSynthesizer.write(_:toBufferCallback:)` renders to buffers rather than speakers, which is what an offline render needs. **Timings become real** — D100 times a line at the reading speed for want of anything better, and a synthesiser returns the durations it produced, so words should be re-timed from the render; that is the one part which is not purely additive. It writes the third audio track `AudioTrackOrder.canonical` already reserves and `VoiceoverTrack` already places, so the composition side is done. Undecided: whether a synthesised take replaces a recorded one on the same track, and what happens to a written line an edit has left behind. §5 makes it a generated artifact, so the audit record must say a model produced the audio | D100, D93, D94, §5; `AudioTrackOrder`, `VoiceoverTrack` | Queued (not built) | the-script-is-already-there-so-this-is-only-synthesis |
 
 `conformance: 2026-09-07` (post-D66 refinement pass)
 

@@ -484,3 +484,18 @@ WrappingLayoutTests :: Sources/SnittApp/TranscriptPane.swift :: widest = max(wid
 WrappingLayoutTests :: Sources/SnittApp/TranscriptPane.swift :: if x > 0, x + size.width > width { :: if x + size.width > width {
 # A line takes its height from its TALLEST box, not its last.
 WrappingLayoutTests :: Sources/SnittApp/TranscriptPane.swift :: lineHeight = max(lineHeight, size.height) :: lineHeight = size.height
+# D100: a written line is marked as written. Without the flag, deleting it cuts
+# whatever footage the script happened to be anchored over.
+AuthoredNarrationTests :: Sources/SnittDocument/AuthoredNarration.swift :: isAuthored: true) :: isAuthored: false)
+# A line is merged in TIME order; every consumer of a transcript assumes it.
+AuthoredNarrationTests :: Sources/SnittDocument/AuthoredNarration.swift :: ? left.offset < right.offset :: ? left.offset > right.offset
+# Written only when true, so existing transcripts keep their bytes.
+AuthoredWordCodingTests :: Sources/SnittDocument/Transcript.swift :: if isAuthored { try container.encode(isAuthored, forKey: .isAuthored) } :: try container.encode(isAuthored, forKey: .isAuthored)
+# Shift-select runs along DISPLAY order. Rows are grouped by voice, so the
+# stored order selects words the reader can see are not between their clicks.
+TranscriptSelectionTests :: Sources/SnittDocument/TranscriptSelection.swift :: TranscriptParagraphs.split(words).flatMap(\.words) :: words
+# Deleting a written line removes it; deleting speech cuts the footage.
+AuthoredNarrationEditorTests :: Sources/SnittApp/EditorWindowController.swift :: let authored = selected.filter(\.isAuthored) :: let authored: [TranscriptWord] = []
+AuthoredNarrationEditorTests :: Sources/SnittApp/EditorWindowController.swift :: let spoken = selected.filter { !$0.isAuthored } :: let spoken = selected
+# Undoing the FIRST line removes the transcript rather than emptying it.
+AuthoredNarrationEditorTests :: Sources/SnittApp/EditorWindowController.swift :: hadTranscript ? target.restoreTranscript(current) : target.discardTranscript() :: target.restoreTranscript(current)

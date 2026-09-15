@@ -19,13 +19,14 @@ import SnittDocument
 /// Callers pass ALREADY-MAPPED times, exactly as `WebVTTChapters` requires —
 /// see `MarkerMapping` for the piece that converts bundle time to export time.
 public enum WebVTTSubtitles {
-    /// Reading speed, in words per second.
+    /// Reading speed, in words per second — `SpeechRate`'s, not a second copy.
     ///
-    /// ~3.3 w/s is around 200 wpm, a common subtitle-industry comfortable
-    /// reading rate. Not tuned against this project's own recordings yet —
-    /// D57's "subtitles need reading time" criterion will want the same number,
-    /// so when one of them is measured the other should move with it.
-    public static let wordsPerSecond = 3.3
+    /// The number moved down to `SnittDocument` when authored narration needed
+    /// it too: `SnittExport` may depend on that module and not the reverse, so
+    /// a constant declared here was unreachable from the layer that writes the
+    /// words. Kept as a forwarding property because this is the name the
+    /// caption code and its tests already ask for.
+    public static var wordsPerSecond: Double { SpeechRate.wordsPerSecond }
     /// No cue shorter than this, however few words: a caption that flashes is
     /// worse than none.
     public static let minimumCueSeconds = 1.2
