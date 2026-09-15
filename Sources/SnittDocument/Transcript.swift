@@ -37,10 +37,29 @@ public struct TranscriptWord: Codable, Equatable, Sendable, Identifiable {
     /// overlapping times.
     public var track: String
 
+    /// Whether a human WROTE this rather than the recogniser hearing it.
+    ///
+    /// An authored word is a script: narration somebody intends to speak or to
+    /// synthesise, placed at a moment in the recording before any audio for it
+    /// exists. A recognised word is a record of a sound that is already in the
+    /// file. They look identical and they are not the same claim.
+    ///
+    /// The distinction is load-bearing rather than informational, and the
+    /// place it bites is deletion. `deleteWords` removes a word by CUTTING THE
+    /// FOOTAGE underneath it, which is right for speech — the way to unsay
+    /// something is to remove the seconds in which it was said — and is
+    /// nonsense for a line that has no seconds behind it. Selecting an
+    /// authored phrase and pressing delete would cut video at the point the
+    /// script happened to be anchored.
+    ///
+    /// Additive on the wire, like `track`: absent decodes to `false`, which is
+    /// what every word written before this existed is.
+    public var isAuthored: Bool
+
     public var end: Double { start + duration }
 
     private enum CodingKeys: String, CodingKey {
-        case id, text, start, duration, confidence, track
+        case id, text, start, duration, confidence, track, isAuthored
     }
 
     /// Hand-written ONLY for `track`'s default. The synthesised decoder would
@@ -55,6 +74,7 @@ public struct TranscriptWord: Codable, Equatable, Sendable, Identifiable {
         duration = try container.decode(Double.self, forKey: .duration)
         confidence = try container.decode(Double.self, forKey: .confidence)
         track = try container.decodeIfPresent(String.self, forKey: .track) ?? "microphone"
+        isAuthored = try container.decodeIfPresent(Bool.self, forKey: .isAuthored) ?? false
     }
 
     /// Written only when it is NOT the microphone, so a recording with no
@@ -67,11 +87,16 @@ public struct TranscriptWord: Codable, Equatable, Sendable, Identifiable {
         try container.encode(duration, forKey: .duration)
         try container.encode(confidence, forKey: .confidence)
         if track != "microphone" { try container.encode(track, forKey: .track) }
+        // Written only when true, for the same reason `track` is: a recording
+        // with no authored narration produces the bytes it always did.
+        if isAuthored { try container.encode(isAuthored, forKey: .isAuthored) }
     }
 
     public init(id: UUID = UUID(), text: String, start: Double,
                 duration: Double, confidence: Double,
-                track: String = "microphone") {
+                track: String = "microphone",
+                isAuthored: Bool = false) {
+        self.isAuthored = isAuthored
         self.id = id
         self.track = track
         self.text = text

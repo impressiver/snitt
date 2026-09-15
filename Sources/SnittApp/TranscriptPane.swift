@@ -31,7 +31,16 @@ struct TranscriptPane: View {
     @State private var editingText = ""
     /// Whether the refine panel is open. UI-only, like `editingWordID`.
     @State private var refining = false
+    /// The narration line being written, and whether the field is showing.
+    /// UI-only, like the two above: what is asserted elsewhere is that
+    /// `addNarration` places and persists a line.
+    @State private var narrationDraft = ""
+    @State private var writingNarration = false
+    @FocusState private var narrationFocused: Bool
     @FocusState private var editingFocused: Bool
+    /// Whether the word list holds focus, which is what lets the delete key
+    /// reach it.
+    @FocusState private var listFocused: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -102,6 +111,73 @@ struct TranscriptPane: View {
         .padding(8)
     }
 
+    /// The header's `+`, the same shape and slot the markers list uses.
+    ///
+    /// In the accordion header rather than beside "Delete Words", because that
+    /// is where this app already puts "add one of these" — and the two panes
+    /// sit one above the other, so a `+` in a different place in each would
+    /// read as two unrelated tools sharing a rail.
+    var addButton: some View {
+        let presentation = TranscriptPanePresentation.decide(
+            status: state.transcriptionStatus,
+            hasTranscript: state.transcript != nil,
+            wordCount: state.transcript?.words.count ?? 0)
+        return Button {
+            writingNarration = true
+            narrationFocused = true
+        } label: {
+            Image(systemName: "plus")
+        }
+        .buttonStyle(.borderless)
+        // Disabled rather than hidden while the body is a prompt or a spinner:
+        // a control that vanishes reads as a different pane, and this one comes
+        // back as soon as there is somewhere for the line to appear.
+        .disabled(!presentation.acceptsWrittenNarration)
+        .help("Write a line of narration at the playhead")
+    }
+
+    /// Where a written line is typed.
+    ///
+    /// A field rather than the inline word editor, because that one edits ONE
+    /// word: narration is a sentence, and typing it a word at a time is not an
+    /// interface anybody would choose.
+    @ViewBuilder
+    private var narrationField: some View {
+        if writingNarration {
+            HStack(spacing: 8) {
+                Text(MarkerPane.timestamp(playhead))
+                    .font(.system(.caption, design: .monospaced).weight(.medium))
+                    .monospacedDigit()
+                    .foregroundStyle(SnittPalette.Swatch.amberText)
+                    .frame(width: 44, alignment: .leading)
+                TextField("What should be said here", text: $narrationDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.callout)
+                    .focused($narrationFocused)
+                    .onSubmit { commitNarration() }
+                    // Esc abandons it, matching the inline word editor.
+                    .onExitCommand { cancelNarration() }
+            }
+            .padding(.horizontal, 10)
+            .padding(.bottom, 6)
+        }
+    }
+
+    private func commitNarration() {
+        // Keeps the field open when nothing was added, rather than swallowing
+        // the text: the only ways to fail here are an empty line or a playhead
+        // sitting inside a cut, and both are worth seeing rather than guessing
+        // at.
+        guard state.addNarration(narrationDraft, atOutput: playhead) else { return }
+        narrationDraft = ""
+        writingNarration = false
+    }
+
+    private func cancelNarration() {
+        narrationDraft = ""
+        writingNarration = false
+    }
+
     @ViewBuilder
     private func transcriptBody(_ transcript: Transcript) -> some View {
         let cutIDs = state.cutWordIDs
@@ -129,6 +205,16 @@ struct TranscriptPane: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .topLeading)
             }
+            // Focusable so the delete key reaches this pane rather than the
+            // window. Taking focus on a tap rather than on appearance: a pane
+            // that grabs focus when it is merely shown would steal the delete
+            // key from whatever the reader was actually working in.
+            .focusable()
+            .focused($listFocused)
+            .onDeleteCommand { deleteSelection() }
+            // Escape clears the selection, so there is a way out that does not
+            // involve deleting something.
+            .onExitCommand { selection.removeAll() }
             // Follows only while PLAYING. Scrolling the text while someone is
             // reading and selecting would drag it out from under them, and
             // scrubbing already moves the playhead deliberately.
@@ -139,14 +225,16 @@ struct TranscriptPane: View {
                 }
             }
         }
+        narrationField
         HStack {
-            Button("Delete Words") {
-                state.deleteWords(ids: selection)
-                selection.removeAll()
-            }
-            .disabled(selection.isEmpty)
+            // No "Delete Words" button. Select the words and press delete —
+            // the same gesture as everywhere else that has a selection, and
+            // the timeline can already cut by hand. A button that duplicates a
+            // keystroke is a third way to do a thing that had two.
             Spacer()
-            Text("\(state.audibleWords.count) words")
+            Text(selection.isEmpty
+                 ? "\(state.audibleWords.count) words"
+                 : "\(selection.count) of \(state.audibleWords.count) selected")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -367,15 +455,23 @@ struct TranscriptPane: View {
     }
 
     private func handleTap(_ word: TranscriptWord) {
+        // Clicking gives the list focus, so the delete key has somewhere to
+        // land. Doing it here rather than on appearance keeps the pane from
+        // stealing the key from whatever the reader was working in.
+        listFocused = true
+
         // Shift extends from the anchor, like text selection everywhere else
         // on the platform. Read from NSEvent because a SwiftUI TapGesture
         // carries no modifiers on macOS 15.
-        if NSEvent.modifierFlags.contains(.shift), let anchorID,
-           let transcript = state.transcript,
-           let anchorIndex = transcript.words.firstIndex(where: { $0.id == anchorID }),
-           let tappedIndex = transcript.words.firstIndex(where: { $0.id == word.id }) {
-            let range = min(anchorIndex, tappedIndex)...max(anchorIndex, tappedIndex)
-            selection = Set(transcript.words[range].map(\.id))
+        //
+        // Extended along DISPLAY order, not `transcript.words`. Rows are
+        // grouped by voice now, so a narrator's phrase is one row even though
+        // its words interleave in time with the speech beside it — and the
+        // stored order would select words the reader can see are not between
+        // the two they clicked.
+        if NSEvent.modifierFlags.contains(.shift) {
+            selection = TranscriptSelection.range(from: anchorID, to: word.id,
+                                                  in: state.audibleWords)
         } else {
             selection = [word.id]
             anchorID = word.id
@@ -383,6 +479,13 @@ struct TranscriptPane: View {
             // a moment is to read to it, then hear it.
             state.seek(toWord: word)
         }
+    }
+
+    private func deleteSelection() {
+        guard !selection.isEmpty else { return }
+        state.deleteWords(ids: selection)
+        selection.removeAll()
+        anchorID = nil
     }
 }
 
