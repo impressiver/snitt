@@ -473,3 +473,14 @@ SignOffTests :: .github/pull_request_template.md :: - [ ] Commits are signed off
 # A tombstone that still reads as an agreement is one a contributor can
 # reasonably believe is in force.
 SignOffTests :: CLA.md :: # The Snitt CLA has been retired :: # Snitt Contributor Licence Agreement
+# The transcript's timestamp aligns with the FIRST line of a wrapped phrase. A
+# custom Layout that answers no baseline lays its words out perfectly and sinks
+# the timestamp to the last line — invisible until rows started wrapping.
+TimestampAlignmentTests :: Sources/SnittApp/TranscriptPane.swift :: guard guide == .firstTextBaseline, let first = subviews.first else { return nil } :: guard false, let first = subviews.first else { return nil }
+# A wrapped row measures its widest LINE, not the cursor's running total.
+WrappingLayoutTests :: Sources/SnittApp/TranscriptPane.swift :: widest = max(widest, x - spacing) :: widest = max(widest, x)
+# A box wider than the row is placed and overhangs, rather than wrapping onto
+# empty lines for ever.
+WrappingLayoutTests :: Sources/SnittApp/TranscriptPane.swift :: if x > 0, x + size.width > width { :: if x + size.width > width {
+# A line takes its height from its TALLEST box, not its last.
+WrappingLayoutTests :: Sources/SnittApp/TranscriptPane.swift :: lineHeight = max(lineHeight, size.height) :: lineHeight = size.height

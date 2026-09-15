@@ -218,20 +218,6 @@ struct TranscriptPane: View {
                                                      keptRanges: state.controller.keptRanges)
         let isNarration = paragraph.track == "voiceover"
         HStack(alignment: .firstTextBaseline, spacing: 8) {
-            // The lane this line belongs to, as a rule down its leading edge,
-            // in the SAME colour the timeline draws that lane and the VU meter
-            // beside it. A row is one voice now, so its identity is a property
-            // of the row rather than of each word in it — and a rule reads at
-            // a glance while a per-word colour has to be noticed.
-            //
-            // Only when there IS a second voice: a rail down every row of a
-            // recording with one speaker is chrome that distinguishes nothing.
-            Rectangle()
-                .fill(Color(nsColor: SnittPalette.track(paragraph.track)))
-                .frame(width: 2)
-                .opacity(state.hasNarration ? 1 : 0)
-                .accessibilityHidden(true)
-
             // Amber, because a timecode is time — the same reasoning, and the
             // same swatch, as the marker rail's. A phrase cut away entirely
             // has no output time at all and shows a dash: there is nowhere to
@@ -262,10 +248,32 @@ struct TranscriptPane: View {
                              ? AnyShapeStyle(Color(nsColor: SnittPalette.voiceover))
                              : AnyShapeStyle(.primary))
         }
-        .padding(.leading, 8)
+        .padding(.leading, 12)
         .padding(.trailing, 10)
         .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
+        // The lane this line belongs to, as a rule down its leading edge, in
+        // the SAME colour the timeline draws that lane and the VU meter beside
+        // it. A row is one voice, so its identity belongs to the row rather
+        // than to each word in it.
+        //
+        // An OVERLAY rather than a member of the `HStack`. As a sibling it was
+        // a `Rectangle` with a width and no height — infinitely flexible
+        // vertically, and with no text baseline to contribute to an
+        // `.firstTextBaseline` stack. It took a height of its own choosing,
+        // dragged the row's height with it, and left one phrase drawn over the
+        // next. An overlay is measured against a row that has already decided
+        // how tall it is, so it can only ever match.
+        //
+        // Only when there IS a second voice: a rule down every row of a
+        // single-speaker recording is chrome that distinguishes nothing.
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(Color(nsColor: SnittPalette.track(paragraph.track)))
+                .frame(width: 2)
+                .opacity(state.hasNarration ? 1 : 0)
+                .accessibilityHidden(true)
+        }
         .accessibilityElement(children: .contain)
         // Said rather than implied by colour, which a screen reader cannot
         // see and which is the one cue this design leans on.
@@ -383,27 +391,74 @@ struct WrappingLayout: Layout {
     var spacing: CGFloat = 4
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? 300
-        var x: CGFloat = 0, y: CGFloat = 0, rowHeight: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > 0, x + size.width > width { x = 0; y += rowHeight + spacing; rowHeight = 0 }
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
-        }
-        return CGSize(width: width, height: y + rowHeight)
+        // `.infinity` when unproposed, so an unbounded measurement reports the
+        // one-line width it actually wants. The old fallback was a literal
+        // 300, which invented a wrap nobody asked for and then reported a
+        // height for it.
+        let width = proposal.width ?? .infinity
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let plan = WrappingLayout.plan(sizes: sizes, width: width, spacing: spacing)
+        return CGSize(width: min(width, plan.size.width), height: plan.size.height)
     }
 
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX, y = bounds.minY, rowHeight: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x > bounds.minX, x + size.width > bounds.maxX {
-                x = bounds.minX; y += rowHeight + spacing; rowHeight = 0
-            }
-            subview.place(at: CGPoint(x: x, y: y), proposal: .unspecified)
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize,
+                       subviews: Subviews, cache: inout ()) {
+        let sizes = subviews.map { $0.sizeThatFits(.unspecified) }
+        let plan = WrappingLayout.plan(sizes: sizes, width: bounds.width, spacing: spacing)
+        for (subview, origin) in zip(subviews, plan.origins) {
+            subview.place(at: CGPoint(x: bounds.minX + origin.x, y: bounds.minY + origin.y),
+                          proposal: .unspecified)
         }
+    }
+
+    /// Where the timestamp column lines up.
+    ///
+    /// Without this, `HStack(alignment: .firstTextBaseline)` cannot find a
+    /// baseline in a custom `Layout` and falls back to its bottom edge — so
+    /// the timestamp sank to the LAST line of a wrapped phrase. Invisible on a
+    /// one-line row, which is why it survived: every row was one line until
+    /// narration started producing long ones.
+    func explicitAlignment(of guide: VerticalAlignment, in bounds: CGRect,
+                           proposal: ProposedViewSize, subviews: Subviews,
+                           cache: inout ()) -> CGFloat? {
+        guard guide == .firstTextBaseline, let first = subviews.first else { return nil }
+        return bounds.minY + first.dimensions(in: .unspecified)[.firstTextBaseline]
+    }
+}
+
+extension WrappingLayout {
+    /// The wrap, as arithmetic: where each box goes, and how big the result is.
+    ///
+    /// ONE routine for measuring and for placing. They used to be two copies
+    /// of the same loop, and a copy is a copy: if they ever answered
+    /// differently the row reported a height that did not contain its own
+    /// contents, and the overflow drew straight over the row beneath. Which is
+    /// exactly what happened once a sibling view changed the width the stack
+    /// granted after the measurement had been taken.
+    ///
+    /// Pure, over plain sizes, because `Layout.Subviews` cannot be constructed
+    /// in a test — so an invariant asserted against the protocol methods could
+    /// only ever be asserted by eye.
+    static func plan(sizes: [CGSize], width: CGFloat, spacing: CGFloat)
+        -> (origins: [CGPoint], size: CGSize) {
+        var origins: [CGPoint] = []
+        var x: CGFloat = 0, y: CGFloat = 0
+        var lineHeight: CGFloat = 0, widest: CGFloat = 0
+        for size in sizes {
+            // `x > 0` guards the first box on a line: one wider than the whole
+            // row still gets placed and overhangs, rather than wrapping
+            // forever onto empty lines.
+            if x > 0, x + size.width > width {
+                widest = max(widest, x - spacing)
+                x = 0
+                y += lineHeight + spacing
+                lineHeight = 0
+            }
+            origins.append(CGPoint(x: x, y: y))
+            x += size.width + spacing
+            lineHeight = max(lineHeight, size.height)
+        }
+        widest = max(widest, x - spacing)
+        return (origins, CGSize(width: max(0, widest), height: y + lineHeight))
     }
 }
