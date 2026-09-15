@@ -27,6 +27,27 @@ enum RailLayout {
         case fixed(Double)
     }
 
+    /// Whether the transcript section should open ITSELF, right now.
+    ///
+    /// It starts closed and opens when the recording turns out to have words.
+    /// A recording with none leaves it shut, because an empty section is a
+    /// header promising something that is not there.
+    ///
+    /// The transcript is loaded AFTER the editor opens — `loadTranscript` is
+    /// deliberately not called from `init`, so the test host never constructs a
+    /// recognizer — which is why this is a rule that fires on a change rather
+    /// than an initial value. At the moment the rail is first built there is
+    /// usually nothing to decide from.
+    ///
+    /// `alreadyDecided` is what makes it a DEFAULT rather than a behaviour. The
+    /// section is re-evaluated whenever the word count moves, and every edit to
+    /// the transcript moves it — so without this, closing the section and then
+    /// deleting a word would spring it open again, and the panel would feel
+    /// like it was fighting back.
+    static func transcriptOpensItself(wordCount: Int, alreadyDecided: Bool) -> Bool {
+        !alreadyDecided && wordCount > 0
+    }
+
     /// The transcript's share of the rail.
     ///
     /// Its stored height applies ONLY while it is sharing — a section alone in

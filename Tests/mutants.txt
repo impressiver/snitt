@@ -499,3 +499,8 @@ AuthoredNarrationEditorTests :: Sources/SnittApp/EditorWindowController.swift ::
 AuthoredNarrationEditorTests :: Sources/SnittApp/EditorWindowController.swift :: let spoken = selected.filter { !$0.isAuthored } :: let spoken = selected
 # Undoing the FIRST line removes the transcript rather than emptying it.
 AuthoredNarrationEditorTests :: Sources/SnittApp/EditorWindowController.swift :: hadTranscript ? target.restoreTranscript(current) : target.discardTranscript() :: target.restoreTranscript(current)
+# The transcript section opens itself when the recording has words, leaves
+# itself shut when it has none, and only ever has its say ONCE — every edit to
+# a transcript moves the word count, so without the latch, closing the section
+# and deleting a word would spring it open again.
+TranscriptDisclosureTests :: Sources/SnittApp/RailLayout.swift :: !alreadyDecided && wordCount > 0 :: wordCount > 0
