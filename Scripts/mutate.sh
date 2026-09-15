@@ -60,19 +60,33 @@ open(path, "w").write(s.replace(find, replace, 1))
 
   log="$(mktemp)"
   swift test --filter "$filter" > "$log" 2>&1
+  # The LAST summary line, matched with its leading marker — not the first
+  # thing in the log that looks like one.
+  #
+  # `grep -q "Test run with .* passed"` used to decide this, and it reported a
+  # mutant SURVIVED that the tests had killed. A failing expectation prints its
+  # receiver, the receiver was the whole of CONTRIBUTING.md, and that file
+  # contains the sentence "Only the `Test run with N tests ... passed` line is
+  # trustworthy" — the project's own warning about this exact trap, echoed into
+  # a failure message, springing the trap it describes.
+  #
+  # Anything a test prints can contain anything. The marker and the tail are
+  # what make this a summary rather than a substring: `run-tests.sh` already
+  # took the last match for the same reason.
+  summary="$(grep -E '^[✔✘] Test run with .* (passed|failed)' "$log" | tail -1 || true)"
   # A crashed bundle is a KILL, not a pass: `swift test` exits 0 on a
   # segfault and prints no summary, which is the trap Scripts/run-tests.sh
   # exists for.
   if grep -q "signal code\|Fatal error" "$log"; then
     echo "killed (crash)  ${find:0:60}"
-  elif grep -q "Test run with .* passed" "$log"; then
-    echo "SURVIVED        ${find:0:60}"
-    survived=$((survived + 1))
-  elif grep -q "Test run with .* failed" "$log"; then
-    echo "killed          ${find:0:60}"
-  else
+  elif [ -z "$summary" ]; then
     echo "SKIP  (build failed)  ${find:0:50}"
     total=$((total - 1))
+  elif [[ "$summary" == *failed* ]]; then
+    echo "killed          ${find:0:60}"
+  else
+    echo "SURVIVED        ${find:0:60}"
+    survived=$((survived + 1))
   fi
 
   cp "$backup" "$file"

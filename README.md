@@ -125,8 +125,11 @@ Two things to know up front: every source file carries an MPL notice (a test
 enforces it), and every test must name a plausible wrong implementation and be
 verified to fail against it.
 
-Contributions require agreeing to the [CLA](CLA.md). It is short, and it is not a
-copyright assignment — you keep your copyright.
+There is no CLA — sign your commits off with `git commit -s` instead. That
+certifies you wrote the change, and submits it under both the MPL-2.0 and the
+Apache-2.0, which is what lets the project relicense later without hunting down
+every past contributor. You keep your copyright.
+[`CONTRIBUTING.md`](CONTRIBUTING.md) has the detail.
 
 ## Design
 
