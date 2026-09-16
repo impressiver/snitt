@@ -203,6 +203,21 @@ public class PreviewController {
         newItem.add(output)
         self.videoOutput = output
 
+        // WHERE THE PLAYHEAD WAS, carried across the rebuild.
+        //
+        // `replaceCurrentItem` starts the new item at zero, so every edit sent
+        // the playhead home — after a cut, after a marker, after recording a
+        // take. The visible jump was the smaller half of it: the NEXT take
+        // reads the playhead to decide where it was spoken, read 0, and
+        // claimed to cover the opening seconds of the recording. The words it
+        // was meant to replace then survived, because they were nowhere near
+        // what the take said it covered.
+        //
+        // Through SOURCE time, because output time means different footage
+        // before and after an edit.
+        let wasAt = player.currentTime().seconds
+        let previousKept = keptRanges
+
         player.replaceCurrentItem(with: newItem)
         self.item = newItem
         self.durationSeconds = built.duration
@@ -210,6 +225,15 @@ public class PreviewController {
         self.keptRanges = built.keptRanges
         self.jumpPoints = MarkerJumpPoints.compute(events: events, keptRanges: built.keptRanges)
         self.markerTrackPoints = MarkerTrackPoints.compute(events: events, keptRanges: built.keptRanges)
+
+        // Seeked AFTER the item is installed and the ranges are updated, so
+        // the destination is computed against the timeline it is landing in.
+        if wasAt.isFinite, wasAt > 0, !previousKept.isEmpty {
+            let landing = PlayheadCarry.carriedOrNearest(
+                outputTime: wasAt, before: previousKept,
+                after: built.keptRanges, newDuration: built.duration)
+            await seek(toSeconds: landing)
+        }
     }
 
     /// Re-applies ONLY the audio mix, leaving the composition and the player

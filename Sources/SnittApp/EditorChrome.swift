@@ -163,8 +163,11 @@ struct TransportBar: View {
     let canCut: Bool
     let onRewind: () -> Void
     let onPreviousMark: () -> Void
-    /// D93. The transport becomes a stop button while a take is running, and
-    /// a recording indicator sits beside the clock.
+    /// D102's over-dub transport. The record button sits beside play, and the
+    /// play button shows the count-in while one is running.
+    var overdubState: OverdubTransport.State = .idle
+    var onTapRecord: () -> Void = {}
+    /// D93. A recording indicator sits beside the clock.
     var isRecordingVoiceover: Bool = false
     var onStopVoiceover: () -> Void = {}
     let onTogglePlay: () -> Void
@@ -280,20 +283,48 @@ struct TransportBar: View {
             //
             // Red rather than the brand's signal colour, because this is the
             // one state in the app where the machine is capturing you.
-            Button(action: isRecordingVoiceover ? onStopVoiceover : onTogglePlay) {
-                Image(systemName: isRecordingVoiceover
-                      ? "stop.fill"
-                      : (isPlaying ? "pause.fill" : "play.fill"))
-                    .frame(width: 30, height: 22)
-                    .foregroundStyle(isRecordingVoiceover ? Color.white
-                                                          : SnittPalette.Swatch.ink0)
-                    .background(isRecordingVoiceover ? Color.red
-                                                     : SnittPalette.Swatch.signalBright,
+            Button(action: onTogglePlay) {
+                Group {
+                    // COUNTING IN, the play button becomes the count. It is
+                    // the control the eye is already on, and a countdown
+                    // anywhere else would be a second thing to look at during
+                    // the three seconds there is least attention to spare.
+                    if case .countingIn(let remaining) = overdubState {
+                        Text("\(remaining)")
+                            .font(.system(.body, design: .rounded).weight(.bold))
+                            .monospacedDigit()
+                    } else {
+                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                    }
+                }
+                .frame(width: 30, height: 22)
+                .foregroundStyle(SnittPalette.Swatch.ink0)
+                .background(SnittPalette.Swatch.signalBright,
+                            in: RoundedRectangle(cornerRadius: 5))
+            }
+            .help(Self.help("Play or pause", "Play / Pause"))
+            .accessibilityLabel(playAccessibilityLabel)
+
+            // THE RECORD BUTTON, beside play rather than replacing it. Play
+            // still means play while a take is open — pausing to think must
+            // not end the take — so the two cannot share one control.
+            //
+            // Red only while it is active, because red in this app means the
+            // machine is capturing you and an always-red button would spend
+            // that meaning on a control that is merely available.
+            Button(action: onTapRecord) {
+                Image(systemName: overdubState.isRecordActive ? "stop.fill" : "record.circle")
+                    .frame(width: 26, height: 22)
+                    .foregroundStyle(overdubState.isRecordActive
+                                     ? Color.white : SnittPalette.Swatch.slateText)
+                    .background(overdubState.isRecordActive ? Color.red : Color.clear,
                                 in: RoundedRectangle(cornerRadius: 5))
             }
-            .help(isRecordingVoiceover ? "Stop over-dubbing"
-                                       : Self.help("Play or pause", "Play / Pause"))
-            .accessibilityLabel(isRecordingVoiceover ? "Stop over-dubbing" : "Play or pause")
+            .buttonStyle(.plain)
+            .help(overdubState.isRecordActive ? "Stop over-dubbing"
+                                              : Self.help("Over-dub", "Over-dub"))
+            .accessibilityLabel(overdubState.isRecordActive
+                                ? "Stop over-dubbing" : "Over-dub the microphone")
             // Not `.borderedProminent`: that draws in the system accent, which
             // is whatever colour the user picked for selection — so the one
             // filled control on the instrument would change meaning from Mac
@@ -305,6 +336,20 @@ struct TransportBar: View {
         }
         .padding(3)
         .background(SnittPalette.Swatch.ink2, in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    /// What the play button is called, which depends on what it will DO.
+    ///
+    /// Spelled out rather than "Play or pause" throughout, because while a
+    /// take is open this button pauses the TAKE — a screen reader announcing
+    /// "play or pause" there would be describing a different control.
+    private var playAccessibilityLabel: String {
+        switch overdubState {
+        case .countingIn(let remaining): return "Counting in, \(remaining)"
+        case .recording: return "Pause the over-dub"
+        case .armedButPaused: return "Resume the over-dub"
+        case .idle: return "Play or pause"
+        }
     }
 
     private func transportButton(_ symbol: String, _ help: String,

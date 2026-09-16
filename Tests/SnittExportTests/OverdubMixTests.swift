@@ -204,3 +204,97 @@ struct OverdubPlaybackTests {
                 "the microphone has an empty stretch where the take should be")
     }
 }
+
+/// That a take REPLACES in place, rather than lengthening the microphone.
+///
+/// Reported as "the original microphone transcription gets offset by the
+/// length of the overdub". The transcript maps source time to output through
+/// `keptRanges` alone — it knows nothing about takes — so if a take made the
+/// microphone track longer than the picture, every captured word after it
+/// would be heard late by exactly the take's length while the caption stayed
+/// put. Which is the reported symptom, stated as a duration.
+struct OverdubTimingTests {
+
+    private func bundleWithTake(takeSeconds: Double,
+                                atSource: Double) async throws -> (SnittBundle, EditDecisionList) {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "timing-\(UUID().uuidString).snitt")
+        let bundle = try SnittBundle(creatingAt: root)
+        try await writeSyntheticMovie(to: bundle.captureURL, seconds: 6.0,
+                                      audioTrackCount: 2, audioContent: .tone)
+        try RecordingMetadata(createdAt: Date(), initiator: .human).write(to: bundle)
+        let filename = "overdub-timing.m4a"
+        try await writeSyntheticMovie(to: bundle.url.appendingPathComponent(filename),
+                                      seconds: takeSeconds, audioTrackCount: 1,
+                                      audioContent: .tone)
+        var edl = EditDecisionList()
+        edl.trackStates = [TrackState(track: "systemAudio"), TrackState(track: "microphone")]
+        edl.overdubs = [Overdub(filename: filename, durationSeconds: takeSeconds,
+                                segments: [OverdubSegment(takeStart: 0, sourceStart: atSource,
+                                                          durationSeconds: takeSeconds)])]
+        return (bundle, edl)
+    }
+
+    @Test("The microphone is exactly as long as the picture")
+    func microphoneMatchesTheVideo() async throws {
+        // THE REPORTED BUG, as the one number that states it. A take that
+        // INSERTED rather than replaced would make this longer by the take's
+        // length, and everything after it would play late.
+        let (bundle, edl) = try await bundleWithTake(takeSeconds: 2.0, atSource: 2.0)
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+
+        let video = try #require(built.composition.tracks(withMediaType: .video).first)
+        let microphone = try #require(built.composition.tracks(withMediaType: .audio).last)
+        let mic = microphone.timeRange.duration.seconds
+        let pic = video.timeRange.duration.seconds
+        #expect(abs(mic - pic) < 0.05, "microphone \(mic)s vs picture \(pic)s")
+    }
+
+    @Test("Both audio tracks stay the same length as each other")
+    func audioTracksAgree() async throws {
+        // System audio is built by the untouched kept-range loop, so it is the
+        // control: the microphone drifting away from it is the drift.
+        let (bundle, edl) = try await bundleWithTake(takeSeconds: 2.0, atSource: 2.0)
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+        let audio = built.composition.tracks(withMediaType: .audio)
+        #expect(audio.count == 2)
+        #expect(abs(audio[0].timeRange.duration.seconds
+                    - audio[1].timeRange.duration.seconds) < 0.05,
+                "\(audio[0].timeRange.duration.seconds)s vs \(audio[1].timeRange.duration.seconds)s")
+    }
+
+    @Test("The capture after a take resumes at the right OUTPUT second")
+    func captureResumesOnTime() async throws {
+        // Where the drift would actually be audible. The take covers source
+        // 2-4 of a 6s recording with no cuts, so the tail must start at output
+        // 4 — not at 6, which is where it lands if the take was inserted.
+        let (bundle, edl) = try await bundleWithTake(takeSeconds: 2.0, atSource: 2.0)
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+
+        let microphone = try #require(built.composition.tracks(withMediaType: .audio).last)
+        let tail = try #require(microphone.segments.last)
+        #expect(abs(tail.timeMapping.target.start.seconds - 4.0) < 0.05,
+                "the capture resumes at output \(tail.timeMapping.target.start.seconds)s, not 4s")
+        // And it plays the right SOURCE seconds: 4-6, not 2-4 again.
+        #expect(abs(tail.timeMapping.source.start.seconds - 4.0) < 0.05,
+                "the tail replays source \(tail.timeMapping.source.start.seconds)s")
+    }
+
+    @Test("A longer take does not stretch anything")
+    func aLongTakeStillReplaces() async throws {
+        // Scaled up, because "offset by the length of the overdub" means the
+        // error grows with the take — a 4s take would push everything 4s late.
+        let (bundle, edl) = try await bundleWithTake(takeSeconds: 4.0, atSource: 1.0)
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+        let video = try #require(built.composition.tracks(withMediaType: .video).first)
+        let microphone = try #require(built.composition.tracks(withMediaType: .audio).last)
+        let mic = microphone.timeRange.duration.seconds
+        let pic = video.timeRange.duration.seconds
+        #expect(abs(mic - pic) < 0.05,
+                "a 4s take left the microphone \(mic)s against a \(pic)s picture")
+    }
+}

@@ -244,6 +244,35 @@ public struct EditDecisionList: Codable, Sendable {
     /// Whether any take covers the microphone.
     public var hasOverdubs: Bool { !overdubs.isEmpty }
 
+    /// This edit as it should SOUND while a take is being recorded (D102).
+    ///
+    /// The captured microphone is silenced, because otherwise the speakers
+    /// play it into the microphone that is recording — the old audio arrives
+    /// in the new take, quieter and a fraction late, and the take is ruined in
+    /// a way that is not obvious until it is played back.
+    ///
+    /// Silencing the TRACK covers earlier takes too, and that is the point of
+    /// this being one mute rather than a special case: a take plays on the
+    /// microphone, so punching in over a stretch that was already over-dubbed
+    /// would otherwise bleed the previous take instead of the capture.
+    ///
+    /// System audio is left alone deliberately. You are narrating OVER a
+    /// demonstration, and silencing the thing being demonstrated would leave
+    /// nothing to talk about.
+    ///
+    /// A VALUE, never saved. The document's own mute is what the export
+    /// honours; this is a mix the preview wears for the length of a take, and
+    /// writing it would turn a recording aid into an edit nobody made.
+    public func silencingMicrophone() -> EditDecisionList {
+        var copy = self
+        if let index = copy.trackStates.firstIndex(where: { $0.track == "microphone" }) {
+            copy.trackStates[index].muted = true
+        } else {
+            copy.trackStates.append(TrackState(track: "microphone", muted: true))
+        }
+        return copy
+    }
+
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, cuts, trackStates, crop, showClicks
         case showSubtitles, showMarkers, overdubs

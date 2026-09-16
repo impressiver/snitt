@@ -173,3 +173,116 @@ struct VoiceoverTranscriptTests {
         #expect(state.audibleWords.map(\.text) == ["narrated"])
     }
 }
+
+/// Re-transcribing a take the moment it is recorded (D102).
+///
+/// Without it the transcript is a lie the instant a take lands: it still shows
+/// what the CAPTURED microphone said over those seconds — audio the export has
+/// replaced — and none of what was just said instead. Worse than stale, because
+/// the words left on screen are specifically the ones the take exists to remove.
+struct AutoTranscribeTakeTests {
+
+    private func word(_ text: String, at start: Double,
+                      track: String = "microphone") -> TranscriptWord {
+        TranscriptWord(text: text, start: start, duration: 0.3, confidence: 1, track: track)
+    }
+
+    private func take(from start: Double, to end: Double) -> Overdub {
+        Overdub(filename: "t.m4a", durationSeconds: end - start,
+                segments: [OverdubSegment(takeStart: 0, sourceStart: start,
+                                          durationSeconds: end - start)])
+    }
+
+    // MARK: - The consent gate
+
+    @Test("A recording that has never been transcribed is left alone")
+    func noTranscriptMeansNoAutoRun() {
+        // Transcription is consent-gated (§4.10 asks at first USE), so a take
+        // must not push a document through the Speech grant. Having a
+        // transcript IS the opt-in.
+        #expect(!Transcriber.shouldAutoTranscribeTake(hasTranscript: false,
+                                                      availability: .available))
+    }
+
+    @Test("A recording that HAS one is kept up to date")
+    func transcriptMeansAutoRun() {
+        #expect(Transcriber.shouldAutoTranscribeTake(hasTranscript: true,
+                                                     availability: .available))
+    }
+
+    @Test("An unavailable or refused recogniser is never invoked")
+    func unavailableIsNeverRun() {
+        // Both directions matter: `notYetRequested` would raise a dialog with
+        // no visible cause, and `denied` would ask again after a no.
+        #expect(!Transcriber.shouldAutoTranscribeTake(hasTranscript: true,
+                                                      availability: .notYetRequested))
+        #expect(!Transcriber.shouldAutoTranscribeTake(hasTranscript: true,
+                                                      availability: .denied))
+        #expect(!Transcriber.shouldAutoTranscribeTake(hasTranscript: true,
+                                                      availability: .unsupported))
+    }
+
+    // MARK: - Merging just the new take
+
+    @Test("The new take replaces the words under IT")
+    func newTakeReplacesItsOwnSpan() throws {
+        let before = Transcript(words: [word("keep", at: 1),
+                                        word("replaced", at: 5.5),
+                                        word("also keep", at: 9)],
+                                locale: "en-US")
+        let merged = try #require(Transcriber.merging(
+            take(from: 5, to: 6), words: [word("said instead", at: 5.5)], into: before))
+        #expect(merged.words.map(\.text) == ["keep", "said instead", "also keep"])
+    }
+
+    @Test("An EARLIER take's words survive a later take being transcribed")
+    func earlierTakesAreNotRedropped() throws {
+        // THE SUBTLETY. Take words are tagged `microphone` and are
+        // indistinguishable from captured ones, so merging against EVERY take
+        // would drop the words of takes that were transcribed earlier — they
+        // sit under a take's span by construction. Passing only the NEW take
+        // means the words dropped are exactly the ones it replaced.
+        let afterFirstTake = Transcript(words: [word("from take one", at: 2.5),
+                                                word("captured", at: 8)],
+                                        locale: "en-US")
+        let merged = try #require(Transcriber.merging(
+            take(from: 7, to: 9), words: [word("from take two", at: 8)],
+            into: afterFirstTake))
+        #expect(merged.words.map(\.text) == ["from take one", "from take two"],
+                "got \(merged.words.map(\.text))")
+    }
+
+    @Test("Surviving captured words keep their ORIGINAL times")
+    func mergingShiftsNothing() throws {
+        // Reported as "the original microphone transcription gets offset by
+        // the length of the overdub". The composition is not where that comes
+        // from — `OverdubTimingTests` pins the microphone to the picture's
+        // length — it is that the words under a take were STALE until a take
+        // re-transcribed. For the take's duration you read one thing and heard
+        // another, which reads as an offset exactly that wide.
+        //
+        // This is the other half: merging must move nothing. A merge that
+        // re-timed the survivors would introduce the very drift the staleness
+        // only impersonated.
+        let before = Transcript(words: [word("early", at: 1.0),
+                                        word("under", at: 5.5),
+                                        word("late", at: 12.25)],
+                                locale: "en-US")
+        let merged = try #require(Transcriber.merging(
+            take(from: 5, to: 6), words: [word("new", at: 5.5)], into: before))
+        let byText = Dictionary(uniqueKeysWithValues: merged.words.map { ($0.text, $0.start) })
+        #expect(byText["early"] == 1.0)
+        #expect(byText["late"] == 12.25, "a surviving word moved to \(byText["late"] ?? -1)")
+    }
+
+    @Test("A take the recogniser heard nothing in still clears what it replaced")
+    func silentTakeStillClears() throws {
+        // Recording silence over a sentence removes the sentence: the audio
+        // that said it is not in the file any more, so neither should the
+        // words be. Leaving them would caption speech nobody can hear.
+        let before = Transcript(words: [word("gone", at: 5.5)], locale: "en-US")
+        let merged = try #require(Transcriber.merging(
+            take(from: 5, to: 6), words: [], into: before))
+        #expect(merged.words.isEmpty, "got \(merged.words.map(\.text))")
+    }
+}

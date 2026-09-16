@@ -194,6 +194,43 @@ enum Transcriber {
         }
     }
 
+    /// Whether a freshly recorded take should be transcribed without being asked.
+    ///
+    /// **Only when the recording already has a transcript.** Transcription is
+    /// consent-gated — §4.10 asks at first USE, so the pane shows a button
+    /// rather than a dialog — and a document nobody has transcribed must not
+    /// be pushed through the Speech grant because a take happened to be
+    /// recorded. Having a transcript IS the opt-in; this keeps it true rather
+    /// than creating one.
+    ///
+    /// A separate decision from the work it gates so the rule can be asserted
+    /// without the recogniser, which is TCC-gated and absent on any machine
+    /// that has not granted it.
+    static func shouldAutoTranscribeTake(hasTranscript: Bool,
+                                         availability: Availability) -> Bool {
+        guard hasTranscript else { return false }
+        if case .available = availability { return true }
+        return false
+    }
+
+    /// `transcript` with ONE freshly recorded take merged in.
+    ///
+    /// Named rather than left as an argument at the call site, because the
+    /// argument IS the decision: it merges against a list holding only this
+    /// take, so the words dropped are exactly the ones it replaced.
+    ///
+    /// Passing every take instead would re-drop the words of takes that were
+    /// transcribed earlier — they are tagged `microphone`, they sit under a
+    /// take's span by construction, and nothing distinguishes them from
+    /// captured words. Each new take would quietly empty the ones before it.
+    ///
+    /// A mutation of the `[take]` here survived when this was inline: the
+    /// merge was tested and the choice of what to pass it was not.
+    static func merging(_ take: Overdub, words: [TranscriptWord],
+                        into transcript: Transcript?) -> Transcript? {
+        merge(transcript, overdubs: [take], takeWords: words)
+    }
+
     /// Everything the finished recording can be heard to say.
     ///
     /// **Captured words under a take are REMOVED, not merged.** A take

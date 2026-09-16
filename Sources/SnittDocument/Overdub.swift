@@ -143,6 +143,79 @@ public enum OverdubPlacement {
         return result
     }
 
+    /// One continuous stretch of recording, in OUTPUT time.
+    ///
+    /// A take can be PAUSED and carried on (D102's transport), so it is no
+    /// longer one run from a single start — it is several, written end to end
+    /// into one file. The recorder never stops, so file offsets are
+    /// continuous; the output times are not, because the playhead can be
+    /// anywhere when recording resumes.
+    public struct TakeRun: Equatable, Sendable {
+        public var outputStart: Double
+        public var durationSeconds: Double
+
+        public init(outputStart: Double, durationSeconds: Double) {
+            self.outputStart = outputStart
+            self.durationSeconds = durationSeconds
+        }
+    }
+
+    /// The source spans a take covers, given every run it was recorded in.
+    ///
+    /// Runs are in FILE order, and each one's offset into the file is the sum
+    /// of the durations before it — which is what makes pausing safe: the
+    /// audio is continuous even when the timeline is not.
+    ///
+    /// The single-run case is `segments(outputStart:duration:keptRanges:)` and
+    /// this delegates to it, so a paused take and an unpaused one cannot be
+    /// placed by two different rules.
+    public static func segments(runs: [TakeRun],
+                                keptRanges: [TimeRange]) -> [OverdubSegment] {
+        var out: [OverdubSegment] = []
+        var fileOffset = 0.0
+        for run in runs {
+            let placed = segments(outputStart: run.outputStart,
+                                  duration: run.durationSeconds,
+                                  keptRanges: keptRanges)
+            out += placed.map {
+                OverdubSegment(takeStart: $0.takeStart + fileOffset,
+                               sourceStart: $0.sourceStart,
+                               durationSeconds: $0.durationSeconds)
+            }
+            // Advanced by the run's OWN length, not by what was placed. A run
+            // that overhung the end of the footage still consumed that much
+            // audio, and charging only the placed part would slide every later
+            // run earlier in the file.
+            fileOffset += run.durationSeconds
+        }
+        return out
+    }
+
+    /// The runs of a take IN PROGRESS, measured in level samples.
+    ///
+    /// The live lane counts level readings rather than seconds of file, because
+    /// the file cannot be decoded while it is still being written. Those are
+    /// two different clocks, so a live run's length has to be derived from the
+    /// level indices each run began at — mixing the recorder's own elapsed
+    /// time with a count of meter readings gives a length that is neither.
+    ///
+    /// `starts` is the level index each run began at, oldest first, and must
+    /// be the same length as `outputStarts`.
+    public static func liveRuns(outputStarts: [Double],
+                                levelStarts: [Int],
+                                levelCount: Int,
+                                levelsPerSecond: Double) -> [TakeRun] {
+        guard outputStarts.count == levelStarts.count, levelsPerSecond > 0 else { return [] }
+        return outputStarts.indices.map { index in
+            let from = levelStarts[index]
+            // The last run runs to whatever has been sampled so far; every
+            // other one ends where the next began.
+            let to = index + 1 < levelStarts.count ? levelStarts[index + 1] : levelCount
+            return TakeRun(outputStart: outputStarts[index],
+                           durationSeconds: Double(max(0, to - from)) / levelsPerSecond)
+        }
+    }
+
     /// A moment in the recorded audio, as a SOURCE instant — or nil when that
     /// part of the narration sits over footage no longer in the document.
     ///

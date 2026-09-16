@@ -533,3 +533,56 @@ OverdubMixTests :: Sources/SnittExport/CompositionBuilder.swift :: for (index, p
 # AVURLAsset alive, so building the asset inline released it at the end of the
 # loop and every insert failed against a dead track — silently, behind a `try?`.
 OverdubPlaybackTests :: Sources/SnittExport/CompositionBuilder.swift :: takeAssets.append(asset) :: _ = asset
+# D102 transport: pause keeps the take OPEN. Abandoning it because somebody
+# paused to think makes pause unusable during the one operation it is most
+# needed for.
+OverdubTransportTests :: Sources/SnittApp/OverdubTransport.swift :: var step = Step(state: .armedButPaused) :: var step = Step(state: .idle)
+# Record while recording STOPS the take rather than suspending it.
+OverdubTransportTests :: Sources/SnittApp/OverdubTransport.swift :: step.stopRecording = true :: step.pauseRecording = true
+# Record counts in before it records; the picture must not move either.
+OverdubTransportTests :: Sources/SnittApp/OverdubTransport.swift :: var step = Step(state: .countingIn(remaining: countInBeats)) :: var step = Step(state: .recording)
+# The record button reads as active from the press, not from the first frame.
+OverdubTransportTests :: Sources/SnittApp/OverdubTransport.swift :: public var isRecordActive: Bool { self != .idle } :: public var isRecordActive: Bool { self == .recording }
+# A paused take is ONE file: offsets accumulate across runs, or the second run
+# replays the first run's words at the second run's position.
+PausedTakeTests :: Sources/SnittDocument/Overdub.swift :: fileOffset += run.durationSeconds :: fileOffset += 0
+PausedTakeTests :: Sources/SnittDocument/Overdub.swift :: takeStart: $0.takeStart + fileOffset, :: takeStart: $0.takeStart,
+# "The punch in didn't actually record anything": a paused AVAudioRecorder
+# reports currentTime 0, so a take stopped while paused measured as zero and
+# the mis-click guard threw it away. The length must be REMEMBERED at the pause.
+TakeLengthTests :: Sources/SnittApp/VoiceoverRecorder.swift :: mutating func pause(at elapsed: Double) { pausedElapsed = elapsed } :: mutating func pause(at elapsed: Double) { pausedElapsed = 0 }
+# And it is the LARGER of the two: the remembered one is stale after a resume.
+TakeLengthTests :: Sources/SnittApp/VoiceoverRecorder.swift :: func length(recorderTime: Double) -> Double { max(recorderTime, pausedElapsed) } :: func length(recorderTime: Double) -> Double { recorderTime }
+TakeLengthTests :: Sources/SnittApp/VoiceoverRecorder.swift :: func length(recorderTime: Double) -> Double { max(recorderTime, pausedElapsed) } :: func length(recorderTime: Double) -> Double { pausedElapsed }
+# "Pausing doesn't stop the recording overlaying the waveform": a PAUSED take
+# is still open, so guarding the meter on "is a take open" kept it sampling.
+CapturingAudioTests :: Sources/SnittApp/OverdubTransport.swift :: public var isCapturingAudio: Bool { self == .recording } :: public var isCapturingAudio: Bool { self != .idle }
+# A live run ends where the next began, or the first one draws over the pause.
+LiveRunTests :: Sources/SnittDocument/Overdub.swift :: let to = index + 1 < levelStarts.count ? levelStarts[index + 1] : levelCount :: let to = levelCount
+LiveRunTests :: Sources/SnittDocument/Overdub.swift :: guard outputStarts.count == levelStarts.count, levelsPerSecond > 0 else { return [] } :: guard levelsPerSecond > 0 else { return [] }
+# Auto-transcribing a take is consent-gated: a document nobody has transcribed
+# must not be pushed through the Speech grant because a take was recorded.
+AutoTranscribeTakeTests :: Sources/SnittApp/Transcriber.swift :: guard hasTranscript else { return false } :: guard true else { return false }
+AutoTranscribeTakeTests :: Sources/SnittApp/Transcriber.swift :: if case .available = availability { return true } :: return true
+# And it merges against ONLY the new take, or each take empties the ones before
+# it — their words are tagged `microphone` and sit under a take's span.
+AutoTranscribeTakeTests :: Sources/SnittApp/Transcriber.swift :: merge(transcript, overdubs: [take], takeWords: words) :: merge(transcript, overdubs: [], takeWords: words)
+# While a take is recording, the captured microphone is silenced — otherwise
+# the speakers play it into the microphone recording it, and the old audio
+# arrives in the new take quieter and slightly late.
+SilencingMicrophoneTests :: Sources/SnittDocument/EditDecisionList.swift :: copy.trackStates[index].muted = true :: copy.trackStates[index].muted = false
+SilencingMicrophoneTests :: Sources/SnittDocument/EditDecisionList.swift :: copy.trackStates.append(TrackState(track: "microphone", muted: true)) :: copy.trackStates.append(TrackState(track: "systemAudio", muted: true))
+# A take REPLACES in place. If it lengthened the microphone, every captured
+# word after it would be heard late by the take's length while its caption
+# stayed put — "the transcription gets offset by the length of the overdub".
+OverdubTimingTests :: Sources/SnittExport/CompositionBuilder.swift :: try pair.destination.insertTimeRange(range, of: pair.source, at: at) :: try pair.destination.insertTimeRange(range, of: pair.source, at: CMTime(seconds: piece.outputStart + 2, preferredTimescale: 600))
+# And merging a take moves no surviving word.
+AutoTranscribeTakeTests :: Sources/SnittApp/Transcriber.swift :: merged.words = (surviving + takeWords).sorted { $0.start < $1.start } :: merged.words = (surviving.map { var w = $0; w.start += 1; return w } + takeWords).sorted { $0.start < $1.start }
+# An edit must not send the playhead home. `replaceCurrentItem` starts at zero,
+# so every rebuild reset it — and the NEXT take then read 0 as where it was
+# spoken, claimed the opening seconds, and left the words it replaced behind.
+PlayheadSurvivesEditsTests :: Sources/SnittApp/PreviewController.swift :: if wasAt.isFinite, wasAt > 0, !previousKept.isEmpty { :: if false {
+# Carried through SOURCE time: output time means different footage after a cut.
+PlayheadCarryTests :: Sources/SnittDocument/PlayheadCarry.swift :: return TimeRangeMapping.trimmedTime(of: source, keptRanges: after) :: return TimeRangeMapping.trimmedTime(of: source, keptRanges: before)
+# And a lost moment lands NEAR itself rather than at the start.
+PlayheadCarryTests :: Sources/SnittDocument/PlayheadCarry.swift :: return min(max(0, outputTime), max(0, newDuration)) :: return 0
