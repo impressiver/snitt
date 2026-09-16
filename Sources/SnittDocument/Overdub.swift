@@ -191,6 +191,31 @@ public enum OverdubPlacement {
         return out
     }
 
+    /// The runs of a take IN PROGRESS, measured in level samples.
+    ///
+    /// The live lane counts level readings rather than seconds of file, because
+    /// the file cannot be decoded while it is still being written. Those are
+    /// two different clocks, so a live run's length has to be derived from the
+    /// level indices each run began at — mixing the recorder's own elapsed
+    /// time with a count of meter readings gives a length that is neither.
+    ///
+    /// `starts` is the level index each run began at, oldest first, and must
+    /// be the same length as `outputStarts`.
+    public static func liveRuns(outputStarts: [Double],
+                                levelStarts: [Int],
+                                levelCount: Int,
+                                levelsPerSecond: Double) -> [TakeRun] {
+        guard outputStarts.count == levelStarts.count, levelsPerSecond > 0 else { return [] }
+        return outputStarts.indices.map { index in
+            let from = levelStarts[index]
+            // The last run runs to whatever has been sampled so far; every
+            // other one ends where the next began.
+            let to = index + 1 < levelStarts.count ? levelStarts[index + 1] : levelCount
+            return TakeRun(outputStart: outputStarts[index],
+                           durationSeconds: Double(max(0, to - from)) / levelsPerSecond)
+        }
+    }
+
     /// A moment in the recorded audio, as a SOURCE instant — or nil when that
     /// part of the narration sits over footage no longer in the document.
     ///

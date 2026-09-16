@@ -246,3 +246,76 @@ struct TakeLengthTests {
         #expect(clock.length(recorderTime: 0) == 6.0)
     }
 }
+
+/// What is actually being CAPTURED, as opposed to what is open.
+///
+/// Reported as "pausing the record doesn't stop the recording from overlaying
+/// the waveform". The level meter guarded on "is a take open", which stays
+/// true through a pause — so it went on metering with the recorder stopped,
+/// the level array kept growing, and the lane drew a take getting longer while
+/// nothing was being recorded.
+struct CapturingAudioTests {
+
+    @Test("Only the recording state captures audio")
+    func onlyRecordingCaptures() {
+        #expect(OverdubTransport.State.recording.isCapturingAudio)
+        #expect(!OverdubTransport.State.armedButPaused.isCapturingAudio,
+                "a paused take still meters the microphone")
+        #expect(!OverdubTransport.State.countingIn(remaining: 2).isCapturingAudio,
+                "the count-in meters before the take has started")
+        #expect(!OverdubTransport.State.idle.isCapturingAudio)
+    }
+
+    @Test("It is NOT the same question as whether the button is lit")
+    func capturingDiffersFromActive() {
+        // The distinction that was missing. A paused take is open — the button
+        // stays lit, the file is waiting — and nothing is being written.
+        let paused = OverdubTransport.State.armedButPaused
+        #expect(paused.isRecordActive)
+        #expect(!paused.isCapturingAudio)
+        #expect(paused.isRecordActive != paused.isCapturingAudio)
+    }
+}
+
+/// The live lane's runs, while a take is still being written.
+///
+/// The file cannot be decoded while it is open, so the lane counts LEVEL
+/// readings instead — a different clock from the recorder's own elapsed time.
+struct LiveRunTests {
+
+    @Test("One run is as long as the levels sampled so far")
+    func oneRun() {
+        let runs = OverdubPlacement.liveRuns(outputStarts: [10], levelStarts: [0],
+                                             levelCount: 40, levelsPerSecond: 20)
+        #expect(runs == [OverdubPlacement.TakeRun(outputStart: 10, durationSeconds: 2)])
+    }
+
+    @Test("An earlier run ends where the next one began")
+    func earlierRunsAreClosed() {
+        // The defect this catches: a first run that kept growing would draw
+        // over the pause, claiming audio for seconds nothing was recorded in.
+        let runs = OverdubPlacement.liveRuns(outputStarts: [10, 30], levelStarts: [0, 40],
+                                             levelCount: 60, levelsPerSecond: 20)
+        #expect(runs[0].durationSeconds == 2, "the first run did not stop at the pause")
+        #expect(runs[1].durationSeconds == 1)
+        #expect(runs[1].outputStart == 30)
+    }
+
+    @Test("Nothing sampled yet is a zero-length run, not a negative one")
+    func nothingSampled() {
+        // A run opened by a resume, before the next tick has landed.
+        let runs = OverdubPlacement.liveRuns(outputStarts: [10, 30], levelStarts: [0, 40],
+                                             levelCount: 40, levelsPerSecond: 20)
+        #expect(runs[1].durationSeconds == 0)
+    }
+
+    @Test("Mismatched inputs produce nothing rather than a wrong answer")
+    func mismatchedInputs() {
+        // The two arrays are maintained by different call sites; if they ever
+        // disagree, drawing nothing is honest and drawing a guess is not.
+        #expect(OverdubPlacement.liveRuns(outputStarts: [10], levelStarts: [0, 40],
+                                          levelCount: 60, levelsPerSecond: 20).isEmpty)
+        #expect(OverdubPlacement.liveRuns(outputStarts: [10], levelStarts: [0],
+                                          levelCount: 60, levelsPerSecond: 0).isEmpty)
+    }
+}

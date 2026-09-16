@@ -554,3 +554,9 @@ TakeLengthTests :: Sources/SnittApp/VoiceoverRecorder.swift :: mutating func pau
 # And it is the LARGER of the two: the remembered one is stale after a resume.
 TakeLengthTests :: Sources/SnittApp/VoiceoverRecorder.swift :: func length(recorderTime: Double) -> Double { max(recorderTime, pausedElapsed) } :: func length(recorderTime: Double) -> Double { recorderTime }
 TakeLengthTests :: Sources/SnittApp/VoiceoverRecorder.swift :: func length(recorderTime: Double) -> Double { max(recorderTime, pausedElapsed) } :: func length(recorderTime: Double) -> Double { pausedElapsed }
+# "Pausing doesn't stop the recording overlaying the waveform": a PAUSED take
+# is still open, so guarding the meter on "is a take open" kept it sampling.
+CapturingAudioTests :: Sources/SnittApp/OverdubTransport.swift :: public var isCapturingAudio: Bool { self == .recording } :: public var isCapturingAudio: Bool { self != .idle }
+# A live run ends where the next began, or the first one draws over the pause.
+LiveRunTests :: Sources/SnittDocument/Overdub.swift :: let to = index + 1 < levelStarts.count ? levelStarts[index + 1] : levelCount :: let to = levelCount
+LiveRunTests :: Sources/SnittDocument/Overdub.swift :: guard outputStarts.count == levelStarts.count, levelsPerSecond > 0 else { return [] } :: guard levelsPerSecond > 0 else { return [] }

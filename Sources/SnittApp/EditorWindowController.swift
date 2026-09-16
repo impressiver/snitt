@@ -1079,6 +1079,11 @@ final class EditorTimelineState: ObservableObject {
     private var countInTimer: Timer?
     /// The runs this take has been recorded in, closed off by each pause.
     private var takeRuns: [OverdubPlacement.TakeRun] = []
+    /// The level index each run began at, for the LIVE lane. Level readings
+    /// and the recorder's own elapsed time are different clocks, and the live
+    /// lane can only count the former — the file cannot be decoded while it is
+    /// still being written.
+    private var takeLevelStarts: [Int] = []
     /// How much audio was in the file when the current run began.
     private var takeFileOffset: Double = 0
     /// Swapped in tests so a count-in can be counted rather than heard.
@@ -1163,18 +1168,33 @@ final class EditorTimelineState: ObservableObject {
     /// it with the code it already has, through the same cuts and the same
     /// zoom. Nothing in the timeline knows a take is running.
     func sampleVoiceoverLevel() {
-        guard isRecordingVoiceover else { return }
+        // `isCapturingAudio`, not `isRecordingVoiceover`. A PAUSED take is
+        // still open — the button is lit and the file is waiting — so the
+        // older guard kept the meter running with the recorder stopped: the
+        // levels went on accumulating and the lane drew a take that was
+        // getting longer while nothing was being recorded.
+        guard overdubState.isCapturingAudio else { return }
         voiceoverRecorder.sampleLevel()
         voiceoverLevels = voiceoverRecorder.levels
         guard !voiceoverLevels.isEmpty else { return }
 
         let duration = Double(voiceoverLevels.count) / Self.voiceoverLevelRate
+        // Placed from the RUNS, so a take that was paused and carried on draws
+        // in the two places it was spoken rather than as one block from where
+        // it first started.
+        let runs = OverdubPlacement.liveRuns(
+            outputStarts: takeRuns.map(\.outputStart),
+            levelStarts: takeLevelStarts,
+            levelCount: voiceoverLevels.count,
+            levelsPerSecond: Self.voiceoverLevelRate)
         let live = Overdub(
             filename: "",
             durationSeconds: duration,
-            segments: OverdubPlacement.segments(outputStart: voiceoverStartedAt,
-                                                duration: duration,
-                                                keptRanges: controller.keptRanges))
+            segments: runs.isEmpty
+                ? OverdubPlacement.segments(outputStart: voiceoverStartedAt,
+                                            duration: duration,
+                                            keptRanges: controller.keptRanges)
+                : OverdubPlacement.segments(runs: runs, keptRanges: controller.keptRanges))
         liveTake = (WaveformSamples(track: "microphone",
                                     samplesPerSecond: Self.voiceoverLevelRate,
                                     peaks: voiceoverLevels),
@@ -1754,6 +1774,7 @@ final class EditorTimelineState: ObservableObject {
         }
         takeRuns.append(OverdubPlacement.TakeRun(outputStart: voiceoverStartedAt,
                                                  durationSeconds: 0))
+        takeLevelStarts = [0]
     }
 
     /// Closes the run that was running, using the recorder's own count of what
@@ -1772,6 +1793,7 @@ final class EditorTimelineState: ObservableObject {
         // after the pause over the wrong footage.
         takeRuns.append(OverdubPlacement.TakeRun(outputStart: currentOutputSeconds,
                                                  durationSeconds: 0))
+        takeLevelStarts.append(voiceoverLevels.count)
     }
 
     private func finishTake() {
@@ -1783,6 +1805,7 @@ final class EditorTimelineState: ObservableObject {
         // is right whether the take was paused or not.
         stopVoiceover(runs: takeRuns)
         takeRuns = []
+        takeLevelStarts = []
         takeFileOffset = 0
     }
 

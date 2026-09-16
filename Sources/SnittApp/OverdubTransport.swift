@@ -50,6 +50,17 @@ public enum OverdubTransport {
         /// finished would leave the three most uncertain seconds looking like
         /// nothing had happened.
         public var isRecordActive: Bool { self != .idle }
+
+        /// Whether the microphone is actually being written to right now.
+        ///
+        /// NOT the same as `isRecordActive`, and that difference is a bug this
+        /// shipped with. A paused take is still open — the button is lit and
+        /// the file is waiting — but nothing is being captured, so anything
+        /// that samples the input has to ask THIS. Guarding the level meter on
+        /// "is a take open" kept it metering through a pause: the lane went on
+        /// growing, drawing a take that was getting longer while the recorder
+        /// was stopped.
+        public var isCapturingAudio: Bool { self == .recording }
     }
 
     public enum Action: Equatable, Sendable {
