@@ -238,3 +238,75 @@ struct OverdubWithoutCapturedMicTests {
         }, "the take was not placed")
     }
 }
+
+/// Silencing the captured microphone for the length of a take (D102).
+///
+/// Requested as "while recording, mute the original microphone audio so it
+/// doesn't interfere with recording" — otherwise the speakers play the old
+/// audio into the microphone that is recording it, and the take arrives with a
+/// quieter, slightly late copy of what it was meant to replace.
+struct SilencingMicrophoneTests {
+
+    private var edl: EditDecisionList {
+        var e = EditDecisionList()
+        e.trackStates = [TrackState(track: "video"),
+                         TrackState(track: "systemAudio"),
+                         TrackState(track: "microphone")]
+        return e
+    }
+
+    @Test("The microphone is muted")
+    func microphoneIsMuted() throws {
+        let quiet = edl.silencingMicrophone()
+        let mic = try #require(quiet.trackStates.first { $0.track == "microphone" })
+        #expect(mic.muted)
+    }
+
+    @Test("System audio is left alone")
+    func systemAudioKeepsPlaying() throws {
+        // You are narrating OVER a demonstration; silencing the thing being
+        // demonstrated would leave nothing to talk about.
+        let quiet = edl.silencingMicrophone()
+        let system = try #require(quiet.trackStates.first { $0.track == "systemAudio" })
+        #expect(!system.muted)
+    }
+
+    @Test("The original is untouched")
+    func theDocumentIsNotEdited() throws {
+        // A VALUE, never saved. The document's own mute is what the export
+        // honours; writing this one would turn a recording aid into an edit
+        // nobody made.
+        let original = edl
+        _ = original.silencingMicrophone()
+        let mic = try #require(original.trackStates.first { $0.track == "microphone" })
+        #expect(!mic.muted)
+    }
+
+    @Test("A recording with no microphone state gains a muted one")
+    func missingStateIsAdded() throws {
+        // A recording made with the mic off, then over-dubbed. The take plays
+        // on the microphone track, so there has to be a state to silence — and
+        // without one the mix would leave the previous take audible.
+        var sparse = EditDecisionList()
+        sparse.trackStates = [TrackState(track: "systemAudio")]
+        let mic = try #require(sparse.silencingMicrophone()
+            .trackStates.first { $0.track == "microphone" })
+        #expect(mic.muted)
+    }
+
+    @Test("An existing mute is not disturbed, and neither is the gain")
+    func existingSettingsSurvive() throws {
+        // Restoring afterwards puts back the DOCUMENT's edl, so nothing here
+        // persists — but a version that rebuilt the state from scratch would
+        // drop a gain somebody set, and the restore would then be restoring a
+        // value this had already lost.
+        var tuned = edl
+        if let i = tuned.trackStates.firstIndex(where: { $0.track == "microphone" }) {
+            tuned.trackStates[i].gain = 0.5
+        }
+        let quiet = tuned.silencingMicrophone()
+        let mic = try #require(quiet.trackStates.first { $0.track == "microphone" })
+        #expect(mic.muted)
+        #expect(mic.gain == 0.5, "the gain was reset to \(mic.gain)")
+    }
+}

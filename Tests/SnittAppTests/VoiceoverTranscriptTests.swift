@@ -252,6 +252,29 @@ struct AutoTranscribeTakeTests {
                 "got \(merged.words.map(\.text))")
     }
 
+    @Test("Surviving captured words keep their ORIGINAL times")
+    func mergingShiftsNothing() throws {
+        // Reported as "the original microphone transcription gets offset by
+        // the length of the overdub". The composition is not where that comes
+        // from — `OverdubTimingTests` pins the microphone to the picture's
+        // length — it is that the words under a take were STALE until a take
+        // re-transcribed. For the take's duration you read one thing and heard
+        // another, which reads as an offset exactly that wide.
+        //
+        // This is the other half: merging must move nothing. A merge that
+        // re-timed the survivors would introduce the very drift the staleness
+        // only impersonated.
+        let before = Transcript(words: [word("early", at: 1.0),
+                                        word("under", at: 5.5),
+                                        word("late", at: 12.25)],
+                                locale: "en-US")
+        let merged = try #require(Transcriber.merging(
+            take(from: 5, to: 6), words: [word("new", at: 5.5)], into: before))
+        let byText = Dictionary(uniqueKeysWithValues: merged.words.map { ($0.text, $0.start) })
+        #expect(byText["early"] == 1.0)
+        #expect(byText["late"] == 12.25, "a surviving word moved to \(byText["late"] ?? -1)")
+    }
+
     @Test("A take the recogniser heard nothing in still clears what it replaced")
     func silentTakeStillClears() throws {
         // Recording silence over a sentence removes the sentence: the audio

@@ -1780,6 +1780,22 @@ final class EditorTimelineState: ObservableObject {
         if step.stopRecording { finishTake() }
         if step.play { controller.play() }
         if step.pause { controller.pause() }
+        updatePreviewMixForTake()
+    }
+
+    /// Silences the captured microphone for the length of a take.
+    ///
+    /// Driven from the transport state rather than toggled at start and stop,
+    /// so a pause restores it and a resume takes it away again with no second
+    /// place to keep in step.
+    private func updatePreviewMixForTake() {
+        let sounding = overdubState.isCapturingAudio ? edl.silencingMicrophone() : edl
+        Task { [weak self] in
+            // `try?`: the mix is a recording comfort, and failing to build one
+            // must not stop a take. The worst case is hearing what you
+            // recorded over, which is the behaviour this replaces.
+            try? await self?.controller.applyAudioMix(edl: sounding)
+        }
     }
 
     private func scheduleCountInBeat() {

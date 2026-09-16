@@ -567,3 +567,14 @@ AutoTranscribeTakeTests :: Sources/SnittApp/Transcriber.swift :: if case .availa
 # And it merges against ONLY the new take, or each take empties the ones before
 # it — their words are tagged `microphone` and sit under a take's span.
 AutoTranscribeTakeTests :: Sources/SnittApp/Transcriber.swift :: merge(transcript, overdubs: [take], takeWords: words) :: merge(transcript, overdubs: [], takeWords: words)
+# While a take is recording, the captured microphone is silenced — otherwise
+# the speakers play it into the microphone recording it, and the old audio
+# arrives in the new take quieter and slightly late.
+SilencingMicrophoneTests :: Sources/SnittDocument/EditDecisionList.swift :: copy.trackStates[index].muted = true :: copy.trackStates[index].muted = false
+SilencingMicrophoneTests :: Sources/SnittDocument/EditDecisionList.swift :: copy.trackStates.append(TrackState(track: "microphone", muted: true)) :: copy.trackStates.append(TrackState(track: "systemAudio", muted: true))
+# A take REPLACES in place. If it lengthened the microphone, every captured
+# word after it would be heard late by the take's length while its caption
+# stayed put — "the transcription gets offset by the length of the overdub".
+OverdubTimingTests :: Sources/SnittExport/CompositionBuilder.swift :: try pair.destination.insertTimeRange(range, of: pair.source, at: at) :: try pair.destination.insertTimeRange(range, of: pair.source, at: CMTime(seconds: piece.outputStart + 2, preferredTimescale: 600))
+# And merging a take moves no surviving word.
+AutoTranscribeTakeTests :: Sources/SnittApp/Transcriber.swift :: merged.words = (surviving + takeWords).sorted { $0.start < $1.start } :: merged.words = (surviving.map { var w = $0; w.start += 1; return w } + takeWords).sorted { $0.start < $1.start }
