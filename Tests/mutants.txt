@@ -504,3 +504,11 @@ AuthoredNarrationEditorTests :: Sources/SnittApp/EditorWindowController.swift ::
 # a transcript moves the word count, so without the latch, closing the section
 # and deleting a word would spring it open again.
 TranscriptDisclosureTests :: Sources/SnittApp/RailLayout.swift :: !alreadyDecided && wordCount > 0 :: wordCount > 0
+# The + opens the narration field. It is drawn in the accordion HEADER, so the
+# pane value producing it is never installed as a view and `@State` written
+# from there goes to storage nothing observes — the reported "+ does nothing".
+WritingNarrationTests :: Sources/SnittApp/EditorWindowController.swift :: isWritingNarration = true :: isWritingNarration = false
+# A line that was not added leaves the field open rather than swallowing it.
+WritingNarrationTests :: Sources/SnittApp/EditorWindowController.swift :: guard addNarration(narrationDraft, atOutput: output) else { return false } :: _ = addNarration(narrationDraft, atOutput: output)
+# And the flag actually draws the field.
+WritingNarrationTests :: Sources/SnittApp/TranscriptPane.swift :: if state.isWritingNarration { :: if false {
