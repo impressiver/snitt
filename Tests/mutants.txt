@@ -578,3 +578,11 @@ SilencingMicrophoneTests :: Sources/SnittDocument/EditDecisionList.swift :: copy
 OverdubTimingTests :: Sources/SnittExport/CompositionBuilder.swift :: try pair.destination.insertTimeRange(range, of: pair.source, at: at) :: try pair.destination.insertTimeRange(range, of: pair.source, at: CMTime(seconds: piece.outputStart + 2, preferredTimescale: 600))
 # And merging a take moves no surviving word.
 AutoTranscribeTakeTests :: Sources/SnittApp/Transcriber.swift :: merged.words = (surviving + takeWords).sorted { $0.start < $1.start } :: merged.words = (surviving.map { var w = $0; w.start += 1; return w } + takeWords).sorted { $0.start < $1.start }
+# An edit must not send the playhead home. `replaceCurrentItem` starts at zero,
+# so every rebuild reset it — and the NEXT take then read 0 as where it was
+# spoken, claimed the opening seconds, and left the words it replaced behind.
+PlayheadSurvivesEditsTests :: Sources/SnittApp/PreviewController.swift :: if wasAt.isFinite, wasAt > 0, !previousKept.isEmpty { :: if false {
+# Carried through SOURCE time: output time means different footage after a cut.
+PlayheadCarryTests :: Sources/SnittDocument/PlayheadCarry.swift :: return TimeRangeMapping.trimmedTime(of: source, keptRanges: after) :: return TimeRangeMapping.trimmedTime(of: source, keptRanges: before)
+# And a lost moment lands NEAR itself rather than at the start.
+PlayheadCarryTests :: Sources/SnittDocument/PlayheadCarry.swift :: return min(max(0, outputTime), max(0, newDuration)) :: return 0

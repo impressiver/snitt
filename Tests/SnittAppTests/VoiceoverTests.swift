@@ -129,3 +129,43 @@ struct VoiceoverTests {
             .contains("disk is full"), "the underlying reason was swallowed")
     }
 }
+
+/// That an edit does not send the playhead home (D102).
+///
+/// The failure this guards is not the visible jump. An over-dub reads the
+/// playhead to decide where it was spoken, so a playhead reset to 0 by the
+/// PREVIOUS take's save anchors the next take at the start of the recording —
+/// and the words it was meant to replace survive, being nowhere near what it
+/// claims to cover. Four takes in a real document, every one anchored at
+/// source 0.
+@MainActor
+struct PlayheadSurvivesEditsTests {
+
+    @Test("Rebuilding after an edit leaves the playhead where it was")
+    func playheadSurvivesARebuild() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(SnittBundle.fileExtension)
+        let bundle = try SnittBundle(creatingAt: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await writeSyntheticMovie(to: bundle.captureURL, seconds: 10.0)
+        try EditDecisionList.fullRange().write(to: bundle)
+
+        let built = try await CompositionBuilder.build(
+            bundle: bundle, edl: .fullRange(), scale: 1.0)
+        let controller = PreviewController(built: built, jumpPoints: [],
+                                           bundle: bundle, scale: 1.0)
+        await controller.seek(toSeconds: 6.0)
+        #expect(abs(controller.player.currentTime().seconds - 6.0) < 0.2,
+                "the fixture did not seek, so this proves nothing")
+
+        // An edit that removes no footage — exactly what saving a take does.
+        var edl = EditDecisionList.fullRange()
+        edl.showMarkers = true
+        try await controller.apply(edl: edl, events: [])
+
+        let after = controller.player.currentTime().seconds
+        #expect(abs(after - 6.0) < 0.3,
+                "the playhead moved to \(after) — an edit sent it home")
+    }
+}
