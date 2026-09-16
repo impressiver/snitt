@@ -60,10 +60,10 @@ public enum KeyboardShortcutRegistry {
     public static let showSubtitlesTitle = "Show Subtitles"
     public static let showMarkersTitle = "Show Markers"
     /// One title for both states. The item TOGGLES, and two titles would need
-    /// two bindings — which is how a menu ends up offering "Record Voiceover"
+    /// two bindings — which is how a menu ends up offering "Over-dub"
     /// while one is already recording.
-    public static let voiceoverTitle = "Record Voiceover"
-    public static let stopVoiceoverTitle = "Stop Recording Voiceover"
+    public static let overdubTitle = "Over-dub"
+    public static let stopOverdubTitle = "Stop Over-dubbing"
 
     public static let shortcuts: [KeyboardShortcut] = [
         .init(title: "Play / Pause", key: " ", modifiers: [], menu: .playback,
@@ -93,11 +93,11 @@ public enum KeyboardShortcutRegistry {
         .init(title: showMarkersTitle, key: "m",
               modifiers: [.command, .shift], menu: .playback,
               selector: #selector(AppDelegate.toggleShowMarkers(_:))),
-        // D93. ⇧⌘V — V for voiceover; plain ⌘V is Paste and the shifted form
+        // D102. ⇧⌘V — V for voice; plain ⌘V is Paste and the shifted form
         // is unclaimed, which `shortcutsDoNotCollide` proves rather than this
         // comment. Its own group: the three above change what you SEE, and
         // this RECORDS something into the document.
-        .init(title: voiceoverTitle, key: "v",
+        .init(title: overdubTitle, key: "v",
               modifiers: [.command, .shift], menu: .playback,
               selector: #selector(AppDelegate.toggleVoiceover(_:)),
               startsGroup: true),

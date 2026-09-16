@@ -14,7 +14,7 @@ import Foundation
 
 /// Narration recorded in the editor (D93), everywhere it touches the document.
 ///
-/// The placement arithmetic is `VoiceoverPlacementTests`. This is the wiring
+/// The placement arithmetic is `OverdubPlacementTests`. This is the wiring
 /// around it: the recorder's refusals, the document field surviving a round
 /// trip, and the two guards that stop a voiceover shipping silently absent
 /// from an export.
@@ -45,7 +45,7 @@ struct VoiceoverTests {
     @Test("Stopping when nothing is recording is a no-op, not a zero-length take")
     func stoppingIdleReturnsNil() {
         // Nil rather than 0: a caller distinguishes "nothing to record" from
-        // "a take of no length", and 0 would write an empty VoiceoverTrack.
+        // "a take of no length", and 0 would write an empty Overdub.
         #expect(VoiceoverRecorder().stop() == nil)
     }
 
@@ -68,60 +68,53 @@ struct VoiceoverTests {
 
     // MARK: - The document
 
-    @Test("A voiceover survives a write and a read")
-    func voiceoverRoundTrips() throws {
+    @Test("A take survives a write and a read")
+    func takeRoundTrips() throws {
         var edl = EditDecisionList()
-        edl.voiceover = VoiceoverTrack(
-            filename: "voiceover.m4a", durationSeconds: 6.25,
-            segments: [VoiceoverSegment(voiceoverStart: 0, sourceStart: 30, durationSeconds: 6.25)])
+        edl.overdubs = [Overdub(
+            filename: "overdub-1.m4a", durationSeconds: 6.25,
+            segments: [OverdubSegment(takeStart: 0, sourceStart: 30, durationSeconds: 6.25)])]
 
         let data = try JSONEncoder().encode(edl)
         let decoded = try JSONDecoder().decode(EditDecisionList.self, from: data)
-        #expect(decoded.voiceover == edl.voiceover)
-    }
-
-    @Test("A document with no narration writes no voiceover key")
-    func absentVoiceoverWritesNothing() throws {
-        // Additive, like `crop` and the three `show` flags: the schema version
-        // does not move, and an older build reading a newer document loses the
-        // narration rather than refusing the file.
-        let data = try JSONEncoder().encode(EditDecisionList())
-        let json = try #require(String(data: data, encoding: .utf8))
-        #expect(!json.contains("voiceover"))
-        #expect(try JSONDecoder().decode(EditDecisionList.self, from: data).voiceover == nil)
+        #expect(decoded.overdubs == edl.overdubs)
     }
 
     // MARK: - The two guards
 
-    @Test("Narration disqualifies passthrough, so the track cannot be silently dropped")
-    func voiceoverForcesAReEncode() {
-        // Passthrough copies ALREADY-ENCODED samples. A voiceover is not in
-        // `capture.mov`, so there are none to copy — an eligible export would
-        // produce the picture and the original audio and no narration at all.
-        // The failure is silent: the file plays, and the thing you recorded is
-        // just missing.
+    @Test("A take disqualifies passthrough, so it cannot be silently dropped")
+    func takeForcesAReEncode() {
+        // Passthrough copies ALREADY-ENCODED samples. A take is not in
+        // `capture.mov`, so there are none to copy for the stretch it covers —
+        // an eligible export would produce the picture and the ORIGINAL
+        // microphone, which is exactly the audio the take was recorded to
+        // replace. The failure is silent: the file plays, and says the thing
+        // you re-recorded to stop it saying.
         var edl = EditDecisionList()
         #expect(PassthroughEligibility.disqualifier(
             resolution: .source, maxSizeBytes: nil, clicks: [], edl: edl,
             hasAudioMix: false) == nil, "the fixture is not otherwise eligible")
 
-        edl.voiceover = VoiceoverTrack(filename: "voiceover.m4a", durationSeconds: 3,
-                                       segments: [VoiceoverSegment(voiceoverStart: 0,
-                                                                   sourceStart: 0,
-                                                                   durationSeconds: 3)])
+        edl.overdubs = [Overdub(filename: "overdub-1.m4a", durationSeconds: 3,
+                                segments: [OverdubSegment(takeStart: 0, sourceStart: 0,
+                                                          durationSeconds: 3)])]
         #expect(PassthroughEligibility.disqualifier(
             resolution: .source, maxSizeBytes: nil, clicks: [], edl: edl,
-            hasAudioMix: false) == .voiceover)
+            hasAudioMix: false) == .overdub)
     }
 
-    @Test("The track vocabulary has room for narration at the index it lands on")
-    func canonicalOrderCoversTheVoiceover() {
-        // `CompositionBuilder` appends the voiceover after the captured tracks
-        // and the mix resolves composition audio track `i` to `canonical[i]`.
-        // A vocabulary of two names would leave index 2 unresolved, so muting
-        // or gaining narration would do nothing — silently, because an
-        // unmatched track is simply left at unity.
-        #expect(AudioTrackOrder.canonical.count > AudioTrackOrder.captured.count)
+    @Test("A take lands on the microphone, so the mix covers only captured tracks")
+    func takesAddNoTrackToTheVocabulary() {
+        // The mix resolves composition audio track `i` to `canonical[i]`. Under
+        // D93 a voiceover occupied index 2 and the vocabulary needed a third
+        // name for it; a take goes on the microphone, so the composition has
+        // exactly the capture's tracks again and the two lists agree.
+        //
+        // `canonical` still has the third slot, reserved for the synthesised
+        // voice (D101). What this pins is that a TAKE does not use it — an
+        // implementation that quietly went back to appending a track would
+        // still pass every assertion about the take being audible.
+        #expect(AudioTrackOrder.captured == ["systemAudio", "microphone"])
         #expect(AudioTrackOrder.canonical[AudioTrackOrder.captured.count] == "voiceover")
     }
 

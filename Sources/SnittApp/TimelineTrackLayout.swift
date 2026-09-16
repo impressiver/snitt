@@ -27,7 +27,8 @@ enum TimelineTrackLayout {
     /// an empty band implying a source that was never captured.
     static func audioTracks(in states: [TrackState]) -> [String] {
         // `AudioTrackOrder.canonical`, rather than a second list that happens
-        // to agree — system audio, then the microphone, then the voiceover.
+        // to agree — system audio, then the microphone, then the synthesised
+        // voice.
         //
         // THE LANES NOW READ IN THE ORDER THE TRACKS EXIST IN THE FILE. That
         // is the order `AssetWriterSink` writes and the order an audio mix
@@ -37,9 +38,12 @@ enum TimelineTrackLayout {
         // place it is load-bearing.
         //
         // Keeping it derived also makes "voiceover LAST" a consequence rather
-        // than a coincidence: narration is appended third, so it draws third,
-        // and it reads as something added UNDER the recording rather than as
-        // one of the sources it was made from.
+        // than a coincidence: it is appended third, so it draws third.
+        //
+        // Nothing adds that lane today. A recorded take lands on the
+        // microphone (D102), and the third track is reserved for synthesised
+        // speech (D101) — which has no `TrackState` until there is something
+        // in it, so the filter below leaves the lane out until then.
         //
         // Filtered by what the recording actually has, because a lane for a
         // source that was never captured implies one that was.

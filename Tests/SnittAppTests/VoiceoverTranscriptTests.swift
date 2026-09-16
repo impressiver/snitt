@@ -24,34 +24,73 @@ struct VoiceoverTranscriptTests {
 
     // MARK: - Merging
 
+    /// A take covering source 2-3.
+    private func take(from start: Double = 2, to end: Double = 3) -> Overdub {
+        Overdub(filename: "t.m4a", durationSeconds: end - start,
+                segments: [OverdubSegment(takeStart: 0, sourceStart: start,
+                                          durationSeconds: end - start)])
+    }
+
     @Test("Both sources land in one transcript, in time order")
     func mergeInterleavesByTime() throws {
-        // They INTERLEAVE rather than concatenate: narration is spoken over
-        // footage that already has speech in it, so appending one list to the
-        // other would put every narrated word after every recorded one however
-        // early it was said.
+        // They INTERLEAVE rather than concatenate: a take is recorded over
+        // footage that already has speech either side of it, so appending one
+        // list to the other would put every re-recorded word after every
+        // captured one however early it was said.
         let spoken = Transcript(words: [word("first", at: 1, track: "microphone"),
-                                        word("third", at: 3, track: "microphone")],
+                                        word("third", at: 5, track: "microphone")],
                                 locale: "en-US")
         let merged = try #require(Transcriber.merge(
-            spoken, voiceover: [word("second", at: 2, track: "voiceover")]))
+            spoken, overdubs: [take()],
+            takeWords: [word("second", at: 2.5, track: "microphone")]))
         #expect(merged.words.map(\.text) == ["first", "second", "third"])
     }
 
-    @Test("A recording with no microphone still gets a transcript from narration")
-    func narrationAloneProducesATranscript() throws {
-        // A recording made with the mic off and narrated afterwards. Gating the
-        // voiceover pass on the microphone pass having found something would
-        // leave exactly this case empty.
+    @Test("Captured words UNDER a take are dropped, not kept beside it")
+    func coveredWordsAreReplaced() throws {
+        // THE D102 CHANGE. A take replaces the microphone for its span, so the
+        // capture's own words there are not in the file anybody will watch.
+        // Keeping them would put two different sentences on the same second
+        // and invite editing against audio that no longer exists.
+        let spoken = Transcript(words: [word("before", at: 1, track: "microphone"),
+                                        word("replaced", at: 2.5, track: "microphone"),
+                                        word("after", at: 5, track: "microphone")],
+                                locale: "en-US")
         let merged = try #require(Transcriber.merge(
-            nil, voiceover: [word("narrated", at: 1, track: "voiceover")]))
-        #expect(merged.words.map(\.text) == ["narrated"])
+            spoken, overdubs: [take()],
+            takeWords: [word("instead", at: 2.5, track: "microphone")]))
+        #expect(merged.words.map(\.text) == ["before", "instead", "after"],
+                "got \(merged.words.map(\.text))")
     }
 
-    @Test("No narration leaves the transcript untouched")
-    func noVoiceoverIsIdentity() throws {
+    @Test("Words either side of a take survive exactly")
+    func uncoveredWordsSurvive() throws {
+        // The boundary, both ends. A take covering 2-3 must not take a word at
+        // 3 with it: `covers` is half-open, so a word starting where a take
+        // ends belongs to the capture again.
+        let spoken = Transcript(words: [word("in", at: 2.0, track: "microphone"),
+                                        word("out", at: 3.0, track: "microphone")],
+                                locale: "en-US")
+        let merged = try #require(Transcriber.merge(
+            spoken, overdubs: [take()], takeWords: []))
+        #expect(merged.words.map(\.text) == ["out"])
+    }
+
+    @Test("A recording with no microphone still gets a transcript from a take")
+    func takeAloneProducesATranscript() throws {
+        // A recording made with the mic off and spoken over afterwards. Gating
+        // the take pass on the capture pass having found something would leave
+        // exactly this case empty.
+        let merged = try #require(Transcriber.merge(
+            nil, overdubs: [take()],
+            takeWords: [word("recorded later", at: 2.5, track: "microphone")]))
+        #expect(merged.words.map(\.text) == ["recorded later"])
+    }
+
+    @Test("No takes leaves the transcript untouched")
+    func noTakesIsIdentity() throws {
         let spoken = Transcript(words: [word("a", at: 1, track: "microphone")], locale: "en-US")
-        let merged = try #require(Transcriber.merge(spoken, voiceover: []))
+        let merged = try #require(Transcriber.merge(spoken, overdubs: [], takeWords: []))
         #expect(merged.words.count == 1)
         #expect(merged.locale == "en-US", "the merge invented a locale")
     }
@@ -61,7 +100,7 @@ struct VoiceoverTranscriptTests {
         // Nil and empty are different states for the pane: one says "nothing
         // was transcribed", the other draws a list with nothing in it under a
         // heading reading "0 words".
-        #expect(Transcriber.merge(nil, voiceover: []) == nil)
+        #expect(Transcriber.merge(nil, overdubs: [], takeWords: []) == nil)
     }
 
     // MARK: - The wire

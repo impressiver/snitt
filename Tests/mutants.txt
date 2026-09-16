@@ -512,3 +512,20 @@ WritingNarrationTests :: Sources/SnittApp/EditorWindowController.swift :: isWrit
 WritingNarrationTests :: Sources/SnittApp/EditorWindowController.swift :: guard addNarration(narrationDraft, atOutput: output) else { return false } :: _ = addNarration(narrationDraft, atOutput: output)
 # And the flag actually draws the field.
 WritingNarrationTests :: Sources/SnittApp/TranscriptPane.swift :: if state.isWritingNarration { :: if false {
+# D102: the microphone is ASSEMBLED — captured audio where no take covers it,
+# take audio where one does, tiling the kept footage with no gaps.
+MicrophoneTimelineTests :: Sources/SnittDocument/Overdub.swift :: pieces.append(contentsOf: remainder(of: captured, under: cover)) :: pieces.append(captured)
+# The capture after a take resumes at the right SOURCE second. Advancing the
+# output time without the source offset replays what the take just covered.
+MicrophoneTimelineTests :: Sources/SnittDocument/Overdub.swift :: case .capture(let start): source = .capture(start: start + skipped) :: case .capture(let start): source = .capture(start: start)
+# A later take wins where two overlap.
+MicrophoneTimelineTests :: Sources/SnittDocument/Overdub.swift :: kept.append(contentsOf: subtract(existing, removing: entry.span)) :: kept.append(existing)
+# The lane REPLACES rather than mixes: `max` would draw audio the export threw
+# away, which is D93's rule surviving into a model that contradicts it.
+MicrophoneWaveformTests :: Sources/SnittExport/MicrophoneWaveform.swift :: peaks[to] = take.samples.peaks[from] :: peaks[to] = max(peaks[to], take.samples.peaks[from])
+# A discarded D93 narration takes its lane with it.
+LegacyVoiceoverDiscardTests :: Sources/SnittDocument/EditDecisionList.swift :: self.trackStates.removeAll { $0.track == "voiceover" } :: _ = 0
+# Captured words UNDER a take are dropped: that audio is not in the file.
+VoiceoverTranscriptTests :: Sources/SnittApp/Transcriber.swift :: let surviving = overdubs.isEmpty ? transcript.words : transcript.words.filter { :: let surviving = true ? transcript.words : transcript.words.filter {
+# The microphone is built from MicrophoneTimeline, not from the kept-range loop.
+OverdubMixTests :: Sources/SnittExport/CompositionBuilder.swift :: for (index, pair) in audioTrackPairs.enumerated() where index != microphoneIndex { :: for (index, pair) in audioTrackPairs.enumerated() where index != nil {

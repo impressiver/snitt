@@ -187,7 +187,7 @@ struct GainMeterView: View {
 #Preview("Gain meter — boosted, unity, cut, muted, narration") {
     // Five ladders side by side, because the segment count is the whole
     // control and one ladder alone gives nothing to read it against. The last
-    // is a voiceover, which is the only one that should not be amber.
+    // is the synthesised voice, the only one that should not be amber.
     HStack(spacing: 8) {
         GainMeterView(title: "Mic", track: "microphone", gain: 2.0, muted: false,
                       onGain: { _ in }, onToggleMute: {})
@@ -197,7 +197,7 @@ struct GainMeterView: View {
                       onGain: { _ in }, onToggleMute: {})
         GainMeterView(title: "Sys", track: "systemAudio", gain: 1.0, muted: true,
                       onGain: { _ in }, onToggleMute: {})
-        GainMeterView(title: "Voiceover", track: "voiceover", gain: 1.4, muted: false,
+        GainMeterView(title: "Synthesised", track: "voiceover", gain: 1.4, muted: false,
                       onGain: { _ in }, onToggleMute: {})
     }
     .frame(height: 70)

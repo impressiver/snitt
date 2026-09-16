@@ -295,56 +295,73 @@ public enum CompositionBuilder {
             audioTrackPairs.append((source, destination))
         }
 
+        // The microphone is assembled separately, because a take recorded over
+        // it (D102) replaces what was captured for its own span. Identified by
+        // NAME through `AudioTrackOrder.captured` rather than by a literal 1:
+        // an index-based answer is the defect that once gave system audio the
+        // state named "video".
+        let microphoneIndex = AudioTrackOrder.captured.firstIndex(of: "microphone")
+
         var cursor = CMTime.zero
         for range in kept {
             let timeRange = CMTimeRange(
                 start: CMTime(seconds: range.start, preferredTimescale: 600),
                 end: CMTime(seconds: range.end, preferredTimescale: 600))
             try videoTrack.insertTimeRange(timeRange, of: sourceVideo, at: cursor)
-            for pair in audioTrackPairs {
+            for (index, pair) in audioTrackPairs.enumerated() where index != microphoneIndex {
                 try pair.destination.insertTimeRange(timeRange, of: pair.source, at: cursor)
             }
             cursor = CMTimeAdd(cursor, timeRange.duration)
         }
 
-        // D93's narration, appended AFTER the captured tracks so the audio
-        // track order stays `AudioTrackOrder.canonical` — index 2, which is
-        // free because `AssetWriterSink` writes both capture audio inputs
-        // whether or not the microphone was on.
+        // The microphone, from `MicrophoneTimeline`: captured audio where no
+        // take covers it, take audio where one does.
         //
-        // Inserted span by span rather than as one block. A voiceover is
-        // anchored to the FOOTAGE (D93): each stretch of narration plays over
-        // the frames it was spoken about, so a cut made afterwards takes the
-        // narration over it and leaves the rest where it belongs.
-        // `VoiceoverPlacement` decides that; this only places what it returns.
-        // Every audio track the MIX has to cover, which is not the same list
-        // as the capture's. `audioTrackPairs` exists to pair sources with
-        // destinations for the insert loop above and holds only the tracks
-        // `capture.mov` had; a voiceover is a destination with no source in
-        // that asset, so it has to join this one explicitly.
-        var mixTracks = audioTrackPairs.map(\.destination)
-
-        if let voiceover = edl.voiceover {
-            let voiceoverURL = bundle.url.appendingPathComponent(voiceover.filename)
-            let voiceoverAsset = AVURLAsset(url: voiceoverURL)
-            if let narration = try? await voiceoverAsset.loadTracks(withMediaType: .audio).first,
-               let destination = composition.addMutableTrack(
-                   withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
-                mixTracks.append(destination)
-                for span in VoiceoverPlacement.outputSpans(of: voiceover, keptRanges: kept) {
-                    let source = CMTimeRange(
-                        start: CMTime(seconds: span.voiceoverStart, preferredTimescale: 600),
-                        duration: CMTime(seconds: span.durationSeconds, preferredTimescale: 600))
-                    // `try?`: a span past the end of the recorded audio is a
-                    // rounding artefact at the tail, not a reason to fail an
-                    // export. Losing a few milliseconds of narration beats
-                    // losing the file.
-                    try? destination.insertTimeRange(
-                        source, of: narration,
-                        at: CMTime(seconds: span.outputStart, preferredTimescale: 600))
+        // ALWAYS through this path, even with no takes at all — where it
+        // returns exactly the kept ranges and the result is identical. Two
+        // ways to build one track is two things to keep in agreement, and this
+        // project has paid for that often enough to stop doing it.
+        if let microphoneIndex, microphoneIndex < audioTrackPairs.count {
+            let pair = audioTrackPairs[microphoneIndex]
+            var takes: [Int: AVAssetTrack] = [:]
+            for (index, overdub) in edl.overdubs.enumerated() {
+                let url = bundle.url.appendingPathComponent(overdub.filename)
+                if let track = try? await AVURLAsset(url: url)
+                    .loadTracks(withMediaType: .audio).first {
+                    takes[index] = track
+                }
+            }
+            for piece in MicrophoneTimeline.pieces(keptRanges: kept, overdubs: edl.overdubs) {
+                let at = CMTime(seconds: piece.outputStart, preferredTimescale: 600)
+                let duration = CMTime(seconds: piece.durationSeconds, preferredTimescale: 600)
+                switch piece.source {
+                case .capture(let start):
+                    let range = CMTimeRange(
+                        start: CMTime(seconds: start, preferredTimescale: 600),
+                        duration: duration)
+                    try pair.destination.insertTimeRange(range, of: pair.source, at: at)
+                case .overdub(let index, let start):
+                    // `try?` and a missing take are the same rule the old
+                    // narration path used: a span past the end of the recorded
+                    // audio is a rounding artefact at the tail, and a take file
+                    // that has gone missing costs a line rather than the whole
+                    // export. An insert that does not happen leaves silence,
+                    // which is honest about the audio not being there.
+                    guard let take = takes[index] else { continue }
+                    let range = CMTimeRange(
+                        start: CMTime(seconds: start, preferredTimescale: 600),
+                        duration: duration)
+                    try? pair.destination.insertTimeRange(range, of: take, at: at)
                 }
             }
         }
+
+        // Every audio track the MIX has to cover. That used to be a longer
+        // list than the capture's, because a voiceover was a destination with
+        // no source in `capture.mov`; a take lands on the microphone, so the
+        // two lists are the same again and the mix covers exactly the tracks
+        // the recording has.
+        let mixTracks = audioTrackPairs.map(\.destination)
 
         let naturalSize = try await sourceVideo.load(.naturalSize)
         let preferredTransform = try await sourceVideo.load(.preferredTransform)

@@ -224,45 +224,32 @@ public struct EditDecisionList: Codable, Sendable {
     public var showSubtitles: Bool
     /// Whether marker banners are drawn.
     public var showMarkers: Bool
-    /// Narration recorded in the editor (D93), or nil for a recording with
-    /// none — which is nearly all of them.
+    /// Takes recorded over the microphone in the editor (D102), oldest first.
     ///
-    /// In the EDL rather than in `meta.json` because it is an EDIT: it is made
-    /// after the recording, it is undoable, and a cut changes where it plays.
-    /// `meta.json` describes what was captured, and a voiceover was not.
+    /// In the EDL rather than in `meta.json` because each one is an EDIT: made
+    /// after the recording, undoable, and moved by a cut. `meta.json`
+    /// describes what was captured, and a take was not.
+    ///
+    /// A LIST, because punching in twice is the ordinary case once punching in
+    /// once is possible — fixing two sentences should not mean re-recording
+    /// everything between them. Order is record order, which is also the
+    /// precedence `MicrophoneTimeline` applies where two takes overlap.
     ///
     /// Additive, like `crop` and the three `show` flags: absent decodes to
-    /// nil and nil writes no key, so the schema version does not move and an
-    /// older build reading a newer document loses the narration rather than
+    /// empty and empty writes no key, so the schema version does not move and
+    /// an older build reading a newer document loses the takes rather than
     /// refusing the file.
-    public var voiceover: VoiceoverTrack?
+    public var overdubs: [Overdub]
 
-    /// Adds a `TrackState` for a voiceover that has one in the document but
-    /// not in `trackStates`.
-    ///
-    /// **Documents narrated before 2026-09-14 are exactly that.** The
-    /// voiceover shipped (D93) before it had a lane, so those recordings carry
-    /// `voiceover` and no matching track state — and the timeline derives its
-    /// lanes from `trackStates`, so the narration plays and nothing shows it.
-    /// Reported that way: "this file has a recorded voiceover, I can hear it
-    /// when I play, but there's no lane visible".
-    ///
-    /// Backfilled rather than the lane derived from `voiceover != nil`
-    /// directly, because the state is not only a display flag: it is where
-    /// mute and gain live. A lane drawn without one would have a fader
-    /// attached to nothing.
-    ///
-    /// Idempotent, and it never overwrites an existing state — reopening a
-    /// document must not reset a voiceover somebody muted.
-    public mutating func backfillVoiceoverTrackState() {
-        guard voiceover != nil,
-              !trackStates.contains(where: { $0.track == "voiceover" }) else { return }
-        trackStates.append(TrackState(track: "voiceover"))
-    }
+    /// Whether any take covers the microphone.
+    public var hasOverdubs: Bool { !overdubs.isEmpty }
 
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, cuts, trackStates, crop, showClicks
-        case showSubtitles, showMarkers, voiceover
+        case showSubtitles, showMarkers, overdubs
+        /// D93's third narration track. Read only to be DISCARDED — see the
+        /// decode.
+        case voiceover
     }
 
     public init(schemaVersion: Int = EditDecisionList.currentSchemaVersion,
@@ -272,7 +259,7 @@ public struct EditDecisionList: Codable, Sendable {
                 showClicks: Bool = false,
                 showSubtitles: Bool = false,
                 showMarkers: Bool = false,
-                voiceover: VoiceoverTrack? = nil) {
+                overdubs: [Overdub] = []) {
         self.schemaVersion = schemaVersion
         self.cuts = cuts
         self.trackStates = trackStates
@@ -280,7 +267,7 @@ public struct EditDecisionList: Codable, Sendable {
         self.showClicks = showClicks
         self.showSubtitles = showSubtitles
         self.showMarkers = showMarkers
-        self.voiceover = voiceover
+        self.overdubs = overdubs
     }
 
     /// Custom rather than synthesized so `schemaVersion` can be checked
@@ -313,7 +300,31 @@ public struct EditDecisionList: Codable, Sendable {
         self.showClicks = try container.decodeIfPresent(Bool.self, forKey: .showClicks) ?? false
         self.showSubtitles = try container.decodeIfPresent(Bool.self, forKey: .showSubtitles) ?? false
         self.showMarkers = try container.decodeIfPresent(Bool.self, forKey: .showMarkers) ?? false
-        self.voiceover = try container.decodeIfPresent(VoiceoverTrack.self, forKey: .voiceover)
+        self.overdubs = try container.decodeIfPresent([Overdub].self, forKey: .overdubs) ?? []
+        // D93's third-track narration is DROPPED rather than migrated, which
+        // is a deliberate choice and a lossy one. The two models place audio
+        // differently — a third track plays alongside the microphone, a take
+        // plays instead of it — so a migration would have to decide on the
+        // author's behalf that narration recorded to sit BESIDE the microphone
+        // should now silence it. For the handful of documents that have one,
+        // being asked to record it again beats being given something nobody
+        // chose.
+        //
+        // The audio file itself stays in the bundle. Dropping the reference
+        // stops it playing; deleting the recording would make this
+        // unrecoverable, and nothing here needs it to be.
+        //
+        // Its LANE goes with it. A D93 document carries a `voiceover`
+        // TrackState, and leaving that behind would draw a third lane — with a
+        // fader and a mute — over audio that is no longer in the composition.
+        // An empty lane claiming a track exists is worse than no lane.
+        //
+        // Conditioned on the narration key rather than applied to every
+        // document, so this cannot eat the state D101's synthesised voice will
+        // legitimately need.
+        if try container.decodeIfPresent(LegacyVoiceover.self, forKey: .voiceover) != nil {
+            self.trackStates.removeAll { $0.track == "voiceover" }
+        }
     }
 
     /// Custom rather than synthesized so a WRITE always declares the version
@@ -355,7 +366,9 @@ public struct EditDecisionList: Codable, Sendable {
         if showClicks { try container.encode(true, forKey: .showClicks) }
         if showSubtitles { try container.encode(true, forKey: .showSubtitles) }
         if showMarkers { try container.encode(true, forKey: .showMarkers) }
-        try container.encodeIfPresent(voiceover, forKey: .voiceover)
+        // Empty writes no key, so a recording with no takes produces the bytes
+        // it always did.
+        if !overdubs.isEmpty { try container.encode(overdubs, forKey: .overdubs) }
     }
 
     /// The default EDL for a fresh recording: nothing cut, nothing muted.
@@ -557,4 +570,13 @@ extension EditDecisionList {
         if range.end < duration { cuts.append(TimeRange(start: range.end, end: duration)) }
         return cuts
     }
+}
+
+/// Just enough of D93's narration to know a document has one.
+///
+/// A probe rather than the real type: nothing needs its contents, and keeping
+/// a full model of a format that has been retired would invite somebody to
+/// start using it again.
+private struct LegacyVoiceover: Decodable {
+    let filename: String
 }

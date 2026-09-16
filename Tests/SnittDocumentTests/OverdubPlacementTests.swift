@@ -19,7 +19,7 @@ import Foundation
 ///
 /// Every test with a cut in it exists because uncut, output and source are the
 /// same number and an implementation that confused them would pass.
-struct VoiceoverPlacementTests {
+struct OverdubPlacementTests {
 
     private let whole = [TimeRange(start: 0, end: 60)]
 
@@ -27,9 +27,9 @@ struct VoiceoverPlacementTests {
 
     @Test("With nothing cut, narration covers the source it was spoken over")
     func uncutIsOneSpan() {
-        let segments = VoiceoverPlacement.segments(
+        let segments = OverdubPlacement.segments(
             outputStart: 10, duration: 5, keptRanges: whole)
-        #expect(segments == [VoiceoverSegment(voiceoverStart: 0, sourceStart: 10,
+        #expect(segments == [OverdubSegment(takeStart: 0, sourceStart: 10,
                                               durationSeconds: 5)])
     }
 
@@ -39,9 +39,9 @@ struct VoiceoverPlacementTests {
         // 20. Storing the output number would put this narration over the
         // wrong footage the moment anything else changed.
         let kept = [TimeRange(start: 0, end: 10), TimeRange(start: 20, end: 60)]
-        let segments = VoiceoverPlacement.segments(
+        let segments = OverdubPlacement.segments(
             outputStart: 15, duration: 4, keptRanges: kept)
-        #expect(segments == [VoiceoverSegment(voiceoverStart: 0, sourceStart: 25,
+        #expect(segments == [OverdubSegment(takeStart: 0, sourceStart: 25,
                                               durationSeconds: 4)])
     }
 
@@ -53,16 +53,16 @@ struct VoiceoverPlacementTests {
         // out, because a cut the narration ran over is a place it must not
         // describe.
         let kept = [TimeRange(start: 0, end: 10), TimeRange(start: 20, end: 60)]
-        let segments = VoiceoverPlacement.segments(
+        let segments = OverdubPlacement.segments(
             outputStart: 8, duration: 5, keptRanges: kept)
         #expect(segments == [
-            VoiceoverSegment(voiceoverStart: 0, sourceStart: 8, durationSeconds: 2),
-            VoiceoverSegment(voiceoverStart: 2, sourceStart: 20, durationSeconds: 3),
+            OverdubSegment(takeStart: 0, sourceStart: 8, durationSeconds: 2),
+            OverdubSegment(takeStart: 2, sourceStart: 20, durationSeconds: 3),
         ])
         // The audio itself is continuous: every second is accounted for
         // exactly once, and the offsets into the file run without a gap.
         #expect(segments.map(\.durationSeconds).reduce(0, +) == 5)
-        #expect(segments[1].voiceoverStart == segments[0].voiceoverEnd)
+        #expect(segments[1].takeStart == segments[0].takeEnd)
     }
 
     @Test("Narration running past the end of the recording is clipped, not dropped")
@@ -70,30 +70,30 @@ struct VoiceoverPlacementTests {
         // Talking over the last second and carrying on after it stops is
         // ordinary. Keeping only what has footage under it is the anchoring
         // rule applied at the end as well as in the middle.
-        let segments = VoiceoverPlacement.segments(
+        let segments = OverdubPlacement.segments(
             outputStart: 58, duration: 10, keptRanges: whole)
-        #expect(segments == [VoiceoverSegment(voiceoverStart: 0, sourceStart: 58,
+        #expect(segments == [OverdubSegment(takeStart: 0, sourceStart: 58,
                                               durationSeconds: 2)])
     }
 
     @Test("Zero-length narration produces nothing")
     func zeroDurationIsEmpty() {
-        #expect(VoiceoverPlacement.segments(outputStart: 5, duration: 0,
+        #expect(OverdubPlacement.segments(outputStart: 5, duration: 0,
                                             keptRanges: whole).isEmpty)
     }
 
     // MARK: - Playback: source spans back into the current timeline
 
-    private func track(_ segments: [VoiceoverSegment], duration: Double = 30) -> VoiceoverTrack {
-        VoiceoverTrack(filename: "voiceover.m4a", durationSeconds: duration, segments: segments)
+    private func track(_ segments: [OverdubSegment], duration: Double = 30) -> Overdub {
+        Overdub(filename: "voiceover.m4a", durationSeconds: duration, segments: segments)
     }
 
     @Test("Unchanged edit: narration plays exactly where it was spoken")
     func roundTripsThroughAnUnchangedEdit() {
-        let segments = VoiceoverPlacement.segments(
+        let segments = OverdubPlacement.segments(
             outputStart: 12, duration: 6, keptRanges: whole)
-        let spans = VoiceoverPlacement.outputSpans(of: track(segments), keptRanges: whole)
-        #expect(spans == [VoiceoverOutputSpan(voiceoverStart: 0, outputStart: 12,
+        let spans = OverdubPlacement.outputSpans(of: track(segments), keptRanges: whole)
+        #expect(spans == [OverdubOutputSpan(takeStart: 0, outputStart: 12,
                                               durationSeconds: 6)])
     }
 
@@ -105,20 +105,20 @@ struct VoiceoverPlacementTests {
         //
         // Anchoring to the timeline would have left it at output 30, which by
         // then is different footage entirely.
-        let segments = VoiceoverPlacement.segments(
+        let segments = OverdubPlacement.segments(
             outputStart: 30, duration: 6, keptRanges: whole)
         let afterCut = [TimeRange(start: 10, end: 60)]
-        let spans = VoiceoverPlacement.outputSpans(of: track(segments), keptRanges: afterCut)
-        #expect(spans == [VoiceoverOutputSpan(voiceoverStart: 0, outputStart: 20,
+        let spans = OverdubPlacement.outputSpans(of: track(segments), keptRanges: afterCut)
+        #expect(spans == [OverdubOutputSpan(takeStart: 0, outputStart: 20,
                                               durationSeconds: 6)])
     }
 
     @Test("Cutting the footage UNDER narration takes that narration too")
     func cuttingUnderNarrationRemovesIt() {
-        let segments = VoiceoverPlacement.segments(
+        let segments = OverdubPlacement.segments(
             outputStart: 30, duration: 6, keptRanges: whole)
         let afterCut = [TimeRange(start: 0, end: 30), TimeRange(start: 36, end: 60)]
-        #expect(VoiceoverPlacement.outputSpans(of: track(segments),
+        #expect(OverdubPlacement.outputSpans(of: track(segments),
                                                keptRanges: afterCut).isEmpty)
     }
 
@@ -128,11 +128,11 @@ struct VoiceoverPlacementTests {
         // narration. Dropping the whole segment would silently remove speech
         // that sits over footage still on screen — a bigger, quieter edit than
         // the one that was asked for.
-        let segments = VoiceoverPlacement.segments(
+        let segments = OverdubPlacement.segments(
             outputStart: 30, duration: 6, keptRanges: whole)
         let afterCut = [TimeRange(start: 0, end: 33), TimeRange(start: 36, end: 60)]
-        let spans = VoiceoverPlacement.outputSpans(of: track(segments), keptRanges: afterCut)
-        #expect(spans == [VoiceoverOutputSpan(voiceoverStart: 0, outputStart: 30,
+        let spans = OverdubPlacement.outputSpans(of: track(segments), keptRanges: afterCut)
+        #expect(spans == [OverdubOutputSpan(takeStart: 0, outputStart: 30,
                                               durationSeconds: 3)])
     }
 
@@ -141,12 +141,12 @@ struct VoiceoverPlacementTests {
         // Nothing is destroyed: the audio file is never trimmed and `segments`
         // is never rewritten, so restoring the footage restores the narration.
         // §4.5's non-destructive rule applying to narration for free.
-        let segments = VoiceoverPlacement.segments(
+        let segments = OverdubPlacement.segments(
             outputStart: 30, duration: 6, keptRanges: whole)
         let subject = track(segments)
         let cut = [TimeRange(start: 0, end: 30), TimeRange(start: 36, end: 60)]
-        #expect(VoiceoverPlacement.outputSpans(of: subject, keptRanges: cut).isEmpty)
-        #expect(VoiceoverPlacement.outputSpans(of: subject, keptRanges: whole).count == 1)
+        #expect(OverdubPlacement.outputSpans(of: subject, keptRanges: cut).isEmpty)
+        #expect(OverdubPlacement.outputSpans(of: subject, keptRanges: whole).count == 1)
     }
 
     @Test("Restoring footage narration was spoken ACROSS pulls the two halves apart")
@@ -164,16 +164,16 @@ struct VoiceoverPlacementTests {
         // the failure this model exists to avoid. I wrote this test expecting
         // the halves to re-join, which would have required exactly that.
         let kept = [TimeRange(start: 0, end: 10), TimeRange(start: 20, end: 60)]
-        let segments = VoiceoverPlacement.segments(
+        let segments = OverdubPlacement.segments(
             outputStart: 8, duration: 5, keptRanges: kept)
-        let spans = VoiceoverPlacement.outputSpans(of: track(segments), keptRanges: whole)
+        let spans = OverdubPlacement.outputSpans(of: track(segments), keptRanges: whole)
 
         #expect(spans.count == 2)
         #expect(spans[0].outputStart == 8)
         #expect(spans[1].outputStart == 20, "the second half left the footage it was spoken over")
         // The FILE is still continuous — nothing was destroyed, and the two
         // halves are still consecutive audio. Only where they play moved.
-        #expect(spans[1].voiceoverStart == spans[0].voiceoverStart + spans[0].durationSeconds)
+        #expect(spans[1].takeStart == spans[0].takeStart + spans[0].durationSeconds)
     }
 
     @Test("Spans come back in output order")
@@ -181,18 +181,18 @@ struct VoiceoverPlacementTests {
         // The exporter inserts them in the order given, so an unsorted result
         // would place later narration before earlier narration.
         let segments = [
-            VoiceoverSegment(voiceoverStart: 4, sourceStart: 40, durationSeconds: 2),
-            VoiceoverSegment(voiceoverStart: 0, sourceStart: 5, durationSeconds: 2),
+            OverdubSegment(takeStart: 4, sourceStart: 40, durationSeconds: 2),
+            OverdubSegment(takeStart: 0, sourceStart: 5, durationSeconds: 2),
         ]
-        let spans = VoiceoverPlacement.outputSpans(of: track(segments), keptRanges: whole)
+        let spans = OverdubPlacement.outputSpans(of: track(segments), keptRanges: whole)
         #expect(spans.map(\.outputStart) == [5, 40])
     }
 
     @Test("Everything cut away leaves nothing to play")
     func noKeptRangesMeansNoSpans() {
-        let segments = VoiceoverPlacement.segments(
+        let segments = OverdubPlacement.segments(
             outputStart: 0, duration: 5, keptRanges: whole)
-        #expect(VoiceoverPlacement.outputSpans(of: track(segments), keptRanges: []).isEmpty)
+        #expect(OverdubPlacement.outputSpans(of: track(segments), keptRanges: []).isEmpty)
     }
 }
 
@@ -205,18 +205,18 @@ struct VoiceoverPlacementTests {
 /// picture the later it was spoken.
 struct VoiceoverWordTimeTests {
 
-    private func track(_ segments: [VoiceoverSegment]) -> VoiceoverTrack {
-        VoiceoverTrack(filename: "voiceover.m4a", durationSeconds: 60, segments: segments)
+    private func track(_ segments: [OverdubSegment]) -> Overdub {
+        Overdub(filename: "voiceover.m4a", durationSeconds: 60, segments: segments)
     }
 
     @Test("A word's time moves from the FILE's clock to the capture's")
     func wordMovesToSourceTime() {
         // Narration recorded over source 30: second 0 of the file is source
         // 30, not source 0.
-        let subject = track([VoiceoverSegment(voiceoverStart: 0, sourceStart: 30,
+        let subject = track([OverdubSegment(takeStart: 0, sourceStart: 30,
                                               durationSeconds: 10)])
-        #expect(VoiceoverPlacement.sourceTime(ofVoiceoverTime: 0, in: subject) == 30)
-        #expect(VoiceoverPlacement.sourceTime(ofVoiceoverTime: 4.5, in: subject) == 34.5)
+        #expect(OverdubPlacement.sourceTime(ofTakeTime: 0, in: subject) == 30)
+        #expect(OverdubPlacement.sourceTime(ofTakeTime: 4.5, in: subject) == 34.5)
     }
 
     @Test("A word after a split lands over ITS footage, not the first segment's")
@@ -226,11 +226,11 @@ struct VoiceoverWordTimeTests {
         // second stretch of footage, which is somewhere else entirely — the
         // case a single offset cannot express.
         let subject = track([
-            VoiceoverSegment(voiceoverStart: 0, sourceStart: 5, durationSeconds: 2),
-            VoiceoverSegment(voiceoverStart: 2, sourceStart: 40, durationSeconds: 3),
+            OverdubSegment(takeStart: 0, sourceStart: 5, durationSeconds: 2),
+            OverdubSegment(takeStart: 2, sourceStart: 40, durationSeconds: 3),
         ])
-        #expect(VoiceoverPlacement.sourceTime(ofVoiceoverTime: 1, in: subject) == 6)
-        #expect(VoiceoverPlacement.sourceTime(ofVoiceoverTime: 2.5, in: subject) == 40.5)
+        #expect(OverdubPlacement.sourceTime(ofTakeTime: 1, in: subject) == 6)
+        #expect(OverdubPlacement.sourceTime(ofTakeTime: 2.5, in: subject) == 40.5)
     }
 
     @Test("A boundary belongs to the segment it STARTS")
@@ -239,10 +239,10 @@ struct VoiceoverWordTimeTests {
         // ends, a word at 2.0 would resolve to the first segment's end AND the
         // second's start, and which one won would depend on array order.
         let subject = track([
-            VoiceoverSegment(voiceoverStart: 0, sourceStart: 5, durationSeconds: 2),
-            VoiceoverSegment(voiceoverStart: 2, sourceStart: 40, durationSeconds: 3),
+            OverdubSegment(takeStart: 0, sourceStart: 5, durationSeconds: 2),
+            OverdubSegment(takeStart: 2, sourceStart: 40, durationSeconds: 3),
         ])
-        #expect(VoiceoverPlacement.sourceTime(ofVoiceoverTime: 2.0, in: subject) == 40)
+        #expect(OverdubPlacement.sourceTime(ofTakeTime: 2.0, in: subject) == 40)
     }
 
     @Test("Narration over footage that has been cut has no place, and says so")
@@ -250,8 +250,8 @@ struct VoiceoverWordTimeTests {
         // Nil rather than a nearby time. A word whose footage is gone belongs
         // nowhere, and placing it at the fold would put narration on a frame
         // it was never spoken about.
-        let subject = track([VoiceoverSegment(voiceoverStart: 0, sourceStart: 5,
+        let subject = track([OverdubSegment(takeStart: 0, sourceStart: 5,
                                               durationSeconds: 2)])
-        #expect(VoiceoverPlacement.sourceTime(ofVoiceoverTime: 9, in: subject) == nil)
+        #expect(OverdubPlacement.sourceTime(ofTakeTime: 9, in: subject) == nil)
     }
 }
