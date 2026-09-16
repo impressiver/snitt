@@ -533,3 +533,17 @@ OverdubMixTests :: Sources/SnittExport/CompositionBuilder.swift :: for (index, p
 # AVURLAsset alive, so building the asset inline released it at the end of the
 # loop and every insert failed against a dead track — silently, behind a `try?`.
 OverdubPlaybackTests :: Sources/SnittExport/CompositionBuilder.swift :: takeAssets.append(asset) :: _ = asset
+# D102 transport: pause keeps the take OPEN. Abandoning it because somebody
+# paused to think makes pause unusable during the one operation it is most
+# needed for.
+OverdubTransportTests :: Sources/SnittApp/OverdubTransport.swift :: var step = Step(state: .armedButPaused) :: var step = Step(state: .idle)
+# Record while recording STOPS the take rather than suspending it.
+OverdubTransportTests :: Sources/SnittApp/OverdubTransport.swift :: step.stopRecording = true :: step.pauseRecording = true
+# Record counts in before it records; the picture must not move either.
+OverdubTransportTests :: Sources/SnittApp/OverdubTransport.swift :: var step = Step(state: .countingIn(remaining: countInBeats)) :: var step = Step(state: .recording)
+# The record button reads as active from the press, not from the first frame.
+OverdubTransportTests :: Sources/SnittApp/OverdubTransport.swift :: public var isRecordActive: Bool { self != .idle } :: public var isRecordActive: Bool { self == .recording }
+# A paused take is ONE file: offsets accumulate across runs, or the second run
+# replays the first run's words at the second run's position.
+PausedTakeTests :: Sources/SnittDocument/Overdub.swift :: fileOffset += run.durationSeconds :: fileOffset += 0
+PausedTakeTests :: Sources/SnittDocument/Overdub.swift :: takeStart: $0.takeStart + fileOffset, :: takeStart: $0.takeStart,

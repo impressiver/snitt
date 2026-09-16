@@ -1321,6 +1321,29 @@ D84 and D86 left this section on 2026-09-09 once their real cost was measured.
   *A take's words are tagged `microphone`, not `voiceover`*, because that is
   the lane they play on. Teal now means synthesis and nothing else.
 
+  *The transport, requested in the same breath.* A RECORD button beside play
+  rather than replacing it, because play still means play while a take is open.
+  Pressing record counts in — three beats, ticking, with the play button
+  showing the count, and nothing recording or playing until the last one, since
+  a count-in that played the video would put the first beat over footage the
+  take is not about.
+
+  *Pause keeps the take OPEN.* You stop to think mid-sentence and carry on;
+  abandoning the take there would make pause unusable during the one operation
+  it is most needed for. Pressing RECORD is what ends it, and it pauses
+  playback too — the thing you do next is listen back, and that starts from a
+  standstill.
+
+  *So a take is no longer one run.* `OverdubPlacement.segments(runs:)` places
+  each stretch separately with CUMULATIVE file offsets, because
+  `AVAudioRecorder.pause()` keeps one file open: the audio is continuous even
+  when the timeline is not, and nothing stops somebody scrubbing while paused.
+
+  *`OverdubTransport` is a pure state machine* for the same reason
+  `MicrophoneTimeline` is pure: four states where two buttons each mean
+  something different is not observable from outside a running app, and
+  scattered `if isRecording` checks are what nobody can write a test against.
+
 - **D99 — select, move and scale the marker and subtitle overlays in the
   editor.** Requested 2026-09-14. Global first — one position and one scale for
   every banner, one for every caption — with per-item placement as a later

@@ -1072,6 +1072,18 @@ final class EditorTimelineState: ObservableObject {
     }
 
     /// Whether narration is being recorded right now (D93).
+    /// The over-dub transport's state (D102). Everything about what the two
+    /// buttons do lives in `OverdubTransport`; this holds the answer.
+    @Published private(set) var overdubState: OverdubTransport.State = .idle
+    /// The count-in's timer, kept so cancelling actually stops it.
+    private var countInTimer: Timer?
+    /// The runs this take has been recorded in, closed off by each pause.
+    private var takeRuns: [OverdubPlacement.TakeRun] = []
+    /// How much audio was in the file when the current run began.
+    private var takeFileOffset: Double = 0
+    /// Swapped in tests so a count-in can be counted rather than heard.
+    var countInTick = CountInTick()
+
     @Published private(set) var isRecordingVoiceover = false
     /// Levels captured so far in the current take, for the lane drawn while it
     /// runs. Empty when nothing is recording.
@@ -1210,7 +1222,7 @@ final class EditorTimelineState: ObservableObject {
     /// The whole-EDL snapshot undo every other edit uses, so narration is as
     /// undoable as a cut — and because the audio file is left on disk, an undo
     /// followed by a redo does not have to re-record anything.
-    func stopVoiceover() {
+    func stopVoiceover(runs: [OverdubPlacement.TakeRun] = []) {
         guard let duration = voiceoverRecorder.stop() else { return }
         isRecordingVoiceover = false
         voiceoverLevels = []
@@ -1231,10 +1243,26 @@ final class EditorTimelineState: ObservableObject {
         // Resolved to SOURCE spans HERE, once, against the edit that was in
         // force while it was spoken. Re-deriving later would need that edit,
         // which the document does not keep — see `Overdub.segments`.
-        let segments = OverdubPlacement.segments(
-            outputStart: voiceoverRecorder.startedAtOutput,
-            duration: duration,
-            keptRanges: controller.keptRanges)
+        // From the RUNS when the take was paused and carried on, and from the
+        // single start when it was not. One arithmetic either way — the
+        // multi-run form delegates to the single-run one — so a paused take
+        // and an unpaused one cannot be placed by two different rules.
+        let segments: [OverdubSegment]
+        if runs.count > 1 {
+            // The last run's length is whatever the file has beyond the runs
+            // already closed off, which is the only number the recorder can
+            // still be asked for after it has stopped.
+            var closed = runs
+            let accounted = closed.dropLast().reduce(0) { $0 + $1.durationSeconds }
+            closed[closed.count - 1].durationSeconds = max(0, duration - accounted)
+            segments = OverdubPlacement.segments(runs: closed,
+                                                 keptRanges: controller.keptRanges)
+        } else {
+            segments = OverdubPlacement.segments(
+                outputStart: voiceoverRecorder.startedAtOutput,
+                duration: duration,
+                keptRanges: controller.keptRanges)
+        }
         // APPENDED, so punching in twice keeps both takes and the later one
         // wins only where they actually overlap. Replacing the list would make
         // a second correction throw away the first, which is the opposite of
@@ -1652,6 +1680,91 @@ final class EditorTimelineState: ObservableObject {
     /// already maps source time to the trimmed timeline and snaps a click
     /// inside a cut to the nearest kept edge.
     func seek(toWord word: TranscriptWord) { onScrub(word.start) }
+
+    // MARK: - The over-dub transport (D102)
+
+    /// The record button.
+    func tapRecord() { apply(OverdubTransport.next(overdubState, .tapRecord)) }
+
+    /// Play/pause, which means something different while a take is open.
+    ///
+    /// Returns whether the transport handled it. When it did not, the caller
+    /// does its ordinary play/pause — this machine has no opinion about a
+    /// transport that is not recording, and duplicating the toggle here would
+    /// be a second answer to a question already answered.
+    @discardableResult
+    func tapPlayPause() -> Bool {
+        guard overdubState != .idle else { return false }
+        apply(OverdubTransport.next(overdubState, .tapPlayPause))
+        return true
+    }
+
+    private func apply(_ step: OverdubTransport.Step) {
+        overdubState = step.state
+
+        if step.playTick { countInTick.play() }
+        if case .countingIn = step.state { scheduleCountInBeat() } else { cancelCountIn() }
+
+        if step.startRecording { beginTake() }
+        if step.pauseRecording { closeCurrentRun() }
+        if step.resumeRecording { openNewRun() }
+        if step.stopRecording { finishTake() }
+        if step.play { controller.play() }
+        if step.pause { controller.pause() }
+    }
+
+    private func scheduleCountInBeat() {
+        cancelCountIn()
+        countInTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.apply(OverdubTransport.next(self.overdubState, .countInBeat))
+            }
+        }
+    }
+
+    private func cancelCountIn() {
+        countInTimer?.invalidate()
+        countInTimer = nil
+    }
+
+    /// Drives one count-in beat without waiting a second, for tests.
+    func countInBeatForTesting() {
+        apply(OverdubTransport.next(overdubState, .countInBeat))
+    }
+
+    private func beginTake() {
+        takeRuns = []
+        takeFileOffset = 0
+        _ = startVoiceover()
+        takeRuns.append(OverdubPlacement.TakeRun(outputStart: voiceoverStartedAt,
+                                                 durationSeconds: 0))
+    }
+
+    /// Closes the run that was running, using the recorder's own count of what
+    /// it has written rather than a wall clock.
+    private func closeCurrentRun() {
+        guard let elapsed = voiceoverRecorder.pause(), !takeRuns.isEmpty else { return }
+        takeRuns[takeRuns.count - 1].durationSeconds = elapsed - takeFileOffset
+        takeFileOffset = elapsed
+    }
+
+    private func openNewRun() {
+        guard voiceoverRecorder.resume() else { return }
+        // A NEW run at wherever the playhead is now. Resuming usually carries
+        // on from the same instant, but nothing stops somebody scrubbing while
+        // paused — and a take that assumed otherwise would place everything
+        // after the pause over the wrong footage.
+        takeRuns.append(OverdubPlacement.TakeRun(outputStart: currentOutputSeconds,
+                                                 durationSeconds: 0))
+    }
+
+    private func finishTake() {
+        closeCurrentRun()
+        stopVoiceover(runs: takeRuns)
+        takeRuns = []
+        takeFileOffset = 0
+    }
 
     /// Sets one audio track's gain (M5f follow-on; `TrackState.gain` has
     /// existed and been applied by the export mix since M3 with no way to set
@@ -2198,9 +2311,17 @@ struct EditorContentView: View {
                 canCut: state.selection != nil,
                 onRewind: { state.rewind() },
                 onPreviousMark: { state.goToPreviousMark() },
+                overdubState: state.overdubState,
+                onTapRecord: { state.tapRecord() },
                 isRecordingVoiceover: state.isRecordingVoiceover,
                 onStopVoiceover: { state.stopVoiceover() },
-                onTogglePlay: { state.togglePlayback() },
+                // The transport machine gets first refusal: while a take is
+                // open, play/pause means pause the TAKE. It says whether it
+                // handled the press, and ordinary playback is what happens
+                // when it did not.
+                onTogglePlay: {
+                    if !state.tapPlayPause() { state.togglePlayback() }
+                },
                 onNextMark: { state.goToNextMark() },
                 onSeekToTime: { text in
                     if let seconds = Timecode.parse(text) { state.seek(toOutput: seconds) }

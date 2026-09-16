@@ -143,6 +143,54 @@ public enum OverdubPlacement {
         return result
     }
 
+    /// One continuous stretch of recording, in OUTPUT time.
+    ///
+    /// A take can be PAUSED and carried on (D102's transport), so it is no
+    /// longer one run from a single start — it is several, written end to end
+    /// into one file. The recorder never stops, so file offsets are
+    /// continuous; the output times are not, because the playhead can be
+    /// anywhere when recording resumes.
+    public struct TakeRun: Equatable, Sendable {
+        public var outputStart: Double
+        public var durationSeconds: Double
+
+        public init(outputStart: Double, durationSeconds: Double) {
+            self.outputStart = outputStart
+            self.durationSeconds = durationSeconds
+        }
+    }
+
+    /// The source spans a take covers, given every run it was recorded in.
+    ///
+    /// Runs are in FILE order, and each one's offset into the file is the sum
+    /// of the durations before it — which is what makes pausing safe: the
+    /// audio is continuous even when the timeline is not.
+    ///
+    /// The single-run case is `segments(outputStart:duration:keptRanges:)` and
+    /// this delegates to it, so a paused take and an unpaused one cannot be
+    /// placed by two different rules.
+    public static func segments(runs: [TakeRun],
+                                keptRanges: [TimeRange]) -> [OverdubSegment] {
+        var out: [OverdubSegment] = []
+        var fileOffset = 0.0
+        for run in runs {
+            let placed = segments(outputStart: run.outputStart,
+                                  duration: run.durationSeconds,
+                                  keptRanges: keptRanges)
+            out += placed.map {
+                OverdubSegment(takeStart: $0.takeStart + fileOffset,
+                               sourceStart: $0.sourceStart,
+                               durationSeconds: $0.durationSeconds)
+            }
+            // Advanced by the run's OWN length, not by what was placed. A run
+            // that overhung the end of the footage still consumed that much
+            // audio, and charging only the placed part would slide every later
+            // run earlier in the file.
+            fileOffset += run.durationSeconds
+        }
+        return out
+    }
+
     /// A moment in the recorded audio, as a SOURCE instant — or nil when that
     /// part of the narration sits over footage no longer in the document.
     ///

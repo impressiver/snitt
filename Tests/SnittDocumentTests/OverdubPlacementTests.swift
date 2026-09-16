@@ -255,3 +255,98 @@ struct VoiceoverWordTimeTests {
         #expect(OverdubPlacement.sourceTime(ofTakeTime: 9, in: subject) == nil)
     }
 }
+
+/// A take that was PAUSED and carried on (D102's transport).
+///
+/// The recorder never stops, so the audio is one continuous file; the output
+/// times are not continuous, because nothing stops somebody scrubbing while
+/// paused. Getting this wrong misplaces everything after the pause, and it is
+/// silent — the file plays, over the wrong footage.
+struct PausedTakeTests {
+
+    private let whole = [TimeRange(start: 0, end: 60)]
+
+    @Test("Two runs become two segments, at the two places they were spoken")
+    func runsBecomeSegments() {
+        let segments = OverdubPlacement.segments(
+            runs: [OverdubPlacement.TakeRun(outputStart: 10, durationSeconds: 2),
+                   OverdubPlacement.TakeRun(outputStart: 30, durationSeconds: 3)],
+            keptRanges: whole)
+        #expect(segments.count == 2)
+        #expect(segments[0].sourceStart == 10)
+        #expect(segments[1].sourceStart == 30)
+    }
+
+    @Test("File offsets are CUMULATIVE, because the recorder never stopped")
+    func fileOffsetsAccumulate() {
+        // The defect this catches is inaudible in a placement check and
+        // obvious to a listener: the second run starts two seconds into the
+        // file, and reading it from zero replays the first run's words at the
+        // second run's position.
+        let segments = OverdubPlacement.segments(
+            runs: [OverdubPlacement.TakeRun(outputStart: 10, durationSeconds: 2),
+                   OverdubPlacement.TakeRun(outputStart: 30, durationSeconds: 3)],
+            keptRanges: whole)
+        #expect(segments[0].takeStart == 0)
+        #expect(segments[1].takeStart == 2, "the second run reads from \(segments[1].takeStart)")
+    }
+
+    @Test("A run that overhangs the footage still consumes its own audio")
+    func overhangingRunStillAdvancesTheOffset() {
+        // Charging only the PLACED part would slide every later run earlier in
+        // the file — so a take paused after running past the end would come
+        // back mid-word.
+        let short = [TimeRange(start: 0, end: 11)]
+        let segments = OverdubPlacement.segments(
+            runs: [OverdubPlacement.TakeRun(outputStart: 10, durationSeconds: 5),
+                   OverdubPlacement.TakeRun(outputStart: 5, durationSeconds: 2)],
+            keptRanges: short)
+        let second = segments.last
+        #expect(second?.takeStart == 5,
+                "the second run reads from \(String(describing: second?.takeStart)) of 5")
+    }
+
+    @Test("A single run is placed exactly as an unpaused take")
+    func oneRunMatchesTheSimpleForm() {
+        // One arithmetic either way. Two rules for "where does this audio go"
+        // is how a paused take and an unpaused one start disagreeing.
+        let viaRuns = OverdubPlacement.segments(
+            runs: [OverdubPlacement.TakeRun(outputStart: 12, durationSeconds: 4)],
+            keptRanges: whole)
+        let direct = OverdubPlacement.segments(outputStart: 12, duration: 4, keptRanges: whole)
+        #expect(viaRuns == direct)
+    }
+
+    @Test("A run split by a cut still splits, and the next run follows it")
+    func runsAndCutsCompose() {
+        // Both mechanisms at once, which is where an offset bug hides: the
+        // first run is broken in two by a cut, so the second run's file offset
+        // has to be its own length rather than the number of segments before
+        // it.
+        let kept = [TimeRange(start: 0, end: 10), TimeRange(start: 20, end: 40)]
+        let segments = OverdubPlacement.segments(
+            runs: [OverdubPlacement.TakeRun(outputStart: 8, durationSeconds: 4),
+                   OverdubPlacement.TakeRun(outputStart: 15, durationSeconds: 2)],
+            keptRanges: kept)
+        #expect(segments.count == 3, "got \(segments.count) segments")
+        #expect(segments[2].takeStart == 4,
+                "the second run reads from \(segments[2].takeStart) rather than 4")
+    }
+
+    @Test("No runs is no segments")
+    func noRuns() {
+        #expect(OverdubPlacement.segments(runs: [], keptRanges: whole).isEmpty)
+    }
+
+    @Test("A zero-length run contributes nothing and shifts nothing")
+    func emptyRunIsHarmless() {
+        // A pause pressed immediately after resuming.
+        let segments = OverdubPlacement.segments(
+            runs: [OverdubPlacement.TakeRun(outputStart: 10, durationSeconds: 2),
+                   OverdubPlacement.TakeRun(outputStart: 20, durationSeconds: 0),
+                   OverdubPlacement.TakeRun(outputStart: 30, durationSeconds: 1)],
+            keptRanges: whole)
+        #expect(segments.count == 2)
+        #expect(segments[1].takeStart == 2, "an empty run moved the file offset")
+    }
+}

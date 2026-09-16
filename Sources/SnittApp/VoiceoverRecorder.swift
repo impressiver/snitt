@@ -124,4 +124,33 @@ public final class VoiceoverRecorder {
         isRecording = false
         return duration
     }
+
+    /// Suspends the take without ending it (D102's transport).
+    ///
+    /// `AVAudioRecorder.pause()` keeps the file open and appends on the next
+    /// `record()`, so a paused-and-resumed take is ONE continuous file — which
+    /// is what lets `OverdubPlacement.segments(runs:)` treat file offsets as
+    /// cumulative while output times jump.
+    ///
+    /// Returns how much audio is in the file so far, so the caller can close
+    /// off the run that just ended. `currentTime` rather than wall clock: it
+    /// is the recorder's own count of what it has written, and a wall clock
+    /// includes the moment before the first sample.
+    @discardableResult
+    public func pause() -> Double? {
+        guard let recorder, isRecording else { return nil }
+        let elapsed = recorder.currentTime
+        recorder.pause()
+        return elapsed
+    }
+
+    /// Carries on into the same take and the same file.
+    ///
+    /// Returns false when there is nothing to resume, so a caller cannot
+    /// silently believe a take is running when none is.
+    @discardableResult
+    public func resume() -> Bool {
+        guard let recorder, isRecording else { return false }
+        return recorder.record()
+    }
 }
