@@ -36,6 +36,8 @@ public final class VoiceoverRecorder {
 
     private var recorder: AVAudioRecorder?
     public private(set) var isRecording = false
+    /// How long the take is, tracked across pauses — see `TakeClock`.
+    private var clock = TakeClock()
     /// Where in the OUTPUT timeline the current take began. Captured at start,
     /// because the playhead moves while narration is being spoken and the
     /// anchor is where it STARTED.
@@ -118,10 +120,11 @@ public final class VoiceoverRecorder {
     @discardableResult
     public func stop() -> Double? {
         guard let recorder, isRecording else { return nil }
-        let duration = recorder.currentTime
+        let duration = clock.length(recorderTime: recorder.currentTime)
         recorder.stop()
         self.recorder = nil
         isRecording = false
+        clock = TakeClock()
         return duration
     }
 
@@ -141,6 +144,9 @@ public final class VoiceoverRecorder {
         guard let recorder, isRecording else { return nil }
         let elapsed = recorder.currentTime
         recorder.pause()
+        // Remembered BEFORE the pause takes effect, because afterwards the
+        // recorder reports 0 and the length is unrecoverable.
+        clock.pause(at: elapsed)
         return elapsed
     }
 
@@ -153,4 +159,34 @@ public final class VoiceoverRecorder {
         guard let recorder, isRecording else { return false }
         return recorder.record()
     }
+}
+
+/// How long a take is, across pauses.
+///
+/// A value type rather than two fields on the recorder, and that is the point:
+/// `AVAudioRecorder` needs an input device, so it cannot be driven on a test
+/// runner at all — and the bookkeeping around it was therefore the one part of
+/// this that nothing could assert. Extracting it moves the rule AND the
+/// remembering somewhere a test can reach.
+///
+/// The defect it exists for was reported as "the punch in didn't actually
+/// record anything". It had: the audio was written and the file was on disk.
+/// `AVAudioRecorder.currentTime` is documented as 0 when the recorder is not
+/// recording, `pause()` makes it not recording, and stopping a paused take
+/// therefore measured it as zero seconds long — so the guard that throws away
+/// accidental taps threw away the take.
+struct TakeClock: Equatable {
+    /// How much audio was in the file when it was last paused.
+    private(set) var pausedElapsed: Double = 0
+
+    /// Records the length at the moment of a pause, BEFORE the recorder stops
+    /// being able to report it.
+    mutating func pause(at elapsed: Double) { pausedElapsed = elapsed }
+
+    /// The take's length, from the two things that can know.
+    ///
+    /// The LARGER, and neither alone: a running recorder knows its own time
+    /// and a paused one reports 0, while `pausedElapsed` is the truth for a
+    /// paused take and stale for a running one that has been resumed since.
+    func length(recorderTime: Double) -> Double { max(recorderTime, pausedElapsed) }
 }

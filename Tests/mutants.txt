@@ -547,3 +547,10 @@ OverdubTransportTests :: Sources/SnittApp/OverdubTransport.swift :: public var i
 # replays the first run's words at the second run's position.
 PausedTakeTests :: Sources/SnittDocument/Overdub.swift :: fileOffset += run.durationSeconds :: fileOffset += 0
 PausedTakeTests :: Sources/SnittDocument/Overdub.swift :: takeStart: $0.takeStart + fileOffset, :: takeStart: $0.takeStart,
+# "The punch in didn't actually record anything": a paused AVAudioRecorder
+# reports currentTime 0, so a take stopped while paused measured as zero and
+# the mis-click guard threw it away. The length must be REMEMBERED at the pause.
+TakeLengthTests :: Sources/SnittApp/VoiceoverRecorder.swift :: mutating func pause(at elapsed: Double) { pausedElapsed = elapsed } :: mutating func pause(at elapsed: Double) { pausedElapsed = 0 }
+# And it is the LARGER of the two: the remembered one is stale after a resume.
+TakeLengthTests :: Sources/SnittApp/VoiceoverRecorder.swift :: func length(recorderTime: Double) -> Double { max(recorderTime, pausedElapsed) } :: func length(recorderTime: Double) -> Double { recorderTime }
+TakeLengthTests :: Sources/SnittApp/VoiceoverRecorder.swift :: func length(recorderTime: Double) -> Double { max(recorderTime, pausedElapsed) } :: func length(recorderTime: Double) -> Double { pausedElapsed }

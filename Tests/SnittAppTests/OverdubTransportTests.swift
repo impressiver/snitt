@@ -179,3 +179,70 @@ struct OverdubTransportTests {
         #expect(steps.filter { $0.stopRecording }.count == 1)
     }
 }
+
+/// How long a take is, when the recorder cannot say.
+///
+/// Reported as "the punch in didn't actually record anything". It had: the
+/// audio was written and the file was on disk. What came back was a length of
+/// ZERO, so the guard that throws away accidental taps threw away the take.
+///
+/// `AVAudioRecorder.currentTime` is documented as 0 when the recorder is not
+/// recording, and `pause()` makes it not recording — so a take that is paused
+/// when it stops cannot be measured from the recorder at all.
+struct TakeLengthTests {
+
+    @Test("A running recorder's own time is the length")
+    func runningRecorderReportsItself() {
+        #expect(TakeClock().length(recorderTime: 4.2) == 4.2)
+    }
+
+    @Test("A PAUSED recorder reports zero, so the remembered length is used")
+    func pausedRecorderUsesTheRemembered() {
+        // THE BUG. `stop()` read `currentTime` from a recorder that had just
+        // been paused, got 0, and the take was discarded as a mis-click.
+        var clock = TakeClock()
+        clock.pause(at: 4.2)
+        #expect(clock.length(recorderTime: 0) == 4.2)
+    }
+
+    @Test("A take resumed after a pause uses the LIVE time, not the stale one")
+    func resumedRecorderUsesTheLiveTime() {
+        // The other direction, and the reason this is `max` rather than
+        // "prefer the remembered one": after resuming, `pausedElapsed` is a
+        // number from the middle of the take, and trusting it would truncate
+        // everything said after the pause.
+        var clock = TakeClock()
+        clock.pause(at: 4.2)
+        #expect(clock.length(recorderTime: 9.0) == 9.0)
+    }
+
+    @Test("A take that really is empty still reads as empty")
+    func genuinelyEmptyStaysEmpty() {
+        // The mis-click guard has to keep working: a tap that started and
+        // stopped a take without recording anything must still be discarded,
+        // or every stray click would leave a silent span over the microphone.
+        #expect(TakeClock().length(recorderTime: 0) == 0)
+    }
+
+    @Test("Pausing REMEMBERS the length, rather than merely reporting it")
+    func pauseStoresTheLength() {
+        // The assertion that was missing: the rule was covered and the
+        // remembering was not, so a mutant that stored 0 survived. That is the
+        // whole defect — the number is unrecoverable once the recorder has
+        // paused, so failing to keep it is failing to record.
+        var clock = TakeClock()
+        #expect(clock.pausedElapsed == 0)
+        clock.pause(at: 3.5)
+        #expect(clock.pausedElapsed == 3.5, "the pause did not keep the length")
+    }
+
+    @Test("A second pause supersedes the first")
+    func laterPauseWins() {
+        // Pause, resume, pause again: the file is longer now, and keeping the
+        // first number would truncate everything said in between.
+        var clock = TakeClock()
+        clock.pause(at: 2.0)
+        clock.pause(at: 6.0)
+        #expect(clock.length(recorderTime: 0) == 6.0)
+    }
+}

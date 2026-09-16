@@ -1733,10 +1733,25 @@ final class EditorTimelineState: ObservableObject {
         apply(OverdubTransport.next(overdubState, .countInBeat))
     }
 
+    /// Why the last take could not start, when it could not.
+    ///
+    /// Surfaced rather than discarded. `startVoiceover` returns a failure —
+    /// a refused microphone, a recorder AVFoundation would not create — and
+    /// throwing it away left the transport sitting in `.recording` with a lit
+    /// button and nothing being written, which is indistinguishable from the
+    /// bug this shipped with.
+    @Published private(set) var overdubStartFailure: VoiceoverRecorder.StartFailure?
+
     private func beginTake() {
         takeRuns = []
         takeFileOffset = 0
-        _ = startVoiceover()
+        overdubStartFailure = startVoiceover()
+        guard overdubStartFailure == nil else {
+            // Back to idle, because nothing is recording. A transport that
+            // stayed armed would promise a take that cannot exist.
+            overdubState = .idle
+            return
+        }
         takeRuns.append(OverdubPlacement.TakeRun(outputStart: voiceoverStartedAt,
                                                  durationSeconds: 0))
     }
@@ -1760,7 +1775,12 @@ final class EditorTimelineState: ObservableObject {
     }
 
     private func finishTake() {
-        closeCurrentRun()
+        // NOT `closeCurrentRun()` first. That pauses the recorder, and a
+        // paused `AVAudioRecorder` reports a `currentTime` of 0 — so stopping
+        // straight afterwards read the take as zero seconds long and the
+        // mis-click guard threw it away. `stopVoiceover` fills in the last
+        // run's length from the finished file, which is the only number that
+        // is right whether the take was paused or not.
         stopVoiceover(runs: takeRuns)
         takeRuns = []
         takeFileOffset = 0
