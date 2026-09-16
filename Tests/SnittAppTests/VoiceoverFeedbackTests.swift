@@ -163,78 +163,125 @@ struct VoiceoverLaneLabelTests {
     }
 }
 
-/// Documents narrated before the lane existed.
+/// D93's third-track narration, in documents written before D102.
+///
+/// The product-owner's call was DISCARD rather than migrate, and it is worth
+/// recording why it is not merely the cheap option. The two models place audio
+/// differently — a third track plays alongside the microphone, a take plays
+/// instead of it — so a migration would have to decide, on the author's
+/// behalf, that narration recorded to sit BESIDE the microphone should now
+/// silence it. For the handful of documents that have one, being asked to
+/// record it again beats being handed something nobody chose.
 @Suite
-struct VoiceoverBackfillTests {
+struct LegacyVoiceoverDiscardTests {
 
-    private func narratedWithoutATrackState() -> EditDecisionList {
-        // Exactly the shape on disk from a recording made between D93 shipping
-        // and the lane landing: `voiceover` present, `trackStates` naming only
-        // what the capture had. Verified against a real document.
-        var edl = EditDecisionList()
-        edl.trackStates = [TrackState(track: "video"),
-                           TrackState(track: "microphone"),
-                           TrackState(track: "systemAudio")]
-        edl.voiceover = VoiceoverTrack(
-            filename: "voiceover.m4a", durationSeconds: 4,
-            segments: [VoiceoverSegment(voiceoverStart: 0, sourceStart: 2, durationSeconds: 4)])
-        return edl
+    /// Exactly the shape on disk from a recording made under D93.
+    private func narratedUnderD93() -> Data {
+        Data("""
+        {"schemaVersion":1,"cuts":[],"trackStates":[{"track":"video","muted":false,"gain":1},\
+        {"track":"microphone","muted":false,"gain":1},\
+        {"track":"systemAudio","muted":false,"gain":1},\
+        {"track":"voiceover","muted":false,"gain":1}],\
+        "voiceover":{"filename":"voiceover.m4a","durationSeconds":4,\
+        "segments":[{"voiceoverStart":0,"sourceStart":2,"durationSeconds":4}]}}
+        """.replacingOccurrences(of: "\\\n", with: "").utf8)
     }
 
-    @Test("An older narrated document gets its lane back")
-    func backfillGivesTheOlderDocumentALane() {
-        // Reported as "I can hear it when I play, but there's no lane visible".
-        // The narration was in the file and in the mix; only the thing the
-        // timeline derives lanes from was missing.
-        var edl = narratedWithoutATrackState()
-        #expect(!TimelineTrackLayout.audioTracks(in: edl.trackStates).contains("voiceover"))
-
-        edl.backfillVoiceoverTrackState()
-        #expect(TimelineTrackLayout.audioTracks(in: edl.trackStates).contains("voiceover"))
+    @Test("An older document still opens")
+    func legacyDocumentDecodes() throws {
+        // The key is unknown to the current model, and a synthesised decoder
+        // would not mind — but `voiceover` is still declared in `CodingKeys`
+        // precisely so this stays deliberate rather than accidental. A build
+        // that refused the file would lose the whole recording, not just the
+        // narration.
+        let edl = try JSONDecoder().decode(EditDecisionList.self, from: narratedUnderD93())
+        // Three of the four survive — the fourth was the narration's own lane,
+        // which goes with the narration. What matters here is that the FILE
+        // still opens: a build that refused it would lose the whole recording
+        // rather than just the take.
+        #expect(edl.trackStates.map(\.track) == ["video", "microphone", "systemAudio"])
     }
 
-    @Test("It does not reset a voiceover somebody muted")
-    func backfillPreservesExistingState() {
-        // Reopening a document must not undo an edit. This is the assertion
-        // that makes the backfill safe to run on EVERY open rather than once.
-        var edl = narratedWithoutATrackState()
-        edl.trackStates.append(TrackState(track: "voiceover", muted: true, gain: 0.5))
-        edl.backfillVoiceoverTrackState()
-
-        let states = edl.trackStates.filter { $0.track == "voiceover" }
-        #expect(states.count == 1, "the backfill added a duplicate")
-        #expect(states[0].muted)
-        #expect(states[0].gain == 0.5)
+    @Test("Its narration is dropped rather than carried forward")
+    func legacyNarrationIsDiscarded() throws {
+        let edl = try JSONDecoder().decode(EditDecisionList.self, from: narratedUnderD93())
+        #expect(edl.overdubs.isEmpty, "D93 narration was silently turned into a take")
+        #expect(!edl.hasOverdubs)
     }
 
-    @Test("A document with no narration gains nothing")
-    func backfillDoesNothingWithoutAVoiceover() {
-        // Otherwise every recording would grow a lane for a track it does not
-        // have — the same failure the microphone band's own guard prevents.
-        var edl = EditDecisionList()
-        edl.trackStates = [TrackState(track: "systemAudio")]
-        edl.backfillVoiceoverTrackState()
+    @Test("Its LANE is dropped with it")
+    func legacyLaneIsDiscarded() throws {
+        // Leaving the TrackState behind would draw a third lane — with a fader
+        // and a mute — over audio that is no longer in the composition. An
+        // empty lane claiming a track exists is worse than no lane.
+        let edl = try JSONDecoder().decode(EditDecisionList.self, from: narratedUnderD93())
         #expect(!edl.trackStates.contains { $0.track == "voiceover" })
+        #expect(!TimelineTrackLayout.audioTracks(in: edl.trackStates).contains("voiceover"))
+        // The capture's own lanes survive — this drops a lane, not the file.
+        #expect(TimelineTrackLayout.audioTracks(in: edl.trackStates)
+                == ["systemAudio", "microphone"])
     }
 
-    @Test("Running it twice changes nothing the second time")
-    func backfillIsIdempotent() {
-        var edl = narratedWithoutATrackState()
-        edl.backfillVoiceoverTrackState()
-        let after = edl.trackStates.map(\.track)
-        edl.backfillVoiceoverTrackState()
-        #expect(edl.trackStates.map(\.track) == after)
+    @Test("A document with NO legacy narration keeps a voiceover state it was given")
+    func synthesisStateIsNotEaten() throws {
+        // D101's synthesised voice will legitimately want that TrackState. The
+        // discard is conditioned on the narration key rather than applied to
+        // every document, so it cannot eat one that arrives for another reason.
+        var edl = EditDecisionList()
+        edl.trackStates = [TrackState(track: "microphone"), TrackState(track: "voiceover")]
+        let data = try JSONEncoder().encode(edl)
+        let back = try JSONDecoder().decode(EditDecisionList.self, from: data)
+        #expect(back.trackStates.contains { $0.track == "voiceover" })
+    }
+
+    @Test("Re-saving it writes no narration key back")
+    func legacyNarrationIsNotRewritten() throws {
+        // The round trip is where a half-migration would show: decoded away
+        // and then written back out would leave the file unchanged and the
+        // behaviour changed, which is the worst of both.
+        let edl = try JSONDecoder().decode(EditDecisionList.self, from: narratedUnderD93())
+        let json = String(decoding: try JSONEncoder().encode(edl), as: UTF8.self)
+        // The narration OBJECT, not the word: a first version of this matched
+        // the bare string and failed against correct code, because the
+        // document also carries a TrackState NAMED "voiceover".
+        #expect(!json.contains("\"voiceover\":{"), "the discarded narration was written back")
+        #expect(!json.contains("overdubs"), "an empty take list wrote a key")
+    }
+
+    @Test("A recording with no takes produces the bytes it always did")
+    func noTakesWritesNoKey() throws {
+        let json = String(decoding: try JSONEncoder().encode(EditDecisionList()), as: UTF8.self)
+        #expect(!json.contains("overdubs"))
+    }
+
+    @Test("A take round-trips")
+    func takesRoundTrip() throws {
+        var edl = EditDecisionList()
+        edl.overdubs = [
+            Overdub(filename: "a.m4a", durationSeconds: 2,
+                    segments: [OverdubSegment(takeStart: 0, sourceStart: 1, durationSeconds: 2)]),
+            Overdub(filename: "b.m4a", durationSeconds: 1,
+                    segments: [OverdubSegment(takeStart: 0, sourceStart: 9, durationSeconds: 1)]),
+        ]
+        let data = try JSONEncoder().encode(edl)
+        let back = try JSONDecoder().decode(EditDecisionList.self, from: data)
+        // ORDER survives, because it is the precedence `MicrophoneTimeline`
+        // applies where two takes overlap — a document that reordered them on
+        // save would quietly change which one is heard.
+        #expect(back.overdubs.map(\.filename) == ["a.m4a", "b.m4a"])
+        #expect(back.overdubs == edl.overdubs)
     }
 }
+
 
 /// The waveform for a document that is OPENED rather than just recorded.
 @Suite(.serialized)
 @MainActor
-struct VoiceoverWaveformLoadTests {
+struct MicrophoneWaveformLoadTests {
     init() { _ = NSApplication.shared }
 
     @Test("Opening a narrated document samples its voiceover, not only the capture")
-    func openingLoadsTheVoiceoverWaveform() async throws {
+    func openingLoadsTheMicrophoneWaveform() async throws {
         // Reported as "the lane shows up now, but there's no waveform, just an
         // empty audio track where there definitely should be audio".
         //
@@ -247,16 +294,17 @@ struct VoiceoverWaveformLoadTests {
         defer { try? FileManager.default.removeItem(at: root) }
         try await writeSyntheticMovie(to: bundle.captureURL, seconds: 3.0,
                                       audioTrackCount: 2)
-        try await writeSyntheticMovie(to: bundle.voiceoverURL, seconds: 2.0,
-                                      audioTrackCount: 1)
+        let takeName = "overdub-\(UUID().uuidString).m4a"
+        try await writeSyntheticMovie(to: bundle.url.appendingPathComponent(takeName),
+                                      seconds: 2.0, audioTrackCount: 1)
         try RecordingMetadata(createdAt: Date(), initiator: .human).write(to: bundle)
 
         var edl = EditDecisionList()
         edl.trackStates = [TrackState(track: "systemAudio"), TrackState(track: "microphone")]
-        edl.voiceover = VoiceoverTrack(
-            filename: bundle.voiceoverURL.lastPathComponent, durationSeconds: 2.0,
-            segments: [VoiceoverSegment(voiceoverStart: 0, sourceStart: 0.5,
-                                        durationSeconds: 2.0)])
+        edl.overdubs = [Overdub(
+            filename: takeName, durationSeconds: 2.0,
+            segments: [OverdubSegment(takeStart: 0, sourceStart: 0.5,
+                                      durationSeconds: 2.0)])]
         try edl.write(to: bundle)
 
         let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
@@ -268,15 +316,23 @@ struct VoiceoverWaveformLoadTests {
         // alone and timed out on the full run, and twenty seconds timed out
         // too — so the wait was never the problem and a longer one would have
         // been a worse test rather than a passing one.
-        await state.voiceoverWaveformLoad?.value
+        await state.overdubWaveformLoad?.value
+        // BOTH, because the microphone lane is composed from the capture and
+        // the take together — awaiting only one asserts against a half-built
+        // answer.
+        await state.captureWaveformLoadForTesting?.value
 
-        let reason = state.voiceoverWaveformFailure ?? "no reason recorded"
-        let waveform = try #require(state.waveforms.first { $0.track == "voiceover" },
-                                    "opening a narrated document did not sample its voiceover: \(reason)")
+        let reason = state.overdubWaveformFailure ?? "no reason recorded"
+        // The MICROPHONE's lane, because that is where a take lands now. A
+        // "voiceover" lane would mean the third track came back.
+        let waveform = try #require(state.waveforms.first { $0.track == "microphone" },
+                                    "opening an over-dubbed document sampled nothing: \(reason)")
+        #expect(!state.waveforms.contains { $0.track == "voiceover" },
+                "a take was drawn on a third lane rather than on the microphone")
         // Sized to the CAPTURE, which is the thing an unloaded lane cannot
-        // fake: the samples come from a 2s voiceover and the array spans the
-        // 3s recording, so the length is proof the re-indexing ran rather than
-        // the raw file being handed over.
+        // fake: the take is 2s and the array spans the 3s recording, so the
+        // length is proof the re-indexing ran rather than the raw file being
+        // handed over.
         //
         // AMPLITUDE is deliberately not asserted here, and this is the
         // limitation worth naming rather than working around: this target's
@@ -284,7 +340,7 @@ struct VoiceoverWaveformLoadTests {
         // fixture does not exist at this level and an amplitude check would
         // fail against correct code. That the mapping carries real values, and
         // puts them at the right source offsets, is
-        // `VoiceoverWaveformTests` — which uses a ramp precisely so a
+        // `MicrophoneWaveformTests` — which uses a ramp precisely so a
         // misplacement shows up as a wrong VALUE rather than as "some numbers
         // moved".
         #expect(waveform.samplesPerSecond > 0)
@@ -300,40 +356,51 @@ struct VoiceoverWaveformLoadTests {
 struct WaveformMergeTests {
     init() { _ = NSApplication.shared }
 
-    @Test("A late capture sample does not wipe the voiceover's")
-    func captureLoadPreservesTheVoiceover() async throws {
-        // The race that made the missing lane intermittent. `loadWaveforms`
-        // assigned the whole array, so whichever of the two decodes finished
-        // LAST won — on an idle machine the capture finished first and the
-        // voiceover survived; under a full test run it did not.
+    @Test("Whichever load finishes last, both are in the result")
+    func bothLoadsSurviveWhicheverOrder() async throws {
+        // The race that made the missing lane intermittent: `loadWaveforms`
+        // ASSIGNED the whole array, so whichever decode finished last won — on
+        // an idle machine the capture finished first and the other survived,
+        // under a full test run it did not.
         //
-        // Driven through the published property rather than by racing two real
-        // decodes, because the failure is the ASSIGNMENT and a test that had
-        // to win a race to see it would be the flake it is replacing.
+        // It cannot happen any more, and the fix is structural rather than a
+        // careful merge: `waveforms` is COMPOSED from two inputs, each loader
+        // sets only its own, and neither can overwrite the other's. So this no
+        // longer drives the published property — there is nothing to clobber —
+        // and instead runs both real loads and asserts the outcome is complete
+        // whatever order they land in.
         let root = FileManager.default.temporaryDirectory
             .appending(path: "wfmerge-\(UUID().uuidString).snitt")
         let bundle = try SnittBundle(creatingAt: root)
         defer { try? FileManager.default.removeItem(at: root) }
         try await writeSyntheticMovie(to: bundle.captureURL, seconds: 2.0, audioTrackCount: 2)
+        let takeName = "overdub-\(UUID().uuidString).m4a"
+        try await writeSyntheticMovie(to: bundle.url.appendingPathComponent(takeName),
+                                      seconds: 1.0, audioTrackCount: 1)
         try RecordingMetadata(createdAt: Date(), initiator: .human).write(to: bundle)
 
-        let built = try await CompositionBuilder.build(
-            bundle: bundle, edl: EditDecisionList(), scale: 1.0)
+        var edl = EditDecisionList()
+        edl.trackStates = [TrackState(track: "systemAudio"), TrackState(track: "microphone")]
+        edl.overdubs = [Overdub(filename: takeName, durationSeconds: 1.0,
+                                segments: [OverdubSegment(takeStart: 0, sourceStart: 0.5,
+                                                          durationSeconds: 1.0)])]
+        try edl.write(to: bundle)
+
+        let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
         let controller = PreviewController(built: built, jumpPoints: [],
                                            bundle: bundle, scale: 1.0)
-        let state = EditorTimelineState(controller: controller,
-                                        edl: EditDecisionList(), events: [])
+        let state = EditorTimelineState(controller: controller, edl: edl, events: [])
 
-        // A voiceover lane arrives first, as it does when the smaller file
-        // decodes sooner.
-        state.waveforms = [WaveformSamples(track: "voiceover",
-                                           samplesPerSecond: 10, peaks: [1, 1, 1])]
-        // Then the capture's load lands.
+        // Awaited in the OPPOSITE order to the one they were started in, so a
+        // result that depended on completion order would show here.
+        await state.overdubWaveformLoad?.value
         await state.captureWaveformLoadForTesting?.value
 
-        #expect(state.waveforms.contains { $0.track == "voiceover" },
-                "the capture's sample wiped the voiceover lane")
         #expect(state.waveforms.contains { $0.track == "systemAudio" },
                 "the capture's own tracks did not arrive")
+        #expect(state.waveforms.contains { $0.track == "microphone" },
+                "the microphone lane is missing")
+        #expect(!state.waveforms.contains { $0.track == "voiceover" },
+                "a take was given a third lane")
     }
 }

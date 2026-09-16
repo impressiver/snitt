@@ -270,7 +270,7 @@ struct TransportBar: View {
             transportButton("backward.frame.fill",
                             Self.help("Previous mark", "Previous Mark"),
                             enabled: hasMarks, action: onPreviousMark)
-            // WHILE NARRATING THIS IS A STOP BUTTON, and it says so in red.
+            // WHILE OVER-DUBBING THIS IS A STOP BUTTON, and it says so in red.
             //
             // The transport is the only control anyone looks at during a take,
             // and it previously showed an ordinary pause — identical to
@@ -291,9 +291,9 @@ struct TransportBar: View {
                                                      : SnittPalette.Swatch.signalBright,
                                 in: RoundedRectangle(cornerRadius: 5))
             }
-            .help(isRecordingVoiceover ? "Stop recording the voiceover"
+            .help(isRecordingVoiceover ? "Stop over-dubbing"
                                        : Self.help("Play or pause", "Play / Pause"))
-            .accessibilityLabel(isRecordingVoiceover ? "Stop recording voiceover" : "Play or pause")
+            .accessibilityLabel(isRecordingVoiceover ? "Stop over-dubbing" : "Play or pause")
             // Not `.borderedProminent`: that draws in the system accent, which
             // is whatever colour the user picked for selection — so the one
             // filled control on the instrument would change meaning from Mac
@@ -378,9 +378,11 @@ struct TransportBar: View {
         switch track {
         case "microphone": return "Microphone"
         case "systemAudio": return "System audio"
-        case "voiceover": return "Voiceover"
+        // The synthesised voice (D101), which is the only thing this track
+        // carries now — a recorded take lands on the microphone (D102).
+        case "voiceover": return "Synthesised"
         // The fallback returns the RAW name, so a track this does not know
-        // labels its lane "voiceover" in lower case rather than not at all.
+        // labels its lane in lower case rather than not at all.
         // That is why the omission was invisible: the lane appeared, the meter
         // worked, and only the capitalisation said nobody had thought about it.
         default: return track

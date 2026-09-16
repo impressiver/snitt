@@ -158,51 +158,75 @@ enum Transcriber {
         return try await collector.value
     }
 
-    /// The narration's words, on the CAPTURE's clock and tagged as narration.
+    /// A take's words, on the CAPTURE's clock and tagged as MICROPHONE.
     ///
-    /// A second pass over a second file, not a second recogniser: the
-    /// microphone and the voiceover are different audio, recorded at different
-    /// times, and one analyzer cannot be given both. They merge afterwards.
+    /// A second pass over a second file, not a second recogniser: the capture
+    /// and the take are different audio, recorded at different times, and one
+    /// analyzer cannot be given both. They merge afterwards.
     ///
-    /// Words whose footage has since been cut are DROPPED. Narration over
-    /// removed picture has no position in the recording — the same answer
-    /// `VoiceoverPlacement` gives everywhere else — and placing it at the fold
-    /// would put speech on a frame it was never spoken about.
-    static func transcribeVoiceover(bundle: SnittBundle,
-                                    track: VoiceoverTrack,
-                                    locale: Locale = Locale(identifier: "en-US"),
-                                    vocabulary: [String]? = nil) async throws -> [TranscriptWord] {
-        let url = bundle.url.appendingPathComponent(track.filename)
+    /// Tagged `"microphone"` because that is the lane it plays on (D102). Under
+    /// D93 these were `"voiceover"` and drew teal beside the speech they were
+    /// spoken over; a take does not sit beside anything — it IS the
+    /// microphone for its own span, and colouring it as a second voice would
+    /// claim two people talking where there is one, twice.
+    ///
+    /// Words whose footage has since been cut are DROPPED. Speech over removed
+    /// picture has no position in the recording — the same answer
+    /// `OverdubPlacement` gives everywhere else — and placing it at the fold
+    /// would put words on a frame they were never spoken about.
+    static func transcribeOverdub(bundle: SnittBundle,
+                                  overdub: Overdub,
+                                  locale: Locale = Locale(identifier: "en-US"),
+                                  vocabulary: [String]? = nil) async throws -> [TranscriptWord] {
+        let url = bundle.url.appendingPathComponent(overdub.filename)
         guard FileManager.default.fileExists(atPath: url.path) else { return [] }
         let terms = resolveVocabulary(override: vocabulary, bundle: bundle)
         guard let spoken = try await transcribe(audioAt: url, locale: locale, vocabulary: terms)
         else { return [] }
 
         return spoken.compactMap { word in
-            guard let source = VoiceoverPlacement.sourceTime(ofVoiceoverTime: word.start,
-                                                             in: track) else { return nil }
+            guard let source = OverdubPlacement.sourceTime(ofTakeTime: word.start,
+                                                           in: overdub) else { return nil }
             var placed = word
             placed.start = source
-            placed.track = "voiceover"
+            placed.track = "microphone"
             return placed
         }
     }
 
-    /// Everything a recording has been heard to say, from every track.
+    /// Everything the finished recording can be heard to say.
     ///
-    /// Sorted by time across BOTH sources, because they interleave: narration
-    /// is spoken over footage that already has speech in it, and a reader
-    /// moving down the transcript is moving through the recording.
+    /// **Captured words under a take are REMOVED, not merged.** A take
+    /// replaces the microphone for its own span, so the speech the capture
+    /// heard there is not in the file anybody will watch. Keeping it would put
+    /// two different sentences on the same second and invite editing against
+    /// audio that no longer exists — the same reason `AudibleTranscript` hides
+    /// a muted track's words.
+    ///
+    /// This is the one place D102 is lossy in a way D93 was not: under a third
+    /// track both were audible, so both belonged in the transcript. Replacing
+    /// means one of them stops being true.
+    ///
+    /// Sorted by time, because a reader moving down the transcript is moving
+    /// through the recording.
     static func merge(_ transcript: Transcript?,
-                      voiceover: [TranscriptWord]) -> Transcript? {
+                      overdubs: [Overdub],
+                      takeWords: [TranscriptWord]) -> Transcript? {
         guard let transcript else {
-            guard !voiceover.isEmpty else { return nil }
-            return Transcript(words: voiceover.sorted { $0.start < $1.start },
+            guard !takeWords.isEmpty else { return nil }
+            return Transcript(words: takeWords.sorted { $0.start < $1.start },
                               locale: Locale.current.identifier)
         }
-        guard !voiceover.isEmpty else { return transcript }
+        let surviving = overdubs.isEmpty ? transcript.words : transcript.words.filter {
+            !OverdubPlacement.covers(sourceTime: $0.start, overdubs: overdubs)
+        }
+        guard !takeWords.isEmpty else {
+            var trimmed = transcript
+            trimmed.words = surviving
+            return trimmed
+        }
         var merged = transcript
-        merged.words = (transcript.words + voiceover).sorted { $0.start < $1.start }
+        merged.words = (surviving + takeWords).sorted { $0.start < $1.start }
         return merged
     }
 

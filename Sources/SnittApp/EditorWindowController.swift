@@ -202,26 +202,21 @@ final class EditorTimelineState: ObservableObject {
         // route — a recording that just stopped, File ▸ Open, a Finder
         // double-click, an import. One place, so a document narrated before
         // the lane existed cannot arrive without one.
-        var edl = edl
-        edl.backfillVoiceoverTrackState()
         self.edl = edl
-        // `lastSavedEDL` takes the BACKFILLED value deliberately: the added
-        // state describes what is already in the document rather than an edit
-        // somebody made, so it must not mark a freshly-opened file dirty.
         self.lastSavedEDL = edl
         self.events = events
         self.lastSavedEvents = events
         loadWaveforms()
-        // The capture's tracks and the voiceover come from DIFFERENT FILES, so
-        // one call cannot fetch both. `loadWaveforms` samples `capture.mov`;
-        // this samples `voiceover.m4a`, and without it a document that is
-        // opened rather than just recorded shows the lane with nothing in it —
-        // which is how it was reported.
+        // The capture's tracks and the takes come from DIFFERENT FILES, so one
+        // call cannot fetch both. `loadWaveforms` samples `capture.mov`; this
+        // samples each take, and without it a document that is opened rather
+        // than just recorded draws the microphone as it was captured — showing
+        // audio the export has replaced.
         //
         // Both are fired here rather than lazily on first draw: a waveform
         // that appears only after some unrelated redraw is worse than one that
         // takes a moment, because nothing on screen says it is coming.
-        loadVoiceoverWaveform()
+        loadOverdubWaveforms()
     }
 
     /// Peak amplitudes per audio track, empty until the read finishes.
@@ -230,7 +225,68 @@ final class EditorTimelineState: ObservableObject {
     /// error: reading every audio sample of a long recording takes real time,
     /// and blocking the editor's first paint on it would be a worse trade than
     /// a waveform that arrives a moment later.
+    /// What the timeline draws: the capture's lanes, with every take written
+    /// over the microphone. Composed by `rebuildWaveforms` from the two inputs
+    /// below rather than mutated in place.
+    ///
+    /// The inputs are kept separately because they arrive from different files
+    /// on different tasks, and a shared array edited by whichever finished
+    /// first is exactly the race that shipped once already: a plain assignment
+    /// wiped the other's work, so a lane drew or did not depending on which
+    /// decode won. Composing from inputs cannot have that failure — each task
+    /// sets its own input and asks for a rebuild.
     @Published var waveforms: [WaveformSamples] = []
+    /// `capture.mov`'s own lanes, before any take is applied.
+    private var capturedWaveforms: [WaveformSamples] = []
+    /// One entry per take, by its index in `edl.overdubs`.
+    private var takeWaveforms: [Int: WaveformSamples] = [:]
+    /// The take being recorded right now, sampled at the playhead's rate.
+    private var liveTake: (samples: WaveformSamples, overdub: Overdub)?
+
+    /// Recomposes what the timeline draws.
+    ///
+    /// Takes are applied in `edl.overdubs` order so a later one overwrites an
+    /// earlier one, matching `MicrophoneTimeline`'s precedence exactly — a
+    /// lane that disagreed with the audio would be worse than no lane.
+    func rebuildWaveforms() {
+        var takes: [MicrophoneWaveform.Take] = []
+        for (index, overdub) in edl.overdubs.enumerated() {
+            guard let samples = takeWaveforms[index] else { continue }
+            takes.append(MicrophoneWaveform.Take(overdub: overdub, samples: samples))
+        }
+        // The in-progress take goes LAST, because it is the most recent thing
+        // said and is what the author is listening to.
+        if let liveTake {
+            takes.append(MicrophoneWaveform.Take(overdub: liveTake.overdub,
+                                                 samples: liveTake.samples))
+        }
+        guard !takes.isEmpty else {
+            waveforms = capturedWaveforms
+            return
+        }
+        let duration = controller.sourceDurationSeconds
+        // A recording made with the MICROPHONE OFF and spoken over afterwards
+        // has no captured microphone lane to write into, so one is created.
+        // Without this the take would be in the file, in the mix and in the
+        // export, and invisible — which is the shape of the bug D93 shipped
+        // with, arriving by a different route.
+        //
+        // Silent, and the take is written over the silence: that is exactly
+        // what the audio does, since there was nothing there before.
+        var base = capturedWaveforms
+        if !base.contains(where: { $0.track == "microphone" }) {
+            let rate = base.first?.samplesPerSecond
+                ?? takes.first?.samples.samplesPerSecond
+                ?? Self.voiceoverLevelRate
+            base.append(WaveformSamples(
+                track: "microphone", samplesPerSecond: rate,
+                peaks: [Float](repeating: 0, count: Int((duration * rate).rounded(.up)))))
+        }
+        waveforms = base.map { lane in
+            guard lane.track == "microphone" else { return lane }
+            return MicrophoneWaveform.overdubbed(lane, takes: takes, sourceDuration: duration)
+        }
+    }
     /// Whether waveform sampling has FINISHED, regardless of what it found.
     ///
     /// `waveforms.isEmpty` alone cannot tell "this recording has no audio" from
@@ -253,18 +309,15 @@ final class EditorTimelineState: ObservableObject {
         captureWaveformLoadForTesting = Task { [weak self] in
             let samples = try? await WaveformSampler.sample(movieAt: url)
             await MainActor.run {
-                // MERGED, not replaced. The voiceover comes from a different
-                // file and a different task, and a plain assignment here wiped
-                // whichever of the two finished first — so the lane drew empty
-                // or not depending on which decode won a race.
-                //
-                // That is the bug reported as "there's no waveform, just an
-                // empty audio track where there definitely should be audio",
-                // and the reason it looked like a load that never happened: on
-                // an idle machine the capture won and the voiceover survived,
-                // under load it did not.
-                let voiceover = self?.waveforms.filter { $0.track == "voiceover" } ?? []
-                self?.waveforms = (samples ?? []) + voiceover
+                // Sets its OWN input and asks for a rebuild. The version this
+                // replaces assigned the shared array, which wiped whatever the
+                // take loader had already put there — the bug reported as
+                // "there's no waveform, just an empty audio track where there
+                // definitely should be audio", and the reason it looked like a
+                // load that never happened: on an idle machine the capture
+                // finished first and the other survived, under load it did not.
+                self?.capturedWaveforms = samples ?? []
+                self?.rebuildWaveforms()
                 // Set even when the result is empty: a recording with no audio
                 // track samples to nothing, and without this flag that is
                 // indistinguishable from "still decoding" forever.
@@ -1051,39 +1104,39 @@ final class EditorTimelineState: ObservableObject {
     /// test, not a passing one — and "assert the loader was called" would be
     /// the adjacent-property trap this project keeps finding. Awaiting the
     /// actual work keeps the assertion on the actual outcome.
-    private(set) var voiceoverWaveformLoad: Task<Void, Never>?
-    /// Why the voiceover lane has no waveform, when it has none.
-    private(set) var voiceoverWaveformFailure: String?
+    private(set) var overdubWaveformLoad: Task<Void, Never>?
+    /// Why a take is missing from the microphone lane, when one is.
+    private(set) var overdubWaveformFailure: String?
 
-    func loadVoiceoverWaveform() {
-        guard let voiceover = edl.voiceover else { return }
-        let url = controller.snittBundle.url.appendingPathComponent(voiceover.filename)
-        let sourceDuration = controller.sourceDurationSeconds
-        voiceoverWaveformLoad = Task { [weak self] in
-            var sampled: [WaveformSamples] = []
-            var failure: String?
-            do { sampled = try await WaveformSampler.sample(movieAt: url) }
-            catch { failure = (error as NSError).localizedDescription }
-            guard let first = sampled.first else {
-                // Recorded rather than swallowed. A `try?` here made "the
-                // narration could not be read" and "there is no narration"
-                // the same empty lane, which is the difference between a
-                // transient failure worth retrying and nothing to draw.
-                await MainActor.run {
-                    self?.voiceoverWaveformFailure =
-                        failure ?? "no audio track in \(url.lastPathComponent)"
+    func loadOverdubWaveforms() {
+        guard !edl.overdubs.isEmpty else { return }
+        let bundle = controller.snittBundle.url
+        let takes = edl.overdubs.enumerated().map {
+            ($0.offset, bundle.appendingPathComponent($0.element.filename))
+        }
+        overdubWaveformLoad = Task { [weak self] in
+            for (index, url) in takes {
+                var sampled: [WaveformSamples] = []
+                var failure: String?
+                do { sampled = try await WaveformSampler.sample(movieAt: url) }
+                catch { failure = (error as NSError).localizedDescription }
+                guard let first = sampled.first else {
+                    // Recorded rather than swallowed. A `try?` here made "the
+                    // take could not be read" and "there is no take" the same
+                    // flat lane, which is the difference between a transient
+                    // failure worth retrying and nothing to draw.
+                    await MainActor.run {
+                        self?.overdubWaveformFailure =
+                            failure ?? "no audio track in \(url.lastPathComponent)"
+                    }
+                    continue
                 }
-                return
-            }
-            let aligned = VoiceoverWaveform.sourceAligned(
-                first, track: voiceover, sourceDuration: sourceDuration)
-            await MainActor.run {
-                guard let self else { return }
-                // REPLACED, not appended: re-recording produces a second
-                // waveform for one track, and `drawWaveform` takes the first
-                // match — so the lane would keep showing the take before last.
-                self.waveforms.removeAll { $0.track == "voiceover" }
-                self.waveforms.append(aligned)
+                await MainActor.run {
+                    // Keyed by index rather than appended, so re-reading a
+                    // take replaces its own entry instead of adding a second.
+                    self?.takeWaveforms[index] = first
+                    self?.rebuildWaveforms()
+                }
             }
         }
     }
@@ -1104,20 +1157,17 @@ final class EditorTimelineState: ObservableObject {
         guard !voiceoverLevels.isEmpty else { return }
 
         let duration = Double(voiceoverLevels.count) / Self.voiceoverLevelRate
-        let live = VoiceoverTrack(
+        let live = Overdub(
             filename: "",
             durationSeconds: duration,
-            segments: VoiceoverPlacement.segments(outputStart: voiceoverStartedAt,
-                                                  duration: duration,
-                                                  keptRanges: controller.keptRanges))
-        let aligned = VoiceoverWaveform.sourceAligned(
-            WaveformSamples(track: "voiceover",
-                            samplesPerSecond: Self.voiceoverLevelRate,
-                            peaks: voiceoverLevels),
-            track: live,
-            sourceDuration: controller.sourceDurationSeconds)
-        waveforms.removeAll { $0.track == "voiceover" }
-        waveforms.append(aligned)
+            segments: OverdubPlacement.segments(outputStart: voiceoverStartedAt,
+                                                duration: duration,
+                                                keptRanges: controller.keptRanges))
+        liveTake = (WaveformSamples(track: "microphone",
+                                    samplesPerSecond: Self.voiceoverLevelRate,
+                                    peaks: voiceoverLevels),
+                    live)
+        rebuildWaveforms()
     }
 
     /// Starts narrating over the edit, from the playhead.
@@ -1128,27 +1178,32 @@ final class EditorTimelineState: ObservableObject {
     /// across whatever footage happened to follow it.
     func startVoiceover() -> VoiceoverRecorder.StartFailure? {
         let start = currentOutputSeconds
-        if let failure = voiceoverRecorder.start(writingTo: controller.snittBundle.voiceoverURL,
-                                                 fromOutputSeconds: start) {
+        // The filename is chosen HERE, because the recorder needs somewhere to
+        // write before anyone knows whether the take will be worth keeping. A
+        // UUID rather than a position in the list: takes can be deleted, and a
+        // name derived from an index stops matching the list the moment one is.
+        let filename = controller.snittBundle.overdubFilename()
+        if let failure = voiceoverRecorder.start(
+            writingTo: controller.snittBundle.overdubURL(filename: filename),
+            fromOutputSeconds: start) {
             return failure
         }
+        pendingOverdubFilename = filename
         isRecordingVoiceover = true
         voiceoverLevels = []
         voiceoverStartedAt = start
-        // The lane appears NOW, not when the take ends. It is the only thing
-        // on screen that distinguishes recording narration from playing the
-        // recording, and waiting until the end would mean the feedback arrives
-        // exactly when it is no longer needed.
-        //
-        // Not an edit: written straight into `edl` without an undo entry or a
-        // save, because an abandoned take removes it again below. A take
-        // becomes an edit when it produces audio.
-        if !edl.trackStates.contains(where: { $0.track == "voiceover" }) {
-            edl.trackStates.append(TrackState(track: "voiceover", muted: false, gain: 1.0))
-        }
+        // No TrackState is added any more. A take lands on the MICROPHONE
+        // (D102), which already has one — the lane it draws into is the lane
+        // that was always there, and the live waveform is what distinguishes
+        // recording from playing.
         controller.play()
         return nil
     }
+
+    /// Where the take in progress is being written. Held from start to stop
+    /// because the recorder is told the path and the document is told the
+    /// name, and those are two different moments.
+    private var pendingOverdubFilename: String?
 
     /// Ends the take and writes it into the EDL.
     ///
@@ -1161,14 +1216,12 @@ final class EditorTimelineState: ObservableObject {
         voiceoverLevels = []
         controller.pause()
         guard duration > 0.05 else {
-            // A take shorter than a syllable is a mis-click, not narration.
-            // Recorded as nothing rather than as a segment nobody can hear —
-            // and the lane goes with it, or the editor would keep a band for a
-            // track that holds nothing.
-            if edl.voiceover == nil {
-                edl.trackStates.removeAll { $0.track == "voiceover" }
-                waveforms.removeAll { $0.track == "voiceover" }
-            }
+            // A take shorter than a syllable is a mis-click, not speech.
+            // Recorded as nothing rather than as a span nobody can hear — and
+            // the live lane goes with it, or the microphone would keep drawing
+            // a take the document does not have.
+            liveTake = nil
+            rebuildWaveforms()
             return
         }
         let previous = edl
@@ -1177,23 +1230,23 @@ final class EditorTimelineState: ObservableObject {
         }
         // Resolved to SOURCE spans HERE, once, against the edit that was in
         // force while it was spoken. Re-deriving later would need that edit,
-        // which the document does not keep — see `VoiceoverTrack.segments`.
-        let segments = VoiceoverPlacement.segments(
+        // which the document does not keep — see `Overdub.segments`.
+        let segments = OverdubPlacement.segments(
             outputStart: voiceoverRecorder.startedAtOutput,
             duration: duration,
             keptRanges: controller.keptRanges)
-        // `startVoiceover` already added the TrackState so the lane could be
-        // drawn live; this is the point at which it becomes part of the saved
-        // document rather than a view of a take in progress.
-        if !edl.trackStates.contains(where: { $0.track == "voiceover" }) {
-            edl.trackStates.append(TrackState(track: "voiceover", muted: false, gain: 1.0))
-        }
-        edl.voiceover = VoiceoverTrack(
-            filename: controller.snittBundle.voiceoverURL.lastPathComponent,
+        // APPENDED, so punching in twice keeps both takes and the later one
+        // wins only where they actually overlap. Replacing the list would make
+        // a second correction throw away the first, which is the opposite of
+        // what recording again means.
+        edl.overdubs.append(Overdub(
+            filename: pendingOverdubFilename ?? controller.snittBundle.overdubFilename(),
             durationSeconds: duration,
-            segments: segments)
+            segments: segments))
+        pendingOverdubFilename = nil
+        liveTake = nil
         applyAndSave()
-        loadVoiceoverWaveform()
+        loadOverdubWaveforms()
     }
 
     /// Applies a crop drawn over the preview.
@@ -1387,29 +1440,28 @@ final class EditorTimelineState: ObservableObject {
     private func startTranscription(vocabulary: [String]? = nil) {
         transcriptionStatus = .transcribing
         let bundle = controller.snittBundle
-        let voiceover = edl.voiceover
+        let overdubs = edl.overdubs
         Task { [weak self] in
             do {
                 let spoken = try await Transcriber.transcribe(
                     bundle: bundle, vocabulary: vocabulary)
-                // A SECOND pass over a second file. The microphone and the
-                // narration are different audio recorded at different times,
-                // so one analyzer cannot be given both — they merge after.
+                // ONE PASS PER TAKE, over its own file. The capture and each
+                // take are different audio recorded at different times, so one
+                // analyzer cannot be given them together — they merge after.
                 //
-                // Run even when the microphone pass found nothing: a recording
-                // made with the mic off and narrated afterwards has a
-                // transcript consisting entirely of narration, and gating this
-                // on the first result would leave it empty.
-                let narrated: [TranscriptWord]
-                if let voiceover {
-                    narrated = try await Transcriber.transcribeVoiceover(
-                        bundle: bundle, track: voiceover, vocabulary: vocabulary)
-                } else {
-                    narrated = []
+                // Run even when the capture pass found nothing: a recording
+                // made with the mic off and spoken over afterwards has a
+                // transcript consisting entirely of takes, and gating this on
+                // the first result would leave it empty.
+                var takeWords: [TranscriptWord] = []
+                for overdub in overdubs {
+                    takeWords += try await Transcriber.transcribeOverdub(
+                        bundle: bundle, overdub: overdub, vocabulary: vocabulary)
                 }
-                guard let result = Transcriber.merge(spoken, voiceover: narrated) else {
-                    // No mic track and no narration — a normal recording, not
-                    // a failure.
+                guard let result = Transcriber.merge(spoken, overdubs: overdubs,
+                                                     takeWords: takeWords) else {
+                    // No mic track and no takes — a normal recording, not a
+                    // failure.
                     await MainActor.run { self?.transcriptionStatus = .none }
                     return
                 }

@@ -35,7 +35,21 @@ public struct SnittBundle: Sendable {
     /// inside it: §4.5 makes the capture immutable, and mixing narration in
     /// would make the one file that is meant to be the untouched original the
     /// one file an edit had rewritten.
+    /// D93's third-track narration file. Kept only so a document written
+    /// before D102 can still be recognised — nothing writes it any more, and
+    /// the EDL no longer points at it.
     public var voiceoverURL: URL { url.appendingPathComponent("voiceover.m4a") }
+
+    /// A file for one over-dub take.
+    ///
+    /// Named by UUID rather than by position. A document can hold several
+    /// takes and any of them can be deleted, so an index in the name would
+    /// stop matching the list the moment one went — and the take that had been
+    /// `overdub-1` would either collide with a new one or silently point at
+    /// another take's audio.
+    public func overdubFilename(id: UUID = UUID()) -> String { "overdub-\(id.uuidString).m4a" }
+
+    public func overdubURL(filename: String) -> URL { url.appendingPathComponent(filename) }
 
     /// Where agent screenshots land (M5e, D53).
     ///

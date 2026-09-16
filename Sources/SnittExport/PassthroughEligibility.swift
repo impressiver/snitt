@@ -40,7 +40,7 @@ public enum PassthroughEligibility {
         case audioMix
         case scaled
         case burnedInText
-        case voiceover
+        case overdub
     }
 
     /// Nil when the samples can be copied; otherwise the first reason they cannot.
@@ -86,12 +86,12 @@ public enum PassthroughEligibility {
         // changed. Both asked separately rather than as one flag: the reason
         // an export re-encoded is worth being able to state.
         if edl.showSubtitles || edl.showMarkers { return .burnedInText }
-        // A voiceover is a track `capture.mov` does not contain, so there are
-        // no encoded samples to copy for it. Checked BEFORE `hasAudioMix`
-        // because it is a different fact with a different remedy: a mix means
-        // the levels changed, this means a whole track would be missing from
-        // the file.
-        if edl.voiceover != nil { return .voiceover }
+        // A take is audio `capture.mov` does not contain, so there are no
+        // encoded samples to copy for the stretch it covers. Checked BEFORE
+        // `hasAudioMix` because it is a different fact with a different
+        // remedy: a mix means the levels changed, this means part of a track
+        // would be missing from the file.
+        if edl.hasOverdubs { return .overdub }
         if hasAudioMix { return .audioMix }
         return nil
     }
@@ -134,6 +134,6 @@ public enum PassthroughEligibility {
     ///   failure this predicate exists to prevent.
     public static let consideredEDLFields: Set<String> = [
         "schemaVersion", "cuts", "trackStates", "crop", "showClicks",
-        "showSubtitles", "showMarkers", "voiceover",
+        "showSubtitles", "showMarkers", "overdubs",
     ]
 }
