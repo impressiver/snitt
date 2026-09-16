@@ -560,3 +560,10 @@ CapturingAudioTests :: Sources/SnittApp/OverdubTransport.swift :: public var isC
 # A live run ends where the next began, or the first one draws over the pause.
 LiveRunTests :: Sources/SnittDocument/Overdub.swift :: let to = index + 1 < levelStarts.count ? levelStarts[index + 1] : levelCount :: let to = levelCount
 LiveRunTests :: Sources/SnittDocument/Overdub.swift :: guard outputStarts.count == levelStarts.count, levelsPerSecond > 0 else { return [] } :: guard levelsPerSecond > 0 else { return [] }
+# Auto-transcribing a take is consent-gated: a document nobody has transcribed
+# must not be pushed through the Speech grant because a take was recorded.
+AutoTranscribeTakeTests :: Sources/SnittApp/Transcriber.swift :: guard hasTranscript else { return false } :: guard true else { return false }
+AutoTranscribeTakeTests :: Sources/SnittApp/Transcriber.swift :: if case .available = availability { return true } :: return true
+# And it merges against ONLY the new take, or each take empties the ones before
+# it — their words are tagged `microphone` and sit under a take's span.
+AutoTranscribeTakeTests :: Sources/SnittApp/Transcriber.swift :: merge(transcript, overdubs: [take], takeWords: words) :: merge(transcript, overdubs: [], takeWords: words)

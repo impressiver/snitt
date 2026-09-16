@@ -1292,9 +1292,58 @@ final class EditorTimelineState: ObservableObject {
             durationSeconds: duration,
             segments: segments))
         pendingOverdubFilename = nil
+        let recorded = edl.overdubs[edl.overdubs.count - 1]
         liveTake = nil
         applyAndSave()
         loadOverdubWaveforms()
+        transcribeNewTake(recorded)
+    }
+
+    /// Re-transcribes a take the moment it is recorded (D102).
+    ///
+    /// Without this the transcript is a lie the instant a take lands: it still
+    /// shows what the CAPTURED microphone said over those seconds — audio the
+    /// export has replaced — and none of what was just said instead. That is
+    /// worse than being out of date, because the words on screen are
+    /// specifically the ones the take exists to get rid of.
+    ///
+    /// **Only when the recording already has a transcript.** Transcription is
+    /// consent-gated (§4.10: ask at first USE), so a document nobody has
+    /// transcribed must not be pushed through the Speech grant because a take
+    /// happened to be recorded. Having a transcript IS the opt-in, and this
+    /// keeps it true rather than creating one.
+    ///
+    /// Only the NEW take is recognised, and it merges against a list holding
+    /// only that take — so the words dropped are exactly the ones under it.
+    /// Passing every take would re-drop earlier takes' words, which are
+    /// already in the transcript and indistinguishable from captured ones.
+    private func transcribeNewTake(_ overdub: Overdub) {
+        guard Transcriber.shouldAutoTranscribeTake(
+            hasTranscript: transcript != nil,
+            availability: Transcriber.availability()) else { return }
+
+        let bundle = controller.snittBundle
+        transcriptionStatus = .transcribing
+        Task { [weak self] in
+            let words = (try? await Transcriber.transcribeOverdub(
+                bundle: bundle, overdub: overdub)) ?? []
+            await MainActor.run {
+                guard let self, let current = self.transcript else { return }
+                // A SECOND undo step, deliberately. The take's own undo
+                // restores the EDL; this restores the transcript. Folding them
+                // into one would mean an undo registered before the words
+                // existed — the recogniser finishes long after the take does —
+                // and the alternative, leaving the words behind on undo, keeps
+                // a transcript of audio the document no longer has.
+                self.undoManager?.registerUndo(withTarget: self) {
+                    $0.restoreTranscript(current)
+                }
+                let merged = Transcriber.merging(overdub, words: words, into: current)
+                if let merged { self.transcript = merged }
+                self.transcriptionStatus = .ready
+                self.applyAndSaveTranscript()
+            }
+        }
     }
 
     /// Applies a crop drawn over the preview.
