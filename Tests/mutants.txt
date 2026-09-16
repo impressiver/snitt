@@ -529,3 +529,7 @@ LegacyVoiceoverDiscardTests :: Sources/SnittDocument/EditDecisionList.swift :: s
 VoiceoverTranscriptTests :: Sources/SnittApp/Transcriber.swift :: let surviving = overdubs.isEmpty ? transcript.words : transcript.words.filter { :: let surviving = true ? transcript.words : transcript.words.filter {
 # The microphone is built from MicrophoneTimeline, not from the kept-range loop.
 OverdubMixTests :: Sources/SnittExport/CompositionBuilder.swift :: for (index, pair) in audioTrackPairs.enumerated() where index != microphoneIndex { :: for (index, pair) in audioTrackPairs.enumerated() where index != nil {
+# "It doesn't play the overdubbed tracks": an AVAssetTrack does not keep its
+# AVURLAsset alive, so building the asset inline released it at the end of the
+# loop and every insert failed against a dead track — silently, behind a `try?`.
+OverdubPlaybackTests :: Sources/SnittExport/CompositionBuilder.swift :: takeAssets.append(asset) :: _ = asset

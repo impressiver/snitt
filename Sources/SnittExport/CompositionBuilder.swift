@@ -323,14 +323,30 @@ public enum CompositionBuilder {
         // project has paid for that often enough to stop doing it.
         if let microphoneIndex, microphoneIndex < audioTrackPairs.count {
             let pair = audioTrackPairs[microphoneIndex]
+            // THE ASSETS ARE HELD, not just their tracks.
+            //
+            // An `AVAssetTrack` does not keep its `AVURLAsset` alive. A first
+            // version built the asset inline and kept only the track, so every
+            // asset was released at the end of its own loop iteration and each
+            // `insertTimeRange` then failed against a track whose asset had
+            // gone — silently, because the insert is a `try?`. The composition
+            // came out the right length with EMPTY time where the take should
+            // have been, which is exactly "it doesn't play the overdubbed
+            // tracks".
+            //
+            // The voiceover path this replaced held its asset in a local for
+            // the whole block and worked for that reason; the lifetime was
+            // load-bearing and it did not look it.
+            var takeAssets: [AVURLAsset] = []
             var takes: [Int: AVAssetTrack] = [:]
             for (index, overdub) in edl.overdubs.enumerated() {
-                let url = bundle.url.appendingPathComponent(overdub.filename)
-                if let track = try? await AVURLAsset(url: url)
-                    .loadTracks(withMediaType: .audio).first {
+                let asset = AVURLAsset(url: bundle.url.appendingPathComponent(overdub.filename))
+                takeAssets.append(asset)
+                if let track = try? await asset.loadTracks(withMediaType: .audio).first {
                     takes[index] = track
                 }
             }
+            defer { withExtendedLifetime(takeAssets) {} }
             for piece in MicrophoneTimeline.pieces(keptRanges: kept, overdubs: edl.overdubs) {
                 let at = CMTime(seconds: piece.outputStart, preferredTimescale: 600)
                 let duration = CMTime(seconds: piece.durationSeconds, preferredTimescale: 600)

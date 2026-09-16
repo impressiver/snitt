@@ -143,3 +143,64 @@ struct OverdubMixTests {
             edl: edl, hasAudioMix: false) == .overdub)
     }
 }
+
+/// That the take's AUDIO is actually in the microphone track.
+///
+/// Reported as "it doesn't play the overdubbed tracks". Every assertion in
+/// `OverdubMixTests` above is about the SHAPE of the composition — how many
+/// tracks, how long, what the mix covers — and a composition can have exactly
+/// the right shape while playing none of the take.
+///
+/// `AVCompositionTrack.segments` names the file behind every stretch, which is
+/// the difference between "the microphone is three seconds long" and "these
+/// three seconds come from the take".
+struct OverdubPlaybackTests {
+
+    private func bundleWithTake() async throws -> (SnittBundle, EditDecisionList, String) {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "playback-\(UUID().uuidString).snitt")
+        let bundle = try SnittBundle(creatingAt: root)
+        try await writeSyntheticMovie(to: bundle.captureURL, seconds: 6.0,
+                                      audioTrackCount: 2, audioContent: .tone)
+        try RecordingMetadata(createdAt: Date(), initiator: .human).write(to: bundle)
+
+        let filename = "overdub-take.m4a"
+        try await writeSyntheticMovie(to: bundle.url.appendingPathComponent(filename),
+                                      seconds: 2.0, audioTrackCount: 1, audioContent: .tone)
+        var edl = EditDecisionList()
+        edl.trackStates = [TrackState(track: "systemAudio"), TrackState(track: "microphone")]
+        edl.overdubs = [Overdub(filename: filename, durationSeconds: 2.0,
+                                segments: [OverdubSegment(takeStart: 0, sourceStart: 2.0,
+                                                          durationSeconds: 2.0)])]
+        return (bundle, edl, filename)
+    }
+
+    @Test("The microphone track actually plays the take's file")
+    func microphoneCarriesTheTakeAudio() async throws {
+        let (bundle, edl, filename) = try await bundleWithTake()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+
+        let audio = built.composition.tracks(withMediaType: .audio)
+        let microphone = try #require(audio.last)
+        let sources = microphone.segments.compactMap { $0.sourceURL?.lastPathComponent }
+        #expect(sources.contains(filename),
+                "the microphone plays \(sources) — the take's audio is not in it")
+    }
+
+    @Test("And the capture is still there either side of it")
+    func captureSurvivesAroundTheTake() async throws {
+        let (bundle, edl, filename) = try await bundleWithTake()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+
+        let microphone = try #require(built.composition.tracks(withMediaType: .audio).last)
+        let sources = microphone.segments.compactMap { $0.sourceURL?.lastPathComponent }
+        #expect(sources.contains("capture.mov"), "the capture vanished: \(sources)")
+        #expect(sources.contains(filename))
+        // Three stretches: capture, take, capture — an empty segment in the
+        // middle would mean the take was skipped and the gap left silent.
+        #expect(microphone.segments.allSatisfy { !$0.isEmpty },
+                "the microphone has an empty stretch where the take should be")
+    }
+}
