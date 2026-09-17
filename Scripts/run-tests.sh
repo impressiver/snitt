@@ -43,33 +43,32 @@ counted=0
 # one was a real concurrency violation that had been on `main` for weeks
 # because CI never compiled the commit that introduced it.
 #
-# SOURCES ONLY, matching CI exactly, and the exclusion is forced rather than
-# chosen. `ShareMenu.services()` carries a deliberate
-# `@available(macOS, deprecated: 13.0)` — the modern picker needs the finished
-# export before the menu can open, which is the ten-second wait that design
-# removes — and Swift propagates a deprecated callee's annotation to every
-# caller. The usual answer is to annotate the callers too, and that works all
-# the way up until it reaches the tests: swift-testing REFUSES `@Suite` on a
-# deprecated type ("Attribute 'Suite' cannot be applied to this structure
-# because it has been marked '@available'"). So the chain cannot be completed,
-# and gating the test targets would mean either exempting a warning group for
-# the whole package or deleting a documented decision.
+# SOURCES AND TESTS, which is more than CI's own step covers.
 #
-# The test targets are NOT warning-free. An earlier version of this comment
-# said they were, on the strength of an incremental build that recompiled
-# nothing and therefore reported nothing — forced from scratch they carry 22,
-# sixteen of them main-actor isolation across five SnittAppTests files and six
-# the deprecation chain above. Two were fixed here because they were real and
-# cheap; the rest are a separate change.
+# It took two wrong answers to get here, both recorded because the next person
+# will meet the same wall. Swift propagates a deprecated callee's annotation to
+# every caller, and `ShareMenu.services()` carries a deliberate one — the
+# modern picker needs the finished export before the menu can open, which is
+# the ten-second wait that design removes. Annotating the callers works until
+# it reaches the tests, where swift-testing REFUSES `@Suite` on a deprecated
+# type. From that single failure this was declared impossible.
+#
+# It is not: `@available` is accepted on an individual `@Test`, the warning
+# goes, and the test still runs. The suite is the one place it cannot go.
+#
+# So the whole package builds warning-free and the gate checks all of it.
+# Measure with a FORCED rebuild if you ever doubt that — an incremental build
+# recompiles nothing and reports nothing, which is how a stale count survives
+# in a comment, and how this one was twice confirmed wrong.
 #
 # Run FIRST, and fatal. `swift test` rebuilds without this flag, so a warning
 # here would otherwise be discovered after two thousand tests had run and
 # passed.
 printf '\n=== build (warnings are errors) ===\n'
-if swift build -Xswiftc -warnings-as-errors > "$LOG_DIR/build.log" 2>&1; then
+if swift build --build-tests -Xswiftc -warnings-as-errors > "$LOG_DIR/build.log" 2>&1; then
   echo "clean"
 else
-  echo "FAILED: the sources do not build warning-free"
+  echo "FAILED: the package does not build warning-free"
   grep -E 'error:' "$LOG_DIR/build.log" | head -20
   echo "  see $LOG_DIR/build.log"
   echo

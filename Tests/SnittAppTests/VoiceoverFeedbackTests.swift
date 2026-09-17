@@ -145,6 +145,7 @@ struct EditorWindowMinimumSizeTests {
 /// The lane's label, which is the one part of a new track nothing forces you
 /// to add.
 @Suite
+@MainActor
 struct VoiceoverLaneLabelTests {
 
     @Test("Every audio track Snitt can have is named properly")

@@ -149,6 +149,7 @@ struct GainMeterTests {
 // and unchanged; what these pin is that the view colours what the arithmetic
 // decides, in the brand's vocabulary rather than the user's accent colour.
 @Suite
+@MainActor
 struct GainMeterAppearanceTests {
 
     private func srgb(_ color: Color) -> NSColor {

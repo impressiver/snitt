@@ -26,6 +26,11 @@ struct ShareMenuTests {
     init() { _ = NSApplication.shared }
 
     @Test("A placeholder of the right type offers the SAME destinations as a real file")
+    // Carries `ShareMenu.services()`'s own deprecation. Swift propagates a
+    // deprecated callee's annotation to every caller, and the ONE place it
+    // cannot go is the suite: swift-testing refuses `@Suite` on a deprecated
+    // type. It accepts it here, on the test, and the test still runs.
+    @available(macOS, deprecated: 13.0)
     func placeholderMatchesARealFile() throws {
         // The load-bearing claim. If services depended on the file's contents,
         // the instant menu would be listing destinations the real export
@@ -47,6 +52,11 @@ struct ShareMenuTests {
     }
 
     @Test("The placeholder EXISTS on disk, because a missing file offers nothing")
+    // Carries `ShareMenu.services()`'s own deprecation. Swift propagates a
+    // deprecated callee's annotation to every caller, and the ONE place it
+    // cannot go is the suite: swift-testing refuses `@Suite` on a deprecated
+    // type. It accepts it here, on the test, and the test still runs.
+    @available(macOS, deprecated: 13.0)
     func placeholderMustExist() throws {
         // Probed against the real API: `sharingServices(forItems:)` returns
         // ZERO services for a URL whose file is not there. Building the menu
@@ -64,6 +74,11 @@ struct ShareMenuTests {
     }
 
     @Test("The placeholder's type is the type a share actually sends")
+    // Carries `ShareMenu.services()`'s own deprecation. Swift propagates a
+    // deprecated callee's annotation to every caller, and the ONE place it
+    // cannot go is the suite: swift-testing refuses `@Suite` on a deprecated
+    // type. It accepts it here, on the test, and the test still runs.
+    @available(macOS, deprecated: 13.0)
     func placeholderTypeMatchesTheExport() throws {
         // One constant feeds both. Two would let the menu advertise
         // destinations for a type the export does not produce.
@@ -72,6 +87,11 @@ struct ShareMenuTests {
     }
 
     @Test("The menu lists real destinations, each carrying its own service")
+    // Carries `ShareMenu.services()`'s own deprecation. Swift propagates a
+    // deprecated callee's annotation to every caller, and the ONE place it
+    // cannot go is the suite: swift-testing refuses `@Suite` on a deprecated
+    // type. It accepts it here, on the test, and the test still runs.
+    @available(macOS, deprecated: 13.0)
     func menuCarriesTheService() {
         let menu = NSMenu(title: "Share")
         ShareMenuController.shared.menuNeedsUpdate(menu)
@@ -88,6 +108,11 @@ struct ShareMenuTests {
     }
 
     @Test("Reopening the menu replaces its items rather than appending them")
+    // Carries `ShareMenu.services()`'s own deprecation. Swift propagates a
+    // deprecated callee's annotation to every caller, and the ONE place it
+    // cannot go is the suite: swift-testing refuses `@Suite` on a deprecated
+    // type. It accepts it here, on the test, and the test still runs.
+    @available(macOS, deprecated: 13.0)
     func rebuildDoesNotAccumulate() {
         // `menuNeedsUpdate` fires on every open. Without the `removeAllItems`
         // the list would grow by its own length each time — visible only to
@@ -100,6 +125,11 @@ struct ShareMenuTests {
     }
 
     @Test("The controller is held strongly enough to still be there when the menu opens")
+    // Carries `ShareMenu.services()`'s own deprecation. Swift propagates a
+    // deprecated callee's annotation to every caller, and the ONE place it
+    // cannot go is the suite: swift-testing refuses `@Suite` on a deprecated
+    // type. It accepts it here, on the test, and the test still runs.
+    @available(macOS, deprecated: 13.0)
     func delegateOutlivesMenuConstruction() throws {
         // `NSMenu.delegate` is WEAK — the same trap `NSMenuItem.target` sets,
         // and one this project has already been caught by. A delegate created

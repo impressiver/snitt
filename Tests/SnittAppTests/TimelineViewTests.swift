@@ -37,6 +37,10 @@ extension NSEvent {
     /// Converting here rather than at every call site is the point: a rule
     /// that every author must remember is a rule that gets forgotten, and this
     /// one had no symptom until the geometry stopped being symmetric.
+    /// `@MainActor` because it reads the view's own geometry — `isFlipped`
+    /// and `bounds` are main-actor, and an extension at file scope inherits
+    /// no isolation from the suites that call it.
+    @MainActor
     static func synthetic(at point: NSPoint, in view: NSView,
                           clickCount: Int = 1) -> NSEvent {
         let location = view.isFlipped

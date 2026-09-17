@@ -23,6 +23,7 @@ import SwiftUI
 /// left the ladder behind — which is exactly the defect being fixed, so a test
 /// that cannot see it happen again is not worth writing.
 @Suite
+@MainActor
 struct TrackColourTests {
 
     private func srgb(_ color: Color) -> NSColor { NSColor(color).usingColorSpace(.sRGB)! }
