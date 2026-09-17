@@ -100,6 +100,46 @@ zero-length.
 more importantly, pins that the upload list and the verification list are
 the same list.
 
+## Unlock the screen before you start
+
+**A locked screen makes notarization fail by reporting the credential as
+MISSING.** Not as locked, not as inaccessible. This is what you see:
+
+```
+error: notarization credentials did not work.
+the keychain profile 'snitt' is named but did not authenticate.
+Error: No Keychain password item found for profile: snitt
+```
+
+Nothing is wrong with the profile. Unlock the Mac and re-run; it
+authenticates immediately. Observed on 0.6.1 (2026-09-17), where it cost
+most of an afternoon.
+
+`caffeinate -disu` is in the command above because it stops the screen
+locking PART WAY THROUGH a release, which is worth keeping. It cannot
+unlock a screen that is already locked, so it is not protection against
+starting in this state.
+
+**What is actually established is that symptom and nothing more.** Locked,
+notarytool reports the item missing; unlocked, it works. The mechanism
+underneath was NOT demonstrated, and two plausible explanations were
+checked and found wrong:
+
+- *"The credential has been deleted."* Wrong. It was asserted three times
+  off `security dump-keychain`, which only reads FILE-BASED keychains and
+  is structurally blind to the store notarytool uses. It reports nothing
+  and cannot distinguish that from absence. The Sparkle key showing up in
+  the same dump made it look corroborated; that key is file-based, so it
+  only proved the other keychain was fine.
+- *"Data-protection keychain items are locked."* Also unproven. The probe
+  that seemed to show it returns `errSecItemNotFound` even on an unlocked
+  machine, because an unsigned ad-hoc binary cannot reach that store at
+  all. It never measured lock state in either direction.
+
+So: do not go looking for a deleted credential, and do not trust a
+`security`-based search to tell you whether one exists. Unlock the screen
+first, and if it still fails, you have a real problem rather than this one.
+
 ## Two version numbers, deliberately disjoint
 
 `CFBundleShortVersionString` is what a person reads. `CFBundleVersion` is
@@ -224,6 +264,10 @@ numbers" below), so releasing 0.5.0 means changing `0.5.0-dev` to
    `stapler staple build/Snitt.app` and `spctl --assess` against the
    **app bundle itself**. The temp submission zip is deleted; it is not
    the artifact you publish.
+
+   If this step reports `No Keychain password item found for profile`, the
+   screen is locked. See "Unlock the screen before you start" above; the
+   credential is almost certainly fine.
 
    Read the printed `notarytool submit` status, not just this script's
    exit code — some Xcode versions have been reported to exit 0 on a
