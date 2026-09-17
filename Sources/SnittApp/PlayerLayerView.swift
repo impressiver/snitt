@@ -124,8 +124,20 @@ public final class PlayerLayerBackedView: NSView {
         let interval = CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600)
         timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) {
             [weak self] time in
-            self?.clickOverlay.currentTime = time.seconds
-            self?.textOverlay.currentTime = time.seconds
+            // `assumeIsolated`, not a `Task` hop. The observer was registered
+            // on `.main`, so this IS the main actor — the compiler simply
+            // cannot see that through a `@Sendable` closure, and this asserts
+            // at runtime what the queue already guarantees.
+            //
+            // A `Task { @MainActor in … }` would compile just as well and be
+            // wrong for the feature: it defers to a later turn of the run
+            // loop, and at 1/30s that puts the ring and the caption a frame
+            // behind the picture they are annotating. The overlay has to move
+            // WITH the playhead, not after it.
+            MainActor.assumeIsolated {
+                self?.clickOverlay.currentTime = time.seconds
+                self?.textOverlay.currentTime = time.seconds
+            }
         }
     }
 
