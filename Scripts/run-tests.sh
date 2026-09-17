@@ -55,9 +55,12 @@ counted=0
 # and gating the test targets would mean either exempting a warning group for
 # the whole package or deleting a documented decision.
 #
-# Both test-target warnings that DID exist were fixed rather than tolerated, so
-# `swift build --build-tests` is warning-free today; it simply cannot be made
-# warning-free under this flag.
+# The test targets are NOT warning-free. An earlier version of this comment
+# said they were, on the strength of an incremental build that recompiled
+# nothing and therefore reported nothing — forced from scratch they carry 22,
+# sixteen of them main-actor isolation across five SnittAppTests files and six
+# the deprecation chain above. Two were fixed here because they were real and
+# cheap; the rest are a separate change.
 #
 # Run FIRST, and fatal. `swift test` rebuilds without this flag, so a warning
 # here would otherwise be discovered after two thousand tests had run and

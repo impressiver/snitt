@@ -126,10 +126,24 @@ jobs:
           restore-keys: spm-${{ runner.os }}-
 
       - name: Build (warnings are errors)
-        # Sources only. The test targets carry 30 warnings of one class
-        # (a redundant `try` on `EditorWindowTestGate.run`) in
-        # DocumentOpenerTests and DockReopenTests; gating those is a separate
-        # change, and source warnings are the ones that ship.
+        # Sources only, and source warnings are the ones that ship.
+        #
+        # The test targets carry 22, counted 2026-09-17 from a forced rebuild
+        # — an incremental build reports none, which is how a stale count
+        # survives in a comment. Sixteen are main-actor isolation in
+        # SettingsWindowLayoutTests, GainMeterTests, TrackColourTests,
+        # TimelineViewTests and VoiceoverFeedbackTests; six are in
+        # ShareMenuTests and CANNOT be fixed by annotation —
+        # `ShareMenu.services()` carries a deliberate
+        # `@available(macOS, deprecated: 13.0)`, Swift propagates that to every
+        # caller, and swift-testing refuses `@Suite` on a deprecated type. So
+        # gating the tests means either exempting a warning group for the whole
+        # package or deleting a documented decision; it is a separate change
+        # and may not be a possible one.
+        #
+        # This comment previously named 30 redundant-`try` warnings on
+        # `EditorWindowTestGate.run` in DocumentOpenerTests and DockReopenTests.
+        # Those are gone, and the file it named no longer exists.
         #
         # No warning group is exempt. Raising the floor to macOS 26 (D77) made
         # 18 deprecations fire in CompositionBuilder.swift; they were migrated
