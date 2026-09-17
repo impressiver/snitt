@@ -50,7 +50,7 @@ WORTH RECORDING FOR THE SHAPE: nothing about this leak looked wrong in isolation
 
 Tasks 1-4 REVIEW: spec compliance OK, NOT APPROVED -- one Critical, and it is one I had already "fixed".
 CRITICAL: RecordingCoordinator:518 still logged String(describing: error) as .public beside the message I had redacted. A Cocoa NSError renders its userInfo, which carries NSFilePath AND NSURL -- the FULL ABSOLUTE PATH, so the machine's username and the branch-derived bundle name travelled inside the ERROR even though the message named no file. I measured it directly:
-  describing:  ...UserInfo={NSFilePath=/Users/ian/.../feat-acme-corp-.../edit.json, NSURL=file:///...}
+  describing:  ...UserInfo={NSFilePath=/Users/you/.../feat-acme-corp-.../edit.json, NSURL=file:///...}
   localized:   The file "edit.json" couldn't be opened because there is no such file.
   domain+code: NSCocoaErrorDomain 260
 FIXED, 80132e2: domain + code + localizedDescription. That is MORE precise for a support engineer than String(describing:) was, and names only fixed sidecar files. The doc comment I had written ("the filename only correlates") was FALSE while the error still carried it.

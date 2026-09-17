@@ -729,7 +729,7 @@ public actor RecordingCoordinator: AgentRecordingControlling {
             // userInfo, which carries NSFilePath and NSURL — the FULL
             // ABSOLUTE PATH, including the machine's username and the
             // branch-derived bundle name (BundleNaming, M3a). Measured:
-            //   describing:    …UserInfo={NSFilePath=/Users/ian/…/feat-acme-corp-…}
+            //   describing:    …UserInfo={NSFilePath=/Users/you/…/feat-acme-corp-…}
             //   localized:     The file “edit.json” couldn’t be opened…
             // So the first route leaked exactly what redacting the filename
             // from this message was meant to stop, and this line is
