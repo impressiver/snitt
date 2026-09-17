@@ -105,7 +105,19 @@ public enum PeerIdentityReader {
         var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN))
         let length = proc_pidpath(pid, &buffer, UInt32(buffer.count))
         guard length > 0 else { return nil }
-        return String(cString: buffer)
+        // `proc_pidpath` returns the length it WROTE, not counting the
+        // terminator, so the string is exactly that many bytes — decoded
+        // directly rather than scanned for a NUL.
+        //
+        // `String(cString:)` is deprecated in Swift 6.4 and this project
+        // builds with warnings-as-errors in CI, so the deprecation is a build
+        // failure rather than a note. Its replacement cannot be handed a
+        // NUL-terminated buffer: `String(decoding:as:)` keeps every byte it is
+        // given, so passing the whole 1024-byte buffer would produce a path
+        // with a thousand NULs welded to the end, which compares equal to
+        // nothing and prints as the right answer.
+        return String(decoding: buffer.prefix(Int(length)).map { UInt8(bitPattern: $0) },
+                      as: UTF8.self)
     }
 
     /// The caller's signing identifier and team, via the Security framework.

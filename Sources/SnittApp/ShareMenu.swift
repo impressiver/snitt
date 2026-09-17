@@ -88,6 +88,19 @@ final class ShareMenuController: NSObject, NSMenuDelegate {
     /// installed, removed and enabled while an app is running, and a list
     /// captured at launch would quietly go stale. It is a cheap call — the
     /// expensive part was never the enumeration.
+    ///
+    /// Marked deprecated to CARRY `ShareMenu.services()`'s own annotation
+    /// rather than to discourage anyone from calling this: Swift 6.4 began
+    /// propagating a deprecated callee's warning to its caller, and this
+    /// project builds with warnings-as-errors, so the accepted deprecation
+    /// documented on `services()` turned into a build failure without anything
+    /// about the decision changing.
+    ///
+    /// Contained here rather than exempted globally. A blanket exemption would
+    /// also hide the NEXT deprecation, which is exactly the kind this project
+    /// migrated eighteen of rather than silencing when the floor moved to
+    /// macOS 26 (D77).
+    @available(macOS, deprecated: 13.0)
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let services = ShareMenu.services()
