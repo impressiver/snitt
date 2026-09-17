@@ -194,3 +194,106 @@ func signAppHonoursGenuineTeamIDWithoutOverride() throws {
     #expect(result.status == 0, "a genuine Team ID with no override set must proceed normally: \(result.stderr)")
     #expect(result.stdout.contains("Real Team ID"))
 }
+
+/// A real Mach-O to sign, NOT a shell script.
+///
+/// `makeSignableStub` writes a `#!/bin/sh` file, which codesign will happily
+/// sign and which can carry no embedded entitlements at all — there is no
+/// Mach-O to embed them in, so a readback returns nothing and an entitlement
+/// assertion fails no matter what the script did. That fixture silently
+/// decides which property is under test, the exact failure this project has
+/// logged before. Entitlement tests need a real binary; a copy of a system
+/// executable is the cheapest one.
+private func makeSignableMachO() throws -> URL {
+    let path = FileManager.default.temporaryDirectory
+        .appending(path: "snitt-signable-macho-\(UUID().uuidString)")
+    try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/echo"), to: path)
+    try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: path.path)
+    return path
+}
+
+/// Reads back the entitlements actually embedded in a signature.
+///
+/// Deliberately a READBACK rather than a check that the script passed
+/// `--entitlements`. The bug this pins shipped a signature; whether codesign
+/// was invoked a particular way is the adjacent property, and this project has
+/// found twenty-six tests that asserted one of those instead of the one that
+/// mattered.
+private func embeddedEntitlements(of path: String) -> String {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/codesign")
+    process.arguments = ["-d", "--entitlements", "-", "--xml", path]
+    let out = Pipe(), err = Pipe()
+    process.standardOutput = out
+    process.standardError = err
+    try? process.run()
+    let data = out.fileHandleForReading.readDataToEndOfFile()
+    _ = err.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return String(decoding: data, as: UTF8.self)
+}
+
+/// Snitt records the microphone, and it ships with the Hardened Runtime on
+/// (`codesign --options runtime`, `flags=0x10000(runtime)` on the released
+/// 0.6.0 bundle).
+///
+/// Apple's Hardened Runtime page lists `com.apple.security.device.audio-input`
+/// among the access permissions it gates — "whether the app may record audio
+/// using the built-in microphone and access audio input using Core Audio" —
+/// and states "The default value of these Boolean entitlements is false". So a
+/// hardened app that never declares it cannot reach the microphone at all.
+///
+/// The symptom is not an error. `AVCaptureDevice.requestAccess(for: .audio)`
+/// is refused before TCC registers a client, so the app never appears under
+/// Privacy & Security ▸ Microphone — there is nothing to switch on, and no
+/// dialog ever appears. Reported from a clean install on a second Mac; it is
+/// invisible on any machine that granted the permission to an earlier build.
+///
+/// Screen Recording, Input Monitoring and Speech Recognition are NOT on that
+/// list, which is why only the microphone broke: it is the one capability
+/// Snitt uses that the Hardened Runtime gates.
+@Test("The signed app carries the microphone entitlement the Hardened Runtime requires")
+func signedAppCarriesAudioInputEntitlement() throws {
+    let lib = try copyScriptsLib()
+    defer { try? FileManager.default.removeItem(at: lib) }
+    let stub = try makeSignableMachO()
+    defer { try? FileManager.default.removeItem(at: stub) }
+
+    let signScript = lib.appending(path: "sign-app-with-workaround.sh")
+    let result = run(signScript, [stub.path, "-"])
+    #expect(result.status == 0, "signing failed: \(result.stderr)")
+
+    let entitlements = embeddedEntitlements(of: stub.path)
+    // Without this key the microphone is unreachable no matter what TCC says.
+    #expect(entitlements.contains("com.apple.security.device.audio-input"),
+            "hardened-runtime signature must declare audio-input")
+}
+
+/// The teamless branch re-signs, and `--entitlements` REPLACES the set rather
+/// than merging into it. So the workaround branch has to rewrite the
+/// microphone key alongside `disable-library-validation`, not add to it.
+///
+/// This is the regression that would be invisible where it matters most: the
+/// maintainer's own ad-hoc builds take exactly this branch, so dropping the
+/// key here would restore the original bug on every locally-built app while
+/// the Developer-ID release stayed correct.
+@Test("The teamless workaround branch keeps the microphone entitlement as well")
+func teamlessWorkaroundKeepsAudioInput() throws {
+    let lib = try copyScriptsLib()
+    defer { try? FileManager.default.removeItem(at: lib) }
+    let stub = try makeSignableMachO()
+    defer { try? FileManager.default.removeItem(at: stub) }
+
+    // Ad-hoc signing yields no Team ID, which is what selects the workaround.
+    let signScript = lib.appending(path: "sign-app-with-workaround.sh")
+    let result = run(signScript, [stub.path, "-"])
+    #expect(result.status == 0, "signing failed: \(result.stderr)")
+    #expect(result.stderr.contains("No real Team ID"),
+            "this test is only meaningful on the workaround branch")
+
+    let entitlements = embeddedEntitlements(of: stub.path)
+    #expect(entitlements.contains("com.apple.security.cs.disable-library-validation"),
+            "the workaround itself must still be applied")
+    #expect(entitlements.contains("com.apple.security.device.audio-input"),
+            "re-signing must not drop the microphone entitlement")
+}
