@@ -126,30 +126,29 @@ jobs:
           restore-keys: spm-${{ runner.os }}-
 
       - name: Build (warnings are errors)
-        # Sources only, and source warnings are the ones that ship.
+        # The WHOLE package, tests included. It builds warning-free as of
+        # 2026-09-17, and `Scripts/run-tests.sh` runs this same command first
+        # so a warning fails locally before two thousand tests do.
         #
-        # The test targets carry 22, counted 2026-09-17 from a forced rebuild
-        # — an incremental build reports none, which is how a stale count
-        # survives in a comment. Sixteen are main-actor isolation in
-        # SettingsWindowLayoutTests, GainMeterTests, TrackColourTests,
-        # TimelineViewTests and VoiceoverFeedbackTests; six are in
-        # ShareMenuTests and CANNOT be fixed by annotation —
-        # `ShareMenu.services()` carries a deliberate
-        # `@available(macOS, deprecated: 13.0)`, Swift propagates that to every
-        # caller, and swift-testing refuses `@Suite` on a deprecated type. So
-        # gating the tests means either exempting a warning group for the whole
-        # package or deleting a documented decision; it is a separate change
-        # and may not be a possible one.
+        # This comment has been wrong twice, and the corrections are worth more
+        # than the claim. It named 30 redundant-`try` warnings on
+        # `EditorWindowTestGate.run` long after both those warnings and that
+        # file were gone. Then it said gating the tests might be impossible,
+        # because swift-testing refuses `@Suite` on a deprecated type — true,
+        # and not the end of it: `@available` IS accepted on an individual
+        # `@Test`, so `ShareMenuTests` can carry `ShareMenu.services()`'s
+        # deliberate deprecation after all. One failed attempt was mistaken for
+        # a wall.
         #
-        # This comment previously named 30 redundant-`try` warnings on
-        # `EditorWindowTestGate.run` in DocumentOpenerTests and DockReopenTests.
-        # Those are gone, and the file it named no longer exists.
+        # If you doubt the count, force a rebuild. An incremental build
+        # recompiles nothing and reports nothing, which is how both wrong
+        # versions of this were confirmed.
         #
         # No warning group is exempt. Raising the floor to macOS 26 (D77) made
         # 18 deprecations fire in CompositionBuilder.swift; they were migrated
         # to AVVideoComposition.Configuration rather than exempted, so this can
         # stay absolute.
-        run: swift build -Xswiftc -warnings-as-errors
+        run: swift build --build-tests -Xswiftc -warnings-as-errors
 
       - name: Test
         # NOT the whole suite, and the exclusion is load-bearing rather than

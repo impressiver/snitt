@@ -50,6 +50,10 @@ struct SettingsWindowLayoutTests {
             // the outline reports it INDENTED — the nesting is the thing being
             // asserted, and a reader that silently unwrapped it would make a
             // sub-option and a sibling look identical here.
+            // `@MainActor` because a NESTED function does not inherit the
+            // enclosing test's isolation, and everything it touches —
+            // `title`, `stringValue`, `arrangedSubviews` — is main-actor.
+            @MainActor
             func leadingName(_ view: NSView) -> (name: String, depth: Int)? {
                 if let button = view as? NSButton { return (button.title, 0) }
                 if let label = view as? NSTextField { return (label.stringValue, 0) }
