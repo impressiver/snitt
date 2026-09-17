@@ -43,8 +43,21 @@ run_pass() {
   # thing we do not trust; the log is.
   swift test --filter "$filter" > "$log" 2>&1 || true
 
+  # EVERY summary line, not the last one.
+  #
+  # Swift 6.4 (Xcode 27) prints one summary PER TARGET where earlier
+  # toolchains printed one for the whole invocation. `tail -1` therefore
+  # started reading a single target's result as the pass's result, and it
+  # broke this script in both directions at once:
+  #
+  #   - the count shrank to the last target's, so the reconciliation below
+  #     reported 1291 of 2002 and looked like 711 missing tests;
+  #   - and the pass/fail check only saw the last target, so a pass whose
+  #     FIRST five targets failed would have reported green as long as the
+  #     last one passed. That is the silent-green this whole script exists
+  #     to prevent, arriving by a route it did not know about.
   local summary
-  summary="$(grep -E 'Test run with .* (passed|failed)' "$log" | tail -1 || true)"
+  summary="$(grep -E 'Test run with .* (passed|failed)' "$log" || true)"
 
   if [ -z "$summary" ]; then
     echo "FAILED: no summary line — the bundle probably crashed. Last 20 lines:"
@@ -56,18 +69,23 @@ run_pass() {
 
   echo "$summary"
 
-  # Accumulate what actually RAN. A filter that matches nothing reports
-  # "Test run with 0 tests ... passed" — green, having tested nothing — so a
-  # typo in one of these filters would silently skip a whole target. The
-  # reconciliation after both passes is what catches that.
+  # Accumulate what actually RAN, SUMMED across every target in the pass. A
+  # filter that matches nothing reports "Test run with 0 tests ... passed" —
+  # green, having tested nothing — so a typo in one of these filters would
+  # silently skip a target. The reconciliation after both passes is what
+  # catches that, and it can only do so if this total is the real one.
   local ran
-  ran="$(printf '%s' "$summary" | sed -E 's/.*with ([0-9]+) tests.*/\1/')"
+  ran="$(printf '%s\n' "$summary" | sed -E 's/.*with ([0-9]+) tests.*/\1/' \
+         | awk '{ total += $1 } END { print total + 0 }')"
   counted=$(( counted + ran ))
 
-  case "$summary" in
-    *passed*) ;;
-    *) echo "  see $log"; grep -E '^✘ Test "' "$log" | head -10; failed=1 ;;
-  esac
+  # ANY failing target fails the pass. Asking whether "the summary" passed
+  # stopped being a single question the moment there was more than one.
+  if printf '%s\n' "$summary" | grep -q 'failed'; then
+    echo "  see $log"
+    grep -E '^✘ Test "' "$log" | head -20
+    failed=1
+  fi
 }
 
 run_pass "app-and-fast-targets" "SnittAppTests|$FAST"
