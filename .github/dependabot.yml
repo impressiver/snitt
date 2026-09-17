@@ -1,22 +1,39 @@
+# Dependabot version updates.
+#
+# This exists because Dependabot ALERTS do not cover Sparkle. Alerts are
+# enabled (#142), but the dependency graph only ever picked up the three
+# `actions/*` used by CI: `Package.resolved` is committed and pins Sparkle,
+# yet no Swift package appeared in the SBOM. Version updates are a separate
+# mechanism that reads the manifest directly, so this closes the gap the
+# alerts left.
+#
+# The difference is worth stating: alerts fire on a published advisory,
+# version updates fire on a published RELEASE. For a dependency surface that
+# is essentially one library, being told it moved is the useful signal;
+# waiting for a CVE in an updater framework is not.
 version: 2
 updates:
-  # Sparkle is the only third-party dependency, and it is the one that installs
-  # code on a user's machine — an updater with a known vulnerability is a worse
-  # problem than an out-of-date library. Monthly rather than weekly because
-  # there is one dependency and a solo maintainer; a PR nobody reads is noise.
+  # Sparkle. The only real dependency, and the one that ships inside the app
+  # bundle and downloads and executes code, so a stale copy matters more here
+  # than the count of dependencies suggests.
   - package-ecosystem: "swift"
     directory: "/"
     schedule:
-      interval: "monthly"
-    open-pull-requests-limit: 3
+      interval: "weekly"
+    # Sparkle is pinned with `exact:` in Package.swift. A version bump is
+    # therefore a deliberate act with a signing and notarization path behind
+    # it, never something to batch: one open PR at a time is the honest cap.
+    open-pull-requests-limit: 1
     commit-message:
       prefix: "deps"
 
-  # The workflow's own actions pin to major versions, which still drift.
+  # The CI actions. These are the ones alerts already watch, and a compromised
+  # `actions/checkout` is a real supply-chain class, so keeping them current
+  # is worth the noise of a PR now and then.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "monthly"
+      interval: "weekly"
     open-pull-requests-limit: 3
     commit-message:
       prefix: "ci"
