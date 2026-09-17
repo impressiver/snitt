@@ -62,7 +62,44 @@ fi
 # it has a real Team ID, and only add the entitlement (re-signing) when it
 # does not. `needs-teamless-workaround.sh` holds the actual decision so it
 # can also be unit-tested in isolation with a synthetic TeamIdentifier line.
-codesign --force --sign "$SIGN_ID" --options runtime \
+# The microphone entitlement is NOT conditional and NOT a workaround.
+#
+# Snitt ships with the Hardened Runtime on (`--options runtime` below). Apple's
+# Hardened Runtime page lists com.apple.security.device.audio-input among the
+# access permissions it gates — "whether the app may record audio using the
+# built-in microphone and access audio input using Core Audio" — and says "The
+# default value of these Boolean entitlements is false". So a hardened app that
+# never declares it cannot reach the microphone, whatever TCC says.
+#
+# The symptom is silence, not an error: AVCaptureDevice.requestAccess(for:
+# .audio) is refused before TCC registers a client, so the app never appears
+# under Privacy & Security > Microphone at all. Nothing to switch on, no
+# dialog, no log. Reported from a clean install on a second Mac; invisible on
+# any machine that granted the permission to an earlier build.
+#
+# Screen Recording, Input Monitoring and Speech Recognition are NOT on that
+# list, which is why only the microphone broke — it is the one capability
+# Snitt uses that the Hardened Runtime gates.
+ENTITLEMENTS_DIR="$(mktemp -d -t snitt-app-entitlements)"
+trap 'rm -rf "$ENTITLEMENTS_DIR"' EXIT
+ENTITLEMENTS="$ENTITLEMENTS_DIR/entitlements.plist"
+
+write_entitlements() {
+  # $1: extra keys to add inside the dict, or empty for the baseline.
+  cat > "$ENTITLEMENTS" <<ENTITLEMENTS_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>$1
+</dict>
+</plist>
+ENTITLEMENTS_PLIST
+}
+
+write_entitlements ""
+codesign --force --sign "$SIGN_ID" --options runtime --entitlements "$ENTITLEMENTS" \
   "${TIMESTAMP_ARGS[@]+"${TIMESTAMP_ARGS[@]}"}" "$APP"
 
 REAL_TEAM_LINE="$(codesign -dvv "$APP" 2>&1 | grep '^TeamIdentifier=' || true)"
@@ -108,23 +145,17 @@ fi
 
 if [ "$DECISION" = "yes" ]; then
   echo "No real Team ID ($TEAM_LINE) — adding disable-library-validation so the embedded framework can still load." >&2
-  ENTITLEMENTS_DIR="$(mktemp -d -t snitt-app-entitlements)"
-  ENTITLEMENTS="$ENTITLEMENTS_DIR/entitlements.plist"
-  cat > "$ENTITLEMENTS" <<ENTITLEMENTS_PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
+  # Re-signing REPLACES the entitlement set, so the microphone key has to be
+  # rewritten alongside the workaround rather than added to it. Dropping it
+  # here would restore the original bug on exactly the ad-hoc builds the
+  # maintainer tests with.
+  write_entitlements "
   <key>com.apple.security.cs.disable-library-validation</key>
-  <true/>
-</dict>
-</plist>
-ENTITLEMENTS_PLIST
+  <true/>"
   codesign --force --sign "$SIGN_ID" --options runtime --entitlements "$ENTITLEMENTS" \
     "${TIMESTAMP_ARGS[@]+"${TIMESTAMP_ARGS[@]}"}" "$APP"
-  rm -rf "$ENTITLEMENTS_DIR"
 elif [ "$DECISION" = "no" ]; then
-  echo "Real Team ID ($TEAM_LINE) — library validation satisfied without any extra entitlement."
+  echo "Real Team ID ($TEAM_LINE) — library validation satisfied without widening it; the app keeps the microphone entitlement only."
 else
   echo "error: needs-teamless-workaround.sh returned an unexpected answer: \"$DECISION\" (expected yes/no) — refusing to guess" >&2
   exit 1
