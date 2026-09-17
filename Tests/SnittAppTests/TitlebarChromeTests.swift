@@ -41,11 +41,31 @@ struct TitlebarChromeTests {
                       onExport: {})
     }
 
-    private func hosted(width: Double = 900) -> NSHostingView<EditorToolbar> {
+    /// The toolbar hosted IN A WINDOW, because that is the only place it is
+    /// ever hit-tested.
+    ///
+    /// On macOS 27 `NSHostingView.hitTest` returns nil for a view that has no
+    /// window — and these tests hosted one in mid-air, so both of them started
+    /// failing while the real title bar was fine. Measured directly: the same
+    /// view added to an `NSWindow` hit-tests to itself and answers
+    /// `mouseDownCanMoveWindow == true`, which is exactly what they assert.
+    ///
+    /// So the harness was asking about a view in a state the app never puts it
+    /// in. A window costs one line and makes the question the real one; the
+    /// window is returned so the caller can keep it alive, since a deallocated
+    /// window takes the view's `window` back to nil and the failure returns
+    /// wearing a different hat.
+    private func hosted(width: Double = 900) -> (view: NSHostingView<EditorToolbar>,
+                                                 window: NSWindow) {
         let host = NSHostingView(rootView: toolbar())
-        host.frame = NSRect(x: 0, y: 0, width: width, height: EditorToolbar.height)
+        let frame = NSRect(x: 0, y: 0, width: width, height: EditorToolbar.height)
+        let window = NSWindow(contentRect: frame,
+                              styleMask: [.titled, .fullSizeContentView],
+                              backing: .buffered, defer: false)
+        window.contentView = host
+        host.frame = frame
         host.layoutSubtreeIfNeeded()
-        return host
+        return (host, window)
     }
 
     @Test("The chrome row lets a press become a window drag")
@@ -67,7 +87,8 @@ struct TitlebarChromeTests {
         // answer: wrap this row in a custom `NSView` some day, inherit the
         // default of false, and the window silently stops moving from its own
         // titlebar with nothing failing anywhere.
-        let host = hosted()
+        let (host, window) = hosted()
+        defer { withExtendedLifetime(window) {} }
         let empty = NSPoint(x: 420, y: EditorToolbar.height / 2)
         let hit = try? #require(host.hitTest(empty) as? NSView)
         #expect(hit?.mouseDownCanMoveWindow == true,
@@ -79,7 +100,8 @@ struct TitlebarChromeTests {
         // The other half: the row has to stay interactive. A version of this
         // that made the whole row transparent to clicks would give a draggable
         // window whose Export button does nothing.
-        let host = hosted()
+        let (host, window) = hosted()
+        defer { withExtendedLifetime(window) {} }
         let overControls = NSPoint(x: 860, y: EditorToolbar.height / 2)
         #expect(host.hitTest(overControls) != nil,
                 "the trailing controls stopped taking clicks")

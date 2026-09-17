@@ -70,11 +70,30 @@ struct TextOverlayRenderTests {
         return (sumX / count, sumY / count, count)
     }
 
+    /// 1280x720, not the fixture's 320x240 default.
+    ///
+    /// Overlay sizes are RELATIVE to the picture — `OverlayLayout` gives a
+    /// caption 3.4% of the frame's height, with a 12pt floor — so a tiny frame
+    /// does not merely shrink the caption, it moves the whole measurement into
+    /// the noise. At 320x240 the caption renders at the 12pt floor and comes
+    /// through H.264 as SEVENTEEN pixels of contrast; `textCentroid` requires
+    /// twenty before it will believe it is looking at text rather than
+    /// compression artefacts.
+    ///
+    /// Which is exactly how these tests failed on Xcode 27 while real exports
+    /// were fine: measured on a real 3840-wide export of the same code, the
+    /// captions and banners are present and correctly placed. The encoder
+    /// moved a marginal signal a few pixels, and the fixture had no margin to
+    /// give. 1280x720 is a size Snitt actually exports at, and the same
+    /// caption lands with 502 pixels — twenty-five times the floor.
+    private static let renderSize = CGSize(width: 1280, height: 720)
+
     private func bundleWithMovie(seconds: Double) async throws -> SnittBundle {
         let root = FileManager.default.temporaryDirectory
             .appending(path: "textoverlay-\(UUID().uuidString).snitt")
         let bundle = try SnittBundle(creatingAt: root)
-        try await writeSyntheticMovie(to: bundle.captureURL, seconds: seconds)
+        try await writeSyntheticMovie(to: bundle.captureURL, seconds: seconds,
+                                      size: Self.renderSize)
         return bundle
     }
 
