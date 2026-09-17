@@ -201,7 +201,13 @@ struct ClickOverlayRenderTests {
             .appending(path: "mp4clicks-\(UUID().uuidString).snitt")
         let bundle = try SnittBundle(creatingAt: root)
         defer { try? FileManager.default.removeItem(at: root) }
-        try await writeSyntheticMovie(to: bundle.captureURL, seconds: 2.0)
+        // 1280x720, not the fixture's 320x240 default. A click ring is sized
+        // from the picture, so a tiny frame draws a thin stroke that H.264
+        // smears below the brightness this asserts — the measurement lands in
+        // the noise rather than the ring failing to draw. Verified against a
+        // real export: the burn-in is correct at the sizes Snitt ships.
+        try await writeSyntheticMovie(to: bundle.captureURL, seconds: 2.0,
+                                      size: CGSize(width: 1280, height: 720))
         let built = try await CompositionBuilder.build(
             bundle: bundle, edl: EditDecisionList(), scale: 1.0)
         let marks = ClickOverlay.marks(
