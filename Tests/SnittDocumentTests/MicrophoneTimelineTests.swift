@@ -71,9 +71,13 @@ struct MicrophoneTimelineTests {
         // to a listener: advancing the output time without advancing the
         // source offset replays the seconds the take just covered.
         let pieces = MicrophoneTimeline.pieces(keptRanges: whole, overdubs: [take(4, 2)])
-        let tail = try? #require(pieces.last)
-        #expect(tail?.source == .capture(start: 6),
-                "the capture resumed at \(String(describing: tail?.source)) rather than source 6")
+        // `pieces` is known non-empty here, so `#require` on its last element
+        // is a check the compiler can already prove — and it says so. The
+        // count is the thing actually worth asserting: three pieces means the
+        // take split the capture rather than replacing or truncating it.
+        #expect(pieces.count == 3, "expected capture/take/capture, got \(pieces.count)")
+        #expect(pieces.last?.source == .capture(start: 6),
+                "the capture resumed at \(String(describing: pieces.last?.source)) rather than source 6")
     }
 
     @Test("A take at the very start leaves no empty piece in front of it")

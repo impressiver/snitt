@@ -34,6 +34,46 @@ mkdir -p "$LOG_DIR"
 failed=0
 counted=0
 
+# WARNINGS ARE ERRORS, the way CI builds.
+#
+# The gate and CI used to build with different strictness, so a deprecation
+# was a note here and a build failure there — and on the day Actions came back
+# after a billing block it failed three times in a row while this script passed
+# throughout. Two of those were deprecations only the newer toolchain flags;
+# one was a real concurrency violation that had been on `main` for weeks
+# because CI never compiled the commit that introduced it.
+#
+# SOURCES ONLY, matching CI exactly, and the exclusion is forced rather than
+# chosen. `ShareMenu.services()` carries a deliberate
+# `@available(macOS, deprecated: 13.0)` — the modern picker needs the finished
+# export before the menu can open, which is the ten-second wait that design
+# removes — and Swift propagates a deprecated callee's annotation to every
+# caller. The usual answer is to annotate the callers too, and that works all
+# the way up until it reaches the tests: swift-testing REFUSES `@Suite` on a
+# deprecated type ("Attribute 'Suite' cannot be applied to this structure
+# because it has been marked '@available'"). So the chain cannot be completed,
+# and gating the test targets would mean either exempting a warning group for
+# the whole package or deleting a documented decision.
+#
+# Both test-target warnings that DID exist were fixed rather than tolerated, so
+# `swift build --build-tests` is warning-free today; it simply cannot be made
+# warning-free under this flag.
+#
+# Run FIRST, and fatal. `swift test` rebuilds without this flag, so a warning
+# here would otherwise be discovered after two thousand tests had run and
+# passed.
+printf '\n=== build (warnings are errors) ===\n'
+if swift build -Xswiftc -warnings-as-errors > "$LOG_DIR/build.log" 2>&1; then
+  echo "clean"
+else
+  echo "FAILED: the sources do not build warning-free"
+  grep -E 'error:' "$LOG_DIR/build.log" | head -20
+  echo "  see $LOG_DIR/build.log"
+  echo
+  echo "TEST GATE: FAILED"
+  exit 1
+fi
+
 run_pass() {
   local name="$1" filter="$2" log="$LOG_DIR/$1.log"
 

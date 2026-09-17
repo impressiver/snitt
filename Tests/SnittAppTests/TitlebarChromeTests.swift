@@ -90,7 +90,10 @@ struct TitlebarChromeTests {
         let (host, window) = hosted()
         defer { withExtendedLifetime(window) {} }
         let empty = NSPoint(x: 420, y: EditorToolbar.height / 2)
-        let hit = try? #require(host.hitTest(empty) as? NSView)
+        // `hitTest` already returns `NSView?`, so the old `as? NSView` was a
+        // downcast to the type it was — and now that the gate builds with
+        // warnings as errors, saying so is a build failure rather than a note.
+        let hit = host.hitTest(empty)
         #expect(hit?.mouseDownCanMoveWindow == true,
                 "a press in the chrome row cannot move the window — it is not draggable")
     }

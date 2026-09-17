@@ -108,7 +108,12 @@ func degenerateRenderSizeRefused() async throws {
         bundle: bundle, edl: EditDecisionList(), scale: 1.0)
     let broken = BuiltComposition(
         composition: built.composition,
-        videoComposition: AVMutableVideoComposition(),   // renderSize .zero
+        // A composition whose `renderSize` is .zero, built the non-deprecated
+        // way. `AVMutableVideoComposition()` gave one for free and is
+        // deprecated in macOS 26; an empty `Configuration` defaults its
+        // renderSize to .zero, which is exactly the degenerate value under
+        // test.
+        videoComposition: AVVideoComposition(configuration: .init()),
         audioMix: built.audioMix,
         renderTransform: built.renderTransform,
         naturalSize: built.naturalSize,
