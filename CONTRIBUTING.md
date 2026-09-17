@@ -128,7 +128,7 @@ against it**. A test that passes whether or not the code is correct is worse
 than no test, because it reads as coverage. This project has found twenty-six
 tests that asserted a property *adjacent* to the one that mattered.
 
-Three project-specific traps:
+Two project-specific traps:
 
 - **`swift test` exits 0 when the test bundle segfaults.** Only the
   `Test run with N tests ... passed` line is trustworthy. Piping to `grep`
@@ -138,13 +138,6 @@ Three project-specific traps:
   movies, or open windows. Run the full unfiltered `swift test` locally before
   proposing anything that touches export, composition, the editor or the
   timeline.
-- **A LOCKED SCREEN FAILS TESTS THAT LOOK UNRELATED.** Anything that hit-tests
-  a real `NSHostingView` needs the window server, and macOS does not composite
-  for a locked session — so the run comes back with failures in the editor
-  chrome and a lower test COUNT than usual, neither of which has anything to do
-  with the change under test. Unlock the Mac and run it again before believing
-  a failure. If you are not sure whether that is what you are looking at,
-  `ioreg -n Root -d1 -a | grep -q CGSSessionScreenIsLocked` answers it.
 
 ### Continuous integration
 
