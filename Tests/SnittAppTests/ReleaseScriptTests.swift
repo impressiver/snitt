@@ -566,3 +566,91 @@ private func rawDeclaredVersion() -> String {
     else { return "0.0.0" }
     return String(line[line.index(after: start)..<end])
 }
+
+/// Step 6's guard: the appcast's `sparkle:version` must equal the built app's
+/// CFBundleVersion, because that is the pair Sparkle compares.
+///
+/// The guard itself is covered by `SparkleVersionIsTheBuildNumber` above. What
+/// is covered HERE is that the guard can run at all — it could not. Its `sed`
+/// used `:` as the s/// delimiter while matching the literal tag
+/// `sparkle:version`, whose own colon closed the pattern three characters in;
+/// sed then read the rest as flags and exited with "bad flag in substitute
+/// command: 'v'". So the guard aborted the release instead of checking it, and
+/// because it sits behind `DRY_RUN=0` no test and no dry run ever reached it.
+/// It shipped in #126 and fired for the first time on v0.6.0.
+///
+/// The expression is EXTRACTED FROM THE SCRIPT rather than written out here.
+/// A copy in the test would have gone on passing while release.sh stayed
+/// broken — this file already warns about the adjacent-property version of a
+/// test, and a retyped regex is exactly that: it tests the test.
+@Suite(.serialized)
+struct AppcastVersionExtraction {
+    /// The `sed` expression release.sh actually runs, taken from its source.
+    private func expressionFromScript() throws -> String {
+        let source = try String(contentsOfFile: scriptPath, encoding: .utf8)
+        // If the guard moves, move this test with it rather than deleting it.
+        let line = try #require(
+            source.split(separator: "\n").first { $0.contains("APPCAST_SPARKLE_VERSION=") },
+            "release.sh no longer assigns APPCAST_SPARKLE_VERSION")
+        guard let start = line.firstIndex(of: "'"),
+              let end = line.lastIndex(of: "'"), start < end
+        else {
+            Issue.record("the sed expression is not single-quoted on one line: \(line)")
+            return ""
+        }
+        return String(line[line.index(after: start)..<end])
+    }
+
+    /// An appcast whose build number and marketing version are DIFFERENT
+    /// values, so extracting the wrong tag is a wrong answer rather than a
+    /// coincidentally right one.
+    private func fixture() throws -> String {
+        let url = FileManager.default.temporaryDirectory
+            .appending(path: "appcast-\(UUID().uuidString).xml")
+        try """
+            <?xml version="1.0" standalone="yes"?>
+            <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+              <channel>
+                <item>
+                  <sparkle:version>192</sparkle:version>
+                  <sparkle:shortVersionString>0.6.0</sparkle:shortVersionString>
+                </item>
+              </channel>
+            </rss>
+            """.write(to: url, atomically: true, encoding: .utf8)
+        return url.path
+    }
+
+    @Test("The guard's own sed runs, and yields the build number")
+    func extractsTheBuildNumber() throws {
+        let result = runShell("sed -nE '\(try expressionFromScript())' '\(try fixture())' | head -1")
+
+        // Both halves matter. A delimiter collision makes sed DIE, which is
+        // empty stdout plus a diagnostic; a wrong tag makes it SUCCEED with
+        // "0.6.0". The first assertion catches the bug that shipped, the
+        // second catches the fix being applied to the wrong tag.
+        #expect(result.stderr.isEmpty,
+                "sed failed instead of extracting: \(result.stderr)")
+        #expect(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines) == "192")
+    }
+}
+
+/// Runs one bash command line and captures both streams.
+private func runShell(_ command: String) -> ScriptResult {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/bin/bash")
+    process.arguments = ["-c", command]
+    process.environment = ["PATH": "/usr/bin:/bin:/usr/sbin:/sbin"]
+    let out = Pipe(), err = Pipe()
+    process.standardOutput = out
+    process.standardError = err
+    do { try process.run() } catch {
+        return ScriptResult(status: -1, stdout: "", stderr: "launch failed: \(error)")
+    }
+    let outData = out.fileHandleForReading.readDataToEndOfFile()
+    let errData = err.fileHandleForReading.readDataToEndOfFile()
+    process.waitUntilExit()
+    return ScriptResult(status: process.terminationStatus,
+                        stdout: String(decoding: outData, as: UTF8.self),
+                        stderr: String(decoding: errData, as: UTF8.self))
+}

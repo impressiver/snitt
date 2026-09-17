@@ -448,7 +448,12 @@ if step 6 "Generate the appcast item"; then
   if [ "$DRY_RUN" -eq 0 ]; then
     BUILT_CFBUNDLEVERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
       build/Snitt.app/Contents/Info.plist 2>/dev/null || true)"
-    APPCAST_SPARKLE_VERSION="$(sed -nE 's:.*<sparkle:version>([^<]*)</sparkle:version>.*:\1:p' \
+    # `#` as the delimiter, NOT `:`. The tag being matched is
+    # `sparkle:version`, whose own colon closed the pattern early — sed then
+    # read `version>.*:\1:p` as flags and died on 'v'. The check has therefore
+    # never run since it was added in #126, and 0.6.0 is the first release to
+    # reach it.
+    APPCAST_SPARKLE_VERSION="$(sed -nE 's#.*<sparkle:version>([^<]*)</sparkle:version>.*#\1#p' \
       "$APPCAST" | head -1)"
     if [ -z "$BUILT_CFBUNDLEVERSION" ] || [ -z "$APPCAST_SPARKLE_VERSION" ]; then
       echo "error: could not read the build number from the app or the appcast." >&2
