@@ -242,6 +242,119 @@ verify_release() {
     return 1
   fi
   echo "==> $TAG has every required asset."
+
+  verify_published_app || return 1
+}
+
+# ---------------------------------------------------------------------------
+# The assets existing is not the property anyone cares about. This opens the
+# PUBLISHED zip and checks what is inside it.
+#
+# It exists because v0.6.0 and v0.6.1 both shipped an app binary built weeks
+# earlier: `make-app.sh` copied from a hardcoded product path a toolchain
+# update had abandoned, and every check in the pipeline passed, because every
+# check asked whether a file EXISTED. Nobody found out until a shipped feature
+# appeared to have vanished from the released app.
+#
+# What this catches and what it does not, stated plainly rather than implied:
+#
+#   - the published app is not the one just built  -> caught (hash)
+#   - the release ships the wrong version          -> caught (plist)
+#   - the artifact does not match the tag          -> caught (build number)
+#   - notarization did not survive the upload      -> caught (spctl)
+#   - the BINARY is stale but the plist is fresh   -> NOT caught here
+#
+# That last one is the original bug, and it is caught at BUILD time by the
+# freshness guard in make-app.sh, which is the only moment the question can be
+# asked: it compares the binary against the sources before anything is copied.
+# By the time a release finishes, step 10 has rewritten AppVersion.swift to
+# the next -dev, so a source file is legitimately newer than the binary and an
+# mtime check here would fail every release. Verified before writing this,
+# rather than discovered by a failing release.
+# ---------------------------------------------------------------------------
+verify_published_app() {
+  local workdir app short built tagged published_hash local_hash
+  workdir="$(mktemp -d -t snitt-verify-published)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$workdir'" RETURN
+
+  echo "==> Verifying the contents of the PUBLISHED $ZIP"
+  if ! gh release download "$TAG" --repo "$REPO" --pattern "$ZIP"         --dir "$workdir" >/dev/null 2>&1; then
+    echo "error: could not download $ZIP from $TAG to inspect it." >&2
+    return 1
+  fi
+  if ! ditto -x -k "$workdir/$ZIP" "$workdir/extracted" 2>/dev/null; then
+    echo "error: $ZIP did not extract — it is not a usable archive." >&2
+    return 1
+  fi
+  app="$workdir/extracted/Snitt.app"
+  if [ ! -d "$app" ]; then
+    echo "error: $ZIP does not contain Snitt.app." >&2
+    return 1
+  fi
+
+  short="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+    "$app/Contents/Info.plist" 2>/dev/null || true)"
+  if [ "$short" != "$VERSION" ]; then
+    echo "error: the published app calls itself '$short', but this is the" >&2
+    echo "       $VERSION release. Somebody would install $short from a" >&2
+    echo "       page titled $VERSION." >&2
+    return 1
+  fi
+
+  # The app's build number is the tagged commit's first-parent count. Checking
+  # it against the TAG rather than against HEAD is deliberate: by now HEAD has
+  # moved on to the next -dev, and comparing to HEAD would pass whatever was
+  # shipped.
+  built="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' \
+    "$app/Contents/Info.plist" 2>/dev/null || true)"
+  tagged="$(git rev-list --count --first-parent "$TAG" 2>/dev/null || true)"
+  if [ -n "$tagged" ] && [ "$built" != "$tagged" ]; then
+    echo "error: the published app is build $built, but $TAG is commit" >&2
+    echo "       number $tagged. The artifact does not match the tag." >&2
+    return 1
+  fi
+
+  # Byte-identical to what was built, signed and notarized here. This is an
+  # upload-integrity check: it cannot tell a good binary from a bad one, only
+  # whether the bytes people download are the bytes that were verified.
+  #
+  # Only when the local build IS this version. `--verify 0.6.1` run on a
+  # machine holding a 0.6.2 build must not report the older release corrupt:
+  # the two binaries differing is correct there, and a check that cries wolf
+  # on a healthy release is worse than no check, because the next real
+  # failure reads as the same noise. Caught by running it, not by reasoning
+  # about it.
+  local local_short=""
+  if [ -f "build/Snitt.app/Contents/Info.plist" ]; then
+    local_short="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
+      "build/Snitt.app/Contents/Info.plist" 2>/dev/null || true)"
+  fi
+  if [ -f "build/Snitt.app/Contents/MacOS/Snitt" ] && [ "$local_short" = "$VERSION" ]; then
+    published_hash="$(shasum -a 256 "$app/Contents/MacOS/Snitt" | awk '{print $1}')"
+    local_hash="$(shasum -a 256 "build/Snitt.app/Contents/MacOS/Snitt" | awk '{print $1}')"
+    if [ "$published_hash" != "$local_hash" ]; then
+      echo "error: the published binary is NOT the one built and notarized." >&2
+      echo "       published $published_hash" >&2
+      echo "       local     $local_hash" >&2
+      return 1
+    fi
+    echo "   binary is byte-identical to the one built and notarized"
+  elif [ -n "$local_short" ] && [ "$local_short" != "$VERSION" ]; then
+    echo "   (local build is $local_short, not $VERSION — skipping the hash check)"
+  fi
+
+  # Gatekeeper against the downloaded copy, not the local one: this is the
+  # path a real installation takes, and a staple that did not survive the
+  # round trip looks fine locally.
+  if ! spctl -a -t exec "$app" >/dev/null 2>&1; then
+    echo "error: Gatekeeper REJECTS the published app. It was notarized here," >&2
+    echo "       so the ticket did not survive the upload." >&2
+    return 1
+  fi
+
+  echo "   version $short, build $built, Gatekeeper accepted"
+  echo "==> The published $ZIP contains what it should."
 }
 
 if [ "$MODE" = "verify" ]; then

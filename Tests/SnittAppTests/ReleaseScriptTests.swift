@@ -489,22 +489,79 @@ struct ReleaseScriptTests {
     func verifyModeAcceptsACompleteRelease() throws {
         // The other half. A verifier that reported MISSING unconditionally
         // would pass the test above.
+        //
+        // "Everything" now includes the CONTENTS of the published zip, not
+        // just its presence in the asset list, so this fixture has to produce
+        // a real archive holding a real Info.plist. That is the point of
+        // `verify_published_app`: a listing entry is not an artifact, and
+        // v0.6.0 and v0.6.1 both passed a presence-only check while shipping
+        // an app built weeks earlier.
         let dir = FileManager.default.temporaryDirectory
             .appending(path: "snitt-release-verify-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let app = dir.appending(path: "stage/Snitt.app/Contents/MacOS")
+        try FileManager.default.createDirectory(at: app, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
+        try FileManager.default.copyItem(at: URL(fileURLWithPath: "/bin/echo"),
+                                         to: app.appending(path: "Snitt"))
+        try """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+            <plist version="1.0"><dict>
+            <key>CFBundleShortVersionString</key><string>0.2.0</string>
+            <key>CFBundleVersion</key><string>77</string>
+            </dict></plist>
+            """.write(to: dir.appending(path: "stage/Snitt.app/Contents/Info.plist"),
+                      atomically: true, encoding: .utf8)
+        let zip = dir.appending(path: "Snitt-0.2.0.zip")
+        let ditto = Process()
+        ditto.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        ditto.arguments = ["-c", "-k", "--keepParent",
+                           dir.appending(path: "stage/Snitt.app").path, zip.path]
+        try ditto.run()
+        ditto.waitUntilExit()
+
         let gh = dir.appending(path: "gh")
         try """
             #!/bin/bash
+            if [ "$1" = "release" ] && [ "$2" = "download" ]; then
+              for ((i=1;i<=$#;i++)); do
+                [ "${!i}" = "--dir" ] && j=$((i+1)) && d="${!j}"
+              done
+              cp "\(zip.path)" "$d/"
+              exit 0
+            fi
             printf '%s\\t%s\\n' 'Snitt-0.2.0.zip' 8388063 'appcast.xml' 1012 \\
                                 'Snitt-0.2.0.dmg' 10275411
             """.write(to: gh, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755],
                                               ofItemAtPath: gh.path)
+        // The tag does not exist here, so `git rev-list` would fail and the
+        // build-number comparison would skip itself. Reported explicitly so
+        // the fixture agrees with the plist above rather than passing by
+        // accident.
+        let git = dir.appending(path: "git")
+        try """
+            #!/bin/bash
+            if [ "$1" = "rev-list" ]; then echo 77; exit 0; fi
+            exit 0
+            """.write(to: git, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                              ofItemAtPath: git.path)
+        // A fixture bundle is a copy of /bin/echo and Gatekeeper rightly
+        // refuses it, which is the check working rather than a problem to
+        // route around. Notarization cannot be simulated, so it is stubbed
+        // here and exercised for real instead: `release.sh --verify` against
+        // a published release runs it against the downloaded copy.
+        let spctl = dir.appending(path: "spctl")
+        try "#!/bin/bash\nexit 0\n".write(to: spctl, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                              ofItemAtPath: spctl.path)
 
         let result = runScript(["--verify", "0.2.0"], extraPath: dir.path)
         #expect(result.status == 0, "\(result.output)")
         #expect(result.stdout.contains("every required asset"))
+        #expect(result.stdout.contains("contains what it should"),
+                "the contents were never inspected")
     }
 
     @Test("A zero-byte asset counts as missing")
