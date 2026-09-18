@@ -1,6 +1,6 @@
 cask "snitt" do
-  version "0.6.1"
-  sha256 "be49d0ebd6a1fc6d6ccfe190e40c9b44dcfa9c321d94b16d829e206302e8d0ff"
+  version "0.6.2"
+  sha256 "f21db7e3275b509bbcfe4a78ca7d5d30885a2ab647ab35785a9a2bdb56170e6d"
 
   url "https://github.com/impressiver/snitt/releases/download/v#{version}/Snitt-#{version}.zip"
   name "Snitt"
