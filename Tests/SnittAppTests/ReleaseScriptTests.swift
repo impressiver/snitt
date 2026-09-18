@@ -368,15 +368,22 @@ struct ReleaseScriptTests {
                 "the next version is unmarked — a development build would claim to be a release")
     }
 
-    @Test("The next version is the next MINOR, not a re-release of this one")
-    func postReleaseBumpPicksTheNextMinor() throws {
+    @Test("The next version is the next PATCH, the smallest increment there is")
+    func postReleaseBumpPicksTheNextPatch() throws {
         // Pinned against the actual declared version rather than a literal, so
         // this keeps meaning the same thing after every release. A bump that
         // produced the SAME version would satisfy "contains -dev" while
         // leaving main claiming a shipped version, which is the whole defect.
+        //
+        // PATCH, not minor. A minor bump asserts the next release will carry
+        // features before anyone has decided what it contains, and it makes
+        // that claim silently, at the end of the PREVIOUS release. A patch
+        // claims the least; bumping further stays a deliberate edit to
+        // AppVersion.marketing, which preflight then refuses to disagree with.
         let current = declaredVersion()
         let parts = current.split(separator: ".")
-        let expected = "\(parts[0]).\(Int(parts[1])! + 1).0-dev"
+        let patch = Int(parts[2].split(separator: "-")[0])!
+        let expected = "\(parts[0]).\(parts[1]).\(patch + 1)-dev"
 
         let stubs = try makeStubs()
         defer { try? FileManager.default.removeItem(at: stubs) }

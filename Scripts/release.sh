@@ -523,17 +523,27 @@ fi
 # CFBundleShortVersionString, which Sparkle does not compare; CFBundleVersion
 # is the commit count and keeps rising regardless.
 #
-# NEXT MINOR, following the convention this pattern comes from — Maven's
-# release plugin proposes a minor increment for the next development version —
-# and matching this project's own history, where every release so far has been
-# one. A patch release just sets it explicitly; preflight already refuses a
-# version that disagrees with the file, so that conversation cannot be skipped.
+# NEXT PATCH, deliberately the SMALLEST possible increment.
+#
+# This used to propose the next MINOR, following Maven's release plugin. The
+# problem with that is it makes a claim nobody has decided yet: it says the
+# next release will carry new features, before anyone knows what the next
+# release contains. Worse, it does so silently, so the size of the version
+# bump is chosen by a script at the END of the previous release rather than
+# by a person looking at what actually changed.
+#
+# A patch increment claims the least. Bumping to a minor or a major stays a
+# deliberate act: set AppVersion.marketing, and preflight refuses any version
+# that disagrees with the file, so the decision cannot be skipped by accident
+# in either direction.
 # ---------------------------------------------------------------------------
 next_dev_version() {
-  local v="$1" major rest minor
-  major="${v%%.*}"; rest="${v#*.}"; minor="${rest%%.*}"
-  case "$major$minor" in ""|*[!0-9]*) return 1 ;; esac
-  printf '%s.%s.0-dev\n' "$major" "$((minor + 1))"
+  local v="$1" major rest minor patch
+  major="${v%%.*}"; rest="${v#*.}"; minor="${rest%%.*}"; patch="${rest#*.}"
+  # Strip any pre-release marker so 1.2.3-rc1 still yields 1.2.4-dev.
+  patch="${patch%%-*}"
+  case "$major$minor$patch" in ""|*[!0-9]*) return 1 ;; esac
+  printf '%s.%s.%s-dev\n' "$major" "$minor" "$((patch + 1))"
 }
 
 if step 10 "Leave main on the next development version"; then
