@@ -59,12 +59,27 @@ fi
 # serve a machine the developer does not have is a bad trade.
 if [ -n "${SNITT_SIGN_IDENTITY+x}" ] || [ -n "${SNITT_UNIVERSAL+x}" ]; then
   ARCH_FLAGS=(--arch arm64 --arch x86_64)
-  # A multi-arch `swift build` writes here instead of .build/debug.
-  PRODUCT_DIR=".build/apple/Products/Debug"
   echo "Building universal (arm64 + x86_64)."
 else
   ARCH_FLAGS=()
-  PRODUCT_DIR=".build/debug"
+fi
+
+# ASK the build system where it writes. Never hardcode it.
+#
+# This used to be a literal: `.build/apple/Products/Debug` for multi-arch and
+# `.build/debug` otherwise. A toolchain update moved the real output to
+# `.build/out/Products/Debug` and left the old directory in place, holding a
+# binary from the last build that used it. The existence check below passed,
+# because the file was right there. Every universal build from then on copied
+# a STALE app into the bundle, and universal is tied to SNITT_SIGN_IDENTITY,
+# so that means every release: v0.6.0 and v0.6.1 both shipped an app binary
+# frozen weeks earlier, while local development builds were correct. It
+# surfaced as a shipped feature that had "disappeared" (#128's "Export for"
+# picker) with no failure anywhere in the pipeline.
+PRODUCT_DIR="$(swift build -c debug ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --show-bin-path)"
+if [ -z "$PRODUCT_DIR" ] || [ ! -d "$PRODUCT_DIR" ]; then
+  echo "error: could not resolve the build output directory from swift build." >&2
+  exit 1
 fi
 
 swift build -c debug ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --product SnittApp
@@ -82,6 +97,18 @@ swift build -c debug ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --product snitt-mcp
 for required in SnittApp snitt-cli snitt-mcp; do
   if [ ! -f "$PRODUCT_DIR/$required" ]; then
     echo "error: swift build did not produce $PRODUCT_DIR/$required" >&2
+    exit 1
+  fi
+  # EXISTING is not the property that matters; FRESH is. A leftover from an
+  # earlier toolchain satisfies `-f` forever and ships silently. If any source
+  # file is newer than the binary we are about to copy, the binary is not the
+  # source tree we are releasing.
+  STALE_SOURCE="$(find Sources Package.swift -type f -newer "$PRODUCT_DIR/$required" -print -quit 2>/dev/null || true)"
+  if [ -n "$STALE_SOURCE" ]; then
+    echo "error: $PRODUCT_DIR/$required is OLDER than $STALE_SOURCE." >&2
+    echo "       swift build reported success, so it wrote its output somewhere" >&2
+    echo "       else and this file is a leftover. Copying it would ship code" >&2
+    echo "       that is not in this tree. Check 'swift build --show-bin-path'." >&2
     exit 1
   fi
 done
@@ -264,7 +291,16 @@ if [ -f "$PRODUCT_DIR/SnittApp" ]; then
   # Added here rather than as a linker flag because this layout is make-app.sh's
   # decision, not the package's, and it must hold however the binary was built.
   # Before signing, deliberately: install_name_tool invalidates a signature.
-  if ! otool -l "$APP/Contents/MacOS/Snitt" | grep -qE 'path @loader_path \(offset'; then
+  # Counted into a variable rather than `| grep -q`. Under `set -o pipefail`,
+  # `grep -q` exits on the FIRST match and closes the pipe, so otool is killed
+  # by SIGPIPE and the pipeline reports failure even though the match was
+  # found. `!` then inverts that into "not present" and the tool runs anyway.
+  # The guard therefore failed in exactly the case it was written for: only a
+  # binary that ALREADY has the rpath can short-circuit grep. `|| true` keeps
+  # grep's exit 1 (no match) from tripping `set -e`.
+  RPATH_COUNT="$(otool -l "$APP/Contents/MacOS/Snitt" \
+    | grep -cE 'path @loader_path \(offset' || true)"
+  if [ "${RPATH_COUNT:-0}" -eq 0 ]; then
     install_name_tool -add_rpath "@loader_path" "$APP/Contents/MacOS/Snitt"
   fi
 fi
