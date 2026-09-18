@@ -93,4 +93,65 @@ struct MakeAppFreshnessTests {
         #expect(stderr.contains("is OLDER than"),
                 "the refusal must say WHICH file is stale")
     }
+
+    /// A release must never be a debug build.
+    ///
+    /// Every release up to and including v0.6.1 shipped `-c debug`:
+    /// unoptimised, with debug assertions live and the `#if DEBUG` code that
+    /// exists for previews and test seams compiled in. Nobody chose that; it
+    /// was the only configuration the script knew how to build.
+    ///
+    /// Asserted on the CONFIGURATION THE SCRIPT ASKS FOR, by watching the
+    /// `swift` it invokes, rather than on a string in the file. A stub that
+    /// records its own arguments is the only way to see what was actually
+    /// requested, and the requested configuration is what decides both the
+    /// optimisation level and which product directory gets copied.
+    @Test("A signed build asks swift for release, and an unsigned one does not")
+    func signedBuildUsesReleaseConfiguration() throws {
+        func configurationRequested(signed: Bool) throws -> String {
+            let dir = FileManager.default.temporaryDirectory
+                .appending(path: "snitt-config-\(UUID().uuidString)")
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let log = dir.appending(path: "args.log")
+            let swift = dir.appending(path: "swift")
+            try """
+                #!/bin/bash
+                echo "$@" >> "\(log.path)"
+                for a in "$@"; do
+                  if [ "$a" = "--show-bin-path" ]; then echo "\(dir.path)"; exit 0; fi
+                done
+                exit 0
+                """.write(to: swift, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                                  ofItemAtPath: swift.path)
+
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/bin/bash")
+            process.arguments = [FileManager.default.currentDirectoryPath + "/Scripts/make-app.sh"]
+            var env = ["PATH": "\(dir.path):/usr/bin:/bin:/usr/sbin:/sbin",
+                       "HOME": NSHomeDirectory()]
+            // A fake identity: this test is about the CONFIGURATION that
+            // choice selects, and it never reaches signing.
+            if signed { env["SNITT_SIGN_IDENTITY"] = "Developer ID Application: test" }
+            process.environment = env
+            let out = Pipe(), err = Pipe()
+            process.standardOutput = out
+            process.standardError = err
+            try process.run()
+            _ = out.fileHandleForReading.readDataToEndOfFile()
+            _ = err.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            return (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+        }
+
+        let signed = try configurationRequested(signed: true)
+        #expect(signed.contains("-c release"),
+                "a signed build must ask for release")
+        #expect(!signed.contains("-c debug"),
+                "a signed build asked for debug somewhere")
+
+        let unsigned = try configurationRequested(signed: false)
+        #expect(unsigned.contains("-c debug"),
+                "a development build should stay debug for build speed")
+    }
 }

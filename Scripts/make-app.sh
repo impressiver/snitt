@@ -64,6 +64,27 @@ else
   ARCH_FLAGS=()
 fi
 
+# A RELEASE is never a debug build.
+#
+# Every release up to and including v0.6.1 shipped `-c debug`: unoptimised,
+# carrying debug assertions, and compiling the `#if DEBUG` code that exists
+# for previews and test seams. That is not what anyone should be installing.
+#
+# Tied to SNITT_SIGN_IDENTITY for the same reason the universal slice is: a
+# release must not be able to ship the wrong configuration because somebody
+# forgot a variable. Development builds stay debug, because waiting for an
+# optimised build to check a layout change is a bad trade. SNITT_CONFIG
+# overrides either way, for testing this script itself.
+CONFIG="${SNITT_CONFIG:-}"
+if [ -z "$CONFIG" ]; then
+  if [ -n "${SNITT_SIGN_IDENTITY+x}" ]; then CONFIG="release"; else CONFIG="debug"; fi
+fi
+case "$CONFIG" in
+  debug|release) ;;
+  *) echo "error: SNITT_CONFIG must be 'debug' or 'release', got '$CONFIG'" >&2; exit 1 ;;
+esac
+echo "Building -c $CONFIG."
+
 # ASK the build system where it writes. Never hardcode it.
 #
 # This used to be a literal: `.build/apple/Products/Debug` for multi-arch and
@@ -76,13 +97,13 @@ fi
 # frozen weeks earlier, while local development builds were correct. It
 # surfaced as a shipped feature that had "disappeared" (#128's "Export for"
 # picker) with no failure anywhere in the pipeline.
-PRODUCT_DIR="$(swift build -c debug ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --show-bin-path)"
+PRODUCT_DIR="$(swift build -c "$CONFIG" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --show-bin-path)"
 if [ -z "$PRODUCT_DIR" ] || [ ! -d "$PRODUCT_DIR" ]; then
   echo "error: could not resolve the build output directory from swift build." >&2
   exit 1
 fi
 
-swift build -c debug ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --product SnittApp
+swift build -c "$CONFIG" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --product SnittApp
 
 # The two client frontends ship INSIDE the app (D63). Until v0.1.0 they were
 # built and then left in .build/, so an installed Snitt.app carried no `snitt`
@@ -91,8 +112,8 @@ swift build -c debug ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --product SnittApp
 # and released. They are thin clients by construction (§4.9): they hold no TCC
 # grant and only ask the running app to act, so shipping them inside the bundle
 # costs nothing but bytes and gives `snitt setup` one fixed place to point at.
-swift build -c debug ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --product snitt-cli
-swift build -c debug ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --product snitt-mcp
+swift build -c "$CONFIG" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --product snitt-cli
+swift build -c "$CONFIG" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --product snitt-mcp
 
 for required in SnittApp snitt-cli snitt-mcp; do
   if [ ! -f "$PRODUCT_DIR/$required" ]; then
@@ -335,7 +356,13 @@ cp "Resources/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
 # framework copied in beside it there needs no rpath surgery.
 # Contents/Frameworks would need `install_name_tool -add_rpath
 # @executable_path/../Frameworks` for no offsetting benefit here.
-SPARKLE_SRC=".build/debug/Sparkle.framework"
+# From the SAME resolved product directory as the binaries, not a literal.
+# This was `.build/debug/Sparkle.framework`, which is the wrong tree for a
+# universal build and the wrong configuration for a release one. It survived
+# only because Sparkle is vendored and identical across configurations, which
+# makes it a latent version of the bug that shipped two stale releases rather
+# than a harmless inconsistency.
+SPARKLE_SRC="$PRODUCT_DIR/Sparkle.framework"
 FRAMEWORK_DEST="$APP/Contents/MacOS/Sparkle.framework"
 if [ -d "$SPARKLE_SRC" ]; then
   cp -R "$SPARKLE_SRC" "$FRAMEWORK_DEST"
