@@ -295,3 +295,31 @@ func parsesTranscript() {
     #expect(CommandLineParser.parse(["transcript", "/tmp/x.snitt", "--lines"]).isFailure)
     #expect(CommandLineParser.parse(["transcript"]).isFailure)
 }
+
+// MARK: - D108: finding a recording you lost track of
+
+@Test("recordings list parses, with and without a limit")
+func parsesRecordingsList() {
+    guard case .success(.recordingsList(let none)) =
+        CommandLineParser.parse(["recordings", "list"])
+    else { Issue.record("parse failed"); return }
+    #expect(none == nil)
+
+    guard case .success(.recordingsList(let some)) =
+        CommandLineParser.parse(["recordings", "list", "--limit", "3"])
+    else { Issue.record("parse failed"); return }
+    #expect(some == 3)
+}
+
+@Test("A limit that would list nothing is refused rather than obeyed")
+func recordingsLimitIsValidated() {
+    // DISCRIMINATES AGAINST: `Int(args[index])` with no bound. Zero and
+    // negative both parse, and both produce an empty list indistinguishable
+    // from an empty directory, which is the answer a caller would act on.
+    #expect(CommandLineParser.parse(["recordings", "list", "--limit", "0"]).isFailure)
+    #expect(CommandLineParser.parse(["recordings", "list", "--limit", "-2"]).isFailure)
+    #expect(CommandLineParser.parse(["recordings", "list", "--limit", "x"]).isFailure)
+    #expect(CommandLineParser.parse(["recordings", "list", "--limit"]).isFailure)
+    #expect(CommandLineParser.parse(["recordings"]).isFailure)
+    #expect(CommandLineParser.parse(["recordings", "delete"]).isFailure)
+}

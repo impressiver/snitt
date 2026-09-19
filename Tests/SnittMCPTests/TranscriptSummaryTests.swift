@@ -96,3 +96,57 @@ struct TranscriptSummaryTests {
         #expect(narrationSummary(summary).contains("snitt_export"))
     }
 }
+
+/// D108 on the MCP side.
+@Suite
+struct RecordingsSummaryTests {
+
+    private func list(total: Int, rows: [RecordingSummary],
+                      bytes: Int) -> RecordingList {
+        RecordingList(directory: "/tmp/Snitt", total: total, recordings: rows,
+                      totalByteSize: bytes)
+    }
+
+    private func recording(_ name: String, bytes: Int, age: Double,
+                           outcome: String?) -> RecordingSummary {
+        RecordingSummary(path: "/tmp/Snitt/\(name).snitt", byteSize: bytes,
+                         ageSeconds: age, createdAt: Date(), initiator: "agent",
+                         outcome: outcome, durationSeconds: 12)
+    }
+
+    @Test("The listing arrives as an object as well as prose")
+    func listingHasStructuredContent() throws {
+        // D103's rule applied to the response added after it: an agent that
+        // wants to act on a path should not have to pull it out of a sentence.
+        let structured = try #require(structuredContent(.recordings(
+            list(total: 1,
+                 rows: [recording("orphan", bytes: 10, age: 5, outcome: "capped")],
+                 bytes: 10))))
+        #expect(structured["total"] as? Int == 1)
+        #expect(structured["directory"] as? String == "/tmp/Snitt")
+        let rows = try #require(structured["recordings"] as? [[String: Any]])
+        #expect(rows.first?["outcome"] as? String == "capped")
+        #expect(rows.first?["path"] as? String == "/tmp/Snitt/orphan.snitt")
+    }
+
+    @Test("Capped bundles and a truncated list are both stated in the prose")
+    func proseSaysWhatMatters() {
+        // DISCRIMINATES AGAINST: rendering the rows and nothing else. Both
+        // facts change what an agent does next, and neither is recoverable
+        // from a list of paths and sizes.
+        let text = recordingsSummary(list(
+            total: 9,
+            rows: [recording("orphan", bytes: 500_000_000, age: 7200, outcome: "capped")],
+            bytes: 900_000_000))
+        #expect(text.contains("CAPPED"))
+        #expect(text.lowercased().contains("showing the newest"))
+        #expect(text.contains("9 recording"))
+        #expect(text.contains("2h ago"))
+    }
+
+    @Test("An empty directory says where it looked")
+    func emptyNamesTheDirectory() {
+        #expect(recordingsSummary(list(total: 0, rows: [], bytes: 0))
+            .contains("/tmp/Snitt"))
+    }
+}

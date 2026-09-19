@@ -215,6 +215,12 @@ public enum MCPBridge {
            to snitt_export when the file is going somewhere with an attachment \
            limit, and captions when the recording has anything to say.
 
+        snitt_list_recordings shows what is already on disk: use it when you \
+        have lost a bundle path, and after a session that ended badly. A \
+        recording marked "capped" was force-stopped because the session that \
+        started it went away, so it is a full-resolution video nobody has \
+        watched.
+
         A person at the machine can see and stop any recording at any time.
         """
 
@@ -485,6 +491,29 @@ public enum MCPBridge {
                         ],
                     ],
                     "required": ["bundlePath"],
+                ]),
+            ToolDefinition(
+                name: "snitt_list_recordings",
+                description: "List the .snitt bundles sitting in Snitt's output "
+                           + "directory, newest first: where each one is, how big, how "
+                           + "old, and how it ended. Use it to find a recording you "
+                           + "lost track of, and to notice the ones you never meant to "
+                           + "keep. A recording marked \"capped\" was force-stopped "
+                           + "because the session that started it ran past its limit or "
+                           + "went away, so it is usually a full-resolution video "
+                           + "nobody has watched. Snitt does not delete anything: this "
+                           + "tells you what is there and where, and removing a bundle "
+                           + "is yours to do.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "limit": [
+                            "type": "number",
+                            "description": "How many to return, newest first. The answer "
+                                + "always says how many exist in total, so a truncated "
+                                + "list reads as truncated. Defaults to all of them.",
+                        ],
+                    ],
                 ]),
             ToolDefinition(
                 name: "snitt_transcript",
@@ -944,6 +973,22 @@ public enum MCPBridge {
                 return .failure(MCPBridgeError("snitt_inspect requires bundlePath"))
             }
             return .success(.inspect(bundlePath: path))
+
+        case "snitt_list_recordings":
+            switch numericValue(arguments["limit"], parameter: "limit") {
+            case .failure(let error): return .failure(error)
+            case .success(let value):
+                guard let value else { return .success(.listRecordings(limit: nil)) }
+                // Whole and positive. A fractional limit is a caller who does
+                // not know what it asked for, and zero or less would return an
+                // empty list that reads exactly like an empty directory.
+                guard value.truncatingRemainder(dividingBy: 1) == 0, value > 0,
+                      value <= Double(Int.max) else {
+                    return .failure(MCPBridgeError(
+                        "snitt_list_recordings limit must be a whole number above 0"))
+                }
+                return .success(.listRecordings(limit: Int(value)))
+            }
 
         case "snitt_transcript":
             guard let path = arguments["bundlePath"] as? String else {
