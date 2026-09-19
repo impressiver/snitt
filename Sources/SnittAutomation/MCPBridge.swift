@@ -180,20 +180,30 @@ public enum MCPBridge {
            window by default — prefer bundleIdentifier over displayID, which \
            additionally requires a person to have turned on full-display agent \
            recording.
-        2. Do the work. Call snitt_report_input as you go: your clicks and \
+        2. LOOK, before you do anything else: snitt_screenshot with \
+           inline: true hands you the frame itself. It is the only way to find \
+           out that you are filming the wrong window, that a dialog is sitting \
+           over the target, or that the picture is black, and all of that is \
+           still fixable now and is not fixable later. It is also where the \
+           crop at step 6 comes from: note what the chrome carries and where \
+           it sits, in pixels of the image you were handed, and pass that \
+           image's own width and height back as frameWidth/frameHeight.
+        3. Do the work. Call snitt_report_input as you go: your clicks and \
            keystrokes never reach the screen, so without this the recording \
            shows things changing with no visible cause, which is what makes an \
-           agent demo unwatchable. It also earns you step 4 — auto-trim finds \
-           a recording's bookends from input events, and reported input counts.
-        3. snitt_add_marker at each step a reviewer should be able to jump to.
-        4. snitt_stop_recording, then tidy up: snitt_trim with autoTrim cuts \
-           the setup and teardown off the ends, and snitt_auto_deep_trim \
-           removes the gaps in between — the seconds spent waiting for a page \
-           to load. Both are non-destructive and reversible.
-        5. snitt_crop if the window's chrome carries anything that should not \
+           agent demo unwatchable. It also earns you step 5: a take's ends are \
+           found from input events, and reported input counts.
+        4. snitt_mark at each step a reviewer should be able to jump to.
+        5. snitt_stop_recording, then snitt_auto_deep_trim. One call: it takes \
+           the setup and teardown off the ends AND removes the gaps in between, \
+           the seconds spent waiting for a page to load. Non-destructive, \
+           reversible, and safe to run twice. snitt_trim is still there when \
+           you want to name an explicit start and end instead.
+        6. snitt_crop if the window's chrome carries anything that should not \
            be shared. A browser's tab strip puts the titles of every other open \
-           tab into every frame.
-        6. snitt_inspect, then snitt_export. You cannot watch what you \
+           tab into every frame. Give the rectangle in pixels of the screenshot \
+           you looked at, with frameWidth/frameHeight naming that image's size.
+        7. snitt_inspect, then snitt_export. You cannot watch what you \
            recorded, so snitt_inspect is how you find out what you made, and \
            its output is what to quote when describing the demo. Pass maxSize \
            to snitt_export when the file is going somewhere with an attachment \
@@ -201,6 +211,26 @@ public enum MCPBridge {
 
         A person at the machine can see and stop any recording at any time.
         """
+
+    /// Tool names this bridge still answers to, mapped to what they are now
+    /// called.
+    ///
+    /// A rename is a breaking change to a public surface, and the breakage is
+    /// not symmetrical: an MCP host caches the tool list it was handed at
+    /// `initialize` and may go on calling the old name for the life of that
+    /// session, while a `tools/list` a moment later advertises the new one.
+    /// Answering to both costs one dictionary lookup and removes the whole
+    /// class of failure; the old names are deliberately NOT advertised, so a
+    /// caller reading the list today learns one name per verb.
+    ///
+    /// `snitt_add_marker` was the only verb in the surface that matched
+    /// neither the protocol's `.mark` nor the CLI's `record mark`;
+    /// `snitt_estimate_export` was the only one that did not match its own CLI
+    /// verb, `snitt estimate`.
+    public static let toolAliases: [String: String] = [
+        "snitt_add_marker": "snitt_mark",
+        "snitt_estimate_export": "snitt_estimate",
+    ]
 
     public static func toolDefinitions() -> [ToolDefinition] {
         [
@@ -243,9 +273,34 @@ public enum MCPBridge {
                                 + "enabled full-display agent recording in Snitt's "
                                 + "settings; refused otherwise. Prefer bundleIdentifier.",
                         ],
-                        "microphone": ["type": "boolean", "default": false],
-                        "systemAudio": ["type": "boolean", "default": true],
-                        "maxDurationSeconds": ["type": "number"],
+                        "microphone": [
+                            "type": "boolean",
+                            "default": false,
+                            "description": "Record the microphone too. Off by "
+                                + "default, and worth leaving off unless someone is "
+                                + "actually narrating: a mic that is on records "
+                                + "whatever is said in the room, and nobody in the "
+                                + "room is expecting to be recorded by you. Speech "
+                                + "is transcribed on device.",
+                        ],
+                        "systemAudio": [
+                            "type": "boolean",
+                            "default": true,
+                            "description": "Record what the machine itself plays: a "
+                                + "video in the page, an alert, anything with sound. "
+                                + "On by default, because a demo that plays a video "
+                                + "in silence reads as broken rather than as quiet.",
+                        ],
+                        "maxDurationSeconds": [
+                            "type": "number",
+                            "description": "Stop on your own after this many seconds. "
+                                + "Time spent paused counts toward it. This is a "
+                                + "safety net rather than a plan: an agent that dies "
+                                + "before it calls snitt_stop_recording leaves the "
+                                + "recording running and the disk filling, so set it "
+                                + "to a generous upper bound on the work you are about "
+                                + "to do. No cap unless you set one.",
+                        ],
                         "vocabulary": [
                             "type": "array",
                             "items": ["type": "string"],
@@ -305,10 +360,13 @@ public enum MCPBridge {
                            + "the real cursor never moves and the recording shows "
                            + "buttons changing with nothing visibly causing it — "
                            + "unwatchable as a demo. Reporting each click puts it on "
-                           + "the recording's clock so it can be drawn. Coordinates are "
-                           + "FRACTIONS of the recorded window (0-1, origin top-left), "
-                           + "not page or screen pixels: compute them from the element's "
-                           + "position plus the browser's own chrome offset. Snitt does "
+                           + "the recording's clock so it can be drawn. GIVE THE PIXELS "
+                           + "YOU ALREADY HAVE: pass frameWidth and frameHeight naming "
+                           + "the window or the snitt_screenshot image you measured x "
+                           + "and y in, and Snitt does the division. Without them x and "
+                           + "y are read as fractions of the recorded window (0-1, "
+                           + "origin top-left). Either way a point outside the frame is "
+                           + "refused rather than quietly moved to the edge. Snitt does "
                            + "not click anything — it records what you say you did.",
                 inputSchema: [
                     "type": "object",
@@ -322,8 +380,26 @@ public enum MCPBridge {
                                      + "label: report WHEN you typed, never what. It is "
                                      + "what lets snitt_trim's autoTrim find the bookends "
                                      + "of a session you drove from a terminal."],
-                        "x": ["type": "number", "description": "0-1 across the window"],
-                        "y": ["type": "number", "description": "0-1 down the window"],
+                        "x": ["type": "number",
+                              "description": "Across the window: pixels when frameWidth "
+                                  + "is given, otherwise a fraction (0-1)."],
+                        "y": ["type": "number",
+                              "description": "Down the window: pixels when frameHeight "
+                                  + "is given, otherwise a fraction (0-1)."],
+                        "frameWidth": [
+                            "type": "number",
+                            "description": "Width, in the same units as x, of the picture "
+                                + "you measured in, the recorded window's own width or "
+                                + "the width of the snitt_screenshot image you are "
+                                + "looking at. Given with frameHeight, x and y are read "
+                                + "as pixels instead of fractions.",
+                        ],
+                        "frameHeight": [
+                            "type": "number",
+                            "description": "Height of that same picture. Required "
+                                + "alongside frameWidth, and refused without it: half a "
+                                + "frame size cannot say what the other axis means.",
+                        ],
                     ],
                     // x/y are required for the pointer kinds and checked in the
                     // handler, not here: JSON Schema cannot express "required
@@ -370,7 +446,12 @@ public enum MCPBridge {
                            + "failure. This tool itself is never refused.",
                 inputSchema: ["type": "object", "properties": [String: Any]()]),
             ToolDefinition(
-                name: "snitt_add_marker",
+                // Renamed from snitt_add_marker, which was the one verb in this
+                // surface that matched neither the protocol's `.mark` nor the
+                // CLI's `record mark`. The old name still maps, so a host
+                // holding a cached tool list keeps working; only the advertised
+                // name changed. See `markerToolAliases`.
+                name: "snitt_mark",
                 description: "Drop a labelled marker into the running recording, so a "
                            + "reviewer can jump to this moment. Narrate what you just did.",
                 inputSchema: [
@@ -438,7 +519,13 @@ public enum MCPBridge {
                            + "capture.mov is never modified and the crop can be "
                            + "removed again. Use it to cut away a cluttered "
                            + "desktop, a second monitor, or window chrome so the "
-                           + "demo shows only what matters. Returns the pixel "
+                           + "demo shows only what matters. GIVE THE PIXELS YOU "
+                           + "ALREADY HAVE: pass frameWidth and frameHeight naming "
+                           + "the snitt_screenshot image you worked the rectangle out "
+                           + "from, and x/y/width/height are read as pixels in that "
+                           + "image. Without them they are fractions of the frame "
+                           + "(0-1). A rectangle that runs off the edge is refused "
+                           + "rather than quietly pulled back to it. Returns the pixel "
                            + "dimensions the export will have.",
                 inputSchema: [
                     "type": "object",
@@ -447,30 +534,56 @@ public enum MCPBridge {
                             "type": "string",
                             "description": "Path printed by snitt_stop_recording",
                         ],
-                        "x": ["type": "number", "description": "Left edge, as a fraction of the frame (0-1)"],
-                        "y": ["type": "number", "description": "Top edge, as a fraction of the frame (0-1)"],
-                        "width": ["type": "number", "description": "Width, as a fraction of the frame (0-1)"],
-                        "height": ["type": "number", "description": "Height, as a fraction of the frame (0-1)"],
+                        "x": ["type": "number",
+                              "description": "Left edge: pixels when frameWidth is "
+                                  + "given, otherwise a fraction of the frame (0-1)"],
+                        "y": ["type": "number",
+                              "description": "Top edge: pixels when frameHeight is "
+                                  + "given, otherwise a fraction of the frame (0-1)"],
+                        "width": ["type": "number",
+                                  "description": "Width, in the same units as x"],
+                        "height": ["type": "number",
+                                   "description": "Height, in the same units as y"],
+                        "frameWidth": [
+                            "type": "number",
+                            "description": "Width of the picture you measured the "
+                                + "rectangle in, the snitt_screenshot image you looked "
+                                + "at, whose own size you know. Snitt converts; the "
+                                + "stored crop stays a fraction, so it survives an "
+                                + "export at any scale.",
+                        ],
+                        "frameHeight": [
+                            "type": "number",
+                            "description": "Height of that same picture. Required "
+                                + "alongside frameWidth, and refused without it.",
+                        ],
                         "reset": [
                             "type": "boolean",
-                            "description": "Remove an existing crop instead of setting one.",
+                            "description": "Remove an existing crop instead of setting "
+                                + "one. Answers with the frame's FULL pixel dimensions, "
+                                + "which is also how to ask what they are.",
                         ],
                     ],
                     "required": ["bundlePath"],
                 ]),
             ToolDefinition(
                 name: "snitt_auto_deep_trim",
-                description: "Remove the spans where nothing happened — no sound, no "
-                           + "movement on screen, no input, no marker, nothing being "
-                           + "said. Non-destructive: it appends cuts to the edit "
-                           + "decision list and never touches capture.mov, so the "
-                           + "result is reversible and safe to run before deciding. "
-                           + "Unlike snitt_trim's autoTrim, this WORKS ON RECORDINGS "
-                           + "YOU MADE: it needs no input events, because it reads the "
-                           + "picture and the audio instead. Running it twice is safe — "
-                           + "the second run proposes nothing already cut. Use it before "
-                           + "snitt_export to hand someone a demo without the minutes "
-                           + "spent waiting for a page to load.",
+                description: "TIDY UP A RECORDING, in one call. Takes the setup and "
+                           + "teardown off the ends, and removes the spans in between "
+                           + "where nothing happened: no sound, no movement on screen, "
+                           + "no input, no marker, nothing being said. Non-destructive: "
+                           + "it appends cuts to the edit decision list and never "
+                           + "touches capture.mov, so the result is reversible and safe "
+                           + "to run before deciding. The gap removal WORKS ON "
+                           + "RECORDINGS YOU MADE with no input events at all, because "
+                           + "it reads the picture and the audio instead; the ends need "
+                           + "input events to bound the take and are simply left alone "
+                           + "without them. Running it twice is safe, because the second run "
+                           + "proposes nothing already cut. Use it before snitt_export "
+                           + "to hand someone a demo without the minutes spent waiting "
+                           + "for a page to load. snitt_trim is still there for when "
+                           + "you want to name an explicit start and end instead, and "
+                           + "its autoTrim does the ends alone.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -510,11 +623,24 @@ public enum MCPBridge {
                             "description": "Seconds a spoken word stays protected after "
                                 + "it finishes, so captions are not cut mid-read.",
                         ],
+                        "trimBookends": [
+                            "type": "boolean",
+                            "default": true,
+                            "description": "Also take the setup and teardown off the "
+                                + "ends, bounded by the first and last input event the "
+                                + "way snitt_trim's autoTrim is. ON by default, because "
+                                + "tidying a recording is one intent and it should not "
+                                + "cost two calls. Pass false to keep the ends and "
+                                + "remove only the gaps in between.",
+                        ],
                     ],
                     "required": ["bundlePath"],
                 ]),
             ToolDefinition(
-                name: "snitt_estimate_export",
+                // Renamed from snitt_estimate_export to match the CLI's
+                // `snitt estimate`. The old name still maps; see
+                // `estimateToolAliases`.
+                name: "snitt_estimate",
                 description: "Find out how long, how large and what dimensions an "
                            + "export would be, WITHOUT doing it. Costs a two-second "
                            + "encode instead of the whole file. Use it to pick a scale "
@@ -534,6 +660,22 @@ public enum MCPBridge {
                             "type": "number",
                             "description": "Pixel scale to estimate, e.g. 0.5 for half "
                                 + "size. Defaults to 1.0.",
+                        ],
+                        // Declared, and accepting exactly one value, so that a
+                        // caller asking for "gif" is TOLD no rather than handed
+                        // an mp4 estimate labelled with its own request. The
+                        // CLI's `estimate --format` already refuses the same
+                        // way in the same words; the MCP surface silently
+                        // hardcoded "mp4" instead, which is the §8 shape.
+                        "format": [
+                            "type": "string",
+                            "enum": ["mp4"],
+                            "description": "\"mp4\", and only mp4 (issue #160). A GIF's "
+                                + "size tracks how much the picture MOVES rather than "
+                                + "how long it runs, so a two-second sample says too "
+                                + "little about the whole to be worth reporting. Export "
+                                + "a gif with maxSize instead and let the exporter fit "
+                                + "it.",
                         ],
                     ],
                     "required": ["bundlePath"],
@@ -570,18 +712,21 @@ public enum MCPBridge {
                                 + "480p, 2160p, or source to keep the recording's own "
                                 + "dimensions. Never enlarges — asking for more than "
                                 + "the recording has keeps what it has. Use "
-                                + "snitt_estimate_export first to see what each costs. "
+                                + "snitt_estimate first to see what each costs. "
                                 + "Defaults to source.",
                         ],
                         "clicks": [
                             "type": "boolean",
+                            "default": true,
                             "description": "Draw a ring where each click you "
                                 + "REPORTED happened, so a viewer can see what "
-                                + "caused each change. Only reported clicks can "
-                                + "be drawn — the ones you made with "
-                                + "snitt_report_input — because a click the OS "
-                                + "saw carries no position Snitt can place. "
-                                + "Off by default.",
+                                + "caused each change. ON by default (D105): only "
+                                + "reported clicks can be drawn, the ones you made "
+                                + "with snitt_report_input, because a click the OS "
+                                + "saw carries no position Snitt can place, so a "
+                                + "recording that reported nothing is unaffected and "
+                                + "one that reported everything is the demo the "
+                                + "reporting was for. Pass false to leave them off.",
                         ],
                         "maxSize": [
                             "type": "string",
@@ -626,10 +771,11 @@ public enum MCPBridge {
     ///   parameter names that directory directly rather than needing a
     ///   round trip through `getcwd`/`chdir`, which is process-global,
     ///   mutable state shared with every other test in the same test bundle.
-    public static func request(forTool name: String,
+    public static func request(forTool requestedName: String,
                                arguments: [String: Any],
                                workingDirectory: String = FileManager.default.currentDirectoryPath
                                ) -> Result<AutomationRequest.Body, MCPBridgeError> {
+        let name = toolAliases[requestedName] ?? requestedName
         switch name {
         case "snitt_list_targets":
             return .success(.listTargets)
@@ -705,9 +851,9 @@ public enum MCPBridge {
             }
             return .success(.stopRecording(sessionID: session))
 
-        case "snitt_add_marker":
+        case "snitt_mark":
             guard let session = arguments["sessionId"] as? String else {
-                return .failure(MCPBridgeError("snitt_add_marker requires sessionId"))
+                return .failure(MCPBridgeError("snitt_mark requires sessionId"))
             }
             return .success(.mark(sessionID: session, label: arguments["label"] as? String))
 
@@ -732,7 +878,12 @@ public enum MCPBridge {
                 return .failure(MCPBridgeError(
                     "A reported keystroke cannot carry a label. Report WHEN you typed, "
                   + "not what — saying what was typed is a claim about content Snitt "
-                  + "never saw. Use snitt_add_marker if the moment needs a name."))
+                  + "never saw. Use snitt_mark if the moment needs a name."))
+            }
+            let inputFrame: CoordinateFrame?
+            switch frameSize(arguments, tool: "snitt_report_input") {
+            case .failure(let error): return .failure(error)
+            case .success(let value): inputFrame = value
             }
             var point: [String: Double] = [:]
             for key in ["x", "y"] {
@@ -741,10 +892,25 @@ public enum MCPBridge {
                     guard let value else {
                         if isKeystroke { continue }
                         return .failure(MCPBridgeError(
-                            "snitt_report_input requires x and y as fractions of the window"))
+                            "snitt_report_input requires x and y: pixels if you also "
+                          + "give frameWidth and frameHeight, otherwise fractions of "
+                          + "the window (0-1)"))
                     }
                     point[key] = value
                 case .failure(let error): return .failure(error)
+                }
+            }
+            if let x = point["x"], let y = point["y"] {
+                // D105. Divided here, where the caller's own numbers are, and
+                // never stored in pixels: the recorded frame may be a different
+                // size again, and a fraction is the only form that stays true
+                // across all of them.
+                switch CoordinateFrame.unitPoint(x: x, y: y, in: inputFrame,
+                                                 verb: "snitt_report_input") {
+                case .failure(let failure): return .failure(MCPBridgeError(failure.message))
+                case .success(let unit):
+                    point["x"] = unit.x
+                    point["y"] = unit.y
                 }
             }
             return .success(.reportInput(sessionID: session, kind: kind,
@@ -786,6 +952,11 @@ public enum MCPBridge {
             case .success(let value):
                 if value == true { return .success(.crop(bundlePath: path, rect: nil)) }
             }
+            let cropFrame: CoordinateFrame?
+            switch frameSize(arguments, tool: "snitt_crop") {
+            case .failure(let error): return .failure(error)
+            case .success(let value): cropFrame = value
+            }
             var rect: [String: Double] = [:]
             for key in ["x", "y", "width", "height"] {
                 switch numericValue(arguments[key], parameter: key) {
@@ -795,8 +966,9 @@ public enum MCPBridge {
                         // default: zeros crop to nothing, full-frame silently
                         // ignores what was asked for.
                         return .failure(MCPBridgeError(
-                            "snitt_crop needs x, y, width and height together "
-                          + "(fractions of the frame, 0-1), or reset: true."))
+                            "snitt_crop needs x, y, width and height together: "
+                          + "pixels if you also give frameWidth and frameHeight, "
+                          + "otherwise fractions of the frame (0-1). Or reset: true."))
                     }
                     rect[key] = value
                 case .failure(let error): return .failure(error)
@@ -807,9 +979,11 @@ public enum MCPBridge {
                     "snitt_crop needs width and height greater than 0. "
                   + "Use reset: true to remove a crop."))
             }
-            return .success(.crop(bundlePath: path,
-                                  rect: CropRect(x: rect["x"]!, y: rect["y"]!,
-                                                 width: rect["width"]!, height: rect["height"]!)))
+            return CoordinateFrame.unitRect(x: rect["x"]!, y: rect["y"]!,
+                                            width: rect["width"]!, height: rect["height"]!,
+                                            in: cropFrame, verb: "snitt_crop")
+                .map { .crop(bundlePath: path, rect: $0) }
+                .mapError { MCPBridgeError($0.message) }
 
         case "snitt_auto_deep_trim":
             guard let path = arguments["bundlePath"] as? String else {
@@ -848,6 +1022,17 @@ public enum MCPBridge {
                     }
                     apply(&criteria, value)
                 }
+            }
+            // On unless refused, which is the whole of PR I: the server's own
+            // instructions call tidying up ONE step, and it used to cost
+            // `snitt_trim` plus this, with two unrelated parameter
+            // vocabularies, on every recording. Set explicitly rather than
+            // left to `DeepTrimCriteria`'s own default, so the value that
+            // travels says what was meant and the editor's deep trim, which
+            // has a timeline and trim handles, keeps meaning what it meant.
+            switch booleanValue(arguments["trimBookends"], parameter: "trimBookends") {
+            case .failure(let error): return .failure(error)
+            case .success(let value): criteria.trimBookends = value ?? true
             }
             return .success(.autoDeepTrim(
                 bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory),
@@ -890,9 +1075,9 @@ public enum MCPBridge {
             return .success(.trim(bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory),
                                    start: start, end: end, auto: auto))
 
-        case "snitt_estimate_export":
+        case "snitt_estimate":
             guard let path = arguments["bundlePath"] as? String else {
-                return .failure(MCPBridgeError("snitt_estimate_export requires bundlePath"))
+                return .failure(MCPBridgeError("snitt_estimate requires bundlePath"))
             }
             let estimateScale: Double
             switch numericValue(arguments["scale"], parameter: "scale") {
@@ -901,7 +1086,22 @@ public enum MCPBridge {
                 estimateScale = value ?? 1.0
                 guard estimateScale > 0 else {
                     return .failure(MCPBridgeError(
-                        "snitt_estimate_export scale must be greater than 0"))
+                        "snitt_estimate scale must be greater than 0"))
+                }
+            }
+            // The format was hardcoded and the parameter undeclared, so
+            // `{"format": "gif"}` came back as an mp4 estimate with no
+            // indication it had answered a different question, the §8 shape,
+            // and the CLI already refuses it in these words. Wording kept
+            // deliberately identical: a caller must not be told yes by one
+            // frontend and no by the other.
+            if let rawFormat = arguments["format"] {
+                guard let format = rawFormat as? String, format == "mp4" else {
+                    return .failure(MCPBridgeError(
+                        "snitt_estimate supports format mp4 only. GIF size tracks how "
+                      + "much the picture moves rather than how long it runs, so a "
+                      + "sample of one says too little about the whole to be worth "
+                      + "reporting."))
                 }
             }
             return .success(.estimateExport(
@@ -973,9 +1173,17 @@ public enum MCPBridge {
             } else {
                 resolutionValue = .source
             }
+            // D105: on unless refused. §5.6 makes rendering CAPTURED input
+            // opt-in because a keystroke Snitt caught may carry a token nobody
+            // meant to publish. A reported click carries nothing Snitt was not
+            // handed by the caller, and only reported clicks can be drawn at
+            // all, so this default cannot surface anything the caller did not
+            // itself report. The loop tells an agent to report every input
+            // precisely so the demo is watchable; making it ask a second time
+            // is how it shipped the unwatchable one anyway.
             let clicksFlag: Bool
             switch booleanValue(arguments["clicks"], parameter: "clicks") {
-            case .success(let value): clicksFlag = value ?? false
+            case .success(let value): clicksFlag = value ?? true
             case .failure(let error): return .failure(error)
             }
             let subtitlesFlag: Bool
@@ -1010,6 +1218,35 @@ public enum MCPBridge {
         default:
             return .failure(MCPBridgeError("Unknown tool: \(name)"))
         }
+    }
+
+    /// Reads the optional `frameWidth`/`frameHeight` pair that tells this
+    /// bridge the caller's coordinates are PIXELS, and names the picture they
+    /// were measured in (D105, `CoordinateFrame`).
+    ///
+    /// Returns nil when neither key is present, which keeps every existing
+    /// fraction-shaped call meaning precisely what it meant. Half a pair is
+    /// refused rather than guessed: one axis cannot say what the other's unit
+    /// is, and defaulting the missing one to the other would crop, or place a
+    /// click, somewhere nobody asked for.
+    private static func frameSize(_ arguments: [String: Any], tool: String)
+        -> Result<CoordinateFrame?, MCPBridgeError> {
+        var given: [String: Double] = [:]
+        for key in ["frameWidth", "frameHeight"] {
+            switch numericValue(arguments[key], parameter: key) {
+            case .failure(let error): return .failure(error)
+            case .success(let value): if let value { given[key] = value }
+            }
+        }
+        if given.isEmpty { return .success(nil) }
+        guard let width = given["frameWidth"], let height = given["frameHeight"] else {
+            return .failure(MCPBridgeError(
+                "\(tool) needs frameWidth and frameHeight together. One on its own "
+              + "cannot say whether the other axis is pixels or a fraction."))
+        }
+        return CoordinateFrame.make(width: width, height: height, verb: tool)
+            .map { Optional($0) }
+            .mapError { MCPBridgeError($0.message) }
     }
 
     /// Converts an MCP argument value to a `UInt32` display id.

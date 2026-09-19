@@ -36,7 +36,7 @@ func everyToolMaps() {
         switch tool.name {
         case "snitt_start_recording":
             json = #"{"bundleIdentifier": "com.apple.Safari"}"#
-        case "snitt_stop_recording", "snitt_add_marker",
+        case "snitt_stop_recording", "snitt_mark",
              "snitt_pause_recording", "snitt_resume_recording", "snitt_screenshot":
             json = #"{"sessionId": "abc"}"#
         case "snitt_inspect":
@@ -47,7 +47,7 @@ func everyToolMaps() {
             json = #"{"bundlePath": "/tmp/x.snitt", "reset": true}"#
         case "snitt_trim":
             json = #"{"bundlePath": "/tmp/x.snitt", "autoTrim": true}"#
-        case "snitt_estimate_export":
+        case "snitt_estimate":
             json = #"{"bundlePath": "/tmp/x.snitt"}"#
         case "snitt_auto_deep_trim":
             // Deliberately the MINIMAL call: everything but the path is
@@ -72,9 +72,9 @@ func everyToolMaps() {
 func toolNamesAreStable() {
     let names = Set(MCPBridge.toolDefinitions().map(\.name))
     #expect(names == ["snitt_list_targets", "snitt_start_recording",
-                      "snitt_stop_recording", "snitt_status", "snitt_add_marker",
+                      "snitt_stop_recording", "snitt_status", "snitt_mark",
                       "snitt_inspect", "snitt_trim", "snitt_crop", "snitt_export",
-                      "snitt_auto_deep_trim", "snitt_estimate_export",
+                      "snitt_auto_deep_trim", "snitt_estimate",
                       "snitt_pause_recording", "snitt_resume_recording",
                       "snitt_screenshot", "snitt_report_input",
                       "snitt_diagnostics_export"])
@@ -327,7 +327,7 @@ func frontendsAgreeOnMarkers() {
         Issue.record("CLI could not express a marker"); return
     }
     guard case .success(.mark(let mcpSession, let mcpLabel)) = MCPBridge.request(
-        forTool: "snitt_add_marker",
+        forTool: "snitt_mark",
         arguments: jsonArguments(#"{"sessionId": "s1", "label": "step two"}"#)) else {
         Issue.record("MCP could not express a marker"); return
     }
@@ -629,6 +629,7 @@ private let booleanGuardFixtures: [String: String] = [
     "snitt_crop": #"{"bundlePath": "/tmp/x.snitt", "x": 0, "y": 0, "width": 0.5, "height": 0.5}"#,
     "snitt_export": #"{"bundlePath": "/tmp/x.snitt", "format": "mp4", "outputPath": "/tmp/d.mp4"}"#,
     "snitt_screenshot": #"{"sessionId": "abc123"}"#,
+    "snitt_auto_deep_trim": #"{"bundlePath": "/tmp/x.snitt"}"#,
 ]
 
 @Test("EVERY boolean parameter on EVERY tool refuses a JSON string")
@@ -705,4 +706,172 @@ func inlineScreenshotHonoursTheFlag() {
         Issue.record("mapping failed"); return
     }
     #expect(inline == true)
+}
+
+// MARK: - Renames, and the compatibility that makes them safe (PR G)
+
+@Test("The renamed tools still answer to the names they were advertised under")
+func oldToolNamesStillMap() {
+    // An MCP host caches the tool list it was handed at `initialize` and may go
+    // on calling the old name for the life of that session, while a `tools/list`
+    // a moment later advertises the new one. Discriminates against renaming the
+    // switch cases and nothing else, which is how a rename usually ships:
+    // `snitt_add_marker` would then fall to `default` and be refused as an
+    // unknown tool, on a session that was told that name by this very server.
+    guard case .success(.mark(let session, _)) = MCPBridge.request(
+        forTool: "snitt_add_marker",
+        arguments: jsonArguments(#"{"sessionId": "s1", "label": "step two"}"#)) else {
+        Issue.record("snitt_add_marker no longer maps"); return
+    }
+    #expect(session == "s1")
+    guard case .success(.estimateExport(let path, _, _)) = MCPBridge.request(
+        forTool: "snitt_estimate_export",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt"}"#)) else {
+        Issue.record("snitt_estimate_export no longer maps"); return
+    }
+    #expect(path == "/tmp/x.snitt")
+}
+
+@Test("The old names are accepted but not advertised, so a fresh reader sees one name per verb")
+func oldToolNamesAreNotAdvertised() {
+    // The other half of the alias, and the reason `toolNamesAreStable` is not
+    // enough on its own: an implementation that simply ADDED the new names to
+    // the list would pass every mapping test above while handing agents
+    // sixteen verbs under eighteen names, which is the confusion the rename
+    // exists to remove.
+    let advertised = Set(MCPBridge.toolDefinitions().map(\.name))
+    for old in MCPBridge.toolAliases.keys {
+        #expect(!advertised.contains(old), "\(old) is still advertised")
+    }
+    #expect(MCPBridge.toolAliases.count == 2)
+}
+
+@Test("snitt_estimate refuses a format it cannot estimate, rather than answering about mp4")
+func estimateRefusesGif() {
+    // The MCP tool declared no `format` at all and hardcoded "mp4", so
+    // {"format": "gif"} came back as an mp4 estimate, a confident answer to a
+    // question nobody asked (§8), and the CLI already refuses the same request
+    // in the same words. Discriminates against the hardcoding: that version
+    // returns .success here.
+    guard case .failure(let error) = MCPBridge.request(
+        forTool: "snitt_estimate",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "gif"}"#))
+    else { Issue.record("a gif estimate must be refused, not answered about mp4"); return }
+    #expect(error.message.contains("mp4"))
+    // And the CLI's refusal says the same thing, because a caller must not be
+    // told yes by one frontend and no by the other.
+    guard case .failure(let cli) = CommandLineParser.parse(
+        ["estimate", "/tmp/x.snitt", "--format", "gif"]) else {
+        Issue.record("the CLI accepted a gif estimate"); return
+    }
+    #expect(cli.message.contains("how much the picture moves"))
+    #expect(error.message.contains("how much the picture moves"))
+}
+
+// MARK: - Defaults (PR G, PR I)
+
+@Test("Reported clicks are drawn unless the caller says otherwise, on both frontends")
+func clicksDefaultToOn() {
+    // D105. Discriminates against `booleanValue(...) ?? false`, which is what
+    // shipped: the loop's own instructions tell an agent to report every input
+    // BECAUSE a demo with invisible causes is unwatchable, and then the export
+    // drew none of it unless asked a second time. Only clicks that were
+    // REPORTED can be drawn, so this default cannot surface anything the caller
+    // did not itself hand over.
+    guard case .success(.export(_, _, _, _, _, _, _, _, let mcpClicks)) = MCPBridge.request(
+        forTool: "snitt_export",
+        arguments: jsonArguments(
+            #"{"bundlePath": "/tmp/x.snitt", "format": "mp4", "outputPath": "/tmp/d.mp4"}"#))
+    else { Issue.record("mapping failed"); return }
+    #expect(mcpClicks == true)
+
+    guard case .success(.export(_, _, _, _, _, _, _, _, let cliClicks)) = CommandLineParser.parse(
+        ["export", "/tmp/x.snitt", "--format", "mp4", "--out", "/tmp/d.mp4"])
+    else { Issue.record("the CLI could not express an export"); return }
+    #expect(cliClicks == true, "§4.8: the two frontends must not diverge on a default")
+}
+
+@Test("clicks: false is still honoured, so the default is a default and not a hardcode")
+func clicksCanStillBeTurnedOff() {
+    // The control. Without it, `clicksDefaultToOn` passes just as well against
+    // an implementation that ignores the parameter entirely and always draws.
+    guard case .success(.export(_, _, _, _, _, _, _, _, let clicks)) = MCPBridge.request(
+        forTool: "snitt_export",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
+            + #""outputPath": "/tmp/d.mp4", "clicks": false}"#))
+    else { Issue.record("mapping failed"); return }
+    #expect(clicks == false)
+
+    guard case .success(.export(_, _, _, _, _, _, _, _, let cliClicks)) = CommandLineParser.parse(
+        ["export", "/tmp/x.snitt", "--format", "mp4", "--out", "/tmp/d.mp4", "--no-clicks"])
+    else { Issue.record("the CLI could not express --no-clicks"); return }
+    #expect(cliClicks == false)
+}
+
+@Test("Tidying a recording is one call: the ends come off unless the caller keeps them")
+func trimBookendsDefaultsToOn() {
+    // PR I. Discriminates against leaving `DeepTrimCriteria`'s own default
+    // alone, which is `false` (correctly, for the editor), and would leave the
+    // agent loop still needing snitt_trim plus this, with two unrelated
+    // parameter vocabularies, on every recording.
+    guard case .success(.autoDeepTrim(_, let mcp)) = MCPBridge.request(
+        forTool: "snitt_auto_deep_trim",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt"}"#)) else {
+        Issue.record("mapping failed"); return
+    }
+    #expect(mcp.trimBookends == true)
+
+    guard case .success(.autoDeepTrim(_, let cli)) = CommandLineParser.parse(
+        ["auto-deep-trim", "/tmp/x.snitt"]) else {
+        Issue.record("the CLI could not express an auto-deep-trim"); return
+    }
+    #expect(cli.trimBookends == true, "§4.8: the two frontends must not diverge on a default")
+}
+
+@Test("Keeping the bookends is still possible, on both frontends")
+func trimBookendsCanBeTurnedOff() {
+    // The control for the test above, and the case the editor's own behaviour
+    // depends on staying reachable.
+    guard case .success(.autoDeepTrim(_, let mcp)) = MCPBridge.request(
+        forTool: "snitt_auto_deep_trim",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "trimBookends": false}"#))
+    else { Issue.record("mapping failed"); return }
+    #expect(mcp.trimBookends == false)
+
+    guard case .success(.autoDeepTrim(_, let cli)) = CommandLineParser.parse(
+        ["auto-deep-trim", "/tmp/x.snitt", "--keep-bookends"]) else {
+        Issue.record("the CLI could not express --keep-bookends"); return
+    }
+    #expect(cli.trimBookends == false)
+}
+
+@Test("A preset does not quietly put the bookends back")
+func presetDoesNotResetTrimBookends() {
+    // `--preset` REPLACES the whole criteria value, so setting trimBookends
+    // before the flag loop rather than after it would leave
+    // `auto-deep-trim x.snitt --preset aggressive` silently not trimming the
+    // ends while the bare command does, a difference nothing else here would
+    // catch.
+    guard case .success(.autoDeepTrim(_, let cli)) = CommandLineParser.parse(
+        ["auto-deep-trim", "/tmp/x.snitt", "--preset", "aggressive"]) else {
+        Issue.record("the CLI could not express a preset"); return
+    }
+    #expect(cli.trimBookends == true)
+}
+
+@Test("The three bare parameters on snitt_start_recording now say what they do")
+func bareParametersAreDocumented() {
+    // `maxDurationSeconds`, `microphone` and `systemAudio` carried no
+    // description at all while every other parameter on the surface was richly
+    // documented, so an agent reading the schema learned their names and
+    // nothing else. Least useful for maxDurationSeconds, whose whole job is to
+    // stop a recording an agent may no longer be alive to stop.
+    guard let tool = MCPBridge.toolDefinitions().first(where: { $0.name == "snitt_start_recording" }),
+          let properties = tool.inputSchema["properties"] as? [String: Any] else {
+        Issue.record("snitt_start_recording is missing"); return
+    }
+    for name in ["maxDurationSeconds", "microphone", "systemAudio"] {
+        let text = (properties[name] as? [String: Any])?["description"] as? String
+        #expect((text?.count ?? 0) > 40, "\(name) still has no real description: \(text ?? "none")")
+    }
 }

@@ -50,7 +50,7 @@ struct ServerInstructionsTests {
         // instructions were not touched, so agents were never told the loop had
         // grown a tidy-up step. Adding a tool to this list forces a mention.
         let workflow: Set<String> = [
-            "snitt_start_recording", "snitt_report_input", "snitt_add_marker",
+            "snitt_start_recording", "snitt_report_input", "snitt_mark",
             "snitt_stop_recording", "snitt_trim", "snitt_auto_deep_trim",
             "snitt_crop", "snitt_inspect", "snitt_export",
         ]

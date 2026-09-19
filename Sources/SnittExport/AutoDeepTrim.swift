@@ -194,6 +194,34 @@ public enum AutoDeepTrim {
                       to: word.start + word.duration + criteria.subtitleReadingTime)
         }
 
+        // The bookends, painted over everything else and therefore last.
+        //
+        // This is the one criterion that overrides the evidence rather than
+        // weighing it. Setup and teardown are not quiet and not still (a
+        // recording's busiest seconds are usually the ones spent arranging the
+        // window it is about to show), so the head and tail survive every test
+        // above and are exactly what a viewer does not want. Bounded by input
+        // events alone, and by the same events `EditDecisionList.autoTrimRange`
+        // uses (markers excluded: a marker says "this moment matters", not
+        // "something happened here"), so the two trims agree on where a take
+        // begins instead of answering with two different numbers.
+        //
+        // With no input events there is nothing to bound the take, so nothing
+        // is cut: the same refusal `autoTrimRange` makes, expressed as doing
+        // no harm rather than as an error, because the gap-removal half of
+        // this call is still perfectly valid work.
+        if criteria.trimBookends {
+            let inputTimes = events.filter { $0.kind != .marker }.map(\.timeSeconds)
+            if let first = inputTimes.min(), let last = inputTimes.max() {
+                let head = max(0, first - criteria.inputPadding)
+                let tail = min(duration, last + criteria.inputPadding)
+                let headSteps = min(steps, max(0, Int((head * resolution).rounded(.down))))
+                for step in 0..<headSteps { alive[step] = false }
+                let tailStart = min(steps, max(0, Int((tail * resolution).rounded(.up))))
+                for step in tailStart..<steps { alive[step] = false }
+            }
+        }
+
         // Maximal runs of not-alive, long enough to be worth removing.
         var spans: [TimeRange] = []
         var runStart: Int?

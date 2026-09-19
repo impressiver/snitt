@@ -68,7 +68,7 @@ design. No window opens while you record; the editor appears when you stop.
 snitt setup --apply
 ```
 
-Then an agent can call `snitt_start_recording`, `snitt_add_marker`,
+Then an agent can call `snitt_start_recording`, `snitt_mark`,
 `snitt_stop_recording`, `snitt_export` and a dozen more. Markers an agent drops
 as it works become chapters in the exported video.
 

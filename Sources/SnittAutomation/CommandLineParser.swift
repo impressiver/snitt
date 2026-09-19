@@ -93,10 +93,13 @@ public enum CommandLineParser {
             case "click", "cursor":
                 guard args.count >= 3, let x = Double(args[1]), let y = Double(args[2]) else {
                     return .failure(ParseFailure(
-                        "`record \(sub)` needs a session id and x y as fractions of the "
-                      + "window, e.g. `snitt record click S1 0.5 0.32`"))
+                        "`record \(sub)` needs a session id and an x y position, e.g. "
+                      + "`snitt record click S1 0.5 0.32` for fractions of the window, "
+                      + "or `snitt record click S1 640 320 --frame-width 1280 "
+                      + "--frame-height 800` for pixels of a picture you measured in."))
                 }
-                return .success(.recordInput(sessionID: args[0], kind: sub, x: x, y: y))
+                return parseReportedPoint(sessionID: args[0], kind: sub, x: x, y: y,
+                                          args: Array(args.dropFirst(3)))
             case "keystroke":
                 // No coordinates, and no text. Typing happens at no particular
                 // place, and WHAT was typed is a claim about content Snitt
@@ -299,6 +302,58 @@ public enum CommandLineParser {
         return .success(.recordStart(options))
     }
 
+    /// `--frame-width W --frame-height H`, the CLI half of D105.
+    ///
+    /// Both or neither. Half a frame size cannot say what unit the other axis
+    /// is in, and filling the missing one in would place a click, or crop,
+    /// somewhere nobody typed.
+    private static func parseFrame(_ args: [String], verb: String)
+        -> Result<(frame: CoordinateFrame?, rest: [String]), ParseFailure> {
+        var width: Double?
+        var height: Double?
+        var rest: [String] = []
+        var remaining = args
+        while let flag = remaining.first {
+            remaining.removeFirst()
+            guard flag == "--frame-width" || flag == "--frame-height" else {
+                rest.append(flag)
+                continue
+            }
+            guard let raw = remaining.first, let value = Double(raw), value.isFinite else {
+                return .failure(ParseFailure("\(flag) needs a finite number of pixels."))
+            }
+            remaining.removeFirst()
+            if flag == "--frame-width" { width = value } else { height = value }
+        }
+        if width == nil, height == nil { return .success((nil, rest)) }
+        guard let width, let height else {
+            return .failure(ParseFailure(
+                "`\(verb)` needs --frame-width and --frame-height together. One on its "
+              + "own cannot say whether the other axis is pixels or a fraction."))
+        }
+        return CoordinateFrame.make(width: width, height: height, verb: verb)
+            .map { (Optional($0), rest) }
+            .mapError { ParseFailure($0.message) }
+    }
+
+    private static func parseReportedPoint(sessionID: String, kind: String,
+                                           x: Double, y: Double,
+                                           args: [String]) -> Result<ParsedCommand, ParseFailure> {
+        let verb = "record \(kind)"
+        let frame: CoordinateFrame?
+        switch parseFrame(args, verb: verb) {
+        case .failure(let failure): return .failure(failure)
+        case .success(let parsed):
+            guard parsed.rest.isEmpty else {
+                return .failure(ParseFailure("Unknown option: \(parsed.rest[0])"))
+            }
+            frame = parsed.frame
+        }
+        return CoordinateFrame.unitPoint(x: x, y: y, in: frame, verb: verb)
+            .map { .recordInput(sessionID: sessionID, kind: kind, x: $0.x, y: $0.y) }
+            .mapError { ParseFailure($0.message) }
+    }
+
     private static func parseTrim(path: String, args: [String]) -> Result<ParsedCommand, ParseFailure> {
         var start: Double?
         var end: Double?
@@ -346,12 +401,17 @@ public enum CommandLineParser {
         return .success(.trim(bundlePath: path, start: start, end: end, auto: auto))
     }
 
-    /// `snitt crop <bundle> --x F --y F --width F --height F` | `--reset`
+    /// `snitt crop <bundle> --x N --y N --width N --height N
+    /// [--frame-width W --frame-height H]` | `--reset`
     ///
-    /// Fractions of the frame (0-1), not pixels, because that is what
-    /// `CropRect` stores and what survives a change of source resolution.
-    /// Accepting pixels would mean this command has to read `capture.mov` to
-    /// convert — a read §4.9 says the CLI cannot assume it is allowed to make.
+    /// The STORED rect is fractions of the frame (0-1), because that is what
+    /// survives a change of source resolution and what composes with `--scale`.
+    /// What is TYPED may be pixels, as long as `--frame-width`/`--frame-height`
+    /// say what picture they are pixels of. The conversion needs a frame size,
+    /// and §4.9 says the CLI cannot assume it may read `capture.mov` to
+    /// discover Snitt's. It does not have to: the caller knows the size of the
+    /// picture it measured in, and that is the number the division wants
+    /// (D105, `CoordinateFrame`).
     /// `auto-deep-trim <bundle> [--preset P] [per-criterion flags]`.
     ///
     /// The preset is a STARTING POINT that individual flags override, rather
@@ -361,9 +421,19 @@ public enum CommandLineParser {
     private static func parseAutoDeepTrim(path: String, args: [String])
         -> Result<ParsedCommand, ParseFailure> {
         var criteria = DeepTrimCriteria.preset(.default)
+        // PR I: tidying a recording is one intent, and it cost `trim
+        // --auto-trim` plus this, with two unrelated parameter vocabularies.
+        // On here rather than in `DeepTrimCriteria.preset`, so the editor's
+        // deep-trim command, which has a timeline and a pair of trim handles
+        // right beside it, keeps meaning exactly what it meant.
+        var trimBookends = true
         var remaining = args
         while let flag = remaining.first {
             remaining.removeFirst()
+            if flag == "--keep-bookends" {
+                trimBookends = false
+                continue
+            }
             if flag == "--preset" {
                 guard let raw = remaining.first else {
                     return .failure(ParseFailure(
@@ -383,8 +453,8 @@ public enum CommandLineParser {
                          "--input-padding", "--reading-time"]
             guard known.contains(flag) else {
                 return .failure(ParseFailure(
-                    "Unknown auto-deep-trim option: \(flag). Expected --preset or one of: "
-                  + known.joined(separator: ", ")))
+                    "Unknown auto-deep-trim option: \(flag). Expected --preset, "
+                  + "--keep-bookends, or one of: " + known.joined(separator: ", ")))
             }
             guard let raw = remaining.first, let value = Double(raw), value >= 0 else {
                 return .failure(ParseFailure("\(flag) needs a non-negative number."))
@@ -398,13 +468,23 @@ public enum CommandLineParser {
             default: criteria.subtitleReadingTime = value
             }
         }
+        // Applied last: `--preset` REPLACES the criteria value, so setting
+        // this before the loop would let a preset silently turn it off again.
+        criteria.trimBookends = trimBookends
         return .success(.autoDeepTrim(bundlePath: path, criteria: criteria))
     }
 
     private static func parseCrop(path: String, args: [String]) -> Result<ParsedCommand, ParseFailure> {
         var values: [String: Double] = [:]
         var reset = false
-        var remaining = args
+        let frame: CoordinateFrame?
+        var remaining: [String]
+        switch parseFrame(args, verb: "crop") {
+        case .failure(let failure): return .failure(failure)
+        case .success(let parsed):
+            frame = parsed.frame
+            remaining = parsed.rest
+        }
         while let flag = remaining.first {
             remaining.removeFirst()
             if flag == "--reset" { reset = true; continue }
@@ -412,18 +492,20 @@ public enum CommandLineParser {
             guard let key = names[flag] else {
                 return .failure(ParseFailure("Unknown crop option: \(flag)"))
             }
-            guard let raw = remaining.first, let value = Double(raw) else {
-                return .failure(ParseFailure("\(flag) needs a number between 0 and 1."))
+            guard let raw = remaining.first, let value = Double(raw), value.isFinite else {
+                return .failure(ParseFailure(
+                    "\(flag) needs a finite number: pixels with --frame-width and "
+                  + "--frame-height, otherwise a fraction between 0 and 1."))
             }
             remaining.removeFirst()
             values[key] = value
         }
 
         if reset {
-            guard values.isEmpty else {
+            guard values.isEmpty, frame == nil else {
                 return .failure(ParseFailure(
                     "`--reset` removes the crop, so it cannot be combined with "
-                  + "--x/--y/--width/--height."))
+                  + "--x/--y/--width/--height or a frame size."))
             }
             return .success(.crop(bundlePath: path, rect: nil))
         }
@@ -433,15 +515,18 @@ public enum CommandLineParser {
         guard let x = values["x"], let y = values["y"],
               let width = values["width"], let height = values["height"] else {
             return .failure(ParseFailure(
-                "`crop` needs --x, --y, --width and --height (fractions of the "
-              + "frame, 0-1), or --reset to remove an existing crop."))
+                "`crop` needs --x, --y, --width and --height: pixels if you also "
+              + "give --frame-width and --frame-height, otherwise fractions of the "
+              + "frame (0-1). Use --reset to remove an existing crop."))
         }
         guard width > 0, height > 0 else {
             return .failure(ParseFailure(
                 "--width and --height must be greater than 0. Use --reset to remove a crop."))
         }
-        return .success(.crop(bundlePath: path,
-                              rect: CropRect(x: x, y: y, width: width, height: height)))
+        return CoordinateFrame.unitRect(x: x, y: y, width: width, height: height,
+                                        in: frame, verb: "crop")
+            .map { .crop(bundlePath: path, rect: $0) }
+            .mapError { ParseFailure($0.message) }
     }
 
     private static func parseExport(path: String, args: [String]) -> Result<ParsedCommand, ParseFailure> {
@@ -450,7 +535,11 @@ public enum CommandLineParser {
         var scale = 1.0
         var chapters = false
         var subtitles = false
-        var clicks = false
+        // D105: on unless refused, matching snitt_export. Only clicks that were
+        // REPORTED can be drawn (a click the event tap saw carries no position),
+        // so a recording nobody reported input to is unaffected, and the one
+        // case this changes is the one the drawing exists for.
+        var clicks = true
         var resolution = ExportResolution.source
         var maxSizeBytes: Int?
         var index = 0
@@ -476,6 +565,8 @@ public enum CommandLineParser {
                 subtitles = true
             case "--clicks":
                 clicks = true
+            case "--no-clicks":
+                clicks = false
             case "--resolution":
                 index += 1
                 guard index < args.count else {

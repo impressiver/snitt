@@ -13,6 +13,14 @@ import Testing
 @Suite
 struct MCPAutoDeepTrimTests {
 
+    /// The preset, plus the one thing the tool sets on top of it. See
+    /// `AutoDeepTrimParsingTests.asTyped`, which this mirrors for the CLI.
+    private func asCalled(_ criteria: DeepTrimCriteria) -> DeepTrimCriteria {
+        var criteria = criteria
+        criteria.trimBookends = true
+        return criteria
+    }
+
     private func criteria(_ json: String) -> DeepTrimCriteria? {
         guard case .success(.autoDeepTrim(_, let criteria)) = MCPBridge.request(
             forTool: "snitt_auto_deep_trim", arguments: jsonArguments(json)) else { return nil }
@@ -47,12 +55,12 @@ struct MCPAutoDeepTrimTests {
     @Test("With no options it uses the default preset")
     func defaultsToTheDefaultPreset() throws {
         #expect(try #require(criteria(#"{"bundlePath": "/tmp/a.snitt"}"#))
-                == DeepTrimCriteria.preset(.default))
+                == asCalled(DeepTrimCriteria.preset(.default)))
     }
 
     @Test("Every setting overrides one part of the preset, keeping the rest")
     func settingsComposeWithThePreset() throws {
-        let base = DeepTrimCriteria.preset(.conservative)
+        let base = asCalled(DeepTrimCriteria.preset(.conservative))
         let cases: [(String, String, (DeepTrimCriteria) -> DeepTrimCriteria)] = [
             ("minSpan", "9", { var c = $0; c.minimumSpan = 9; return c }),
             ("audioSilence", "0.5", { var c = $0; c.audioSilenceFraction = 0.5; return c }),

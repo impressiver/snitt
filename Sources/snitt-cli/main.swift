@@ -87,20 +87,27 @@ snitt — record a window and hand back a .snitt bundle
   snitt record mark <session-id> [--label <text>]   drop a marker
   snitt record keystroke <session>        report that you typed (no text)
   snitt record click|cursor <session> <x> <y>
-                                          report input the OS never saw
+        [--frame-width W --frame-height H]
+                                          report input the OS never saw; x and y
+                                          are pixels of the named frame, or
+                                          fractions of the window without one
   snitt record screenshot <session> [--label "..."]
                                           save the current frame, marked
   snitt record pause <session>            stop filming without ending
   snitt record resume <session>           start filming again
   snitt setup [--apply]                   register the MCP server with agents
-  snitt crop <bundle> --x F --y F --width F --height F
-        [--reset]                        crop, in fractions of the frame
+  snitt crop <bundle> --x N --y N --width N --height N
+        [--frame-width W --frame-height H]
+        [--reset]                        crop; pixels of the named frame, or
+                                          fractions of it without one
   snitt auto-deep-trim <bundle>          cut the spans where nothing happens
         [--preset conservative|default|aggressive]
         [--min-span S] [--audio-silence F] [--frame-stillness F]
-        [--input-padding S] [--reading-time S]
+        [--input-padding S] [--reading-time S] [--keep-bookends]
                                          a preset sets all five; each flag
-                                          overrides one of them
+                                          overrides one of them. Also takes the
+                                          setup and teardown off the ends unless
+                                          --keep-bookends
   snitt estimate <bundle> [--scale F]    duration, size and an upper bound on
                                           bytes, without doing the export
   snitt inspect <bundle>                 metadata as JSON, no GUI
@@ -110,11 +117,12 @@ snitt — record a window and hand back a .snitt bundle
                                           with none
   snitt export <bundle> --format mp4|gif --out <path>   render a movie
         [--resolution 1080p|720p|540p|480p|2160p|source]
-        [--scale <factor>] [--chapters] [--subtitles] [--clicks]
+        [--scale <factor>] [--chapters] [--subtitles] [--no-clicks]
         [--max-size 10MB]
                                           scale pixels; write a .vtt from markers;
-                                          draw the clicks you reported; walk down
-                                          quality to hit a byte budget
+                                          reported clicks are drawn unless
+                                          --no-clicks; walk down quality to hit a
+                                          byte budget
                                           (gif has no audio track)
   snitt diagnostics export --out <path>  write a support bundle (logs, versions,
                                           permission states, recent sessions) as JSON
