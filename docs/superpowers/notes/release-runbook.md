@@ -140,6 +140,40 @@ So: do not go looking for a deleted credential, and do not trust a
 `security`-based search to tell you whether one exists. Unlock the screen
 first, and if it still fails, you have a real problem rather than this one.
 
+## Who may cut a release, and what a release may push
+
+**Only repository admins.** A `Release tags` ruleset protects `refs/tags/v*`
+against creation, update, deletion and non-fast-forward, bypassed only by
+`RepositoryRole 5` (admin). Write access is no longer enough to tag a release,
+and a release that cannot be tagged cannot be published, since step 8 pushes
+the tag before `gh release create`. The `Main` branch ruleset already bypassed
+admin-only; this closes the tag half, which was open.
+
+Practically it was already hard: a release needs the Developer ID certificate,
+the `snitt` notarytool profile, and the Sparkle EdDSA key, all of which live in
+a keychain on one machine. The ruleset makes it a rule rather than a
+circumstance.
+
+**Step 10 may push exactly two files.** It is the only commit in this project
+that reaches `main` without a pull request, and GitHub reports it as a bypass
+on every release:
+
+```
+remote: Bypassed rule violations for refs/heads/main:
+remote: - Changes must be made through a pull request.
+remote: - 3 of 3 required status checks are expected.
+```
+
+A ruleset cannot scope a bypass to a file path — bypass actors are
+all-or-nothing per ruleset — so the narrowing lives in `bump_to_next_dev`,
+which refuses if anything other than `AppVersion.swift` and `Casks/snitt.rb`
+is staged. `ReleaseScriptTests.ReleaseBypassIsNarrow` reads that allow-list out
+of the script rather than restating it, so widening what a release may push
+unreviewed fails a test and becomes a decision instead of a detail.
+
+If it refuses, the release is already published and verified; the bump is
+bookkeeping, and the warning prints the two commands to finish by hand.
+
 ## Two version numbers, deliberately disjoint
 
 `CFBundleShortVersionString` is what a person reads. `CFBundleVersion` is

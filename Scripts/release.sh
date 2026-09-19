@@ -180,6 +180,36 @@ bump_to_next_dev() {
   sed -i '' "s/public static let marketing = \"$VERSION\"/public static let marketing = \"$next\"/" \
     "$VERSION_SOURCE" || return 1
   git add "$VERSION_SOURCE" || return 1
+
+  # The ONLY commit in this project that reaches `main` without a pull
+  # request, and the only one GitHub reports as a bypass:
+  #
+  #   remote: Bypassed rule violations for refs/heads/main:
+  #   remote: - Changes must be made through a pull request.
+  #   remote: - 3 of 3 required status checks are expected.
+  #
+  # A ruleset cannot scope a bypass to a file path — bypass actors are
+  # all-or-nothing per ruleset — so the narrowing has to live here. This
+  # asserts the commit is exactly the bookkeeping it claims to be: the version
+  # constant, and the cask that carries the release hash beside it. Anything
+  # else in the index means something unrelated is about to ride an unreviewed
+  # push to a protected branch, which is the way a standing exception grows
+  # into a hole.
+  #
+  # Refuses rather than committing partially: the caller treats a false return
+  # as a warning and prints the two commands to finish by hand, which is the
+  # right outcome for a release that is already published and verified.
+  local staged allowed
+  staged="$(git diff --cached --name-only | sort)"
+  allowed="$(printf '%s\n%s\n' "$VERSION_SOURCE" "$CASK_SOURCE" | sort)"
+  if [ -n "$(comm -23 <(printf '%s\n' "$staged") <(printf '%s\n' "$allowed"))" ]; then
+    echo "error: the version bump would also commit files it has no business" >&2
+    echo "       touching, so it is refusing rather than pushing them to" >&2
+    echo "       $DEFAULT_BRANCH without review:" >&2
+    comm -23 <(printf '%s\n' "$staged") <(printf '%s\n' "$allowed") | sed 's/^/         /' >&2
+    return 1
+  fi
+
   git commit --quiet -m "release: main moves to $next
 
 Published $VERSION, so main must stop claiming it: a build made here would
