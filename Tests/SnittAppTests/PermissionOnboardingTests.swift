@@ -105,3 +105,43 @@ func theCoordinatorNeverBlocksOnAHuman() throws {
                 "\(offender) in RecordingCoordinator blocks the agent path on a human click")
     }
 }
+
+@MainActor
+@Test("Declining the explanation does not consume it")
+func decliningPreExplainLeavesItUnspent() {
+    // The bug this fixes: `markPreExplained` ran BEFORE `runModal`, so the
+    // one-time explanation was spent the moment the sheet appeared, however
+    // the person answered it. Snitt is a menu-bar app and its own comment on
+    // `preExplain` says a background app's modal "can open behind whatever the
+    // user is looking at" — so dismissing it, missing it, or choosing Not now
+    // all burned the explanation, reverted the checkbox, and said nothing.
+    // The setting then worked on the next attempt, which is what made it look
+    // intermittent rather than broken.
+    //
+    // Discriminates against marking before the answer: that implementation
+    // returns false here too, so only the SECOND expectation catches it.
+    let defaults = emptyDefaults()
+    let accepted = PermissionOnboarding.preExplain(.screenRecording,
+                                                   defaults: defaults,
+                                                   ask: { false })
+    #expect(accepted == false, "Not now must refuse the toggle")
+    #expect(PermissionOnboarding.shouldPreExplain(.screenRecording, defaults: defaults),
+            "a declined explanation must still be owed, not silently spent")
+}
+
+@MainActor
+@Test("Accepting the explanation spends it, so it is not shown twice")
+func acceptingPreExplainSpendsIt() {
+    // The other half, and the reason the fix is not simply "never mark":
+    // §4.10's sheet exists so the system dialog is expected, and showing it on
+    // every attempt is the nagging `preExplainHappensOnce` guards against.
+    let defaults = emptyDefaults()
+    #expect(PermissionOnboarding.preExplain(.screenRecording,
+                                            defaults: defaults, ask: { true }))
+    #expect(!PermissionOnboarding.shouldPreExplain(.screenRecording, defaults: defaults))
+    // And a second call must not ask again: it short-circuits to true.
+    var askedAgain = false
+    #expect(PermissionOnboarding.preExplain(.screenRecording, defaults: defaults,
+                                            ask: { askedAgain = true; return false }))
+    #expect(!askedAgain, "an explanation already given must not be asked again")
+}

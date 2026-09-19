@@ -126,12 +126,39 @@ public enum PermissionOnboarding {
     }
 
     /// Shows the pre-explain sheet, returning whether the user chose to continue.
+    ///
+    /// **The explanation is spent only once it has been ANSWERED, and only when
+    /// the answer was yes.** It used to be marked before the sheet appeared,
+    /// which meant any outcome other than Continue consumed it anyway: the
+    /// caller saw `false`, `PermissionLadder` returned without persisting, the
+    /// checkbox snapped back, and nothing said why. The next attempt then
+    /// succeeded, because the explanation had already been recorded as given,
+    /// so the setting read as intermittent rather than broken.
+    ///
+    /// That is not a rare path here. The comment below says a background app's
+    /// modal can open behind whatever the user is looking at, and this app
+    /// lives in the menu bar: not seeing the sheet at all is an ordinary
+    /// outcome, and it must not cost the person their explanation.
+    ///
+    /// - Parameter ask: how to put the question, injected. `nil` runs the real
+    ///   sheet. A test MUST pass this rather than let the modal run:
+    ///   `NSAlert.runModal()` holds the MainActor and stops the whole test run
+    ///   with no failing test to show for it, which is the ten-minute hang
+    ///   `NoModalAlerts` exists to prevent.
     @MainActor
     public static func preExplain(_ service: Service,
-                                  defaults: UserDefaults = .standard) -> Bool {
+                                  defaults: UserDefaults = .standard,
+                                  ask: (() -> Bool)? = nil) -> Bool {
         guard shouldPreExplain(service, defaults: defaults) else { return true }
-        markPreExplained(service, defaults: defaults)
 
+        let accepted = ask?() ?? runPreExplainSheet(for: service)
+        guard accepted else { return false }
+        markPreExplained(service, defaults: defaults)
+        return true
+    }
+
+    @MainActor
+    private static func runPreExplainSheet(for service: Service) -> Bool {
         // A background app's modal can open behind whatever the user is
         // looking at, with nothing obvious to bring it forward.
         // `AppDelegate.notify()` activates for exactly this reason.
