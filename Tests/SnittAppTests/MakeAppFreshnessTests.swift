@@ -235,3 +235,91 @@ struct MakeAppOutputIsolation {
                 "the default must remain build/Snitt.app for production: \(line)")
     }
 }
+
+@Suite(.serialized)
+struct ModuleCacheAndManifestFreshness {
+    private func lib() -> String {
+        FileManager.default.currentDirectoryPath + "/Scripts/lib/drop-stale-module-cache.sh"
+    }
+
+    private func sh(_ command: String) -> (out: String, status: Int32) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/bin/bash")
+        p.arguments = ["-c", command]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = pipe
+        try? p.run()
+        let d = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        return (String(decoding: d, as: UTF8.self), p.terminationStatus)
+    }
+
+    /// A tree with a resolved file and a module cache, whose relative ages the
+    /// caller chooses.
+    private func fixture(cacheOlderThanResolved: Bool) throws -> URL {
+        let root = FileManager.default.temporaryDirectory
+            .appending(path: "snitt-cache-\(UUID().uuidString)")
+        let cache = root.appending(path: ".build/out/Intermediates.noindex/SwiftExplicitPrecompiledModules")
+        try FileManager.default.createDirectory(at: cache, withIntermediateDirectories: true)
+        try "cached".write(to: cache.appending(path: "Dep.pcm"), atomically: true, encoding: .utf8)
+        let resolved = root.appending(path: "Package.resolved")
+        try "{}".write(to: resolved, atomically: true, encoding: .utf8)
+
+        let old = Date(timeIntervalSince1970: 1_700_000_000)
+        let new = Date(timeIntervalSince1970: 1_800_000_000)
+        try FileManager.default.setAttributes(
+            [.modificationDate: cacheOlderThanResolved ? old : new], ofItemAtPath: cache.path)
+        try FileManager.default.setAttributes(
+            [.modificationDate: cacheOlderThanResolved ? new : old], ofItemAtPath: resolved.path)
+        return root
+    }
+
+    @Test("A cache older than the resolved dependencies is cleared")
+    func staleCacheIsDropped() throws {
+        // The Sparkle 2.9.6 to 2.10.0 case: the cached .pcm was built against
+        // headers that no longer exist, and the compiler reports it as a file
+        // "modified since the module file was built" naming none of our code.
+        let root = try fixture(cacheOlderThanResolved: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = root.appending(path: ".build/out/Intermediates.noindex/SwiftExplicitPrecompiledModules")
+
+        _ = sh(". '\(lib())'; drop_stale_module_cache '\(root.path)'")
+        #expect(!FileManager.default.fileExists(atPath: cache.path),
+                "a cache predating the current dependency set must be cleared")
+    }
+
+    @Test("A current cache is left alone")
+    func freshCacheSurvives() throws {
+        // The control, and it is the one that matters: clearing unconditionally
+        // would pass the test above while making every build recompile every
+        // module for no reason.
+        let root = try fixture(cacheOlderThanResolved: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = root.appending(path: ".build/out/Intermediates.noindex/SwiftExplicitPrecompiledModules")
+
+        _ = sh(". '\(lib())'; drop_stale_module_cache '\(root.path)'")
+        #expect(FileManager.default.fileExists(atPath: cache.path),
+                "a cache newer than Package.resolved was built against these versions")
+    }
+
+    @Test("The freshness guard does not compare against the manifest")
+    func freshnessIgnoresTheManifest() throws {
+        // Reads the guard out of the script rather than restating it. Comparing
+        // products against Package.swift refuses a build whenever a manifest
+        // edit correctly relinks nothing — which is every dependency bump for
+        // every product that does not import the dependency. `snitt-cli` does
+        // not link Sparkle (§4.9), so the 2.10.0 bump made this fire on a
+        // binary that was entirely current.
+        let source = try String(
+            contentsOfFile: FileManager.default.currentDirectoryPath + "/Scripts/make-app.sh",
+            encoding: .utf8)
+        let line = try #require(
+            source.split(separator: "\n").first { $0.contains("STALE_SOURCE=") },
+            "make-app.sh no longer computes STALE_SOURCE")
+        #expect(line.contains("find Sources"),
+                "the guard must still compare against sources: \(line)")
+        #expect(!line.contains("Package.swift"),
+                "comparing against the manifest refuses correct builds: \(line)")
+    }
+}

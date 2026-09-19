@@ -87,6 +87,14 @@ counted=0
 # here would otherwise be discovered after two thousand tests had run and
 # passed.
 printf '\n=== build (warnings are errors) ===\n'
+# Same reason make-app.sh does it: a dependency version change leaves a
+# precompiled module cache that fails validation against the new headers, and
+# the diagnostic names none of our files. The gate is where that would be met
+# first and read as a real failure.
+# shellcheck source=lib/drop-stale-module-cache.sh
+. "$(dirname "$0")/lib/drop-stale-module-cache.sh"
+drop_stale_module_cache "$PWD"
+
 if swift build --build-tests -Xswiftc -warnings-as-errors > "$LOG_DIR/build.log" 2>&1; then
   echo "clean"
 else
