@@ -25,6 +25,20 @@ import Foundation
 // The property under test is FRESHNESS, not existence. That distinction is
 // the entire bug: existence is the adjacent property, and asserting it is
 // what let this ship twice.
+/// A disposable path for `make-app.sh`'s output.
+///
+/// Every test in this file drives the REAL script, and the script removes
+/// `$APP` from an EXIT trap whenever it exits non-zero — which is what these
+/// tests assert. With the default path that deleted the developer's own
+/// `build/Snitt.app`, in the repo root, while other suites were reading it.
+/// Pointing `SNITT_APP_PATH` somewhere disposable keeps the script under test
+/// unchanged and stops it reaching outside its own test.
+private func disposableAppPath() -> String {
+    FileManager.default.temporaryDirectory
+        .appending(path: "snitt-makeapp-\(UUID().uuidString)")
+        .appending(path: "Snitt.app").path
+}
+
 @Suite(.serialized)
 struct MakeAppFreshnessTests {
     /// A `swift` that reports a product directory of our choosing and builds
@@ -77,6 +91,7 @@ struct MakeAppFreshnessTests {
             "PATH": "\(stubDir.path):/usr/bin:/bin:/usr/sbin:/sbin",
             "SNITT_UNIVERSAL": "1",
             "HOME": NSHomeDirectory(),
+            "SNITT_APP_PATH": disposableAppPath(),
         ]
         let err = Pipe(), out = Pipe()
         process.standardError = err
@@ -129,7 +144,8 @@ struct MakeAppFreshnessTests {
             process.executableURL = URL(fileURLWithPath: "/bin/bash")
             process.arguments = [FileManager.default.currentDirectoryPath + "/Scripts/make-app.sh"]
             var env = ["PATH": "\(dir.path):/usr/bin:/bin:/usr/sbin:/sbin",
-                       "HOME": NSHomeDirectory()]
+                       "HOME": NSHomeDirectory(),
+                       "SNITT_APP_PATH": disposableAppPath()]
             // A fake identity: this test is about the CONFIGURATION that
             // choice selects, and it never reaches signing.
             if signed { env["SNITT_SIGN_IDENTITY"] = "Developer ID Application: test" }
@@ -153,5 +169,69 @@ struct MakeAppFreshnessTests {
         let unsigned = try configurationRequested(signed: false)
         #expect(unsigned.contains("-c debug"),
                 "a development build should stay debug for build speed")
+    }
+}
+
+@Suite(.serialized)
+struct MakeAppOutputIsolation {
+    /// The regression this file caused, pinned so it cannot return quietly.
+    ///
+    /// `make-app.sh` removes `$APP` from an EXIT trap on any non-zero exit,
+    /// and the tests above exist to force non-zero exits. Before
+    /// `SNITT_APP_PATH`, that trap reached the repo's own `build/Snitt.app`,
+    /// because the script cd's to the repo root no matter where it is invoked
+    /// from. The damage was invisible twice over: CI and fresh worktrees have
+    /// no bundle to destroy, and `BundleLayoutTests` SKIPS when one is absent
+    /// while still reporting the run passed.
+    @Test("A failing run deletes only the path it was given")
+    func failureCleansOnlyItsOwnOutput() throws {
+        // A stand-in for the developer's real bundle, in a directory the
+        // script is NOT told about. Discriminates against reading
+        // SNITT_APP_PATH for the build but leaving the trap on the default:
+        // that passes any test which only checks where the app was written.
+        let bystander = FileManager.default.temporaryDirectory
+            .appending(path: "snitt-bystander-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: bystander, withIntermediateDirectories: true)
+        let sentinel = bystander.appending(path: "Snitt.app")
+        try FileManager.default.createDirectory(at: sentinel, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: bystander) }
+
+        let target = disposableAppPath()
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        // No stubbed `swift` on PATH, so the script fails early and the EXIT
+        // trap is what runs. Failing is the point: this asserts what cleanup
+        // touches, not what a build produces.
+        process.arguments = [FileManager.default.currentDirectoryPath + "/Scripts/make-app.sh"]
+        process.environment = [
+            "PATH": "/nonexistent-bin",
+            "HOME": NSHomeDirectory(),
+            "SNITT_APP_PATH": target,
+        ]
+        process.standardOutput = Pipe()
+        process.standardError = Pipe()
+        try process.run()
+        process.waitUntilExit()
+
+        #expect(process.terminationStatus != 0, "the run must fail, or the trap never fires")
+        #expect(FileManager.default.fileExists(atPath: sentinel.path),
+                "a failing make-app.sh deleted a bundle it was never pointed at")
+    }
+
+    @Test("The script reads the override rather than hardcoding its output")
+    func overrideIsHonoured() throws {
+        // Reads the assignment out of the script rather than restating it, so
+        // reverting to a hardcoded path fails here instead of silently
+        // re-arming the trap against the repo root.
+        let source = try String(
+            contentsOfFile: FileManager.default.currentDirectoryPath + "/Scripts/make-app.sh",
+            encoding: .utf8)
+        let line = try #require(
+            source.split(separator: "\n").first { $0.hasPrefix("APP=") },
+            "make-app.sh no longer assigns APP")
+        #expect(line.contains("SNITT_APP_PATH"),
+                "APP must stay overridable or the tests here clobber build/Snitt.app again: \(line)")
+        #expect(line.contains("build/Snitt.app"),
+                "the default must remain build/Snitt.app for production: \(line)")
     }
 }
