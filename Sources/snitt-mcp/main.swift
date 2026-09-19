@@ -35,6 +35,15 @@ func textContent(_ text: String) -> [String: Any] {
     ["content": [["type": "text", "text": text]]]
 }
 
+/// A tool result carrying BOTH halves: the prose a person reads in a log, and
+/// the object an agent parses. The text block stays exactly as it was, so
+/// nothing that reads the prose today breaks.
+func toolResult(_ text: String, structured: [String: Any]?) -> [String: Any] {
+    var payload = textContent(text)
+    if let structured { payload["structuredContent"] = structured }
+    return payload
+}
+
 /// A tool CALL that fails — bad arguments, an unknown tool name, or a request
 /// the app itself refused — is reported through the result channel with
 /// `isError: true`, not as a JSON-RPC protocol error. A protocol error means
@@ -64,6 +73,77 @@ func exportSummary(_ manifest: ExportManifest) -> String {
     }
     text += chapters.isEmpty ? "" : ", chapters: \(chapters)"
     return text
+}
+
+/// One `Encodable` as a JSON object, for embedding in `structuredContent`.
+///
+/// Round-trips through `JSONSerialization` rather than being hand-built,
+/// so the structured payload and the CLI's `emit` cannot drift: both are the
+/// same `Codable` value, encoded the same way.
+func jsonObject(_ value: some Encodable) -> [String: Any]? {
+    guard let data = try? JSONEncoder().encode(value) else { return nil }
+    return (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+}
+
+/// The machine-readable half of a tool result (§4.8's agent-facing contract,
+/// extended to MCP by D103).
+///
+/// Mirrors what `snitt-cli` already writes to stdout for the same response, so
+/// the two frontends answer with the same FIELDS and differ only in transport.
+/// Before this existed, `describe` rendered most cases as prose and an agent
+/// had to pattern-match a sentence to recover a `sessionId` or a `bundlePath` —
+/// values that thirteen tool signatures require as input.
+///
+/// `nil` means "nothing machine-readable to add", not "failed": the prose text
+/// block is always present, so a case that has no structured form simply omits
+/// the key rather than shipping an empty object a client might branch on.
+func structuredContent(_ response: AutomationResponse) -> [String: Any]? {
+    switch response {
+    case .handshake(let info):
+        return jsonObject(info)
+    case .targets(let targets):
+        // Arrays are not valid `structuredContent`, which must be an object, so
+        // the list is named rather than returned bare.
+        guard let data = try? JSONEncoder().encode(targets),
+              let array = try? JSONSerialization.jsonObject(with: data) else { return nil }
+        return ["targets": array]
+    case .started(let id, let target):
+        return ["sessionId": id, "target": target]
+    case .stopped(let path, let health):
+        var payload: [String: Any] = ["bundlePath": path]
+        let block = healthFields(health)
+        if !block.isEmpty { payload["health"] = block }
+        return payload
+    case .status(let info):
+        return jsonObject(info)
+    case .failure(let error):
+        return jsonObject(error)
+    case .marked(let timeSeconds):
+        return ["markedAt": timeSeconds]
+    case .inspected(let report):
+        // The case this matters most for. `InspectReport` exists, in its own
+        // words, "so an agent can write something factually true in a pull
+        // request instead of narrating a recording it has never seen" — and
+        // the prose rendering drops `health` and `git`, which are exactly the
+        // fields that claim rests on.
+        return jsonObject(report)
+    case .trimmed(let summary):
+        return jsonObject(summary)
+    case .cropped(let summary):
+        return jsonObject(summary)
+    case .autoTrimmed(let summary):
+        return jsonObject(summary)
+    case .estimated(let estimates):
+        guard let data = try? JSONEncoder().encode(estimates),
+              let array = try? JSONSerialization.jsonObject(with: data) else { return nil }
+        return ["estimates": array]
+    case .screenshotTaken(let path, let timeSeconds):
+        return ["path": path, "timeSeconds": timeSeconds]
+    case .exported(let manifest):
+        return jsonObject(manifest)
+    case .diagnosticsWritten(let report):
+        return jsonObject(report)
+    }
 }
 
 /// Renders a response as the text an agent reads back.
@@ -233,9 +313,12 @@ while let line = readLine(strippingNewline: true) {
                 })
                 let response = try await client.send(body)
                 if case .diagnosticsWritten(let report) = response, let diagnosticsOutputPath {
-                    result(id: id, textContent(diagnosticsSummary(report, outputPath: diagnosticsOutputPath)))
+                    result(id: id, toolResult(
+                        diagnosticsSummary(report, outputPath: diagnosticsOutputPath),
+                        structured: structuredContent(response)))
                 } else {
-                    result(id: id, textContent(describe(response)))
+                    result(id: id, toolResult(describe(response),
+                                              structured: structuredContent(response)))
                 }
             } catch ClientError.notRunning {
                 // Fail immediately rather than block: an agent cannot see or
