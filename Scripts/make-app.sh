@@ -115,6 +115,10 @@ if [ -z "$PRODUCT_DIR" ] || [ ! -d "$PRODUCT_DIR" ]; then
   exit 1
 fi
 
+# shellcheck source=lib/drop-stale-module-cache.sh
+. "$(dirname "$0")/lib/drop-stale-module-cache.sh"
+drop_stale_module_cache "$PWD"
+
 swift build -c "$CONFIG" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --product SnittApp
 
 # The two client frontends ship INSIDE the app (D63). Until v0.1.0 they were
@@ -136,7 +140,17 @@ for required in SnittApp snitt-cli snitt-mcp; do
   # earlier toolchain satisfies `-f` forever and ships silently. If any source
   # file is newer than the binary we are about to copy, the binary is not the
   # source tree we are releasing.
-  STALE_SOURCE="$(find Sources Package.swift -type f -newer "$PRODUCT_DIR/$required" -print -quit 2>/dev/null || true)"
+  #
+  # `Sources` only, NOT the manifest. A manifest edit that changes a target's
+  # inputs makes SwiftPM relink, and the product comes out newer than the file
+  # either way. A manifest edit that does NOT — bumping a dependency a given
+  # product never imports, say — correctly relinks nothing, and comparing
+  # against it then reports a binary that is perfectly current as stale. That
+  # fired on the Sparkle 2.9.6 to 2.10.0 bump: `snitt-cli` does not link
+  # Sparkle (§4.9), so it was rightly left alone and this guard refused the
+  # build. A check that fails on correct behaviour gets disabled, which costs
+  # more than the case it was catching.
+  STALE_SOURCE="$(find Sources -type f -newer "$PRODUCT_DIR/$required" -print -quit 2>/dev/null || true)"
   if [ -n "$STALE_SOURCE" ]; then
     echo "error: $PRODUCT_DIR/$required is OLDER than $STALE_SOURCE." >&2
     echo "       swift build reported success, so it wrote its output somewhere" >&2
