@@ -592,6 +592,14 @@ public enum MCPBridge {
 
         case "snitt_start_recording":
             var options = StartOptions()
+            // §7's git context is discovered from this, and `StartOptions`'
+            // own comment says it is filled by the CLI rather than the app
+            // because `Snitt.app`'s directory is `/`. The MCP bridge is the
+            // other client and was not filling it, so every agent-driven
+            // recording was filed with no git context while every CLI one had
+            // it. Set here rather than inside a branch: it is a property of
+            // the CALLER, not of which target it chose.
+            options.workingDirectory = workingDirectory
 
             // ConsentPolicy.evaluate checks displayID before bundleIdentifier
             // and returns as soon as a display request is permitted, never
@@ -715,8 +723,15 @@ public enum MCPBridge {
             guard let path = arguments["bundlePath"] as? String else {
                 return .failure(MCPBridgeError("snitt_crop requires bundlePath"))
             }
-            if arguments["reset"] as? Bool == true {
-                return .success(.crop(bundlePath: path, rect: nil))
+            // `booleanValue`, not `as? Bool == true`: a JSON string "true"
+            // decodes to NSString, fails the cast, and falls through to the
+            // rect branch. With x/y/width/height also present that is a silent
+            // SUCCESS that APPLIES a crop when the caller asked to remove one,
+            // the same failure shape `autoTrim` had.
+            switch booleanValue(arguments["reset"], parameter: "reset") {
+            case .failure(let error): return .failure(error)
+            case .success(let value):
+                if value == true { return .success(.crop(bundlePath: path, rect: nil)) }
             }
             var rect: [String: Double] = [:]
             for key in ["x", "y", "width", "height"] {
@@ -910,11 +925,16 @@ public enum MCPBridge {
             case .success(let value): clicksFlag = value ?? false
             case .failure(let error): return .failure(error)
             }
+            let subtitlesFlag: Bool
+            switch booleanValue(arguments["subtitles"], parameter: "subtitles") {
+            case .success(let value): subtitlesFlag = value ?? false
+            case .failure(let error): return .failure(error)
+            }
             return .success(.export(bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory),
                                      format: format,
                                      outputPath: PathResolver.resolve(outputPath, workingDirectory: workingDirectory),
                                      scale: scale, chapters: chapters,
-                                     subtitles: (arguments["subtitles"] as? Bool) ?? false,
+                                     subtitles: subtitlesFlag,
                                      maxSizeBytes: maxSizeBytes,
                                     resolution: resolutionValue,
                                     clicks: clicksFlag))

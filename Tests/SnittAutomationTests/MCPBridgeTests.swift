@@ -543,3 +543,135 @@ func displayTakesPrecedenceOverBundleIdentifier() {
     }
     #expect(options.displayID == 7)
 }
+
+@Test("A string \"true\" for subtitles is refused, not silently read as absent")
+func stringSubtitlesRefused() {
+    // The third instance of the same defect. `chapters` and `clicks` on this
+    // very tool were routed through `booleanValue`; `subtitles` was left on
+    // `arguments["subtitles"] as? Bool ?? false`, so a JSON string decoded to
+    // NSString, failed the cast, and fell into the `false` default. The export
+    // then succeeded with no `.subtitles.vtt` written and nothing to
+    // distinguish that from a caller who genuinely passed false.
+    //
+    // Discriminates against the bare-cast implementation: that version returns
+    // .success here, because the bad value is swallowed rather than refused.
+    guard case .failure(let error) = MCPBridge.request(
+        forTool: "snitt_export",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
+            + #""outputPath": "/tmp/demo.mp4", "subtitles": "true"}"#))
+    else { Issue.record("a string subtitles must not be silently accepted"); return }
+    #expect(error.message.contains("subtitles"))
+}
+
+@Test("subtitles: 1, decoded from real JSON, is accepted as true")
+func numericSubtitlesOneAcceptedAsTrue() {
+    // The flip side, matching `numericChaptersOneAcceptedAsTrue`: routing
+    // `subtitles` through `booleanValue` must extend the same numeric leniency
+    // its siblings get, not tighten it into a refusal.
+    let mapped = MCPBridge.request(
+        forTool: "snitt_export",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
+            + #""outputPath": "/tmp/demo.mp4", "subtitles": 1}"#))
+    guard case .success(.export(_, _, _, _, _, let subtitles, _, _, _)) = mapped else {
+        Issue.record("subtitles: 1, decoded from JSON, must be accepted as true"); return
+    }
+    #expect(subtitles == true)
+}
+
+@Test("An MCP recording carries the working directory, so it gets git context")
+func startRecordingCarriesWorkingDirectory() {
+    // `StartOptions.workingDirectory` is what §7's git context is discovered
+    // from, and its doc comment says it is "filled by the CLI, not the app"
+    // because Snitt.app's own directory is `/`. The CLI fills it on every
+    // `record start`; the MCP bridge received a workingDirectory argument,
+    // used it to resolve bundle and output paths for five other tools, and
+    // never put it on StartOptions — so every agent-driven recording over MCP
+    // was filed with no git context at all, silently.
+    //
+    // Discriminates against the version that omits the assignment: there,
+    // `options.workingDirectory` is nil and this expectation fails while every
+    // other start-recording test still passes.
+    guard case .success(.startRecording(let options)) = MCPBridge.request(
+        forTool: "snitt_start_recording",
+        arguments: jsonArguments(#"{"bundleIdentifier": "com.apple.Safari"}"#),
+        workingDirectory: "/Users/someone/src/project") else {
+        Issue.record("mapping failed"); return
+    }
+    #expect(options.workingDirectory == "/Users/someone/src/project")
+}
+
+@Test("A string \"true\" for reset is refused, not silently swallowed into applying a crop")
+func stringCropResetRefused() {
+    // The FOURTH instance of this defect, found by enumerating the class
+    // rather than waiting for a report. `reset` used `as? Bool == true`, so a
+    // JSON string fell through to the rect branch.
+    //
+    // The rect is present here for the same reason `start` is present in
+    // `stringAutoTrimRefused`: without it the old code fails anyway on the
+    // "all four or none" guard, and the test would pass against the bug for
+    // the wrong reason. WITH a rect, the old code's real failure mode shows —
+    // a silent SUCCESS that APPLIES a crop to a caller who asked to remove one.
+    guard case .failure(let error) = MCPBridge.request(
+        forTool: "snitt_crop",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "reset": "true","#
+            + #""x": 0, "y": 0, "width": 0.5, "height": 0.5}"#))
+    else { Issue.record("a string reset must not be silently swallowed"); return }
+    #expect(error.message.contains("reset"))
+}
+
+/// Minimal arguments that make each tool's request VALID, so adding one bad
+/// boolean is the only reason a call can fail.
+private let booleanGuardFixtures: [String: String] = [
+    "snitt_start_recording": #"{"bundleIdentifier": "com.apple.Safari"}"#,
+    // `start` present so an unrelated guard cannot be what refuses the call.
+    "snitt_trim": #"{"bundlePath": "/tmp/x.snitt", "start": 1}"#,
+    // A full rect, for the reason spelled out in `stringCropResetRefused`.
+    "snitt_crop": #"{"bundlePath": "/tmp/x.snitt", "x": 0, "y": 0, "width": 0.5, "height": 0.5}"#,
+    "snitt_export": #"{"bundlePath": "/tmp/x.snitt", "format": "mp4", "outputPath": "/tmp/d.mp4"}"#,
+]
+
+@Test("EVERY boolean parameter on EVERY tool refuses a JSON string")
+func everyBooleanParameterRefusesAString() {
+    // The structural guard. Four separate rounds of one bug reached shipped
+    // code — `numericValue`/`displayID`, then `autoTrim`/`chapters`, then
+    // `subtitles`, then `crop`'s `reset` — because each was fixed as an
+    // instance. Fixing instances is what let the next one through.
+    //
+    // This walks the tool definitions themselves, so a boolean added later is
+    // covered the day it is added rather than the day someone reports it. If a
+    // new tool grows a boolean, this fails until a fixture is supplied, which
+    // is the point: the failure is a prompt, not an obstacle.
+    var checked = 0
+    for tool in MCPBridge.toolDefinitions() {
+        guard let properties = tool.inputSchema["properties"] as? [String: Any] else { continue }
+        for (parameter, spec) in properties {
+            guard let spec = spec as? [String: Any],
+                  spec["type"] as? String == "boolean" else { continue }
+            guard let fixture = booleanGuardFixtures[tool.name] else {
+                Issue.record("""
+                    \(tool.name) has a boolean parameter "\(parameter)" but no fixture in \
+                    booleanGuardFixtures. Add minimal valid arguments for it so this guard \
+                    can prove the parameter refuses a JSON string.
+                    """)
+                continue
+            }
+            var arguments = jsonArguments(fixture)
+            arguments[parameter] = "true"
+            guard case .failure(let error) = MCPBridge.request(
+                forTool: tool.name, arguments: arguments) else {
+                Issue.record("""
+                    \(tool.name) accepted the JSON STRING "true" for "\(parameter)" instead of \
+                    refusing it. That is the silent-default bug: the value is swallowed and the \
+                    call succeeds having ignored what the caller asked for.
+                    """)
+                continue
+            }
+            #expect(error.message.contains(parameter),
+                    "the refusal must name the parameter so a caller can fix it")
+            checked += 1
+        }
+    }
+    // Guards the guard: a refactor that stopped finding boolean properties
+    // would otherwise make this test vacuously pass.
+    #expect(checked >= 7, "expected at least 7 boolean parameters across the tool surface")
+}
