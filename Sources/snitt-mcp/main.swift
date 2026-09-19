@@ -157,8 +157,13 @@ func structuredContent(_ response: AutomationResponse) -> [String: Any]? {
         guard let data = try? JSONEncoder().encode(targets),
               let array = try? JSONSerialization.jsonObject(with: data) else { return nil }
         return ["targets": array]
-    case .started(let id, let target):
-        return ["sessionId": id, "target": target]
+    case .started(let id, let target, let vocabularyDropped):
+        var payload: [String: Any] = ["sessionId": id, "target": target]
+        // Omitted when nil, so "no vocabulary was sent" is an absent key rather
+        // than a zero that would read as "all of yours were kept": the same
+        // absent-means-absent rule `healthFields` enforces for `.stopped`.
+        if let vocabularyDropped { payload["vocabularyDropped"] = vocabularyDropped }
+        return payload
     case .stopped(let path, let health):
         var payload: [String: Any] = ["bundlePath": path]
         let block = healthFields(health)
@@ -207,8 +212,13 @@ func describe(_ response: AutomationResponse) -> String {
     case .targets(let targets):
         return (try? encoder.encode(targets)).flatMap { String(data: $0, encoding: .utf8) }
             ?? "[]"
-    case .started(let id, let target):
-        return "Recording \(target). Session id: \(id)"
+    case .started(let id, let target, let vocabularyDropped):
+        // The truncation warning rides on the SUCCESS, because that is what it
+        // is: the recording started, and some of the terms it was given are
+        // not biasing anything. Built by the shared `vocabularyNote` so this
+        // sentence and the CLI's cannot drift apart (§4.8).
+        let text = "Recording \(target). Session id: \(id)"
+        return vocabularyNote(vocabularyDropped).map { "\(text) \($0)" } ?? text
     case .stopped(let path, let health):
         // Same "absent means absent" rendering the CLI uses (§4.8: the two
         // frontends must not diverge), via the shared `healthFields` helper.

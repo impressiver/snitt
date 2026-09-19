@@ -295,9 +295,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
 
         case .status:
             let pause = await coordinator.pauseStateForAgent()
-            return .status(await registry.current(now: now(),
-                                                  paused: pause?.paused ?? false,
-                                                  pausedSeconds: pause?.pausedSeconds))
+            return await statusResponse(paused: pause?.paused ?? false,
+                                        pausedSeconds: pause?.pausedSeconds)
 
         case .listTargets:
             return await listTargets()
@@ -840,6 +839,28 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                              fullDisplayAllowed: current.fullDisplayAllowed)
     }
 
+    /// The session's status with D104's grant block attached.
+    ///
+    /// Attached HERE rather than inside `SessionRegistry.current`, because the
+    /// registry tracks sessions and knows nothing about settings, and should
+    /// not learn, since `AgentSettings` lives in the app while the registry is
+    /// pure logic in `SnittAutomation`.
+    ///
+    /// Read fresh on every call, never cached: a person can revoke agent
+    /// recording from the menu bar mid-loop (§5.3's kill switch), and a
+    /// pre-flight report that answered from a snapshot taken at launch would be
+    /// confidently wrong at exactly the moment it mattered.
+    private func statusResponse(paused: Bool,
+                                pausedSeconds: Double?) async -> AutomationResponse {
+        var info = await registry.current(now: now(), paused: paused,
+                                          pausedSeconds: pausedSeconds)
+        let current = settings()
+        info.consent = ConsentInfo(grant: current.unattendedGrant,
+                                   fullDisplay: current.fullDisplayAllowed,
+                                   now: now())
+        return .status(info)
+    }
+
     /// Shown when Screen Recording is not (yet) granted to an agent request.
     ///
     /// `CGRequestScreenCaptureAccess()` returns `false` even when the user grants
@@ -942,7 +963,17 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         var captureOptions = CaptureOptions(captureMicrophone: options.microphone,
                                             captureSystemAudio: options.systemAudio,
                                             logInputEvents: EventLoggingSettings.load().enabled)
-        captureOptions.vocabulary = Vocabulary.prepare(options.vocabulary ?? []).terms
+        // Both halves of `prepare` are used, which is the point: `Vocabulary`'s
+        // own doc comment promises that "truncating is reported rather than
+        // silent", and this call site read `.terms` and threw `.dropped` away,
+        // so the promise was kept by the function and broken by the only agent
+        // path that called it. A caller that listed 150 terms got an ordinary
+        // success while 50 of them biased nothing.
+        let vocabulary = Vocabulary.prepare(options.vocabulary ?? [])
+        captureOptions.vocabulary = vocabulary.terms
+        // nil when nothing was sent, so "sent none" and "sent some, dropped
+        // none" stay different answers rather than both reading as zero.
+        let dropped = options.vocabulary == nil ? nil : vocabulary.dropped
 
         let outcome = await coordinator.startForAgent(sessionID: sessionID,
                                                       reference: reference,
@@ -953,7 +984,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             await pushState(.recording(startedAt: Date()))
             armWatchdog(sessionID: sessionID, after: maxDuration)
             await recordSessionStart(sessionID: sessionID, target: name, caller: caller)
-            return .started(sessionID: sessionID, target: name)
+            return .started(sessionID: sessionID, target: name,
+                            vocabularyDropped: dropped)
         default:
             try? await registry.close(sessionID)
             return .failure(Self.error(for: outcome))
@@ -985,9 +1017,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         switch await coordinator.setPausedForAgent(sessionID: sessionID, paused: paused) {
         case .marked:
             let state = await coordinator.pauseStateForAgent()
-            return .status(await registry.current(now: now(),
-                                                  paused: state?.paused ?? paused,
-                                                  pausedSeconds: state?.pausedSeconds))
+            return await statusResponse(paused: state?.paused ?? paused,
+                                        pausedSeconds: state?.pausedSeconds)
         case .notCurrentSession, .notRecording:
             return .failure(AutomationError(
                 code: .noSuchSession,

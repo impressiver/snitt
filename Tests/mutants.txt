@@ -287,7 +287,8 @@ ExportForDestinationTests :: Sources/SnittApp/ExportSheet.swift :: self.drawSubt
 # again, and the failure is silent: everything keeps working, for six weeks,
 # on a machine nobody is watching.
 UnattendedRecordingGrantTests :: Sources/SnittAutomation/UnattendedRecordingGrant.swift :: if now < expiresAt { :: if true {
-UnattendedRecordingGrantTests :: Sources/SnittAutomation/UnattendedRecordingGrant.swift :: guard agentRecordingEnabled, enabled, let expiresAt else { return .off } :: guard enabled, let expiresAt else { return .off }
+UnattendedRecordingGrantTests :: Sources/SnittAutomation/UnattendedRecordingGrant.swift :: guard enabled, let expiresAt else { return .off } :: guard let expiresAt else { return .off }
+UnattendedRecordingGrantTests :: Sources/SnittAutomation/UnattendedRecordingGrant.swift :: guard agentRecordingEnabled else { return .off } :: guard enabled else { return .off }
 # `.lapsed` is also not `.off`, so the negative test reads correct and treats an
 # expired grant as a live one — on the checkbox a person trusts before leaving.
 UnattendedSettingsRowTests :: Sources/SnittApp/SettingsWindowController.swift :: isOn: status.isActive, :: isOn: status != .off,
@@ -586,3 +587,13 @@ PlayheadSurvivesEditsTests :: Sources/SnittApp/PreviewController.swift :: if was
 PlayheadCarryTests :: Sources/SnittDocument/PlayheadCarry.swift :: return TimeRangeMapping.trimmedTime(of: source, keptRanges: after) :: return TimeRangeMapping.trimmedTime(of: source, keptRanges: before)
 # And a lost moment lands NEAR itself rather than at the start.
 PlayheadCarryTests :: Sources/SnittDocument/PlayheadCarry.swift :: return min(max(0, outputTime), max(0, newDuration)) :: return 0
+
+# D104 - the agent API must report what a caller cannot otherwise learn.
+#
+# Both failures are silent by construction: a truncated vocabulary returns an
+# ordinary success, and a missing grant is only discovered by a call that fails.
+AutomationHostTests :: Sources/SnittApp/AutomationHost.swift :: let dropped = options.vocabulary == nil ? nil : vocabulary.dropped :: let dropped = vocabulary.dropped
+ConsentInfoTests :: Sources/SnittAutomation/Protocol.swift :: switch grant.standingStatus(now: now) { :: switch grant.status(now: now) {
+# `unattended != .off` is the wrong test and reads as the right one: `.lapsed`
+# is also not `.off`, so that form quietly authorises an expired grant.
+ConsentInfoTests :: Sources/SnittAutomation/Protocol.swift :: self.unattendedPermitted = grant.status(now: now).isActive :: self.unattendedPermitted = self.unattended != .off

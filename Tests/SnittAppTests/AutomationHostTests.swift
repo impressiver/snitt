@@ -154,6 +154,10 @@ private func scratchAuditLogURL() -> URL {
 private func makeHost(coordinator: FakeCoordinator,
                       recorder: StateRecorder,
                       fullDisplayAllowed: Bool = false,
+                      // D104's status block reads these, so a test about grants
+                      // needs to set them. Defaulted to the previous fixed
+                      // values, so every existing caller is unchanged.
+                      agentSettings: AgentSettings? = nil,
                       clock: ManualClock? = nil,
                       watchdog: ManualWatchdog? = nil,
                       auditLogURL: URL = scratchAuditLogURL()) -> AutomationHost {
@@ -163,11 +167,13 @@ private func makeHost(coordinator: FakeCoordinator,
     } else {
         now = { Date() }
     }
+    let settings = agentSettings
+        ?? AgentSettings(agentRecordingEnabled: true,
+                         fullDisplayAllowed: fullDisplayAllowed)
     if let watchdog {
         return AutomationHost(
             coordinator: coordinator,
-            settings: { AgentSettings(agentRecordingEnabled: true,
-                                      fullDisplayAllowed: fullDisplayAllowed) },
+            settings: { settings },
             onRecordingState: { state in recorder.record(state) },
             now: now,
             watchdogScheduling: watchdog.scheduling(),
@@ -177,8 +183,7 @@ private func makeHost(coordinator: FakeCoordinator,
     }
     return AutomationHost(
         coordinator: coordinator,
-        settings: { AgentSettings(agentRecordingEnabled: true,
-                                  fullDisplayAllowed: fullDisplayAllowed) },
+        settings: { settings },
         onRecordingState: { state in recorder.record(state) },
         now: now,
         auditLogURL: auditLogURL,
@@ -310,12 +315,14 @@ private final class ManualWatchdog: @unchecked Sendable {
 private func startBody(maxDuration: Double? = nil,
                        microphone: Bool = false,
                        systemAudio: Bool = true,
-                       workingDirectory: String? = nil) -> AutomationRequest.Body {
+                       workingDirectory: String? = nil,
+                       vocabulary: [String]? = nil) -> AutomationRequest.Body {
     .startRecording(StartOptions(bundleIdentifier: "com.example.App",
                                  microphone: microphone,
                                  systemAudio: systemAudio,
                                  maxDurationSeconds: maxDuration,
-                                 workingDirectory: workingDirectory))
+                                 workingDirectory: workingDirectory,
+                                 vocabulary: vocabulary))
 }
 
 // MARK: - Critical 1: the indicator
@@ -334,7 +341,7 @@ func agentStartAndStopDriveTheIndicator() async throws {
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
     let started = await host.handle(startBody(), caller: nil)
-    guard case .started(let sessionID, _) = started else {
+    guard case .started(let sessionID, _, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
     }
@@ -369,7 +376,7 @@ func stopReportsHealthFromCoordinator() async throws {
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
     let started = await host.handle(startBody(), caller: nil)
-    guard case .started(let sessionID, _) = started else {
+    guard case .started(let sessionID, _, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
     }
@@ -415,7 +422,7 @@ func agentSessionIsAudited() async throws {
     let host = makeHost(coordinator: coordinator, recorder: recorder, auditLogURL: auditLogURL)
 
     let started = await host.handle(startBody(), caller: nil)
-    guard case .started(let sessionID, let target) = started else {
+    guard case .started(let sessionID, let target, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
     }
@@ -490,7 +497,7 @@ func cappedSessionRecordsTheCap() async throws {
                        clock: clock, watchdog: watchdog, auditLogURL: auditLogURL)
 
     let started = await host.handle(startBody(maxDuration: 0.2), caller: nil)
-    guard case .started(let sessionID, _) = started else {
+    guard case .started(let sessionID, _, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
     }
@@ -535,7 +542,7 @@ func expiredSessionIsStopped() async throws {
     // A cap below the 600s ceiling passes through `effectiveMaxDuration`
     // unchanged, so this is the real production path and not a test-only knob.
     let started = await host.handle(startBody(maxDuration: 0.2), caller: nil)
-    guard case .started(let sessionID, _) = started else {
+    guard case .started(let sessionID, _, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
     }
@@ -547,9 +554,14 @@ func expiredSessionIsStopped() async throws {
     #expect(stopped == [sessionID],
             "the cap exists so a hung agent cannot fill the disk; it must ACT")
 
-    let status = await host.handle(.status, caller: nil)
-    #expect(status == .status(StatusInfo(recording: false, sessionID: nil,
-                                         elapsedSeconds: nil)),
+    // Field-wise rather than comparing the whole `StatusInfo`: D104 added a
+    // `consent` block whose contents follow the host's settings, and asserting
+    // equality against a hand-built value would make this lifetime test fail
+    // whenever a grant's reporting changes.
+    guard case .status(let info) = await host.handle(.status, caller: nil) else {
+        Issue.record("expected a status response"); return
+    }
+    #expect(info.recording == false && info.sessionID == nil,
             "the expired session must be closed, not left claiming to record")
     #expect(recorder.states.last == .idle,
             "the indicator must clear when the watchdog ends the session")
@@ -618,7 +630,7 @@ func expiryWithFailedFinalizeClearsTheIndicator() async throws {
                        clock: clock, watchdog: watchdog)
 
     let started = await host.handle(startBody(maxDuration: 0.2), caller: nil)
-    guard case .started(let sessionID, _) = started else {
+    guard case .started(let sessionID, _, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
     }
@@ -631,9 +643,10 @@ func expiryWithFailedFinalizeClearsTheIndicator() async throws {
     #expect(recorder.states.last == .idle,
             "an unfinalized recording is still a STOPPED recording; a lit indicator now means the kill switch starts a new one")
 
-    let status = await host.handle(.status, caller: nil)
-    #expect(status == .status(StatusInfo(recording: false, sessionID: nil,
-                                         elapsedSeconds: nil)))
+    guard case .status(let info) = await host.handle(.status, caller: nil) else {
+        Issue.record("expected a status response"); return
+    }
+    #expect(info.recording == false && info.sessionID == nil)
 }
 
 @MainActor
@@ -660,7 +673,7 @@ func expiryWhileBusyPreservesTheSession() async throws {
                        clock: clock, watchdog: watchdog)
 
     let started = await host.handle(startBody(maxDuration: 0.2), caller: nil)
-    guard case .started(let sessionID, _) = started else {
+    guard case .started(let sessionID, _, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
     }
@@ -757,9 +770,10 @@ func refusedStartClosesTheRegistryEntry() async {
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
     _ = await host.handle(startBody(), caller: nil)
-    let status = await host.handle(.status, caller: nil)
-    #expect(status == .status(StatusInfo(recording: false, sessionID: nil,
-                                         elapsedSeconds: nil)))
+    guard case .status(let info) = await host.handle(.status, caller: nil) else {
+        Issue.record("expected a status response"); return
+    }
+    #expect(info.recording == false && info.sessionID == nil)
 
     // ...and a second attempt is not refused with `already_recording`.
     await coordinator.setStartOutcome(.started("Window", usedCache: true))
@@ -784,7 +798,7 @@ func killSwitchStopPreventsBundleLeak() async {
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
     let started = await host.handle(startBody(), caller: nil)
-    guard case .started(let sessionID, _) = started else {
+    guard case .started(let sessionID, _, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
     }
@@ -816,7 +830,7 @@ func busyStopKeepsTheSession() async {
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
     let started = await host.handle(startBody(), caller: nil)
-    guard case .started(let sessionID, _) = started else {
+    guard case .started(let sessionID, _, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
     }
@@ -979,7 +993,7 @@ func markOnOwnedSessionReturnsTheOffset() async {
     let host = makeHost(coordinator: coordinator, recorder: recorder)
 
     let started = await host.handle(startBody(), caller: nil)
-    guard case .started(let sessionID, _) = started else {
+    guard case .started(let sessionID, _, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
     }
@@ -1049,7 +1063,7 @@ func killSwitchStopIsAudited() async throws {
     let host = makeHost(coordinator: coordinator, recorder: recorder, auditLogURL: auditLogURL)
 
     let started = await host.handle(startBody(), caller: nil)
-    guard case .started(let sessionID, _) = started else {
+    guard case .started(let sessionID, _, _) = started else {
         Issue.record("expected a started response, got \(started)")
         return
     }
@@ -1449,4 +1463,127 @@ func inspectIsNotRefusedWhenPermitted() async throws {
         #expect(error.code != .consentRequired,
                 "a permitted agent was refused on consent grounds")
     }
+}
+
+// MARK: - D104: what the caller could not otherwise learn
+
+@MainActor
+@Test("A vocabulary longer than the limit reports how much never reached the recogniser")
+func startReportsVocabularyTruncation() async throws {
+    // `Vocabulary`'s own doc comment promises "truncating is reported rather
+    // than silent", and `prepare` returns `(terms, dropped)` to keep it. This
+    // call site read `.terms` and discarded `.dropped`, so the promise was kept
+    // by the function and broken by the only agent path that called it.
+    //
+    // Discriminates against that implementation, `.started(sessionID:target:)`
+    // with the count thrown away, which returns nil here, and against
+    // `dropped: 0`, which would say all 150 terms were kept.
+    let coordinator = FakeCoordinator()
+    let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
+    let terms = (0..<150).map { "term\($0)" }
+
+    let started = await host.handle(startBody(vocabulary: terms), caller: nil)
+    guard case .started(_, _, let dropped) = started else {
+        Issue.record("expected a started response, got \(started)"); return
+    }
+    #expect(dropped == terms.count - Vocabulary.limit)
+
+    // And the terms that DID reach the recorder are the ones that survived, so
+    // the number reported is about the same list the recogniser was given.
+    let options = try #require(await coordinator.receivedOptions.last)
+    #expect(options.vocabulary.count == Vocabulary.limit)
+}
+
+@MainActor
+@Test("A vocabulary inside the limit reports zero dropped, not nothing")
+func startDistinguishesNoneSentFromNoneDropped() async throws {
+    // The pair that makes the field readable. Discriminates against reporting
+    // nil whenever the count is zero, which would collapse "you sent five terms
+    // and all five are biasing the transcript" into the same answer as "you
+    // sent no vocabulary at all". The second is not a reassurance about the
+    // first.
+    let coordinator = FakeCoordinator()
+    let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
+
+    let withTerms = await host.handle(startBody(vocabulary: ["KeptRanges", "edit.json"]),
+                                      caller: nil)
+    guard case .started(let session, _, let dropped) = withTerms else {
+        Issue.record("expected a started response, got \(withTerms)"); return
+    }
+    #expect(dropped == 0)
+
+    _ = await host.handle(.stopRecording(sessionID: session), caller: nil)
+    let withNone = await host.handle(startBody(), caller: nil)
+    guard case .started(_, _, let none) = withNone else {
+        Issue.record("expected a started response, got \(withNone)"); return
+    }
+    #expect(none == nil)
+}
+
+@MainActor
+@Test("Status reports the grants in force, so an agent need not learn them by failing")
+func statusCarriesConsentState() async throws {
+    // Before D104, `StatusInfo` carried recording/sessionID/elapsed/paused and
+    // nothing about grants, so an agent discovered that full-display capture
+    // was never enabled by calling a tool and reading `consent_required`.
+    // Discriminates against that: `info.consent` is nil against it.
+    let coordinator = FakeCoordinator()
+    let host = makeHost(coordinator: coordinator, recorder: StateRecorder(),
+                        agentSettings: AgentSettings(agentRecordingEnabled: true,
+                                                     fullDisplayAllowed: false))
+
+    guard case .status(let info) = await host.handle(.status, caller: nil) else {
+        Issue.record("expected a status response"); return
+    }
+    let consent = try #require(info.consent)
+    #expect(consent.agentRecording == true)
+    #expect(consent.fullDisplay == false)
+    #expect(consent.unattended == .off)
+}
+
+@MainActor
+@Test("Status answers even when agent recording is switched off")
+func statusIsNotGatedByConsent() async throws {
+    // The whole point of a pre-flight. Discriminates against adding the usual
+    // `policy().evaluate(...)` guard to `.status` the way `mark`, `screenshot`
+    // and `listTargets` have one: that would refuse the one call that exists to
+    // report the refusal, and an agent would be told `consent_required` by the
+    // tool it was sent to in order to avoid being told `consent_required`.
+    let coordinator = FakeCoordinator()
+    let host = makeHost(coordinator: coordinator, recorder: StateRecorder(),
+                        agentSettings: AgentSettings(agentRecordingEnabled: false))
+
+    guard case .status(let info) = await host.handle(.status, caller: nil) else {
+        Issue.record("status was refused; the pre-flight must always answer"); return
+    }
+    let consent = try #require(info.consent)
+    #expect(consent.agentRecording == false)
+    #expect(consent.unattendedPermitted == false)
+}
+
+@MainActor
+@Test("A live unattended grant under a switched-off agent toggle is still reported live")
+func statusDoesNotConflateTheTwoOffStates() async throws {
+    // The trap, end to end. `UnattendedRecordingGrant.status` returns `.off`
+    // both when a person never enabled unattended recording and when they did
+    // but agent recording is off, so the obvious host implementation reports
+    // `.off` here. An agent reading that asks for the wrong switch, gets it,
+    // and fails again. Discriminates against exactly that: against it,
+    // `consent.unattended` is `.off` rather than `.active`.
+    let coordinator = FakeCoordinator()
+    let host = makeHost(
+        coordinator: coordinator, recorder: StateRecorder(),
+        agentSettings: AgentSettings(agentRecordingEnabled: false,
+                                     unattendedRecordingEnabled: true,
+                                     unattendedConfirmedAt: Date()))
+
+    guard case .status(let info) = await host.handle(.status, caller: nil) else {
+        Issue.record("expected a status response"); return
+    }
+    let consent = try #require(info.consent)
+    #expect(consent.agentRecording == false)
+    #expect(consent.unattended == .active,
+            "the person's own grant is live; only the switch above it is off")
+    #expect(consent.unattendedPermitted == false,
+            "reporting the grant honestly must not become permitting the work")
 }
