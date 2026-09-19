@@ -141,6 +141,11 @@ public struct AutomationRequest: Codable, Sendable {
         /// An input event the OS never saw, reported by whoever caused it
         /// (M5e follow-on). `x`/`y` are fractions of the recorded window, and
         /// are nil for a `keystroke`, which happens at no particular place.
+        ///
+        /// Fractions ON THE WIRE, whatever the caller typed: D105 lets both
+        /// frontends take pixels of a frame the caller names, and they divide
+        /// before building this. A fraction is the only form that stays true
+        /// across the window, the capture and a downscaled screenshot at once.
         case reportInput(sessionID: String, kind: String,
                          x: Double?, y: Double?, label: String?)
         /// D57's automatic trim. Carries the resolved criteria rather than a
@@ -157,10 +162,18 @@ public struct AutomationRequest: Codable, Sendable {
                     /// own dimensions, which is what every export did before
                     /// there was a choice.
                     resolution: ExportResolution,
-                    /// D64: draw reported clicks onto the video. Off unless
-                    /// asked — a recording's clicks are data (§4.5), and
-                    /// burning them in is a choice, not a consequence of having
-                    /// logged them.
+                    /// D64: draw reported clicks onto the video.
+                    ///
+                    /// Still a choice rather than a consequence of having
+                    /// logged them, since a recording's clicks are data (§4.5),
+                    /// but D105 flipped which way both frontends choose when
+                    /// nobody says. §5.6's opt-in governs input Snitt CAUGHT,
+                    /// where the hazard is a token the person at the keyboard
+                    /// never handed over. A reported click was handed over by
+                    /// its own caller, and only reported clicks can be drawn
+                    /// at all (`ClickOverlay`: a click the tap saw carries no
+                    /// position), so defaulting this on cannot surface
+                    /// anything the caller did not supply.
                     clicks: Bool)
         /// `outputPath` arrives already resolved against the CALLER's working
         /// directory (`PathResolver.resolve`, done by the CLI before this is

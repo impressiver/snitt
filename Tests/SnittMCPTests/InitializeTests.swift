@@ -35,7 +35,7 @@ struct InitializeTests {
         // A one-line "Snitt records screens" would pass a mere non-empty check
         // and buy nothing: what an agent lacks is the sequence, above all that
         // it cannot watch the result and must inspect it instead.
-        for step in ["snitt_start_recording", "snitt_add_marker",
+        for step in ["snitt_start_recording", "snitt_mark",
                      "snitt_stop_recording", "snitt_inspect"] {
             #expect(text.contains(step), "instructions omit \(step)")
         }

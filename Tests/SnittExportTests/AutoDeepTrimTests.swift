@@ -253,6 +253,78 @@ struct AutoDeepTrimTests {
         #expect(!spans.contains { $0.start >= duration / 2 - 0.5 },
                 "the quiet track's half was cut — it was judged against the loud one: \(spans)")
     }
+    // MARK: - Bookends (PR I)
+
+    /// Everything alive: loud all the way through and a moving picture all the
+    /// way through. Nothing here is dead air by any of D57's criteria, which is
+    /// the point: the setup at the head of a recording is usually its busiest,
+    /// loudest part, so bookends have to come from the event log or not at all.
+    private func busyThroughout(events: [LoggedEvent],
+                                trimBookends: Bool) -> [TimeRange] {
+        var criteria = DeepTrimCriteria.preset(.default)
+        criteria.trimBookends = trimBookends
+        return spans(audio: .sampled([waveform(loud: [(0, 20)])]),
+                     frames: frames(moving: [(0, 20)]),
+                     events: events,
+                     criteria: criteria)
+    }
+
+    private let bookendInput = [
+        LoggedEvent(timeSeconds: 5, kind: .click, x: 0.5, y: 0.5, source: .reported),
+        LoggedEvent(timeSeconds: 15, kind: .click, x: 0.5, y: 0.5, source: .reported),
+    ]
+
+    @Test("With trimBookends, the ends go even though nothing there is dead air")
+    func bookendsOverrideTheEvidence() throws {
+        // Discriminates against the plausible wrong implementation: leaving
+        // `deadSpans` alone and hoping the head and tail fall out of the
+        // silence-and-stillness test. They do not, and that is exactly why
+        // `snitt trim --auto-trim` existed as a second call. This fixture is
+        // loud and moving from end to end, so an implementation that only
+        // weighs audio and picture returns NOTHING here and fails.
+        let found = busyThroughout(events: bookendInput, trimBookends: true)
+        #expect(found.count == 2, "expected a head and a tail, got \(found)")
+        let head = try #require(found.first)
+        #expect(head.start == 0)
+        // The first click is at 5 and inputPadding is 0.75, so the take starts
+        // at 4.25, the same number `EditDecisionList.autoTrimRange` computes,
+        // which is the point of reading the same events.
+        #expect(abs(head.end - 4.25) < 0.1, "head ended at \(head.end)")
+        let tail = try #require(found.last)
+        #expect(abs(tail.start - 15.75) < 0.1, "tail started at \(tail.start)")
+        #expect(abs(tail.end - duration) < 0.1, "tail ended at \(tail.end)")
+    }
+
+    @Test("Without trimBookends the ends survive, so the flag is what does it")
+    func bookendsAreOffByDefault() {
+        // The control. Without this, `bookendsOverrideTheEvidence` would also
+        // pass against an implementation that trimmed bookends unconditionally,
+        // which would change the editor's deep-trim command, a surface this
+        // work deliberately does not touch.
+        #expect(busyThroughout(events: bookendInput, trimBookends: false).isEmpty)
+        #expect(DeepTrimCriteria.preset(.default).trimBookends == false)
+    }
+
+    @Test("A marker is not enough to bound a take")
+    func markersDoNotBoundTheBookends() {
+        // Discriminates against filtering the event log with `events` rather
+        // than `events.filter { $0.kind != .marker }`. A marker says "this
+        // moment matters", not "something happened here", and
+        // `EditDecisionList.autoTrimRange` already refuses on markers alone, and
+        // a version that counted them would throw away everything either side
+        // of a single marker on a recording nobody reported input to.
+        let markersOnly = [LoggedEvent(timeSeconds: 10, kind: .marker, label: "here")]
+        #expect(busyThroughout(events: markersOnly, trimBookends: true).isEmpty)
+    }
+
+    @Test("No input at all leaves the recording alone rather than erasing it")
+    func noInputMeansNoBookends() {
+        // The failure that would matter most: an implementation reading
+        // `min()`/`max()` of an empty list as 0 and `duration`, or worse
+        // defaulting them the other way round, would cut the entire recording
+        // and report a successful tidy-up.
+        #expect(busyThroughout(events: [], trimBookends: true).isEmpty)
+    }
 }
 
 /// `FrameActivity.from` reduces decoded frames to "did the picture change".

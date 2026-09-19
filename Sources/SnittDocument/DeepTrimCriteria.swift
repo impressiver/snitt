@@ -54,15 +54,54 @@ public struct DeepTrimCriteria: Codable, Sendable, Equatable {
     /// D44 missed this and D57 added it: a caption still on screen is not dead
     /// air just because nothing moved while it was being read.
     public var subtitleReadingTime: Double
+    /// Also remove everything before the first input event and after the last,
+    /// the way `snitt trim --auto-trim` does, instead of only the gaps between.
+    ///
+    /// Folded in here rather than left as a second call because the two
+    /// questions have one answer on every recording an agent makes: "tidy this
+    /// up" is a single intent that cost two verbs with two unrelated parameter
+    /// vocabularies. Bookends are not findable from the picture and the audio
+    /// (the setup at the head of a recording is usually its busiest, loudest
+    /// part), so this reads the event log the way
+    /// `EditDecisionList.autoTrimRange` does, and does nothing at all when
+    /// there are no input events to bound the take.
+    ///
+    /// Off in this value and on in both frontends. The editor has a timeline
+    /// and a pair of trim handles, so its deep-trim command keeps meaning
+    /// exactly what it meant; a caller of the automation API has one call and
+    /// cannot look at the result.
+    public var trimBookends: Bool
 
     public init(minimumSpan: Double, audioSilenceFraction: Float,
                 frameStillnessThreshold: Double, inputPadding: Double,
-                subtitleReadingTime: Double) {
+                subtitleReadingTime: Double, trimBookends: Bool = false) {
         self.minimumSpan = minimumSpan
         self.audioSilenceFraction = audioSilenceFraction
         self.frameStillnessThreshold = frameStillnessThreshold
         self.inputPadding = inputPadding
         self.subtitleReadingTime = subtitleReadingTime
+        self.trimBookends = trimBookends
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case minimumSpan, audioSilenceFraction, frameStillnessThreshold
+        case inputPadding, subtitleReadingTime, trimBookends
+    }
+
+    /// Decoded by hand for one reason: a synthesized `init(from:)` ignores a
+    /// property's default value and fails with `keyNotFound` on a payload
+    /// written before that property existed. This value travels over the
+    /// automation protocol, and a request that fails to DECODE never reaches
+    /// §10's version refusal: it surfaces as `internal_error`, which is the
+    /// one outcome that tells a caller nothing it can act on.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        minimumSpan = try container.decode(Double.self, forKey: .minimumSpan)
+        audioSilenceFraction = try container.decode(Float.self, forKey: .audioSilenceFraction)
+        frameStillnessThreshold = try container.decode(Double.self, forKey: .frameStillnessThreshold)
+        inputPadding = try container.decode(Double.self, forKey: .inputPadding)
+        subtitleReadingTime = try container.decode(Double.self, forKey: .subtitleReadingTime)
+        trimBookends = try container.decodeIfPresent(Bool.self, forKey: .trimBookends) ?? false
     }
 
     public static func preset(_ preset: DeepTrimPreset) -> DeepTrimCriteria {

@@ -14,6 +14,21 @@ import Testing
 @Suite
 struct AutoDeepTrimParsingTests {
 
+    /// The preset, plus the one thing the CLI sets on top of it.
+    ///
+    /// `DeepTrimCriteria.preset` leaves `trimBookends` off, because the editor's
+    /// deep trim has a timeline and a pair of trim handles beside it; `snitt
+    /// auto-deep-trim` turns it on, because tidying a recording from a command
+    /// line is one intent that used to cost two commands (PR I). Every
+    /// expectation here is therefore the preset with that flip applied, and
+    /// writing it as a function rather than a literal keeps the rest of the
+    /// preset genuinely under test.
+    private func asTyped(_ criteria: DeepTrimCriteria) -> DeepTrimCriteria {
+        var criteria = criteria
+        criteria.trimBookends = true
+        return criteria
+    }
+
     private func criteria(_ args: [String]) -> DeepTrimCriteria? {
         guard case .success(.autoDeepTrim(_, let criteria)) =
                 CommandLineParser.parse(["auto-deep-trim"] + args) else { return nil }
@@ -23,7 +38,7 @@ struct AutoDeepTrimParsingTests {
     @Test("With no options it uses the default preset")
     func bareInvocationUsesTheDefault() throws {
         let parsed = try #require(criteria(["rec.snitt"]))
-        #expect(parsed == DeepTrimCriteria.preset(.default))
+        #expect(parsed == asTyped(DeepTrimCriteria.preset(.default)))
     }
 
     @Test("The path is carried through")
@@ -38,9 +53,9 @@ struct AutoDeepTrimParsingTests {
     @Test("A preset selects all five criteria at once")
     func presetSelectsEverything() throws {
         #expect(try #require(criteria(["rec.snitt", "--preset", "aggressive"]))
-                == DeepTrimCriteria.preset(.aggressive))
+                == asTyped(DeepTrimCriteria.preset(.aggressive)))
         #expect(try #require(criteria(["rec.snitt", "--preset", "conservative"]))
-                == DeepTrimCriteria.preset(.conservative))
+                == asTyped(DeepTrimCriteria.preset(.conservative)))
     }
 
     @Test("Each flag overrides exactly one criterion")
@@ -94,7 +109,7 @@ struct AutoDeepTrimParsingTests {
                                       "\(flag) did not parse")
             #expect(applied(parsed), "\(flag) was not applied: \(parsed)")
             // Everything the flag did NOT name must still be the preset's.
-            var expected = base
+            var expected = asTyped(base)
             switch flag {
             case "--min-span": expected.minimumSpan = 9
             case "--audio-silence": expected.audioSilenceFraction = 0.5

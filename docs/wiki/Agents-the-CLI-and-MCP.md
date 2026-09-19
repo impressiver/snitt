@@ -23,12 +23,12 @@ An agent can then call:
 | `snitt_list_targets` | What can be recorded |
 | `snitt_start_recording` / `snitt_stop_recording` | Start and stop |
 | `snitt_pause_recording` / `snitt_resume_recording` | Pause without splitting the document |
-| `snitt_add_marker` | Drop a labelled marker |
+| `snitt_mark` | Drop a labelled marker (was `snitt_add_marker`, still accepted) |
 | `snitt_screenshot` | A still, without recording |
 | `snitt_status` | Whether anything is recording |
 | `snitt_inspect` | Read a bundle: markers, transcript, duration |
 | `snitt_trim` / `snitt_auto_deep_trim` / `snitt_crop` | Edit |
-| `snitt_estimate_export` / `snitt_export` | Size first, then render |
+| `snitt_estimate` / `snitt_export` | Size first, then render (`snitt_estimate_export` still accepted) |
 | `snitt_report_input` | Report input timing from the agent's own session |
 | `snitt_diagnostics_export` | Write a support bundle |
 
