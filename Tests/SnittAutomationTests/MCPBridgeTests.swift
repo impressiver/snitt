@@ -60,6 +60,8 @@ func everyToolMaps() {
             json = #"{"bundlePath": "/tmp/x.snitt", "format": "mp4", "outputPath": "/tmp/demo.mp4"}"#
         case "snitt_diagnostics_export":
             json = #"{"outputPath": "/tmp/diagnostics.json"}"#
+        case "snitt_list_recordings":
+            json = "{}"
         default:
             json = "{}"
         }
@@ -80,7 +82,8 @@ func toolNamesAreStable() {
                       "snitt_pause_recording", "snitt_resume_recording",
                       "snitt_screenshot", "snitt_report_input",
                       "snitt_diagnostics_export",
-                      "snitt_transcript", "snitt_narrate"])
+                      "snitt_transcript", "snitt_narrate",
+                      "snitt_list_recordings"])
 }
 
 @Test("The MCP tool maps to the same request the CLI would send")
@@ -976,4 +979,38 @@ func transcriptToolsResolvePaths() {
     #expect(writePath == "/Users/x/project/demo.snitt")
     #expect(text == "two words")
     #expect(at == 4.5)
+}
+
+// MARK: - D108: finding a recording you lost track of
+
+@Test("snitt_list_recordings needs nothing, and defaults to all of them")
+func listRecordingsTakesNoArguments() {
+    // A tool that required a limit would make an agent guess how many
+    // recordings exist in order to ask how many exist.
+    guard case .success(.listRecordings(let limit)) = MCPBridge.request(
+        forTool: "snitt_list_recordings", arguments: [:]) else {
+        Issue.record("mapping failed"); return
+    }
+    #expect(limit == nil)
+}
+
+@Test("A limit that is not a whole positive number is refused, not rounded")
+func listRecordingsLimitIsValidated() {
+    // DISCRIMINATES AGAINST: `Int(value)`, which truncates. `limit: 0.5`
+    // would silently become 0 and return an empty list that reads exactly
+    // like an empty directory, and `limit: -1` would do the same. Both are
+    // answers about somebody's disk that are simply not true.
+    for bad in ["0", "-1", "0.5"] {
+        guard case .failure = MCPBridge.request(
+            forTool: "snitt_list_recordings",
+            arguments: jsonArguments("{\"limit\": \(bad)}")) else {
+            Issue.record("limit \(bad) was accepted"); return
+        }
+    }
+    guard case .success(.listRecordings(let limit)) = MCPBridge.request(
+        forTool: "snitt_list_recordings",
+        arguments: jsonArguments(#"{"limit": 5}"#)) else {
+        Issue.record("mapping failed"); return
+    }
+    #expect(limit == 5)
 }

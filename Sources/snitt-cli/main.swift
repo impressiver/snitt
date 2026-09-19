@@ -124,6 +124,48 @@ func narrationNote(_ summary: NarrationSummary) -> String {
     return text
 }
 
+/// The human-readable lines printed to stderr for `.recordings` (D108).
+///
+/// Bytes as MB and age in whole units, because the reason to run this is to
+/// decide what to delete, and "1794823168" is not a number anybody weighs
+/// against a disk.
+func recordingsNote(_ list: RecordingList) -> String {
+    guard !list.recordings.isEmpty else {
+        return "No recordings in \(list.directory)."
+    }
+    var head = String(format: "%d recording(s) in %@, %.1f MB in total",
+                      list.total, list.directory as NSString,
+                      Double(list.totalByteSize) / 1_000_000)
+    if list.recordings.count < list.total {
+        // Said rather than left to be inferred from two numbers: a reader who
+        // takes this list for the whole directory deletes the wrong things.
+        head += " (showing the newest \(list.recordings.count))"
+    }
+    let capped = list.recordings.filter { $0.outcome == "capped" }.count
+    if capped > 0 {
+        head += "\n\(capped) of these were CAPPED: the session that started them ran "
+              + "past its limit or went away, so nobody has watched them."
+    }
+    let rows = list.recordings.map { recording in
+        String(format: "  %8.1f MB  %-9@ %-10@ %@",
+               Double(recording.byteSize) / 1_000_000,
+               age(recording.ageSeconds) as NSString,
+               (recording.outcome ?? recording.initiator) as NSString,
+               recording.path as NSString)
+    }
+    return ([head] + rows).joined(separator: "\n")
+}
+
+/// An age as the largest unit that still says something: "3d", "4h", "12m".
+func age(_ seconds: Double) -> String {
+    switch seconds {
+    case ..<60: return "\(Int(seconds))s ago"
+    case ..<3600: return "\(Int(seconds / 60))m ago"
+    case ..<86400: return "\(Int(seconds / 3600))h ago"
+    default: return "\(Int(seconds / 86400))d ago"
+    }
+}
+
 let helpText = """
 snitt — record a window and hand back a .snitt bundle
 
@@ -161,6 +203,8 @@ snitt — record a window and hand back a .snitt bundle
   snitt estimate <bundle> [--scale F]    duration, size and an upper bound on
                                           bytes, without doing the export
   snitt inspect <bundle>                 metadata as JSON, no GUI
+  snitt recordings list [--limit N]      what is in the output directory:
+                                          path, size, age, and how each ended
   snitt transcript <bundle>              what the recording says, as lines
   snitt narrate <bundle> --at <s> --text "..."
                                          write a line of narration at a moment
@@ -324,6 +368,8 @@ func requestBody(for command: ParsedCommand,
         return .inspect(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory))
     case .transcript(let path):
         return .transcript(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory))
+    case .recordingsList(let limit):
+        return .listRecordings(limit: limit)
     case .narrate(let path, let text, let atSeconds):
         return .addNarration(
             bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
@@ -429,6 +475,9 @@ do {
         emit(report)
         note("\(Int(report.durationSeconds ?? 0))s · \(report.markerCount) markers "
            + "· \(report.inputEventCount) input events")
+    case .recordings(let list):
+        emit(list)
+        note(recordingsNote(list))
     case .transcriptRead(let report):
         emit(report)
         note(transcriptNote(report))

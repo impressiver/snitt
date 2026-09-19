@@ -58,6 +58,9 @@ public enum ParsedCommand: Equatable {
     /// D107: write a line of narration at a moment in the recording, in SOURCE
     /// seconds.
     case narrate(bundlePath: String, text: String, atSeconds: Double)
+    /// D108: list the recordings in the output directory. `nil` is "all of
+    /// them", which is distinct from a limit of zero.
+    case recordingsList(limit: Int?)
     /// `outputPath` here is still the RAW string typed on the command line —
     /// `main.swift` resolves it against the caller's cwd before it reaches
     /// the wire, the same as `.export`'s `outputPath`/`.trim`'s
@@ -171,6 +174,13 @@ public enum CommandLineParser {
                   + "Use the path `snitt record stop` printed."))
             }
             return .success(.inspect(bundlePath: path))
+
+        case "recordings":
+            guard args.first == "list" else {
+                return .failure(ParseFailure(
+                    "Unknown recordings subcommand. Try `snitt recordings list`."))
+            }
+            return parseRecordingsList(Array(args.dropFirst()))
 
         case "transcript":
             guard let path = args.first else {
@@ -557,6 +567,31 @@ public enum CommandLineParser {
                                         in: frame, verb: "crop")
             .map { .crop(bundlePath: path, rect: $0) }
             .mapError { ParseFailure($0.message) }
+    }
+
+    /// `snitt recordings list [--limit N]` (D108).
+    private static func parseRecordingsList(_ args: [String]) -> Result<ParsedCommand, ParseFailure> {
+        var limit: Int?
+        var index = 0
+        while index < args.count {
+            switch args[index] {
+            case "--limit":
+                index += 1
+                // Refused rather than clamped. A limit of zero asks for no
+                // recordings, which is a request nobody makes on purpose, and
+                // a negative one is a typo; either silently answering "all of
+                // them" or silently answering "none" would be a listing that
+                // does not describe the directory it claims to.
+                guard index < args.count, let value = Int(args[index]), value > 0 else {
+                    return .failure(ParseFailure("--limit needs a whole number above 0"))
+                }
+                limit = value
+            default:
+                return .failure(ParseFailure("Unknown recordings option: \(args[index])"))
+            }
+            index += 1
+        }
+        return .success(.recordingsList(limit: limit))
     }
 
     /// `snitt narrate <bundle> --at <seconds> --text <line>` (D107).

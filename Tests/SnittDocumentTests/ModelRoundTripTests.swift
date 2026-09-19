@@ -146,3 +146,33 @@ func editListDefaults() throws {
     #expect(read.trackStates.allSatisfy { !$0.muted })
     #expect(read.trackStates.allSatisfy { $0.gain == 1.0 })
 }
+
+// MARK: - D108: how an agent's session ended, on the bundle
+
+@Test("A meta.json written before `outcome` existed still decodes")
+func metadataWithoutOutcomeDecodes() throws {
+    // DISCRIMINATES AGAINST: a non-Optional `outcome`, which would fail
+    // `keyNotFound` on every bundle already on disk. `RecordingMetadata`
+    // carries a `schemaVersion` that is compared NOWHERE (see
+    // `RecordingCoordinator.openEditorIfHuman`'s note), so the version gate
+    // would not catch this either: the first symptom would be a recording
+    // that stopped opening.
+    let json = Data(#"""
+        {"schemaVersion":1,"createdAt":"2026-09-01T10:00:00Z","initiator":"agent"}
+        """#.utf8)
+    let decoder = JSONDecoder()
+    decoder.dateDecodingStrategy = .iso8601
+    let meta = try decoder.decode(RecordingMetadata.self, from: json)
+    #expect(meta.outcome == nil)
+    #expect(meta.initiator == .agent)
+}
+
+@Test("An outcome survives a write and a read")
+func metadataOutcomeRoundTrips() throws {
+    let bundle = try SnittBundle(creatingAt: FileManager.default.temporaryDirectory
+        .appending(path: "meta-outcome-\(UUID().uuidString).snitt"))
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+    try RecordingMetadata(createdAt: Date(), initiator: .agent,
+                          outcome: "capped").write(to: bundle)
+    #expect(try RecordingMetadata.read(from: bundle).outcome == "capped")
+}

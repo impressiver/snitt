@@ -1587,3 +1587,104 @@ func statusDoesNotConflateTheTwoOffStates() async throws {
     #expect(consent.unattendedPermitted == false,
             "reporting the grant honestly must not become permitting the work")
 }
+
+// MARK: - D108: how an agent session ended, recorded on the bundle
+
+/// The stamp that makes "capped or completed" answerable at all (D108).
+///
+/// Its own suite because it drives the watchdog, which needs the manual clock
+/// and manual scheduler `AutomationHostTests` builds.
+@Suite
+struct RecordingOutcomeStampTests {
+
+    @MainActor
+    @Test("A capped recording is marked as capped, in the bundle")
+    func watchdogStampsTheBundle() async throws {
+        // DISCRIMINATES AGAINST: recording the outcome only in the audit
+        // trail, which is what the code did before. `AuditRecord` is keyed by
+        // SESSION ID and carries no bundle path, so nothing could ever join
+        // the two: the watchdog finalised a perfectly ordinary-looking bundle
+        // and the fact that nobody asked for it lived in a different file
+        // under a different key. Without the stamp a listing can show the
+        // bundle and not what it is.
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "stamp-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory,
+                                                withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let bundle = try SnittBundle(creatingAt: directory.appending(path: "orphan.snitt"))
+        try RecordingMetadata(createdAt: Date(), initiator: .agent).write(to: bundle)
+
+        let coordinator = FakeCoordinator()
+        await coordinator.setStopOverride(.stopped(bundle.url, copied: false, health: nil))
+        let clock = ManualClock()
+        let watchdog = ManualWatchdog()
+        let host = AutomationHost(
+            coordinator: coordinator,
+            settings: { AgentSettings(agentRecordingEnabled: true) },
+            onRecordingState: { _ in },
+            now: { clock.now() },
+            watchdogScheduling: watchdog.scheduling(),
+            auditLogURL: FileManager.default.temporaryDirectory
+                .appending(path: "stamp-audit-\(UUID().uuidString).jsonl"),
+            outputDirectory: { directory })
+
+        guard case .started = await host.handle(
+            .startRecording(StartOptions(bundleIdentifier: "com.apple.Safari",
+                                         maxDurationSeconds: 1)), caller: nil) else {
+            Issue.record("the recording did not start"); return
+        }
+        clock.advance(by: 2)
+        await watchdog.fire()
+
+        let after = try RecordingMetadata.read(from: bundle)
+        #expect(after.outcome == "capped")
+
+        // And the listing says so, which is the whole point of stamping it.
+        guard case .recordings(let list) = await host.handle(.listRecordings(limit: nil),
+                                                             caller: nil) else {
+            Issue.record("expected a listing"); return
+        }
+        #expect(list.recordings.first?.outcome == "capped")
+    }
+
+    @MainActor
+    @Test("An ordinary agent stop is marked as completed, so absent means something")
+    func aCleanStopIsStampedToo() async throws {
+        // DISCRIMINATES AGAINST: stamping only the capped path. Then `capped`
+        // would be the only value ever written, and every ordinary agent
+        // recording would carry the same `nil` as a bundle recorded before
+        // this field existed and as a recording a person made with the hotkey.
+        // Absent has to mean "did not end through the agent API", or it means
+        // nothing at all.
+        let directory = FileManager.default.temporaryDirectory
+            .appending(path: "stamp-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory,
+                                                withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let bundle = try SnittBundle(creatingAt: directory.appending(path: "clean.snitt"))
+        try RecordingMetadata(createdAt: Date(), initiator: .agent).write(to: bundle)
+
+        let coordinator = FakeCoordinator()
+        await coordinator.setStopOverride(.stopped(bundle.url, copied: false, health: nil))
+        let host = AutomationHost(
+            coordinator: coordinator,
+            settings: { AgentSettings(agentRecordingEnabled: true) },
+            onRecordingState: { _ in },
+            auditLogURL: FileManager.default.temporaryDirectory
+                .appending(path: "stamp-audit-\(UUID().uuidString).jsonl"),
+            outputDirectory: { directory })
+
+        guard case .started(let session, _, _) = await host.handle(
+            .startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")),
+            caller: nil) else {
+            Issue.record("the recording did not start"); return
+        }
+        guard case .stopped = await host.handle(.stopRecording(sessionID: session),
+                                                caller: nil) else {
+            Issue.record("the recording did not stop"); return
+        }
+
+        #expect(try RecordingMetadata.read(from: bundle).outcome == "completed")
+    }
+}

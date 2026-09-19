@@ -205,6 +205,48 @@ func structuredContent(_ response: AutomationResponse) -> [String: Any]? {
         return jsonObject(report)
     case .narrationAdded(let summary):
         return jsonObject(summary)
+    case .recordings(let list):
+        return jsonObject(list)
+    }
+}
+
+/// Renders `.recordings` as the text an agent reads back (D108).
+///
+/// Megabytes and ages rather than bytes and timestamps, for the same reason
+/// the CLI's `recordingsNote` uses them: the reason to ask is to decide what
+/// to keep.
+func recordingsSummary(_ list: RecordingList) -> String {
+    guard !list.recordings.isEmpty else {
+        return "No recordings in \(list.directory)."
+    }
+    var head = String(format: "%d recording(s) in %@, %.1f MB in total",
+                      list.total, list.directory as NSString,
+                      Double(list.totalByteSize) / 1_000_000)
+    if list.recordings.count < list.total {
+        head += " (showing the newest \(list.recordings.count))"
+    }
+    let capped = list.recordings.filter { $0.outcome == "capped" }.count
+    if capped > 0 {
+        head += ". \(capped) of these were CAPPED: the session that started them ran "
+              + "past its limit or went away, so nobody has watched them"
+    }
+    let rows = list.recordings.map { recording in
+        String(format: "  %.1f MB, %@, %@, %@",
+               Double(recording.byteSize) / 1_000_000,
+               ageDescription(recording.ageSeconds) as NSString,
+               (recording.outcome ?? recording.initiator) as NSString,
+               recording.path as NSString)
+    }
+    return ([head] + rows).joined(separator: "\n")
+}
+
+/// An age as the largest unit that still says something.
+func ageDescription(_ seconds: Double) -> String {
+    switch seconds {
+    case ..<60: return "\(Int(seconds))s ago"
+    case ..<3600: return "\(Int(seconds / 60))m ago"
+    case ..<86400: return "\(Int(seconds / 3600))h ago"
+    default: return "\(Int(seconds / 86400))d ago"
     }
 }
 
@@ -343,6 +385,8 @@ func describe(_ response: AutomationResponse) -> String {
         return transcriptSummary(report)
     case .narrationAdded(let summary):
         return narrationSummary(summary)
+    case .recordings(let list):
+        return recordingsSummary(list)
     case .diagnosticsWritten(let report):
         // No `outputPath` here: `DiagnosticsReport` doesn't carry it. The
         // caller (`tools/call` below) renders this case itself, with the

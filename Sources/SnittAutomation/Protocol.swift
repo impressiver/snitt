@@ -200,6 +200,18 @@ public struct AutomationRequest: Codable, Sendable {
         /// ten-minute narration is a thousand words, and bloating every
         /// "how long is this and what is in it" call with them buys nothing.
         case transcript(bundlePath: String)
+        /// What is sitting in the output directory (D108).
+        ///
+        /// Amends v4 rather than bumping again: v4 has not shipped, so there
+        /// is no released v4 client for a new case to break. That is the same
+        /// licence every addition to v2 and v3 took before their releases
+        /// existed, and it expires the moment v4 ships.
+        ///
+        /// Runs in the app, like `.inspect`, for the same reason: the output
+        /// directory is user-configurable, the client cannot be assumed able
+        /// to read it (§4.9), and the client does not know where it points in
+        /// the first place.
+        case listRecordings(limit: Int?)
         /// Narration WRITTEN into a recording at a moment in it (D107, D100).
         ///
         /// In scope despite §4.8's record-only rule, which bounds what Snitt
@@ -695,6 +707,7 @@ public enum AutomationResponse: Codable, Sendable, Equatable {
     /// is a puzzle nobody needs to solve twice.
     case transcriptRead(TranscriptReport)
     case narrationAdded(NarrationSummary)
+    case recordings(RecordingList)
 }
 
 /// What a trim produced, for a caller that cannot inspect `edit.json` itself

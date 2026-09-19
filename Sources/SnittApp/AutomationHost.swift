@@ -112,6 +112,15 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     private let crashReportSettings: @Sendable () -> CrashReportSettings
     private let crashReportsDirectory: URL
 
+    /// Where finished recordings land, read FRESH on every call (D108).
+    ///
+    /// A closure rather than a stored `URL` for the reason `main.swift`
+    /// already gives the coordinator: the setting is user-configurable and can
+    /// change while the app is running, and a value captured at construction
+    /// would list a directory Snitt stopped writing to. Injectable so a test
+    /// lists a scratch directory instead of the machine's real one.
+    private let outputDirectory: @Sendable () -> URL
+
     /// Per-session (target, startedAt) the audit trail needs at stop time,
     /// keyed by session id.
     ///
@@ -159,7 +168,9 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
          watchdogScheduling: @escaping WatchdogScheduling = AutomationHost.realWatchdogScheduling,
          auditLogURL: URL = AuditLogLocation.url(),
          crashReportSettings: @escaping @Sendable () -> CrashReportSettings = { CrashReportSettings.load() },
-         crashReportsDirectory: URL = CrashReportCollector.defaultDirectory()) {
+         crashReportsDirectory: URL = CrashReportCollector.defaultDirectory(),
+         outputDirectory: @escaping @Sendable () -> URL
+             = { OutputDirectorySettings.load().directory }) {
         self.coordinator = coordinator
         self.settings = settings
         self.onRecordingState = onRecordingState
@@ -169,6 +180,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         self.auditLogURL = auditLogURL
         self.crashReportSettings = crashReportSettings
         self.crashReportsDirectory = crashReportsDirectory
+        self.outputDirectory = outputDirectory
     }
 
     private func pushState(_ state: RecordingState) async {
@@ -330,6 +342,17 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             // neutral one, and it was reachable by any same-user process.
             guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
             return inspect(bundlePath: path)
+
+        case .listRecordings(let limit):
+            // Gated, and not only because the verb is a read. A bundle's
+            // FILENAME is derived from the git branch and commit
+            // (`BundleNaming`), which is why `RecordingCoordinator` redacts it
+            // from its own log lines: a branch called
+            // `feat/acme-corp-integration` names a customer. Listing the
+            // directory hands those names out wholesale.
+            guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
+            return .recordings(RecordingInventory.list(in: outputDirectory(),
+                                                       now: now(), limit: limit))
 
         case .transcript(let path):
             // Gated for the same reason `.inspect` is, and more sharply.
@@ -972,6 +995,23 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         }
     }
 
+    /// Records how an agent's session ended, in the bundle it produced (D108).
+    ///
+    /// Best-effort, and silent on failure by design. The recording is already
+    /// finalised and safe on disk by the time this runs, and losing the stamp
+    /// costs a listing one column; failing the stop that has already succeeded
+    /// would cost the recording. That is the same trade `openEditor` makes
+    /// when a preview cannot be built.
+    ///
+    /// Read-modify-write rather than a second file, so `meta.json` stays the
+    /// one place a recording describes itself.
+    private static func stamp(outcome: String, on bundleURL: URL) {
+        guard let bundle = try? SnittBundle(opening: bundleURL),
+              var meta = try? RecordingMetadata.read(from: bundle) else { return }
+        meta.outcome = outcome
+        try? meta.write(to: bundle)
+    }
+
     /// The refusal for a path that is not a readable `.snitt` bundle.
     private static let noSuchBundleError = AutomationError(
         code: .targetNotFound,
@@ -1327,7 +1367,17 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     private func expire(_ sessionID: String) async {
         guard await registry.expiredSession(now: now()) == sessionID else { return }
         switch await coordinator.stopForAgent(sessionID: sessionID) {
-        case .stopped, .failed:
+        case .stopped(let url, _, _):
+            // Stamped on the BUNDLE as well as in the audit trail (D108). The
+            // audit record is keyed by session id and carries no path, so
+            // nothing could ever join the two: this is the only place that
+            // knows both that a recording was capped and which bundle it is.
+            // Without it the watchdog leaves a full-resolution video that
+            // looks exactly like a finished demo.
+            Self.stamp(outcome: AuditOutcome.capped, on: url)
+            fallthrough
+
+        case .failed:
             // `.failed` still means the recording is OVER: `stopRecording()`
             // clears `active` before `recorder.stop()` can throw, so only
             // finalization failed. Leaving the indicator lit would be worse
@@ -1371,6 +1421,12 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             try? await registry.close(sessionID)
             await pushState(.idle)
             await recordSessionEnd(sessionID: sessionID, outcome: AuditOutcome.completed)
+            // Stamped here too, so `nil` in a listing means "did not end
+            // through the agent API" rather than "ended somehow". Without the
+            // completed case, `capped` would be the only value ever written
+            // and every ordinary agent recording would be indistinguishable
+            // from a bundle recorded before this field existed.
+            Self.stamp(outcome: AuditOutcome.completed, on: url)
             return .stopped(bundlePath: url.path, health: health)
 
         case .notCurrentSession:
