@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Signs an app bundle with hardened runtime, then conditionally adds
 # com.apple.security.cs.disable-library-validation (R9) only when the
 # signing identity has no real Team ID. Factored out of make-app.sh so this

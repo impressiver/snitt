@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Publishes docs/wiki/ to the GitHub wiki.
 #

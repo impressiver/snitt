@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Assembles build/Snitt.app so capture runs under a stable TCC identity.
 # Without this, screen-recording permission is attributed to the terminal
 # that launched the binary, not to Snitt (see spec 4.9).

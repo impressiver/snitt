@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Runs a mutation pass: applies each mutant in a spec file, runs a test
 # filter, and reports which mutants SURVIVED.
 #

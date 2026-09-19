@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Submits a signed Snitt.app to Apple's notary service, staples the ticket,
 # then re-verifies with spctl the way Gatekeeper will on someone else's
 # machine.

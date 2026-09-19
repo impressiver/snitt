@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Assembles build/S5Server.app so the probe runs under its own TCC identity.
 # The probe needs its own bundle because TCC keys on code identity, not
 # filesystem location. A probe inside Snitt.app would get its own ad-hoc
