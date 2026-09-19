@@ -348,3 +348,86 @@ func inspectWithFutureSchemaEventsFailsExplicitly() async throws {
     }
     #expect(error.hint != nil, "an agent needs to know why, not just that it failed")
 }
+
+// MARK: - D106: which of the three answers is this?
+
+@Test("An export format Snitt does not have is the caller's mistake, not Snitt's")
+func unsupportedFormatIsACallerMistake() async throws {
+    // WRONG IMPLEMENTATION THIS DISCRIMINATES AGAINST: leaving this site on
+    // `internal_error`, which is what it was. The message and the hint are
+    // already perfect ("Snitt exports mp4 or gif") and an agent that
+    // branches on the code rather than the prose, exactly as
+    // `AutomationError.Code` instructs, reads "something broke inside Snitt"
+    // and retries or gives up instead of sending "mp4". Verified to fail
+    // against `.internalError`.
+    let bundle = try await bundleWithMetadata(duration: 2, events: [])
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+    let output = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString).appendingPathExtension("webm")
+
+    let host = AutomationHost.forTesting()
+    let response = await host.handle(
+        .export(bundlePath: bundle.url.path, format: "webm", outputPath: output.path,
+                scale: 1.0, chapters: false, subtitles: false, maxSizeBytes: nil,
+                resolution: .source, clicks: false), caller: nil)
+
+    guard case .failure(let error) = response else {
+        Issue.record("webm was accepted"); return
+    }
+    #expect(error.code == .invalidArguments,
+            "got \(error.code.rawValue); an agent must be able to tell 'send mp4 instead' from 'Snitt is broken' without reading the sentence")
+    #expect(AutomationError.exitCode[error.code] == 17)
+}
+
+@Test("A corrupt edit.json is the recording's fault, and no retry fixes it")
+func corruptEditJsonIsAnUnusableRecording() async throws {
+    // WRONG IMPLEMENTATION: leaving this on `internal_error` alongside the
+    // format guard above, which is the state D106 found: one code covering
+    // both "change your arguments" and "this bundle is beyond saving". They
+    // are opposite instructions: the first says send a different request, the
+    // second says stop sending this one. Verified to fail against
+    // `.internalError`.
+    //
+    // Deliberately NOT `invalidArguments`: the caller's request was
+    // well-formed, and telling an agent to fix its arguments would send it
+    // round a loop it cannot win.
+    let bundle = try await bundleWithMetadata(duration: 4, events: [])
+    try Data("{ not valid json".utf8).write(to: bundle.editURL)
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+    let output = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
+    defer { try? FileManager.default.removeItem(at: output) }
+
+    let host = AutomationHost.forTesting()
+    let response = await host.handle(
+        .export(bundlePath: bundle.url.path, format: "mp4", outputPath: output.path,
+                scale: 1.0, chapters: false, subtitles: false, maxSizeBytes: nil,
+                resolution: .source, clicks: false), caller: nil)
+
+    guard case .failure(let error) = response else {
+        Issue.record("a corrupt edit.json was exported through"); return
+    }
+    #expect(error.code == .unusableRecording, "got \(error.code.rawValue)")
+    #expect(AutomationError.exitCode[error.code] == 18)
+}
+
+@Test("A recording with nothing to auto-trim against says so as its own answer")
+func autoTrimWithNoInputIsAnUnusableRecording() async throws {
+    // WRONG IMPLEMENTATION: `internal_error`, which is what this was. Its own
+    // hint tells the agent to use `snitt trim --start/--end` instead, a
+    // DIFFERENT request, which is precisely the distinction `unusable_recording`
+    // draws and `internal_error` erases. Verified to fail against
+    // `.internalError`.
+    let bundle = try await bundleWithMetadata(
+        duration: 10, events: [LoggedEvent(timeSeconds: 1, kind: .marker, label: "m")])
+    defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+    let host = AutomationHost.forTesting()
+    let response = await host.handle(
+        .trim(bundlePath: bundle.url.path, start: nil, end: nil, auto: true), caller: nil)
+
+    guard case .failure(let error) = response else {
+        Issue.record("auto-trim must refuse an empty input log"); return
+    }
+    #expect(error.code == .unusableRecording, "got \(error.code.rawValue)")
+}

@@ -827,7 +827,12 @@ func busyStopKeepsTheSession() async {
         Issue.record("expected a failure, got \(response)")
         return
     }
-    #expect(error.code == .internalError)
+    // `busy`, not `internal_error` (D106). This is the site whose own hint
+    // said "try again in a moment" under a code that means "something went
+    // wrong": the only failure in the whole taxonomy an agent SHOULD retry,
+    // wearing the code it must not.
+    #expect(error.code == .busy)
+    #expect(AutomationError.exitCode[error.code] == 19)
 
     // The session is still open, because nothing actually stopped.
     let status = await host.handle(.status, caller: nil)
@@ -1260,6 +1265,16 @@ struct ScreenshotAutomationTests {
         #expect(error.code != .noSuchSession,
                 "a healthy recording was reported as a missing session")
         #expect(error.hint?.contains("try again") == true)
+        // D106. `!= .noSuchSession` was as far as this could go while every
+        // other answer was `internal_error`: it pinned what the code must NOT
+        // be and left "wait and ask again" unsayable. Now it has a name.
+        //
+        // WRONG IMPLEMENTATION: leaving this on `internal_error`, where the
+        // hint asserted retryability and the code denied it, and an agent
+        // branching on the code (as `AutomationError.Code` instructs) tears
+        // down a recording that is half a frame old and perfectly healthy.
+        // Verified to fail against `.internalError`.
+        #expect(error.code == .busy)
     }
 }
 
@@ -1336,6 +1351,37 @@ struct ReportedInputAutomationTests {
         guard case .failure = await host.handle(
             .reportInput(sessionID: session, kind: "wiggle", x: 0.5, y: 0.5, label: nil), caller: nil)
         else { Issue.record("an unknown kind was accepted"); return }
+    }
+
+    @Test("Every way of getting reportInput wrong says the CALL was wrong")
+    func badReportInputArgumentsAreInvalidArguments() async throws {
+        // WRONG IMPLEMENTATION THIS DISCRIMINATES AGAINST: leaving these three
+        // on `internal_error`, which is what they were. All three are pure
+        // argument validation on a request that never reaches the coordinator,
+        // and all three told the agent that Snitt had broken. `invalid_arguments`
+        // is the one answer that makes them fixable without reading English:
+        // send a known kind, drop the label, add x and y. Verified to fail
+        // against `.internalError` at each of the three sites.
+        //
+        // Three cases in one test on purpose: they are the same claim about
+        // three adjacent guards, and the bug being pinned is that one of them
+        // gets reclassified and its neighbours quietly do not.
+        let (_, host, session) = await startedHost()
+        let badCalls: [(String, AutomationRequest.Body)] = [
+            ("an unknown kind",
+             .reportInput(sessionID: session, kind: "wiggle", x: 0.5, y: 0.5, label: nil)),
+            ("a keystroke carrying text",
+             .reportInput(sessionID: session, kind: "keystroke", x: nil, y: nil, label: "rm -rf")),
+            ("a click with no position",
+             .reportInput(sessionID: session, kind: "click", x: nil, y: nil, label: nil)),
+        ]
+        for (what, body) in badCalls {
+            guard case .failure(let error) = await host.handle(body, caller: nil) else {
+                Issue.record("\(what) was accepted"); continue
+            }
+            #expect(error.code == .invalidArguments,
+                    "\(what) refused as \(error.code.rawValue)")
+        }
     }
 }
 

@@ -103,7 +103,34 @@ private enum JSONAnyValue: Codable, Sendable {
 /// pattern for the CLI side.
 public struct MCPBridgeError: Error, Equatable {
     public let message: String
-    public init(_ message: String) { self.message = message }
+    /// The machine-readable half, so a bridge refusal is something an agent
+    /// can BRANCH on rather than a sentence it must read (D106).
+    ///
+    /// `AutomationError.Code`'s own doc comment says "an agent branches on
+    /// this, never on `message`", and until D106 the largest class of real
+    /// agent mistakes (sending the wrong arguments) was the one class that
+    /// never reached the taxonomy: an `AutomationError` rendered code-prefixed
+    /// and with `structuredContent`, while everything built here rendered as
+    /// bare text with `isError: true` and nothing to branch on.
+    ///
+    /// Defaulted rather than demanded at every construction site on purpose.
+    /// Every refusal this type exists for is the same answer: the call was
+    /// wrong, change it and send it again. Making forty-odd sites repeat
+    /// it would add a way to get it wrong, not information. A site that
+    /// genuinely means something else passes it.
+    public let code: AutomationError.Code
+
+    public init(_ message: String, code: AutomationError.Code = .invalidArguments) {
+        self.message = message
+        self.code = code
+    }
+
+    /// The same value the app's own refusals travel in, so a frontend renders
+    /// a bridge error and an app error through one path rather than two that
+    /// can drift (§4.8).
+    public var automationError: AutomationError {
+        AutomationError(code: code, message: message)
+    }
 }
 
 /// Maps MCP tool calls onto the same request bodies the CLI builds.

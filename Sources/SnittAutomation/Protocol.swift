@@ -233,6 +233,13 @@ public struct StatusInfo: Codable, Sendable, Equatable {
 public struct AutomationError: Codable, Sendable, Equatable, Error {
     /// The agent-facing contract. An agent branches on this, never on `message`.
     /// Adding a case is safe; renaming one is a breaking protocol change.
+    ///
+    /// D106 split `internal_error`. It had become a catch-all across three
+    /// unrelated classes, 27 sites in `AutomationHost` alone, and an agent
+    /// receiving it could not tell "fix your request" from "this recording is
+    /// beyond saving" from "wait a second and ask again", which are the only
+    /// three things it could usefully do about a failure. The three codes are
+    /// named for the ANSWER, not for the subsystem that produced it.
     public enum Code: String, Codable, Sendable, CaseIterable {
         case consentRequired = "consent_required"
         case upgradeRequired = "upgrade_required"
@@ -240,7 +247,63 @@ public struct AutomationError: Codable, Sendable, Equatable, Error {
         case alreadyRecording = "already_recording"
         case targetNotFound = "target_not_found"
         case permissionDenied = "permission_denied"
+        /// The CALL was wrong: a missing field, an unknown enum value, a
+        /// number outside its range, a range whose end precedes its start.
+        /// Change the arguments and send it again; sending the same ones
+        /// again cannot work.
+        ///
+        /// Also what an MCP argument error carries. Before D106 those were
+        /// bare prose with no code at all: the largest class of real agent
+        /// mistakes was the one class the taxonomy did not reach.
+        case invalidArguments = "invalid_arguments"
+        /// The RECORDING cannot serve this request, and repeating it
+        /// unchanged never will: a corrupt `edit.json`, a `capture.mov` with
+        /// no video track, a trim that removes every frame, an input log
+        /// with nothing to trim against.
+        ///
+        /// Distinct from `invalidArguments` because the caller's request was
+        /// well-formed, and distinct from `internalError` because nothing
+        /// went wrong unexpectedly. Some of these are recoverable by a
+        /// DIFFERENT request (widen the trim, then export again) and the
+        /// hint says which; none is recoverable by this one.
+        case unusableRecording = "unusable_recording"
+        /// Nothing is wrong. Snitt is mid-transition (starting or stopping a
+        /// recording, or waiting on the first frame) and the same request
+        /// will very likely succeed in a moment.
+        ///
+        /// It earns its own code because it is the only failure an agent
+        /// should RETRY, and it was previously indistinguishable from the
+        /// failures it must not: the hint already said "try again in a
+        /// moment" while the code said `internal_error`.
+        case busy = "busy"
+        /// Something unexpected. Neither the request nor the recording is
+        /// known to be at fault, so there is no advice beyond the hint, which
+        /// carries the underlying error.
+        ///
+        /// After D106 this is the residue, not the default. A new failure
+        /// site belongs here only when none of the three above fits.
         case internalError = "internal_error"
+
+        /// An unrecognised code decodes as `.internalError` rather than
+        /// throwing.
+        ///
+        /// Synthesized `RawRepresentable` decoding throws `dataCorrupted` on
+        /// an unknown string, which makes every future addition to this enum
+        /// a breaking change for every already-released client: the app sends
+        /// a code the client has never heard of and the whole response fails
+        /// to decode, surfacing as `malformedResponse` rather than as the
+        /// failure it actually was. D106 adds three cases at once and would
+        /// have done exactly that.
+        ///
+        /// `.internalError` is the right fallback precisely because of what
+        /// D106 makes it mean: "something unexpected, no advice to give". An
+        /// older client degrades to the single code it already had for these
+        /// failures, which is the behaviour it had before the split: the
+        /// taxonomy is lost, not the response.
+        public init(from decoder: any Decoder) throws {
+            let raw = try decoder.singleValueContainer().decode(String.self)
+            self = Code(rawValue: raw) ?? .internalError
+        }
     }
 
     public var code: Code
@@ -255,6 +318,11 @@ public struct AutomationError: Codable, Sendable, Equatable, Error {
 
     /// Distinct, non-zero exit codes so a shell script can branch without parsing
     /// JSON. Success is 0.
+    ///
+    /// §15 makes these a public interface, so every number here is frozen:
+    /// D106 appends 17-19 and moves nothing. A script that branched on 16
+    /// still means `internal_error`; what changed is which failures now carry
+    /// a different code (and therefore a different number) instead.
     public static let exitCode: [Code: Int32] = [
         .consentRequired: 10,
         .upgradeRequired: 11,
@@ -263,6 +331,9 @@ public struct AutomationError: Codable, Sendable, Equatable, Error {
         .targetNotFound: 14,
         .permissionDenied: 15,
         .internalError: 16,
+        .invalidArguments: 17,
+        .unusableRecording: 18,
+        .busy: 19,
     ]
 }
 

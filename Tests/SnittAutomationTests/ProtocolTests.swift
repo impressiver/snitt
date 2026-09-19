@@ -102,6 +102,12 @@ func errorCodesAreStable() {
     #expect(AutomationError.Code.targetNotFound.rawValue == "target_not_found")
     #expect(AutomationError.Code.permissionDenied.rawValue == "permission_denied")
     #expect(AutomationError.Code.internalError.rawValue == "internal_error")
+    // D106's three. Same claim, same reason: an agent has these strings
+    // written into it, so renaming one is a breaking protocol change even
+    // when the Swift case name stays put.
+    #expect(AutomationError.Code.invalidArguments.rawValue == "invalid_arguments")
+    #expect(AutomationError.Code.unusableRecording.rawValue == "unusable_recording")
+    #expect(AutomationError.Code.busy.rawValue == "busy")
 }
 
 @Test("Every error code maps to a distinct non-zero exit code")

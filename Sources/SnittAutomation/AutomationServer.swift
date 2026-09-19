@@ -176,8 +176,13 @@ public final class AutomationServer: @unchecked Sendable {
             } catch {
                 // Poisoned framer: further appends throw forever. Make a best
                 // effort to tell the client why, then close regardless.
+                // `invalid_arguments`, not `internal_error`: the hint already
+                // told the caller to send a smaller request, and D106 exists
+                // because a code that says "something went wrong in Snitt"
+                // beside a hint that says "change your request" is one of the
+                // two the agent must ignore.
                 let failure = AutomationResponse.failure(AutomationError(
-                    code: .internalError,
+                    code: .invalidArguments,
                     message: "The request exceeded the maximum message size.",
                     hint: "Send a smaller request."))
                 if let payload = try? JSONEncoder().encode(failure) {

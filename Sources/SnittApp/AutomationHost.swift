@@ -480,14 +480,14 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                 bundle: bundle, edl: edl, scale: scale))
         } catch EstimateError.unsupportedFormat(let format) {
             return .failure(AutomationError(
-                code: .internalError,
+                code: .invalidArguments,
                 message: "Cannot estimate a \(format) export.",
                 hint: "GIF size tracks how much the picture moves rather than how long "
                     + "it runs, so a short sample says too little about the whole. "
                     + "Export with --max-size instead, which fits by measuring."))
         } catch CompositionError.everythingCut {
             return .failure(AutomationError(
-                code: .internalError,
+                code: .unusableRecording,
                 message: "The current trim removes the entire recording.",
                 hint: "Widen the kept range before estimating."))
         } catch {
@@ -586,7 +586,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             duration = try await CompositionBuilder.mediaDuration(of: bundle)
         } catch {
             return .failure(AutomationError(
-                code: .internalError,
+                code: .unusableRecording,
                 message: "Could not determine the recording's duration from capture.mov.",
                 hint: "The bundle's capture.mov may be missing or unreadable, so trim "
                     + "cannot compute a duration that will match an export: "
@@ -629,7 +629,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                                         cuts: cutRanges))
         } catch AutoTrimError.noInputEvents {
             return .failure(AutomationError(
-                code: .internalError,
+                code: .unusableRecording,
                 message: "This recording logged no input events, so there is nothing "
                        + "to auto-trim against.",
                 hint: "Auto-trim clips dead air around clicks and keystrokes. An "
@@ -710,7 +710,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         // frontends already accepted only to have the app refuse it here.
         guard format == "mp4" || format == "gif" else {
             return .failure(AutomationError(
-                code: .internalError,
+                code: .invalidArguments,
                 message: "Unsupported export format \"\(format)\".",
                 hint: "Snitt exports mp4 or gif. Omit --format or pass \"mp4\" or \"gif\"."))
         }
@@ -730,7 +730,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             edl = try Self.readEDL(for: bundle)
         } catch {
             return .failure(AutomationError(
-                code: .internalError,
+                code: .unusableRecording,
                 message: "Could not read this recording's edit.json.",
                 hint: "The file exists but is not valid — exporting the whole "
                     + "recording without applying it would silently discard trims "
@@ -759,13 +759,13 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             return .exported(manifest)
         } catch CompositionError.everythingCut {
             return .failure(AutomationError(
-                code: .internalError,
+                code: .unusableRecording,
                 message: "The current trim removes the entire recording.",
                 hint: "Widen the kept range with a `trim` request before exporting — "
                     + "there is nothing left of this recording to write."))
         } catch CompositionError.noVideoTrack {
             return .failure(AutomationError(
-                code: .internalError,
+                code: .unusableRecording,
                 message: "The recording has no video track to export.",
                 hint: "This bundle's capture.mov may be corrupt or incomplete."))
         } catch let error as ExportError {
@@ -827,7 +827,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             return .inspected(try InspectReport.report(for: bundle))
         } catch {
             return .failure(AutomationError(
-                code: .internalError,
+                code: .unusableRecording,
                 message: "Could not build a report for this recording.",
                 hint: "One of its sidecar files exists but could not be read — reporting "
                     + "it as empty would hide a real problem: \(String(describing: error))"))
@@ -1008,7 +1008,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             return .screenshotTaken(path: path, timeSeconds: timeSeconds, imagePNG: inlinePNG)
         case .noFrameYet:
             return .failure(AutomationError(
-                code: .internalError,
+                code: .busy,
                 message: "The recording has not delivered a frame yet.",
                 hint: "Wait a moment and try again — this is normal in the first "
                     + "fraction of a second, and the recording itself is fine."))
@@ -1043,13 +1043,13 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
               eventKind == .click || eventKind == .cursor || eventKind == .keystroke
         else {
             return .failure(AutomationError(
-                code: .internalError,
+                code: .invalidArguments,
                 message: "kind must be \"click\", \"cursor\" or \"keystroke\".",
                 hint: "Narration belongs on a marker."))
         }
         if eventKind == .keystroke, label != nil {
             return .failure(AutomationError(
-                code: .internalError,
+                code: .invalidArguments,
                 message: "A reported keystroke cannot carry a label.",
                 hint: "Report WHEN you typed, not what. Saying what was typed is a "
                     + "claim about content Snitt never saw, which is what \u{00A7}5.6 governs. "
@@ -1057,7 +1057,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         }
         if eventKind != .keystroke, x == nil || y == nil {
             return .failure(AutomationError(
-                code: .internalError,
+                code: .invalidArguments,
                 message: "\(kind) needs x and y as fractions of the window.",
                 hint: "Only a keystroke has no position."))
         }
@@ -1211,7 +1211,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
 
         case .busy:
             return .failure(AutomationError(
-                code: .internalError,
+                code: .busy,
                 message: "Snitt is busy starting or stopping a recording.",
                 hint: "Try `snitt record stop` again in a moment."))
 
