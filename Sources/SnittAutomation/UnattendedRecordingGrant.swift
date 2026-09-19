@@ -76,8 +76,23 @@ public struct UnattendedRecordingGrant: Sendable, Equatable {
 
     public var expiresAt: Date? { confirmedAt.map { $0.addingTimeInterval(Self.validity) } }
 
+    /// May an agent record unwatched RIGHT NOW. The question anything
+    /// authorising work should ask.
     public func status(now: Date) -> Status {
-        guard agentRecordingEnabled, enabled, let expiresAt else { return .off }
+        guard agentRecordingEnabled else { return .off }
+        return standingStatus(now: now)
+    }
+
+    /// What the PERSON set up, ignoring §5.3's global opt-in.
+    ///
+    /// A different question from `status(now:)`, and only a report may ask it:
+    /// this authorises nothing. It exists because `status` returns `.off` both
+    /// for a grant that was never created and for a live grant sitting under a
+    /// switched-off `agentRecordingEnabled`, and `ConsentInfo` has to tell
+    /// those apart. An agent told only "off" would ask a person to turn agent
+    /// recording on and then discover it still may not record unattended.
+    public func standingStatus(now: Date) -> Status {
+        guard enabled, let expiresAt else { return .off }
 
         if now < expiresAt {
             let remaining = expiresAt.timeIntervalSince(now)

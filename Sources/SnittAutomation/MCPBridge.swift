@@ -255,7 +255,10 @@ public enum MCPBridge {
                                 + "them without restricting to them, so a term you "
                                 + "never say costs nothing and it is worth listing "
                                 + "generously. Every one it mishears is a correction "
-                                + "somebody makes by hand. Up to 100.",
+                                + "somebody makes by hand. Up to 100, and terms are "
+                                + "capped at 60 characters; the response reports "
+                                + "`vocabularyDropped` when anything you sent did not "
+                                + "reach the recogniser.",
                         ],
                     ],
                     // Exactly one of bundleIdentifier/displayID is required, which
@@ -357,7 +360,14 @@ public enum MCPBridge {
                 ]),
             ToolDefinition(
                 name: "snitt_status",
-                description: "Report whether a recording is currently running.",
+                description: "Report whether a recording is currently running, and "
+                           + "which permissions a person has granted. Call it FIRST on "
+                           + "a cold start: the `consent` block says whether agent "
+                           + "recording is switched on at all, whether a whole display "
+                           + "may be recorded, and whether unattended recording is in "
+                           + "force, so you can choose a target you are allowed to "
+                           + "record instead of finding out from a consent_required "
+                           + "failure. This tool itself is never refused.",
                 inputSchema: ["type": "object", "properties": [String: Any]()]),
             ToolDefinition(
                 name: "snitt_add_marker",

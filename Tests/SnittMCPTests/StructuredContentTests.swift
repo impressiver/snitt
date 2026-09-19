@@ -110,4 +110,54 @@ struct StructuredContentTests {
         #expect(payload["structuredContent"] == nil)
         #expect(payload["content"] != nil)
     }
+
+    // MARK: - D104
+
+    @Test("A start that truncated the vocabulary says so, as a field and in the prose")
+    func startedReportsTruncation() throws {
+        // Discriminates against the pre-D104 frontends, which built
+        // `["sessionId": id, "target": target]` and the sentence "Recording X.
+        // Session id: Y" from two associated values and had nowhere to put a
+        // third. Against that implementation the key is absent and the sentence
+        // carries no number, and both expectations below fail.
+        let response = AutomationResponse.started(sessionID: "abc123", target: "Safari",
+                                                  vocabularyDropped: 50)
+        let structured = try #require(structuredContent(response))
+        #expect(structured["vocabularyDropped"] as? Int == 50)
+        // And the prose carries it too, because a host that ignores
+        // `structuredContent` is exactly the case that made this silent.
+        #expect(describe(response).contains("50"))
+    }
+
+    @Test("A start with no vocabulary omits the key rather than reporting zero dropped")
+    func startedOmitsTheKeyWhenNothingWasSent() throws {
+        // Discriminates against `payload["vocabularyDropped"] = dropped ?? 0`,
+        // which answers "you sent terms and all were kept" to a caller that
+        // sent none: a confidently wrong answer to a question never asked.
+        let structured = try #require(
+            structuredContent(.started(sessionID: "abc123", target: "Safari")))
+        #expect(structured["vocabularyDropped"] == nil)
+        #expect(structured["sessionId"] as? String == "abc123")
+    }
+
+    @Test("Status carries the consent block, so an agent can check before it calls")
+    func statusCarriesConsent() throws {
+        // Discriminates against the pre-D104 `StatusInfo`, which carried only
+        // recording/sessionID/elapsed/paused. Against that, `consent` is
+        // absent and every expectation below fails. Decoded from JSON rather
+        // than built with the initialiser: that is the shape the app actually
+        // sends, so this stays honest about the wire format.
+        let json = #"""
+        {"recording": false, "paused": false,
+         "consent": {"agentRecording": true, "fullDisplay": false,
+                     "unattended": "lapsed", "unattendedPermitted": false}}
+        """#
+        let info = try JSONDecoder().decode(StatusInfo.self, from: Data(json.utf8))
+        let structured = try #require(structuredContent(.status(info)))
+        let consent = try #require(structured["consent"] as? [String: Any])
+        #expect(consent["agentRecording"] as? Bool == true)
+        #expect(consent["fullDisplay"] as? Bool == false)
+        #expect(consent["unattended"] as? String == "lapsed")
+        #expect(consent["unattendedPermitted"] as? Bool == false)
+    }
 }

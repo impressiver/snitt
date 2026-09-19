@@ -308,9 +308,14 @@ do {
         note("\(error.message)" + (error.hint.map { "\n\($0)" } ?? ""))
         exit(AutomationError.exitCode[error.code] ?? 1)
     case .targets(let targets):        emit(targets)
-    case .started(let id, let target):
-        emit(["sessionId": id, "target": target])
+    case .started(let id, let target, let vocabularyDropped):
+        // `emitObject`, not `emit`: the payload now mixes strings with an
+        // optional number, the same reason `.stopped` below goes this way.
+        var payload: [String: Any] = ["sessionId": id, "target": target]
+        if let vocabularyDropped { payload["vocabularyDropped"] = vocabularyDropped }
+        emitObject(payload)
         note("Recording \(target). Stop with: snitt record stop \(id)")
+        if let warning = vocabularyNote(vocabularyDropped) { note(warning) }
     case .stopped(let path, let health):
         // Rendered from the RESPONSE, never re-read from the bundle: the CLI
         // is a thin client (§4.9) and cannot assume it can read the app's
@@ -337,6 +342,9 @@ do {
         } else {
             note("Not recording.")
         }
+        // After the state, not instead of it: what is running is the answer to
+        // `snitt status`, and the grants are why the next call may not.
+        if let warning = consentNote(info.consent) { note(warning) }
     case .handshake(let info):         emit(info)
     case .marked(let timeSeconds):
         emit(["markedAt": timeSeconds])

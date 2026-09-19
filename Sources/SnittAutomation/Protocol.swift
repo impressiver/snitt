@@ -219,14 +219,100 @@ public struct StatusInfo: Codable, Sendable, Equatable {
     /// How much of `elapsedSeconds` was spent paused. `elapsed - paused` is the
     /// footage.
     public var pausedSeconds: Double?
+    /// D104: what an agent is permitted to do, before it tries.
+    ///
+    /// Optional because it is additive on a shipped wire format: an app that
+    /// predates the field sends no key, and `ResponseWireCompatibilityTests`
+    /// proves a newer client still decodes that. `nil` therefore means "this
+    /// app cannot say", which is not the same as "nothing is permitted": a
+    /// caller that sees nil should fall back to the behaviour it had before,
+    /// which is to call and read `consent_required` if it comes.
+    public var consent: ConsentInfo?
 
     public init(recording: Bool, sessionID: String?, elapsedSeconds: Double?,
-                paused: Bool = false, pausedSeconds: Double? = nil) {
+                paused: Bool = false, pausedSeconds: Double? = nil,
+                consent: ConsentInfo? = nil) {
         self.recording = recording
         self.sessionID = sessionID
         self.elapsedSeconds = elapsedSeconds
         self.paused = paused
         self.pausedSeconds = pausedSeconds
+        self.consent = consent
+    }
+}
+
+/// Which grants are in force right now, so an agent can plan instead of guess
+/// (D104).
+///
+/// `StatusInfo` answered only "is something recording", so the single way to
+/// learn that agent recording was switched off, or that full-display capture
+/// was never enabled, was to call a tool and read `consent_required` back off
+/// the failure. That error is well-hinted and this is a gap rather than a trap,
+/// but it costs a failed call on every cold start and it arrives too late to be
+/// planned around: an agent that wanted a display and may not have one would
+/// rather choose a window than discover a refusal mid-recording.
+///
+/// Reports state, never changes it. Nothing here is a request for permission:
+/// §5.3's opt-in is a person's to give, in front of the machine.
+public struct ConsentInfo: Codable, Sendable, Equatable {
+    /// §5.3's global opt-in: may an agent record at all. Everything else here
+    /// is subordinate to it.
+    public var agentRecording: Bool
+    /// Whether a whole display may be recorded, as opposed to one application's
+    /// window. Separate because agreeing that agents may record is not agreeing
+    /// to hand over the whole screen.
+    public var fullDisplay: Bool
+
+    /// The three states of D95's unattended grant, as a string an agent can
+    /// branch on: never set up, in force, or expired and awaiting renewal.
+    public enum Unattended: String, Codable, Sendable {
+        case off
+        case active
+        case lapsed
+    }
+
+    /// D95's unattended grant reported ON ITS OWN TERMS, independent of
+    /// `agentRecording`.
+    ///
+    /// Deliberately NOT `UnattendedRecordingGrant.status(now:)`, which folds
+    /// the global opt-in in and returns `.off` for two different situations: a
+    /// person who never enabled unattended recording, and a person who did but
+    /// whose agent-recording switch is off. One word for both would send an
+    /// agent to fix the wrong thing. It would ask for agent recording, get it,
+    /// and only then find it still may not record unwatched. Kept separate, the
+    /// two fields compose; `unattendedPermitted` is that composition already
+    /// done.
+    public var unattended: Unattended
+    /// Days left before a person must re-confirm the grant at the machine.
+    /// Present only while `unattended` is `.active`, because it is the only
+    /// state in which a number means anything.
+    public var unattendedDaysRemaining: Int?
+    /// The composed answer: may an agent record with nobody at the keyboard
+    /// right now. The field to branch on; the two above say why.
+    ///
+    /// Stored rather than computed so it crosses the wire, and built only by
+    /// the initialiser below, because `unattended != .off` is the wrong test
+    /// and reads as the right one. `UnattendedRecordingGrant.Status.isActive`
+    /// exists for the same reason, and this is that reasoning one layer out.
+    public var unattendedPermitted: Bool
+
+    /// The one way to build this, so the composition above cannot be got wrong
+    /// at a call site.
+    public init(grant: UnattendedRecordingGrant, fullDisplay: Bool, now: Date) {
+        self.agentRecording = grant.agentRecordingEnabled
+        self.fullDisplay = fullDisplay
+        switch grant.standingStatus(now: now) {
+        case .off:
+            self.unattended = .off
+            self.unattendedDaysRemaining = nil
+        case .active(let days):
+            self.unattended = .active
+            self.unattendedDaysRemaining = days
+        case .lapsed:
+            self.unattended = .lapsed
+            self.unattendedDaysRemaining = nil
+        }
+        self.unattendedPermitted = grant.status(now: now).isActive
     }
 }
 
@@ -387,10 +473,81 @@ public func sizeBudgetNote(_ manifest: ExportManifest) -> String? {
          + "\(String(format: "%.1f", requestedMB)) MB requested"
 }
 
+/// Says, in one sentence, that some vocabulary never reached the recogniser.
+///
+/// Shared by both frontends for the same reason `healthFields` and
+/// `sizeBudgetNote` are (§4.8: the CLI and the MCP server must not diverge). A
+/// silent truncation is the defect D104 fixes, and two hand-written renderings
+/// would be two chances for one of them to go quiet again.
+///
+/// Returns `nil` when there is nothing to say (no vocabulary was sent, or all
+/// of it was kept), so a caller appends this only when it is non-nil rather
+/// than always emitting a trailing clause.
+public func vocabularyNote(_ dropped: Int?) -> String? {
+    guard let dropped, dropped > 0 else { return nil }
+    let terms = dropped == 1 ? "term" : "terms"
+    // Names the two reasons, because they need different fixes: a caller over
+    // the limit should shorten the list, and a caller with a 300-character
+    // paste should find what it pasted.
+    return "\(dropped) vocabulary \(terms) did not reach the recogniser "
+         + "(over the \(Vocabulary.limit)-term limit, or longer than "
+         + "\(Vocabulary.maximumTermLength) characters)."
+}
+
+/// Says what an agent may NOT do right now, in one sentence, or nothing at all.
+///
+/// Shared for the same reason as `vocabularyNote`. Deliberately silent when
+/// everything is permitted: a status line that recited its grants on every call
+/// would train a reader to skip the line that matters.
+///
+/// Unattended is reported only when agent recording is ON. Below that it is not
+/// the actionable half. A person has to enable agent recording first, and
+/// naming a second switch they cannot usefully reach yet is noise in front of
+/// the one they can.
+public func consentNote(_ consent: ConsentInfo?) -> String? {
+    guard let consent else { return nil }
+    var clauses: [String] = []
+    if !consent.agentRecording {
+        clauses.append("agent recording is off, so every tool will refuse")
+    } else {
+        if !consent.fullDisplay {
+            clauses.append("full-display recording is not allowed; record a window")
+        }
+        switch consent.unattended {
+        case .active: break
+        case .off:
+            clauses.append("unattended recording was never enabled")
+        case .lapsed:
+            clauses.append("the unattended grant has lapsed and needs renewing "
+                         + "in front of the machine")
+        }
+    }
+    guard !clauses.isEmpty else { return nil }
+    return clauses.joined(separator: "; ")
+         + ". A person changes these in Snitt's settings."
+}
+
 public enum AutomationResponse: Codable, Sendable, Equatable {
     case handshake(HandshakeInfo)
     case targets([TargetSummary])
-    case started(sessionID: String, target: String)
+    /// `vocabularyDropped` counts the terms in `StartOptions.vocabulary` that
+    /// never reached the recogniser (D104).
+    ///
+    /// `Vocabulary`'s own doc comment promises that "truncating is reported
+    /// rather than silent", and `Vocabulary.prepare` duly returns the count.
+    /// Nothing carried it to the caller, so an agent that listed 150 terms got
+    /// an ordinary success and never learned that 50 of them were not biasing
+    /// anything. Reported at START because that is when the truncation happens,
+    /// and because it is the last moment a caller can still shorten its list
+    /// and record again cheaply.
+    ///
+    /// `nil` means no vocabulary was supplied at all, which is a different
+    /// answer from `0`: zero says terms were sent and every one was kept.
+    ///
+    /// Optional, and additive on a shipped wire format: see `.screenshotTaken`
+    /// below and `ResponseWireCompatibilityTests`, which proves the older app's
+    /// payload still decodes rather than assuming it.
+    case started(sessionID: String, target: String, vocabularyDropped: Int? = nil)
     /// `health` was added to an already-Codable case without bumping
     /// `AutomationProtocol.version`. That is correct, not an oversight: v2 has
     /// never shipped — `main` has no `SnittAutomation` at all, and both PRs
