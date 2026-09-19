@@ -28,7 +28,29 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 FAST='SnittDocumentTests|SnittCaptureTests|SnittAutomationTests|SnittCLITests|SnittMCPTests'
-LOG_DIR="${TMPDIR:-/tmp}/snitt-test-logs"
+
+# PER CHECKOUT, because this script greps back the same files it writes.
+#
+# `run_pass` writes `$LOG_DIR/<pass>.log` and then counts the summary lines in
+# it, so the log is not a record of the run, it is the run's own arithmetic. A
+# fixed path made that arithmetic shared: two gates started from sibling
+# worktrees wrote the same file and each counted whatever was in it, which can
+# report one branch's numerator over another's denominator. It fails LOUDLY
+# when the totals disagree, which is how this was found, but it can just as
+# easily report a false PASS when they happen to agree, and that is the
+# silent-green this whole script exists to prevent.
+#
+# A torn line in a pass log is the fingerprint, e.g.
+#   `uNeedsUpdate, not just once at launch" passed after 0.021 seconds.`
+# which is one writer resuming at another's file offset. Two summary lines for
+# the same target in one pass is the other tell.
+#
+# The leaf name, not the whole path: a person is meant to follow the "see
+# $log" line below, and `mktemp -d` would hand them a fresh random directory
+# every run. Two checkouts sharing a leaf name would still collide, which the
+# `snitt-lane-*` naming here makes unlikely, but it is an assumption rather
+# than a guarantee and is written down for whoever meets the exception.
+LOG_DIR="${TMPDIR:-/tmp}/snitt-test-logs/$(basename "$PWD")"
 mkdir -p "$LOG_DIR"
 
 failed=0
