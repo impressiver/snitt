@@ -203,11 +203,17 @@ public enum MCPBridge {
            be shared. A browser's tab strip puts the titles of every other open \
            tab into every frame. Give the rectangle in pixels of the screenshot \
            you looked at, with frameWidth/frameHeight naming that image's size.
-        7. snitt_inspect, then snitt_export. You cannot watch what you \
+        7. Say something. snitt_narrate writes a line at a moment in the \
+           recording: you have no voice, so a written line is your \
+           microphone. snitt_transcript reads back everything the recording \
+           says, written or spoken. A written line is CAPTIONED rather than \
+           spoken, so it reaches a viewer only if you also pass captions to \
+           snitt_export.
+        8. snitt_inspect, then snitt_export. You cannot watch what you \
            recorded, so snitt_inspect is how you find out what you made, and \
            its output is what to quote when describing the demo. Pass maxSize \
            to snitt_export when the file is going somewhere with an attachment \
-           limit.
+           limit, and captions when the recording has anything to say.
 
         A person at the machine can see and stop any recording at any time.
         """
@@ -481,6 +487,63 @@ public enum MCPBridge {
                     "required": ["bundlePath"],
                 ]),
             ToolDefinition(
+                name: "snitt_transcript",
+                description: "Read what a recording SAYS, as lines with their times. "
+                           + "Speech is transcribed on the device after a recording "
+                           + "stops, and this is how you find out what is in it, since "
+                           + "you cannot listen to it. Each line says whether it was "
+                           + "HEARD by the recogniser or WRITTEN with snitt_narrate, and "
+                           + "whether its audio track is muted, a muted line is in the "
+                           + "transcript and in nobody's video. Times are seconds from "
+                           + "the start of the recording, the same clock snitt_inspect "
+                           + "prints marker times on.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "bundlePath": [
+                            "type": "string",
+                            "description": "Path printed by snitt_stop_recording",
+                        ],
+                    ],
+                    "required": ["bundlePath"],
+                ]),
+            ToolDefinition(
+                name: "snitt_narrate",
+                description: "Write a line of narration into a recording at a moment in "
+                           + "it. This is how you say something on a demo: you have no "
+                           + "voice, so a written line is your microphone. It is "
+                           + "CAPTIONED, NOT SPOKEN, Snitt does not synthesise speech, "
+                           + "so the line reaches a viewer only if the export draws "
+                           + "captions. Pass captions: true to snitt_export, or the "
+                           + "words sit in the bundle and appear on nobody's screen. The "
+                           + "line joins the transcript beside anything the recogniser "
+                           + "heard, marked as written so a person can tell them apart.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "bundlePath": [
+                            "type": "string",
+                            "description": "Path printed by snitt_stop_recording",
+                        ],
+                        "text": [
+                            "type": "string",
+                            "description": "The line to say. A sentence or two, it is "
+                                + "timed at reading speed and drawn as a caption, so a "
+                                + "paragraph stays on screen over the rest of the demo.",
+                        ],
+                        "atSeconds": [
+                            "type": "number",
+                            "description": "Where the line belongs, in seconds from the "
+                                + "START OF THE RECORDING, not from the start of the "
+                                + "trimmed output. That is the clock snitt_inspect "
+                                + "reports marker times on and snitt_screenshot reports "
+                                + "its own on, so a moment you already have a handle on "
+                                + "can be used as it is. Trimming does not move it.",
+                        ],
+                    ],
+                    "required": ["bundlePath", "text", "atSeconds"],
+                ]),
+            ToolDefinition(
                 name: "snitt_trim",
                 description: "Cut the setup and teardown off a recording — the "
                            + "seconds before the first thing happened and after the last "
@@ -728,6 +791,25 @@ public enum MCPBridge {
                                 + "one that reported everything is the demo the "
                                 + "reporting was for. Pass false to leave them off.",
                         ],
+                        "captions": [
+                            "type": "boolean",
+                            "description": "Burn the recording's TRANSCRIPT into the "
+                                + "picture as captions, what was said, and anything "
+                                + "you wrote with snitt_narrate. Not the same thing as "
+                                + "\"subtitles\" above, which writes a sidecar file from "
+                                + "marker labels: this one is on the video itself and "
+                                + "comes from speech. Leave it out to keep whatever this "
+                                + "recording is already set to; a person editing it may "
+                                + "have turned captions on, and passing nothing does not "
+                                + "take them away.",
+                        ],
+                        "markerBanners": [
+                            "type": "boolean",
+                            "description": "Draw each marker's label as a banner over the "
+                                + "picture at the moment it was placed, so a viewer sees "
+                                + "the step names you narrated with snitt_mark. "
+                                + "Leave it out to keep this recording's own setting.",
+                        ],
                         "maxSize": [
                             "type": "string",
                             "description": "A byte budget like \"10MB\". The exporter walks "
@@ -862,6 +944,52 @@ public enum MCPBridge {
                 return .failure(MCPBridgeError("snitt_inspect requires bundlePath"))
             }
             return .success(.inspect(bundlePath: path))
+
+        case "snitt_transcript":
+            guard let path = arguments["bundlePath"] as? String else {
+                return .failure(MCPBridgeError("snitt_transcript requires bundlePath"))
+            }
+            return .success(.transcript(
+                bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory)))
+
+        case "snitt_narrate":
+            guard let path = arguments["bundlePath"] as? String else {
+                return .failure(MCPBridgeError("snitt_narrate requires bundlePath"))
+            }
+            guard let text = arguments["text"] as? String else {
+                return .failure(MCPBridgeError("snitt_narrate requires text"))
+            }
+            // Blank text is refused here rather than written: `AuthoredNarration.words`
+            // yields nothing for it, so the call would report a cheerful
+            // success having added no line at all, the silent no-op §8
+            // forbids, and the one an agent is most likely to hit by
+            // interpolating an empty variable.
+            guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                return .failure(MCPBridgeError(
+                    "snitt_narrate text must not be blank. An empty line places nothing "
+                  + "on the recording and would report success anyway."))
+            }
+            let atSeconds: Double
+            switch numericValue(arguments["atSeconds"], parameter: "atSeconds") {
+            case .failure(let error): return .failure(error)
+            case .success(let value):
+                guard let value else {
+                    return .failure(MCPBridgeError(
+                        "snitt_narrate requires atSeconds: where in the recording the "
+                      + "line belongs, in seconds from its start. Defaulting to 0 would "
+                      + "silently anchor every line to the first frame."))
+                }
+                // Seconds are measured from the start of the recording, so
+                // there is no negative time to place a line at.
+                guard value >= 0 else {
+                    return .failure(MCPBridgeError(
+                        "snitt_narrate atSeconds must be zero or greater, got \(value)"))
+                }
+                atSeconds = value
+            }
+            return .success(.addNarration(
+                bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory),
+                text: text, atSeconds: atSeconds))
 
         case "snitt_report_input":
             guard let session = arguments["sessionId"] as? String else {
@@ -1191,6 +1319,21 @@ public enum MCPBridge {
             case .success(let value): subtitlesFlag = value ?? false
             case .failure(let error): return .failure(error)
             }
+            // These two keep the Optional `booleanValue` hands back instead of
+            // collapsing it with `?? false`, which every other flag here does.
+            // Absent means "the document decides", not "off": collapsing it
+            // would make an agent's export silently drop captions a person had
+            // already turned on in the editor (D107).
+            let captionsFlag: Bool?
+            switch booleanValue(arguments["captions"], parameter: "captions") {
+            case .success(let value): captionsFlag = value
+            case .failure(let error): return .failure(error)
+            }
+            let markerBannersFlag: Bool?
+            switch booleanValue(arguments["markerBanners"], parameter: "markerBanners") {
+            case .success(let value): markerBannersFlag = value
+            case .failure(let error): return .failure(error)
+            }
             return .success(.export(bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory),
                                      format: format,
                                      outputPath: PathResolver.resolve(outputPath, workingDirectory: workingDirectory),
@@ -1198,7 +1341,9 @@ public enum MCPBridge {
                                      subtitles: subtitlesFlag,
                                      maxSizeBytes: maxSizeBytes,
                                     resolution: resolutionValue,
-                                    clicks: clicksFlag))
+                                    clicks: clicksFlag,
+                                    captions: captionsFlag,
+                                    markerBanners: markerBannersFlag))
 
         case "snitt_diagnostics_export":
             guard let outputPath = arguments["outputPath"] as? String else {

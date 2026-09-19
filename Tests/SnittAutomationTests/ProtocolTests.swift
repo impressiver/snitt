@@ -125,18 +125,87 @@ func socketPathIsNotWorldWritable() {
     #expect(!path.hasPrefix("/tmp"), "/tmp is world-writable; another user could squat the socket")
 }
 
-@Test("The protocol version is 3 — a new request case is not backward compatible")
-func protocolVersionIsThree() {
+@Test("The protocol version is 4, a new request case is not backward compatible")
+func protocolVersionIsFour() {
     // An old app receiving a case it has no decoder for reports internal_error.
     // §10 requires a mismatch to be refused outright with a usable message, so
-    // the version moves and the handshake produces upgrade_required instead.
+    // the version moves and a new app produces upgrade_required instead.
     //
     // 2 -> 3 for `.crop`. Every earlier addition to v2 amended it without a
     // bump on the stated grounds that no v2 client had shipped; v0.1.0 has
     // shipped now, so that reasoning has expired and the next case earns a
     // bump. This test exists so the version cannot drift silently away from
     // the wire format.
-    #expect(AutomationProtocol.version == 3)
+    //
+    // 3 -> 4 for `.transcript`/`.addNarration` (D107). v3 shipped in v0.3.0
+    // and in every release since, which is exactly the condition the
+    // amend-without-bumping note on `.pauseRecording` set for its own expiry.
+    // The two OPTIONAL fields added to `.export` in the same change did not
+    // earn this and would not have earned it alone, see
+    // `ResponseWireCompatibilityTests`, which proves that shape is additive.
+    #expect(AutomationProtocol.version == 4)
+}
+
+@Test("A transcript request round-trips")
+func transcriptRequestRoundTrips() {
+    guard case .transcript(let path) = roundTripped(.transcript(bundlePath: "/tmp/x.snitt"))
+    else { Issue.record("wrong body case"); return }
+    #expect(path == "/tmp/x.snitt")
+}
+
+@Test("A narration request round-trips with its text and its anchor")
+func narrationRequestRoundTrips() {
+    // The anchor especially: a `Double` that did not survive the wire would
+    // put every written line at 0 with nothing anywhere saying so.
+    guard case .addNarration(let path, let text, let at) = roundTripped(
+        .addNarration(bundlePath: "/tmp/x.snitt", text: "two words", atSeconds: 4.5))
+    else { Issue.record("wrong body case"); return }
+    #expect(path == "/tmp/x.snitt")
+    #expect(text == "two words")
+    #expect(at == 4.5)
+}
+
+@Test("An export request carries its overlay overrides, absent ones included")
+func exportOverlayOverridesRoundTrip() {
+    // DISCRIMINATES AGAINST: encoding `nil` as `false`. "The document decides"
+    // has to survive the wire, or the distinction exists only in the frontends
+    // and the app sees an off switch.
+    guard case .export(_, _, _, _, _, _, _, _, _, let captions, let banners) = roundTripped(
+        .export(bundlePath: "/tmp/x.snitt", format: "mp4", outputPath: "/tmp/d.mp4",
+                scale: 1, chapters: false, subtitles: false, maxSizeBytes: nil,
+                resolution: .source, clicks: false, captions: nil, markerBanners: true))
+    else { Issue.record("wrong body case"); return }
+    #expect(captions == nil)
+    #expect(banners == true)
+}
+
+@Test("The two new responses round-trip")
+func transcriptResponsesRoundTrip() throws {
+    let read = AutomationResponse.transcriptRead(TranscriptReport(
+        bundlePath: "/tmp/x.snitt", locale: "en-US", wordCount: 3,
+        authoredWordCount: 3, captionsEnabled: true,
+        lines: [TranscriptReport.Line(startSeconds: 1, endSeconds: 2,
+                                      track: "voiceover", authored: true,
+                                      audible: true, text: "the tests pass")]))
+    #expect(try JSONDecoder().decode(
+        AutomationResponse.self, from: JSONEncoder().encode(read)) == read)
+
+    let added = AutomationResponse.narrationAdded(NarrationSummary(
+        bundlePath: "/tmp/x.snitt", wordCount: 3, startSeconds: 1, endSeconds: 2,
+        totalWordCount: 3, captionsEnabled: false))
+    #expect(try JSONDecoder().decode(
+        AutomationResponse.self, from: JSONEncoder().encode(added)) == added)
+}
+
+/// One request through `JSONEncoder`/`JSONDecoder`, as the socket sends it.
+private func roundTripped(_ body: AutomationRequest.Body) -> AutomationRequest.Body {
+    let request = AutomationRequest(body: body)
+    guard let data = try? JSONEncoder().encode(request),
+          let back = try? JSONDecoder().decode(AutomationRequest.self, from: data) else {
+        Issue.record("request did not survive a round trip")
+        return .status
+    }
+    return back.body
 }
 
 @Test("StartOptions carries the client's working directory")

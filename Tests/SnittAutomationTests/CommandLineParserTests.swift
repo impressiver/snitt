@@ -93,7 +93,7 @@ func trimNeedsSomething() {
 
 @Test("export parses its format, output and scale")
 func parsesExport() {
-    guard case .success(.export(let path, let format, let out, let scale, let chapters, _, _, _, _)) =
+    guard case .success(.export(let path, let format, let out, let scale, let chapters, _, _, _, _, _, _)) =
         CommandLineParser.parse(["export", "/tmp/x.snitt", "--format", "mp4",
                                  "--out", "/tmp/demo.mp4", "--scale", "0.5", "--chapters"])
     else { Issue.record("parse failed"); return }
@@ -106,7 +106,7 @@ func parsesExport() {
 
 @Test("export defaults to full scale and no chapters")
 func exportDefaults() {
-    guard case .success(.export(_, _, _, let scale, let chapters, _, let maxSizeBytes, _, _)) =
+    guard case .success(.export(_, _, _, let scale, let chapters, _, let maxSizeBytes, _, _, _, _)) =
         CommandLineParser.parse(["export", "/tmp/x.snitt", "--format", "mp4",
                                  "--out", "/tmp/demo.mp4"])
     else { Issue.record("parse failed"); return }
@@ -119,7 +119,7 @@ func exportDefaults() {
 func exportAcceptsGif() {
     let result = CommandLineParser.parse(
         ["export", "/tmp/b.snitt", "--format", "gif", "--out", "/tmp/o.gif"])
-    guard case .success(.export(_, let format, _, _, _, _, _, _, _)) = result else {
+    guard case .success(.export(_, let format, _, _, _, _, _, _, _, _, _)) = result else {
         Issue.record("expected success, got \(result)"); return
     }
     #expect(format == "gif")
@@ -130,7 +130,7 @@ func maxSizeParsed() {
     let result = CommandLineParser.parse(
         ["export", "/tmp/b.snitt", "--format", "mp4", "--out", "/tmp/o.mp4",
          "--max-size", "10MB"])
-    guard case .success(.export(_, _, _, _, _, _, let maxSize, _, _)) = result else {
+    guard case .success(.export(_, _, _, _, _, _, let maxSize, _, _, _, _)) = result else {
         Issue.record("expected success, got \(result)"); return
     }
     // Asserts the VALUE reached the command, not merely that parsing
@@ -204,4 +204,94 @@ func diagnosticsUnknownSubcommandRefused() {
 
 private extension Result {
     var isFailure: Bool { if case .failure = self { return true }; return false }
+}
+
+// MARK: - D107: captions, marker banners, and narration
+
+@Test("Without a caption flag, the document's own setting stands")
+func captionFlagsAreTriState() {
+    // DISCRIMINATES AGAINST: `var captions = false`, the shape every other
+    // boolean flag in this parser uses. It is right for `--chapters`, which
+    // has nothing in the document to defer to, and wrong here: `showSubtitles`
+    // lives in `edit.json` and a person may have turned it on in the editor.
+    // A `false` default would take it away on every agent export.
+    guard case .success(.export(_, _, _, _, _, _, _, _, _, let captions, let banners)) =
+        CommandLineParser.parse(["export", "/tmp/x.snitt", "--format", "mp4",
+                                 "--out", "/tmp/d.mp4"])
+    else { Issue.record("parse failed"); return }
+    #expect(captions == nil)
+    #expect(banners == nil)
+}
+
+@Test("--captions and --no-captions say opposite things, and both are heard")
+func captionFlagsCarryBothValues() {
+    guard case .success(.export(_, _, _, _, _, _, _, _, _, let on, _)) =
+        CommandLineParser.parse(["export", "/tmp/x.snitt", "--format", "mp4",
+                                 "--out", "/tmp/d.mp4", "--captions"])
+    else { Issue.record("parse failed"); return }
+    #expect(on == true)
+
+    guard case .success(.export(_, _, _, _, _, _, _, _, _, let off, let banners)) =
+        CommandLineParser.parse(["export", "/tmp/x.snitt", "--format", "mp4",
+                                 "--out", "/tmp/d.mp4", "--no-captions",
+                                 "--marker-banners"])
+    else { Issue.record("parse failed"); return }
+    #expect(off == false)
+    #expect(banners == true)
+}
+
+@Test("Contradicting yourself is refused, not resolved by argument order")
+func contradictoryCaptionFlagsAreRefused() {
+    // DISCRIMINATES AGAINST: last-one-wins, which a plain `case "--captions":
+    // captions = true` loop gives for free. A caller who passed both does not
+    // know what they asked for, and silently honouring whichever came last is
+    // the confidently-wrong outcome §8 forbids.
+    #expect(CommandLineParser.parse(
+        ["export", "/tmp/x.snitt", "--format", "mp4", "--out", "/tmp/d.mp4",
+         "--captions", "--no-captions"]).isFailure)
+    #expect(CommandLineParser.parse(
+        ["export", "/tmp/x.snitt", "--format", "mp4", "--out", "/tmp/d.mp4",
+         "--marker-banners", "--no-marker-banners"]).isFailure)
+    // Saying the same thing twice is not a contradiction.
+    #expect(!CommandLineParser.parse(
+        ["export", "/tmp/x.snitt", "--format", "mp4", "--out", "/tmp/d.mp4",
+         "--captions", "--captions"]).isFailure)
+}
+
+@Test("narrate carries its line and its anchor")
+func parsesNarrate() {
+    guard case .success(.narrate(let path, let text, let at)) = CommandLineParser.parse(
+        ["narrate", "/tmp/x.snitt", "--at", "4.5", "--text", "the tests are green"])
+    else { Issue.record("parse failed"); return }
+    #expect(path == "/tmp/x.snitt")
+    #expect(text == "the tests are green")
+    #expect(at == 4.5)
+}
+
+@Test("narrate refuses to default its anchor or its text")
+func narrateNeedsBothFlags() {
+    // DISCRIMINATES AGAINST: `var atSeconds = 0.0`. Zero is a real anchor, so
+    // a default puts every forgotten line on the first frame and reports
+    // success, and a missing `--text` would write an empty line.
+    #expect(CommandLineParser.parse(["narrate", "/tmp/x.snitt", "--text", "hi"]).isFailure)
+    #expect(CommandLineParser.parse(["narrate", "/tmp/x.snitt", "--at", "4"]).isFailure)
+    #expect(CommandLineParser.parse(
+        ["narrate", "/tmp/x.snitt", "--at", "4", "--text", "  "]).isFailure)
+    // "inf" parses as a Double and is not a time.
+    #expect(CommandLineParser.parse(
+        ["narrate", "/tmp/x.snitt", "--at", "inf", "--text", "hi"]).isFailure)
+    #expect(CommandLineParser.parse(
+        ["narrate", "/tmp/x.snitt", "--at", "-1", "--text", "hi"]).isFailure)
+}
+
+@Test("transcript takes a bundle path and nothing else")
+func parsesTranscript() {
+    guard case .success(.transcript(let path)) =
+        CommandLineParser.parse(["transcript", "/tmp/x.snitt"])
+    else { Issue.record("parse failed"); return }
+    #expect(path == "/tmp/x.snitt")
+    // A trailing flag is refused rather than ignored: silently dropping an
+    // option a caller passed is how they learn it worked when it did not.
+    #expect(CommandLineParser.parse(["transcript", "/tmp/x.snitt", "--lines"]).isFailure)
+    #expect(CommandLineParser.parse(["transcript"]).isFailure)
 }

@@ -60,7 +60,44 @@ public enum AutomationProtocol {
     /// inside `Snitt.app`, so client and app ship and update together; a
     /// mismatched pair means someone is running a loose binary from an old
     /// build, which is exactly the case the handshake should refuse loudly.
-    public static let version = 3
+    ///
+    /// 4: added `.transcript` and `.addNarration` (D107). A bump for the same
+    /// reason 3 was: these are new REQUEST cases, and v3 has shipped in every
+    /// release from v0.3.0 onward, so there ARE released v3 clients. The
+    /// `.pauseRecording`/`.resumeRecording` note below gave itself licence to
+    /// amend v3 without bumping and said that licence "expires the moment v3
+    /// ships". It shipped, and these are the first cases added since, so it
+    /// expires here.
+    ///
+    /// Worth stating plainly, because the paragraphs above imply more than a
+    /// bump delivers: `AutomationServer` decodes the whole request BEFORE it
+    /// compares versions, so a NEW client's new case still reaches an OLD app
+    /// as a decode failure rather than as `upgrade_required`. What the bump
+    /// actually buys is the other direction, a new app refusing an old client
+    /// outright, rather than serving it a surface that has moved underneath
+    /// it. Fixing the first direction means handshaking before sending, which
+    /// is a round trip on every call and its own decision.
+    ///
+    /// The two fields added to `.export` in the same change are NOT what
+    /// earned this bump: they are optional and additive, and
+    /// `ResponseWireCompatibilityTests` proves that shape decodes both ways.
+    ///
+    /// **D104, D105 and D106 all landed on v3 and were right not to bump**,
+    /// which is worth spelling out because three no-bumps followed by a bump
+    /// reads like an inconsistency and is not. Each of them added optional
+    /// fields, new CASES in `AutomationError.Code`, or new arguments the
+    /// frontends divide away before a request is built; none added a request
+    /// case an old app's decoder has never heard of. That is the line this
+    /// number has always drawn, and these two cross it.
+    ///
+    /// D106's lenient `Code` decoder is a different axis and does not soften
+    /// this one. It lets an unknown error code degrade instead of failing the
+    /// whole response, which is about a RESPONSE an old CLIENT reads; the bump
+    /// is about a REQUEST an old APP cannot decode at all. The same trick is
+    /// not available here: an unknown `Body` case has no sensible value to
+    /// degrade to, and the refusal the version check already produces is a
+    /// better answer than guessing at one.
+    public static let version = 4
 }
 
 public struct StartOptions: Codable, Sendable, Equatable {
@@ -156,6 +193,29 @@ public struct AutomationRequest: Codable, Sendable {
         /// rather than a flag on `export`, because it answers a different
         /// question and needs no output path.
         case estimateExport(bundlePath: String, scale: Double, format: String)
+        /// What this recording SAYS, read back as lines (D107).
+        ///
+        /// A verb of its own rather than a field on `.inspect`, for the reason
+        /// `Transcript` is its own sidecar and not rows in `events.json`: a
+        /// ten-minute narration is a thousand words, and bloating every
+        /// "how long is this and what is in it" call with them buys nothing.
+        case transcript(bundlePath: String)
+        /// Narration WRITTEN into a recording at a moment in it (D107, D100).
+        ///
+        /// In scope despite §4.8's record-only rule, which bounds what Snitt
+        /// does to the world, "it does not click, type, or navigate, and it
+        /// does not upload", not what may enter a recording. A person
+        /// narrates with a microphone; an agent has no voice, so this is its
+        /// microphone. D49 already grants agents markers carrying a
+        /// transcript.
+        ///
+        /// `atSeconds` is SOURCE time, the clock every transcript word is on
+        /// and the clock `.marked` and `.screenshotTaken` report. The
+        /// editor's own `+` gesture takes OUTPUT time and converts, because a
+        /// playhead reads in output time; nothing on this side has a playhead,
+        /// and an agent's other handles on the recording are already source
+        /// times.
+        case addNarration(bundlePath: String, text: String, atSeconds: Double)
         case export(bundlePath: String, format: String, outputPath: String,
                     scale: Double, chapters: Bool, subtitles: Bool, maxSizeBytes: Int?,
                     /// Output size to target. `.source` keeps the recording's
@@ -174,7 +234,42 @@ public struct AutomationRequest: Codable, Sendable {
                     /// at all (`ClickOverlay`: a click the tap saw carries no
                     /// position), so defaulting this on cannot surface
                     /// anything the caller did not supply.
-                    clicks: Bool)
+                    clicks: Bool,
+                    /// D107: draw the transcript as burned-in captions.
+                    ///
+                    /// NOT `subtitles`, which is already taken and means
+                    /// something else entirely: that flag writes a `.vtt`
+                    /// sidecar from MARKER transcripts, while this burns the
+                    /// SPEECH transcript into the frames. Two things called
+                    /// subtitles on one verb would be a trap; they are
+                    /// different sources, different outputs and different
+                    /// answers to "why is my demo not captioned".
+                    ///
+                    /// **`nil` means the document decides**, which is what
+                    /// makes this an override rather than a default. These
+                    /// live in `edit.json` as `showSubtitles`/`showMarkers`
+                    /// because a person sets them in the editor and they
+                    /// travel with the bundle; a `Bool` defaulting to `false`
+                    /// would make an agent's export silently drop captions a
+                    /// person had already turned on. Never written back:
+                    /// see `EditDecisionList.drawing(captions:markerBanners:)`.
+                    ///
+                    /// **Deliberately not given D105's treatment**, which
+                    /// flipped `clicks` on above. That was the right move
+                    /// there because `clicks` has nothing in the document to
+                    /// defer to, so SOMEBODY had to pick a default and "draw
+                    /// what the caller itself reported" is the better pick.
+                    /// These two do have somewhere to defer to, and deferring
+                    /// beats any default: on would override a person who
+                    /// turned captions off, off would override a person who
+                    /// turned them on.
+                    ///
+                    /// Optional and additive: absent decodes to `nil` on an
+                    /// app that predates them, which is the behaviour those
+                    /// apps already had.
+                    captions: Bool? = nil,
+                    /// D107: draw marker labels as banners.
+                    markerBanners: Bool? = nil)
         /// `outputPath` arrives already resolved against the CALLER's working
         /// directory (`PathResolver.resolve`, done by the CLI before this is
         /// sent) — never the app's, whose own cwd is not the caller's (M3c
@@ -595,6 +690,11 @@ public enum AutomationResponse: Codable, Sendable, Equatable {
     case screenshotTaken(path: String, timeSeconds: Double, imagePNG: Data? = nil)
     case exported(ExportManifest)
     case diagnosticsWritten(DiagnosticsReport)
+    /// D107. `transcriptRead`, not `transcript`, because the request case is
+    /// already called that and reading a switch with two `.transcript`s in it
+    /// is a puzzle nobody needs to solve twice.
+    case transcriptRead(TranscriptReport)
+    case narrationAdded(NarrationSummary)
 }
 
 /// What a trim produced, for a caller that cannot inspect `edit.json` itself

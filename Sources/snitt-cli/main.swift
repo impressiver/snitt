@@ -74,6 +74,56 @@ func diagnosticsNote(_ report: DiagnosticsReport, outputPath: String) -> String 
          + (permissions.isEmpty ? "" : " — \(permissions)")
 }
 
+/// The human-readable lines printed to stderr for `.transcriptRead` (D107).
+///
+/// A separate, testable function for the same reason `exportNote` is, and with
+/// one claim of its own to make: **it says when there is nothing to read.**
+/// `emit(report)` prints `"lines": []`, which a person skimming a terminal
+/// reads as a transcript that came back empty. "No transcript" and "a
+/// transcript with no words in it" want different next moves, run the
+/// recogniser, or write a line, so the prose distinguishes them even though
+/// the JSON already carries `locale: null`.
+func transcriptNote(_ report: TranscriptReport) -> String {
+    guard let locale = report.locale else {
+        return "No transcript in this recording. Nothing has been transcribed, and "
+             + "nothing has been written, `snitt narrate` adds a line."
+    }
+    var head = "\(report.wordCount) word(s) in \(report.lines.count) line(s), \(locale)"
+    if report.authoredWordCount > 0 {
+        head += ", \(report.authoredWordCount) written rather than heard"
+    }
+    if !report.captionsEnabled && report.wordCount > 0 {
+        // The silent failure this whole feature exists around: a transcript
+        // nobody will see, because the export does not draw it.
+        head += "\nCaptions are OFF for this recording: export with --captions "
+              + "to burn these lines into the picture."
+    }
+    let body = report.lines.map { line in
+        let origin = line.authored ? "written" : line.track
+        let muted = line.audible ? "" : ", muted"
+        return String(format: "  %7.2fs [%@%@] %@",
+                      line.startSeconds, origin as NSString, muted as NSString,
+                      line.text as NSString)
+    }
+    return ([head] + body).joined(separator: "\n")
+}
+
+/// The human-readable line printed to stderr for `.narrationAdded` (D107).
+func narrationNote(_ summary: NarrationSummary) -> String {
+    var text = String(format: "Wrote %d word(s) of narration at %.2f-%.2fs. "
+                            + "%d word(s) in the transcript now.",
+                      summary.wordCount, summary.startSeconds, summary.endSeconds,
+                      summary.totalWordCount)
+    if !summary.captionsEnabled {
+        // Said every time, not once: a written line is not spoken (D101 is
+        // queued, not built), so an export without captions carries it
+        // nowhere. Reporting a bare success would be a no-op wearing a tick.
+        text += "\nCaptions are OFF for this recording, so nothing you write will "
+              + "appear in an export. Add --captions to `snitt export`."
+    }
+    return text
+}
+
 let helpText = """
 snitt — record a window and hand back a .snitt bundle
 
@@ -111,6 +161,12 @@ snitt — record a window and hand back a .snitt bundle
   snitt estimate <bundle> [--scale F]    duration, size and an upper bound on
                                           bytes, without doing the export
   snitt inspect <bundle>                 metadata as JSON, no GUI
+  snitt transcript <bundle>              what the recording says, as lines
+  snitt narrate <bundle> --at <s> --text "..."
+                                         write a line of narration at a moment
+                                          in the recording, in seconds from its
+                                          start; captioned, not spoken, so it
+                                          needs export --captions to be seen
   snitt trim <bundle> --start <s> --end <s>   cut a range (edit.json only)
   snitt trim <bundle> --auto-trim        trim bookends from a human recording's
                                           input events; refused on recordings
@@ -118,10 +174,14 @@ snitt — record a window and hand back a .snitt bundle
   snitt export <bundle> --format mp4|gif --out <path>   render a movie
         [--resolution 1080p|720p|540p|480p|2160p|source]
         [--scale <factor>] [--chapters] [--subtitles] [--no-clicks]
+        [--captions|--no-captions] [--marker-banners|--no-marker-banners]
         [--max-size 10MB]
                                           scale pixels; write a .vtt from markers;
                                           reported clicks are drawn unless
-                                          --no-clicks; walk down quality to hit a
+                                          --no-clicks; burn the transcript in as
+                                          captions and marker labels as banners
+                                          (omit both to keep this recording's own
+                                          setting); walk down quality to hit a
                                           byte budget
                                           (gif has no audio track)
   snitt diagnostics export --out <path>  write a support bundle (logs, versions,
@@ -262,6 +322,12 @@ func requestBody(for command: ParsedCommand,
     case .status: return .status
     case .inspect(let path):
         return .inspect(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory))
+    case .transcript(let path):
+        return .transcript(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory))
+    case .narrate(let path, let text, let atSeconds):
+        return .addNarration(
+            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
+            text: text, atSeconds: atSeconds)
     case .trim(let path, let start, let end, let auto):
         return .trim(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
                      start: start, end: end, auto: auto)
@@ -283,12 +349,14 @@ func requestBody(for command: ParsedCommand,
         // `snitt setup` report whether a recording is running.
         fatalError("setup is handled before the client connects")
     case .export(let path, let format, let out, let scale, let chapters, let subtitles,
-                 let maxSizeBytes, let resolution, let clicks):
+                 let maxSizeBytes, let resolution, let clicks, let captions,
+                 let markerBanners):
         return .export(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
                        format: format,
                        outputPath: PathResolver.resolve(out, workingDirectory: currentDirectory),
                        scale: scale, chapters: chapters, subtitles: subtitles,
-                      maxSizeBytes: maxSizeBytes, resolution: resolution, clicks: clicks)
+                      maxSizeBytes: maxSizeBytes, resolution: resolution, clicks: clicks,
+                      captions: captions, markerBanners: markerBanners)
     case .diagnosticsExport(let path):
         return .diagnostics(outputPath: PathResolver.resolve(path, workingDirectory: currentDirectory))
     case .help: return .status  // unreachable; handled above
@@ -361,6 +429,12 @@ do {
         emit(report)
         note("\(Int(report.durationSeconds ?? 0))s · \(report.markerCount) markers "
            + "· \(report.inputEventCount) input events")
+    case .transcriptRead(let report):
+        emit(report)
+        note(transcriptNote(report))
+    case .narrationAdded(let summary):
+        emit(summary)
+        note(narrationNote(summary))
     case .trimmed(let summary):
         emit(summary)
         note("Kept \(Int(summary.keptSeconds))s, cut \(Int(summary.cutSeconds))s")
