@@ -27,6 +27,51 @@ public enum ScreenshotWriter {
     /// health sampling exists to protect.
     private static let context = CIContext(options: [.useSoftwareRenderer: false])
 
+    /// The longest edge an inline screenshot is downscaled to.
+    ///
+    /// 1280 because `GIFExporter.maximumWidth` already settled the same
+    /// question for the same reason: it is the point past which a frame stops
+    /// being worth its bytes. An inline screenshot is returned over MCP into a
+    /// model's context and the loop takes them repeatedly, so full backing
+    /// resolution (a 5K display is 5120 wide, and base64 adds a third again)
+    /// would spend the agent's context on pixels it does not need. 1280 is
+    /// ample for what the tool is FOR: seeing that a tab strip is in frame,
+    /// that the wrong window was captured, or that a dialog is covering the
+    /// target.
+    public static let inlineMaximumEdge: Double = 1280
+
+    /// One captured frame as PNG data, downscaled to `inlineMaximumEdge`.
+    ///
+    /// Separate from `writePNG`: the file inside the bundle stays at full
+    /// capture resolution, because it is the archival copy and a person may
+    /// open it. Only the copy that travels to an agent is reduced.
+    ///
+    /// Never enlarges. A frame already smaller than the cap is encoded as-is,
+    /// matching `ExportResolution`'s rule that asking for more than the
+    /// recording has keeps what it has.
+    public static func inlinePNGData(_ image: CVImageBuffer) throws -> Data {
+        let ciImage = CIImage(cvImageBuffer: image)
+        let extent = ciImage.extent
+        let longest = max(extent.width, extent.height)
+        let scale = longest > inlineMaximumEdge ? inlineMaximumEdge / longest : 1.0
+        let scaled = scale < 1.0
+            ? ciImage.transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+            : ciImage
+        guard let cgImage = context.createCGImage(scaled, from: scaled.extent) else {
+            throw ScreenshotError.encodingFailed
+        }
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            data as CFMutableData, UTType.png.identifier as CFString, 1, nil) else {
+            throw ScreenshotError.encodingFailed
+        }
+        CGImageDestinationAddImage(destination, cgImage, nil)
+        guard CGImageDestinationFinalize(destination) else {
+            throw ScreenshotError.encodingFailed
+        }
+        return data as Data
+    }
+
     public static func writePNG(_ image: CVImageBuffer, to url: URL) throws {
         let ciImage = CIImage(cvImageBuffer: image)
         guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else {

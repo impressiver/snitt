@@ -94,14 +94,15 @@ public protocol AgentRecordingControlling: Sendable {
     func markForAgent(sessionID: String, label: String?) async -> AgentMarkResult
     func setPausedForAgent(sessionID: String, paused: Bool) async -> AgentMarkResult
     func pauseStateForAgent() async -> (paused: Bool, pausedSeconds: Double)?
-    func screenshotForAgent(sessionID: String, label: String?) async -> AgentScreenshotResult
+    func screenshotForAgent(sessionID: String, label: String?,
+                            inline: Bool) async -> AgentScreenshotResult
     func reportInputForAgent(sessionID: String, kind: EventKind,
                              x: Double?, y: Double?, label: String?) async -> AgentMarkResult
 }
 
 /// The outcome of an agent's screenshot request.
 public enum AgentScreenshotResult: Equatable, Sendable {
-    case taken(path: String, timeSeconds: Double)
+    case taken(path: String, timeSeconds: Double, inlinePNG: Data? = nil)
     case notRecording
     case notCurrentSession
     /// No frame has arrived yet, so there is nothing to photograph. Distinct
@@ -356,12 +357,14 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     /// readable over IPC — a screenshot of someone else's screen is the most
     /// obviously sensitive thing this surface could hand out, and §5's posture
     /// makes that Snitt's problem rather than the caller's.
-    public func screenshotForAgent(sessionID: String, label: String?) async -> AgentScreenshotResult {
+    public func screenshotForAgent(sessionID: String, label: String?,
+                                   inline: Bool = false) async -> AgentScreenshotResult {
         guard let recorder = active, agentSessionID != nil else { return .notRecording }
         guard agentSessionID == sessionID else { return .notCurrentSession }
         do {
-            let shot = try await recorder.screenshot(label: label)
-            return .taken(path: shot.url.path, timeSeconds: shot.offsetSeconds)
+            let shot = try await recorder.screenshot(label: label, inline: inline)
+            return .taken(path: shot.url.path, timeSeconds: shot.offsetSeconds,
+                          inlinePNG: shot.inlinePNG)
         } catch ScreenshotError.noFrameYet {
             return .noFrameYet
         } catch {

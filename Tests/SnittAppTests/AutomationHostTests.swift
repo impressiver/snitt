@@ -126,7 +126,8 @@ actor FakeCoordinator: AgentRecordingControlling {
         return .marked(7.5)
     }
 
-    func screenshotForAgent(sessionID: String, label: String?) async -> AgentScreenshotResult {
+    func screenshotForAgent(sessionID: String, label: String?,
+                            inline: Bool) async -> AgentScreenshotResult {
         screenshotCalls.append((sessionID, label))
         guard activeSession != nil else { return .notRecording }
         guard activeSession == sessionID else { return .notCurrentSession }
@@ -1217,7 +1218,7 @@ struct ScreenshotAutomationTests {
         _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")), caller: nil)
         let session = try #require(await coordinator.startCalls.first)
 
-        guard case .screenshotTaken(let path, let time) =
+        guard case .screenshotTaken(let path, let time, _) =
                 await host.handle(.screenshot(sessionID: session, label: "after save"), caller: nil) else {
             Issue.record("screenshot did not return a screenshot"); return
         }

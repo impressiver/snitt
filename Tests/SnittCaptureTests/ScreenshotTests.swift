@@ -22,12 +22,12 @@ import ImageIO
 /// trigger, and which D53 says is already structural.
 @MainActor
 struct ScreenshotTests {
-    private func makeRecorder() throws -> (Recorder, URL) {
+    private func makeRecorder(
+        size: CGSize = CGSize(width: 320, height: 240)) throws -> (Recorder, URL) {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString)
             .appendingPathExtension(SnittBundle.fileExtension)
-        return (try Recorder.forTesting(bundleURL: url,
-                                        videoSize: CGSize(width: 320, height: 240)), url)
+        return (try Recorder.forTesting(bundleURL: url, videoSize: size), url)
     }
 
     @Test("A screenshot writes a real PNG of the recorded frame")
@@ -106,6 +106,79 @@ struct ScreenshotTests {
 
         let shot = try await recorder.screenshot()
         #expect(FileManager.default.fileExists(atPath: shot.url.path))
+        _ = try await recorder.stop()
+    }
+
+    @Test("An inline screenshot returns PNG data without being asked twice")
+    func inlineReturnsPNGData() async throws {
+        // The file on disk and the bytes returned come from ONE frame, so
+        // "what the agent saw" and "what was archived" cannot disagree.
+        let (recorder, url) = try makeRecorder()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await recorder.startForTesting()
+        recorder.feedForTesting(makeVideoBuffer(at: 0, size: CGSize(width: 320, height: 240)), .screen)
+
+        let shot = try await recorder.screenshot(inline: true)
+        let png = try #require(shot.inlinePNG, "inline: true must return the frame")
+        // Decoded, not just non-empty: a truncated blob has a length too.
+        let source = try #require(CGImageSourceCreateWithData(png as CFData, nil))
+        let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        #expect(image.width == 320 && image.height == 240)
+        _ = try await recorder.stop()
+    }
+
+    @Test("Without inline, no image data is produced at all")
+    func noInlineDataByDefault() async throws {
+        // Discriminates against encoding the frame every time and merely
+        // withholding it: that would pay the CPU on every screenshot in a
+        // running recording, competing with the encoder §12.1 protects.
+        let (recorder, url) = try makeRecorder()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await recorder.startForTesting()
+        recorder.feedForTesting(makeVideoBuffer(at: 0, size: CGSize(width: 320, height: 240)), .screen)
+
+        let shot = try await recorder.screenshot()
+        #expect(shot.inlinePNG == nil)
+        _ = try await recorder.stop()
+    }
+
+    @Test("A frame larger than the cap is downscaled; the archived file is not")
+    func inlineDownscalesButTheFileKeepsFullResolution() async throws {
+        // 2560 wide is a Retina 1280pt window, the ordinary case, and twice the
+        // cap. The point of the cap is that an inline frame is returned into a
+        // model's context repeatedly; the point of leaving the FILE alone is
+        // that it is the archival copy a person may open.
+        let (recorder, url) = try makeRecorder(size: CGSize(width: 2560, height: 1440))
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await recorder.startForTesting()
+        recorder.feedForTesting(makeVideoBuffer(at: 0, size: CGSize(width: 2560, height: 1440)), .screen)
+
+        let shot = try await recorder.screenshot(inline: true)
+        let png = try #require(shot.inlinePNG)
+        let source = try #require(CGImageSourceCreateWithData(png as CFData, nil))
+        let inlineImage = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        #expect(inlineImage.width == 1280,
+                "expected the 1280 cap, got \(inlineImage.width)")
+        #expect(inlineImage.height == 720, "aspect ratio must be preserved")
+
+        let fileSource = try #require(CGImageSourceCreateWithURL(shot.url as CFURL, nil))
+        let fileImage = try #require(CGImageSourceCreateImageAtIndex(fileSource, 0, nil))
+        #expect(fileImage.width == 2560, "the archived file keeps full capture resolution")
+        _ = try await recorder.stop()
+    }
+
+    @Test("A frame already under the cap is not enlarged")
+    func inlineNeverEnlarges() async throws {
+        let (recorder, url) = try makeRecorder()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await recorder.startForTesting()
+        recorder.feedForTesting(makeVideoBuffer(at: 0, size: CGSize(width: 320, height: 240)), .screen)
+
+        let shot = try await recorder.screenshot(inline: true)
+        let png = try #require(shot.inlinePNG)
+        let source = try #require(CGImageSourceCreateWithData(png as CFData, nil))
+        let image = try #require(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        #expect(image.width == 320, "asking for less than the cap keeps what there is")
         _ = try await recorder.stop()
     }
 }

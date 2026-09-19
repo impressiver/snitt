@@ -128,7 +128,16 @@ public struct AutomationRequest: Codable, Sendable {
         /// and it expires the moment v3 ships.
         case pauseRecording(sessionID: String)
         case resumeRecording(sessionID: String)
-        case screenshot(sessionID: String, label: String?)
+        /// `inline` asks for the frame itself in the response, not just a path.
+        ///
+        /// Off by default, deliberately. Returning pixels makes "screen content
+        /// leaves this machine" the default rather than something the caller
+        /// chooses: an MCP host is usually a cloud model. `screenshotForAgent`
+        /// already calls a screenshot "the most obviously sensitive thing this
+        /// surface could hand out" and puts that on Snitt rather than the
+        /// caller, and §5.6 already makes rendering captured input opt-in for
+        /// the same reason.
+        case screenshot(sessionID: String, label: String?, inline: Bool = false)
         /// An input event the OS never saw, reported by whoever caused it
         /// (M5e follow-on). `x`/`y` are fractions of the recorded window, and
         /// are nil for a `keystroke`, which happens at no particular place.
@@ -315,7 +324,22 @@ public enum AutomationResponse: Codable, Sendable, Equatable {
     case cropped(CropSummary)
     case autoTrimmed(AutoTrimSummary)
     case estimated([ExportEstimate])
-    case screenshotTaken(path: String, timeSeconds: Double)
+    /// `imagePNG` is the frame itself, downscaled, and is present only when the
+    /// caller asked for it with `inline`.
+    ///
+    /// It travels over the wire rather than being read from `path` because the
+    /// frontends are thin clients (§4.9): a screenshot is written inside the
+    /// `.snitt` bundle, which lives in the app's user-configurable output
+    /// directory behind the Files-and-Folders TCC service. A frontend that
+    /// opened the file itself would work on the developer's machine and return
+    /// nothing on a user's, which is the same trap that once made `.stopped`
+    /// omit health everywhere.
+    ///
+    /// Optional, and additive: `ResponseWireCompatibilityTests` proves an app
+    /// that predates this field still decodes. That proof is required rather
+    /// than assumed, because `.stopped`'s "v2 has never shipped" reasoning
+    /// expired once v2 shipped.
+    case screenshotTaken(path: String, timeSeconds: Double, imagePNG: Data? = nil)
     case exported(ExportManifest)
     case diagnosticsWritten(DiagnosticsReport)
 }

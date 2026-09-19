@@ -281,18 +281,24 @@ public actor Recorder {
     /// Returns the file and the offset. The filename IS the offset, so an agent
     /// that later describes the demo can say when the screenshot was taken
     /// without holding onto anything.
-    public func screenshot(label: String? = nil) async throws -> (url: URL, offsetSeconds: Double) {
+    public func screenshot(label: String? = nil,
+                           inline: Bool = false) async throws
+        -> (url: URL, offsetSeconds: Double, inlinePNG: Data?) {
         guard let frame = session.latestFrameForScreenshot() else {
             throw ScreenshotError.noFrameYet
         }
         let offset = max(0, frame.outputTime.seconds)
         let url = bundle.screenshotURL(atOffset: offset)
         try ScreenshotWriter.writePNG(frame.image, to: url)
+        // Encoded from the SAME frame the file was written from, not re-read
+        // from disk: "what I saw" and "what was archived" must be one image,
+        // and the frontend cannot open the bundle anyway (§4.9).
+        let inlinePNG = inline ? try ScreenshotWriter.inlinePNGData(frame.image) : nil
         // The marker carries the offset the FRAME sits at, not "now" — that is
         // the whole correlation guarantee.
         await eventLog.add(at: offset, kind: .marker,
                            label: label ?? "Screenshot")
-        return (url, offset)
+        return (url, offset, inlinePNG)
     }
 
     /// Stops recording without ending the session (M5e, D53).

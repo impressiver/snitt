@@ -44,6 +44,23 @@ func toolResult(_ text: String, structured: [String: Any]?) -> [String: Any] {
     return payload
 }
 
+/// A tool result that also carries the frame itself.
+///
+/// The image is a SECOND content block beside the text, which is how MCP
+/// carries pixels: a host that renders images shows it, and one that does not
+/// still has the sentence and the path. Only `snitt_screenshot` produces this,
+/// and only when the caller passed `inline`.
+func toolResultWithImage(_ text: String, structured: [String: Any]?,
+                         png: Data) -> [String: Any] {
+    var payload = toolResult(text, structured: structured)
+    var blocks = (payload["content"] as? [[String: Any]]) ?? []
+    blocks.append(["type": "image",
+                   "data": png.base64EncodedString(),
+                   "mimeType": "image/png"])
+    payload["content"] = blocks
+    return payload
+}
+
 /// A tool CALL that fails — bad arguments, an unknown tool name, or a request
 /// the app itself refused — is reported through the result channel with
 /// `isError: true`, not as a JSON-RPC protocol error. A protocol error means
@@ -137,7 +154,10 @@ func structuredContent(_ response: AutomationResponse) -> [String: Any]? {
         guard let data = try? JSONEncoder().encode(estimates),
               let array = try? JSONSerialization.jsonObject(with: data) else { return nil }
         return ["estimates": array]
-    case .screenshotTaken(let path, let timeSeconds):
+    case .screenshotTaken(let path, let timeSeconds, _):
+        // The image goes in a content BLOCK, not in here: `structuredContent`
+        // is for values an agent computes with, and base64 pixels are neither
+        // that nor something worth duplicating in two places in one response.
         return ["path": path, "timeSeconds": timeSeconds]
     case .exported(let manifest):
         return jsonObject(manifest)
@@ -180,7 +200,7 @@ func describe(_ response: AutomationResponse) -> String {
         return "\(Int(report.durationSeconds ?? 0))s recording, "
              + "\(report.markerCount) markers, \(report.inputEventCount) input events"
              + (chapters.isEmpty ? "" : " — \(chapters)")
-    case .screenshotTaken(let path, let timeSeconds):
+    case .screenshotTaken(let path, let timeSeconds, _):
         // The offset is in the text, not only the filename: an agent quoting
         // the demo needs to say WHEN, and reading it back out of a path is
         // work it should not have to do.
@@ -316,6 +336,11 @@ while let line = readLine(strippingNewline: true) {
                     result(id: id, toolResult(
                         diagnosticsSummary(report, outputPath: diagnosticsOutputPath),
                         structured: structuredContent(response)))
+                } else if case .screenshotTaken(_, _, let png) = response, let png {
+                    result(id: id, toolResultWithImage(
+                        describe(response),
+                        structured: structuredContent(response),
+                        png: png))
                 } else {
                     result(id: id, toolResult(describe(response),
                                               structured: structuredContent(response)))
