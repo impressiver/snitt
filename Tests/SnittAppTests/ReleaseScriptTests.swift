@@ -699,6 +699,79 @@ struct AppcastVersionExtraction {
     }
 }
 
+/// The ONE unreviewed push this project makes, and what stops it growing.
+///
+/// Step 10 commits straight to `main`, bypassing the pull-request rule and all
+/// three required checks — GitHub says so out loud on every release
+/// ("Bypassed rule violations for refs/heads/main"). A ruleset cannot scope a
+/// bypass to a file path, so the narrowing lives in the script, and this pins
+/// it.
+///
+/// The allow-list is EXTRACTED FROM THE SCRIPT for the reason the appcast
+/// suite above gives: a retyped list would keep passing while release.sh
+/// started sweeping other files into an unreviewed push, which is the failure
+/// it exists to prevent.
+@Suite(.serialized)
+struct ReleaseBypassIsNarrow {
+    /// The two paths step 10 assembles into its allow-list, from the source.
+    private func allowedPathsFromScript() throws -> [String] {
+        let source = try String(contentsOfFile: scriptPath, encoding: .utf8)
+        func value(of name: String) throws -> String {
+            let line = try #require(
+                source.split(separator: "\n").first { $0.hasPrefix("\(name)=") },
+                "release.sh no longer assigns \(name)")
+            return String(line.split(separator: "\"")[1])
+        }
+        // VERSION_SOURCE carries a ${SNITT_VERSION_SOURCE:-...} default; take
+        // the fallback, which is what a real release uses.
+        let versionLine = try #require(
+            source.split(separator: "\n").first { $0.hasPrefix("VERSION_SOURCE=") })
+        let version = String(versionLine.split(separator: "-")[1]
+            .split(separator: "}")[0])
+        return [version, try value(of: "CASK_SOURCE")].sorted()
+    }
+
+    private func comparison(staged: [String], allowed: [String]) -> ScriptResult {
+        // The script's own comparison, run against a synthetic index.
+        runShell("""
+            staged=$(printf '%s\\n' \(staged.map { "'\($0)'" }.joined(separator: " ")) | sort)
+            allowed=$(printf '%s\\n' \(allowed.map { "'\($0)'" }.joined(separator: " ")) | sort)
+            comm -23 <(printf '%s\\n' "$staged") <(printf '%s\\n' "$allowed")
+            """)
+    }
+
+    @Test("The bookkeeping commit's own two files are allowed")
+    func theTwoBookkeepingFilesPass() throws {
+        // The control. Without it, a guard that rejected EVERYTHING would pass
+        // the test below and break every release instead.
+        let allowed = try allowedPathsFromScript()
+        let result = comparison(staged: allowed, allowed: allowed)
+        #expect(result.stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                "the version bump's own files must not be refused: \(result.stdout)")
+    }
+
+    @Test("Anything else in the index is named and refused")
+    func anUnrelatedFileIsCaught() throws {
+        // Discriminates against a guard that only counts files, or that checks
+        // the two are PRESENT rather than that nothing else is. Both of those
+        // pass the control above and let an unrelated file ride the bypass.
+        let allowed = try allowedPathsFromScript()
+        let result = comparison(staged: allowed + ["Sources/SnittApp/main.swift"],
+                                allowed: allowed)
+        #expect(result.stdout.contains("Sources/SnittApp/main.swift"),
+                "an unrelated staged file must be reported, got: \(result.stdout)")
+    }
+
+    @Test("The allow-list is exactly the two files, so a third needs a decision")
+    func allowListIsTwoFiles() throws {
+        // If this fails, someone widened what a release may push unreviewed.
+        // That may be right, but it is a decision, not a detail.
+        let allowed = try allowedPathsFromScript()
+        #expect(allowed == ["Casks/snitt.rb", "Sources/SnittDocument/AppVersion.swift"],
+                "got \(allowed)")
+    }
+}
+
 /// Runs one bash command line and captures both streams.
 private func runShell(_ command: String) -> ScriptResult {
     let process = Process()
