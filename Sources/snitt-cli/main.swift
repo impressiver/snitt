@@ -132,6 +132,17 @@ let command: ParsedCommand
 switch parsed {
 case .success(let value): command = value
 case .failure(let failure):
+    // The same `{code, message}` object the MCP server now returns for the
+    // same class of mistake (D106), so an agent parsing stdout gets one error
+    // shape from both frontends instead of a code from one and a sentence from
+    // the other (§4.8). Before this, stdout was empty here.
+    //
+    // The exit code stays 2, and is NOT `invalid_arguments`' 17: 2 means the
+    // CLI refused before it built a request, which is a fact 17 cannot carry
+    // because the MCP server has no exit code at all. §15 freezes these
+    // numbers, so moving 2 would break every script that already branches on
+    // it, to say something the JSON on stdout now says better.
+    emit(AutomationError(code: .invalidArguments, message: failure.message))
     note(failure.message)
     exit(2)
 }

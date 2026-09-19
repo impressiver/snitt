@@ -69,8 +69,41 @@ func toolResultWithImage(_ text: String, structured: [String: Any]?,
 /// calling model needs to see that text to self-correct (e.g. add the missing
 /// argument and retry). Genuine protocol errors stay for what they mean: an
 /// unsupported method, or a message that cannot be parsed as JSON-RPC at all.
-func toolError(id: Any?, _ text: String) {
-    result(id: id, ["content": [["type": "text", "text": text]], "isError": true])
+func toolError(id: Any?, _ text: String, structured: [String: Any]? = nil) {
+    result(id: id, toolErrorPayload(text, structured: structured))
+}
+
+/// The dictionary `toolError` sends, separated so a test can read it: the
+/// writing half goes to stdout and cannot be asserted on.
+///
+/// `isError` is set on top of an ordinary tool result rather than beside a
+/// hand-built one, so a failed call carries `structuredContent` for the same
+/// reason a successful call does (D103, D106): the calling model is expected
+/// to self-correct from this, and it can only do that from the code.
+func toolErrorPayload(_ text: String, structured: [String: Any]?) -> [String: Any] {
+    var payload = toolResult(text, structured: structured)
+    payload["isError"] = true
+    return payload
+}
+
+/// Renders a refused tool call (bad arguments, an unknown tool name) the way
+/// a refusal from the app itself is rendered (D106).
+///
+/// The point is the shared path, not the wrapping. `MCPBridgeError` becomes an
+/// `AutomationError` and then travels through the SAME `describe` and
+/// `structuredContent` every app-side `.failure` travels through, so an agent
+/// reads one error shape from this server rather than two: a code-prefixed
+/// sentence plus a `{code, message}` object it can branch on. Before this it
+/// got bare prose and `isError: true`, with nothing machine-readable at all:
+/// the state `AutomationError.Code`'s "an agent branches on this, never on
+/// `message`" contract was written to prevent and never reached.
+///
+/// A named function rather than an inline expression at the call site, so a
+/// test can exercise it without driving the JSON-RPC loop, the same reason
+/// `exportSummary` and `diagnosticsSummary` are separate.
+func argumentFailure(_ problem: MCPBridgeError) -> (text: String, structured: [String: Any]?) {
+    let response = AutomationResponse.failure(problem.automationError)
+    return (describe(response), structuredContent(response))
 }
 
 /// Renders `.exported`'s manifest as the text an agent reads back.
@@ -315,7 +348,8 @@ while let line = readLine(strippingNewline: true) {
 
         switch MCPBridge.request(forTool: name, arguments: arguments) {
         case .failure(let problem):
-            toolError(id: id, problem.message)
+            let rendered = argumentFailure(problem)
+            toolError(id: id, rendered.text, structured: rendered.structured)
         case .success(let body):
             // `DiagnosticsReport` (unlike `ExportManifest`) carries no
             // `outputPath` of its own — captured here, from the SAME
