@@ -245,3 +245,17 @@ func markedResponseRoundTrips() throws {
         AutomationResponse.self, from: JSONEncoder().encode(response))
     #expect(back == response)
 }
+
+@Test("A recordings request round-trips, and no limit stays no limit")
+func listRecordingsRoundTrips() {
+    // DISCRIMINATES AGAINST: encoding `nil` as 0. "All of them" and "none of
+    // them" would then be the same request, and the second is a listing that
+    // describes nobody's directory.
+    guard case .listRecordings(let none) = roundTripped(.listRecordings(limit: nil))
+    else { Issue.record("wrong body case"); return }
+    #expect(none == nil)
+
+    guard case .listRecordings(let some) = roundTripped(.listRecordings(limit: 7))
+    else { Issue.record("wrong body case"); return }
+    #expect(some == 7)
+}

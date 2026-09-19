@@ -94,3 +94,67 @@ struct TranscriptNoteTests {
         #expect(narrationNote(loud).contains("2.20s"))
     }
 }
+
+/// D108's stderr half: a listing a person can act on.
+@Suite
+struct RecordingsNoteTests {
+
+    private func recording(_ name: String, bytes: Int, age: Double,
+                           outcome: String?) -> RecordingSummary {
+        RecordingSummary(path: "/tmp/Snitt/\(name).snitt", byteSize: bytes,
+                         ageSeconds: age, createdAt: Date(), initiator: "agent",
+                         outcome: outcome, durationSeconds: 12)
+    }
+
+    @Test("A truncated listing says it is truncated")
+    func truncationIsStated() {
+        // DISCRIMINATES AGAINST: printing the rows and their count. A reader
+        // who takes two rows for the whole directory deletes the wrong things,
+        // or concludes the disk is fine when it is not.
+        let list = RecordingList(directory: "/tmp/Snitt", total: 9,
+                                 recordings: [recording("a", bytes: 1_000_000,
+                                                        age: 30, outcome: nil)],
+                                 totalByteSize: 9_000_000)
+        let text = recordingsNote(list)
+        #expect(text.contains("9 recording"))
+        #expect(text.lowercased().contains("showing the newest"))
+        // And the byte total is the DIRECTORY's, not the listed row's.
+        #expect(text.contains("9.0 MB"))
+    }
+
+    @Test("Capped recordings are called out, not just listed")
+    func cappedIsCalledOut() {
+        // The finding this closes: a capped bundle is a full-resolution video
+        // nobody asked for and nobody has watched. It reads like any other row
+        // unless the summary says otherwise.
+        let list = RecordingList(
+            directory: "/tmp/Snitt", total: 2,
+            recordings: [recording("orphan", bytes: 500_000_000, age: 7200,
+                                   outcome: "capped"),
+                         recording("demo", bytes: 1_000_000, age: 60,
+                                   outcome: "completed")],
+            totalByteSize: 501_000_000)
+        let text = recordingsNote(list)
+        #expect(text.contains("CAPPED"))
+        #expect(text.contains("500.0 MB"))
+        #expect(text.contains("2h ago"))
+    }
+
+    @Test("An empty directory says where it looked")
+    func emptyNamesTheDirectory() {
+        // "No recordings" alone leaves a person unable to tell an empty
+        // directory from the wrong directory, and the output location is a
+        // setting they may have changed.
+        let text = recordingsNote(RecordingList(directory: "/tmp/Snitt", total: 0,
+                                                recordings: [], totalByteSize: 0))
+        #expect(text.contains("/tmp/Snitt"))
+    }
+
+    @Test("Ages read in the largest unit that still says something")
+    func agesAreHuman() {
+        #expect(age(30) == "30s ago")
+        #expect(age(600) == "10m ago")
+        #expect(age(7200) == "2h ago")
+        #expect(age(172800) == "2d ago")
+    }
+}

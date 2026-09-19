@@ -96,6 +96,25 @@ public struct RecordingMetadata: Codable, Sendable {
     public var vocabulary: [String]?
     public var git: GitContext?
     public var health: CaptureHealth?
+    /// How an AGENT's session ended, stamped after the bundle was finalised
+    /// (D108). One of `AuditOutcome`'s strings, today `"completed"` or
+    /// `"capped"`.
+    ///
+    /// Written here as well as in the audit trail because the audit trail is
+    /// keyed by SESSION ID and carries no bundle path, so nothing could join
+    /// the two: §5.3's watchdog force-stops an abandoned agent's recording,
+    /// finalises a perfectly good bundle and records `capped`, and the bundle
+    /// itself had no way to say it was debris rather than a finished demo.
+    /// `snitt recordings list` is the reader.
+    ///
+    /// `nil` covers three cases and does not distinguish them: a recording a
+    /// person made with the hotkey (which never passes through
+    /// `AutomationHost` at all, and which `initiator` already identifies), a
+    /// session still running, and a bundle written before this field existed.
+    /// None of them is debris an agent needs to find, which is why one nil is
+    /// enough. Optional and absent-means-nil, so every bundle already on disk
+    /// keeps opening.
+    public var outcome: String?
 
     public init(schemaVersion: Int = 1,
                 createdAt: Date,
@@ -103,7 +122,8 @@ public struct RecordingMetadata: Codable, Sendable {
                 durationSeconds: Double? = nil,
                 git: GitContext? = nil,
                 health: CaptureHealth? = nil,
-                vocabulary: [String]? = nil) {
+                vocabulary: [String]? = nil,
+                outcome: String? = nil) {
         self.schemaVersion = schemaVersion
         self.createdAt = createdAt
         self.initiator = initiator
@@ -111,6 +131,7 @@ public struct RecordingMetadata: Codable, Sendable {
         self.git = git
         self.health = health
         self.vocabulary = vocabulary
+        self.outcome = outcome
     }
 
     public func write(to bundle: SnittBundle) throws {
