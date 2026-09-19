@@ -296,10 +296,22 @@ public struct AutomationError: Codable, Sendable, Equatable, Error {
         /// have done exactly that.
         ///
         /// `.internalError` is the right fallback precisely because of what
-        /// D106 makes it mean: "something unexpected, no advice to give". An
-        /// older client degrades to the single code it already had for these
+        /// D106 makes it mean: "something unexpected, no advice to give". A
+        /// client degrades to the single code it already had for these
         /// failures, which is the behaviour it had before the split: the
         /// taxonomy is lost, not the response.
+        ///
+        /// **It protects the NEXT addition, not this one.** This decoder ships
+        /// inside D106, so a client released BEFORE it still has the strict
+        /// synthesized decoder and still throws `dataCorrupted` on
+        /// `invalid_arguments`, `unusable_recording` or `busy`. Nothing here
+        /// can reach back and fix that; the limit is stated rather than left
+        /// for someone to discover. It is tolerable for the same reason the
+        /// `.crop` bump's blast radius was small (D63): `snitt` and
+        /// `snitt-mcp` are embedded in `Snitt.app` and update with it, so a
+        /// client old enough to hit this is a loose binary on `PATH`, and it
+        /// fails loudly as `malformedResponse` ("Snitt and snitt-mcp are out
+        /// of sync") rather than silently.
         public init(from decoder: any Decoder) throws {
             let raw = try decoder.singleValueContainer().decode(String.self)
             self = Code(rawValue: raw) ?? .internalError
