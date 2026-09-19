@@ -201,7 +201,56 @@ func structuredContent(_ response: AutomationResponse) -> [String: Any]? {
         return jsonObject(manifest)
     case .diagnosticsWritten(let report):
         return jsonObject(report)
+    case .transcriptRead(let report):
+        return jsonObject(report)
+    case .narrationAdded(let summary):
+        return jsonObject(summary)
     }
+}
+
+/// Renders `.transcriptRead` as the text an agent reads back (D107).
+///
+/// A separate function for the same reason `exportSummary` is: it can be
+/// exercised without driving the JSON-RPC loop, and its wording is verifiably
+/// the same shape the CLI's `transcriptNote` produces (§4.8).
+func transcriptSummary(_ report: TranscriptReport) -> String {
+    guard report.locale != nil else {
+        return "No transcript in this recording. Nothing has been transcribed, and "
+             + "nothing has been written, snitt_narrate adds a line."
+    }
+    var head = "\(report.wordCount) word(s) in \(report.lines.count) line(s)"
+    if report.authoredWordCount > 0 {
+        head += ", \(report.authoredWordCount) written rather than heard"
+    }
+    if !report.captionsEnabled && report.wordCount > 0 {
+        // The failure this feature exists around: a transcript nobody will
+        // see, because the export does not draw it.
+        head += ". Captions are OFF for this recording, pass captions: true to "
+              + "snitt_export to burn these lines into the picture"
+    }
+    let body = report.lines.map { line in
+        let origin = line.authored ? "written" : line.track
+        let muted = line.audible ? "" : ", muted"
+        return String(format: "  %.2fs [%@%@] %@", line.startSeconds,
+                      origin as NSString, muted as NSString, line.text as NSString)
+    }
+    return ([head] + body).joined(separator: "\n")
+}
+
+/// Renders `.narrationAdded` as the text an agent reads back (D107).
+func narrationSummary(_ summary: NarrationSummary) -> String {
+    var text = String(format: "Wrote %d word(s) of narration at %.2f-%.2fs. "
+                            + "%d word(s) in the transcript now.",
+                      summary.wordCount, summary.startSeconds, summary.endSeconds,
+                      summary.totalWordCount)
+    if !summary.captionsEnabled {
+        // Said on every call, not once: a written line is captioned rather
+        // than spoken, so an export that draws no captions carries it
+        // nowhere. A bare success here would be a no-op wearing a tick.
+        text += " Captions are OFF for this recording, so nothing you write will "
+              + "appear in an export, pass captions: true to snitt_export."
+    }
+    return text
 }
 
 /// Renders a response as the text an agent reads back.
@@ -290,6 +339,10 @@ func describe(_ response: AutomationResponse) -> String {
              + (cuts.isEmpty ? "" : " (\(cuts))")
     case .exported(let manifest):
         return exportSummary(manifest)
+    case .transcriptRead(let report):
+        return transcriptSummary(report)
+    case .narrationAdded(let summary):
+        return narrationSummary(summary)
     case .diagnosticsWritten(let report):
         // No `outputPath` here: `DiagnosticsReport` doesn't carry it. The
         // caller (`tools/call` below) renders this case itself, with the

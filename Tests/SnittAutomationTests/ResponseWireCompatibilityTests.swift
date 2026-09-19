@@ -144,4 +144,38 @@ struct ResponseWireCompatibilityTests {
         let decoded = try JSONDecoder().decode(AutomationResponse.self, from: data)
         #expect(decoded == original)
     }
+
+    // MARK: - D107, proved the same way rather than assumed
+
+    /// An `.export` REQUEST as a client built before D107's overlay overrides
+    /// existed wrote it: nine fields, no `captions`, no `markerBanners`.
+    private static let oldExportRequest = """
+        {"protocolVersion":4,"body":{"export":{"bundlePath":"/tmp/x.snitt",\
+        "format":"mp4","outputPath":"/tmp/d.mp4","scale":1,"chapters":false,\
+        "subtitles":false,"resolution":"source","clicks":false}}}
+        """
+
+    @Test("An export request written before the overlay overrides existed still decodes")
+    func oldExportRequestDecodes() throws {
+        // The claim `AutomationProtocol.version`'s comment makes: those two
+        // fields are additive and did NOT earn the bump to 4 on their own.
+        // That is an assertion about Swift's synthesis for an enum case with
+        // Optional associated values, and this project's own history says not
+        // to assume it, `.stopped`'s "v2 has never shipped" reasoning was
+        // true when written and false by the time somebody leaned on it.
+        //
+        // If synthesis required the keys rather than treating the Optionals as
+        // absent-means-nil, this throws `keyNotFound` and every export request
+        // from a not-yet-updated client fails at the socket.
+        let decoded = try JSONDecoder().decode(
+            AutomationRequest.self, from: Data(Self.oldExportRequest.utf8))
+        guard case .export(let path, _, _, _, _, _, _, _, _,
+                           let captions, let banners) = decoded.body else {
+            Issue.record("did not decode as export: \(decoded.body)"); return
+        }
+        #expect(path == "/tmp/x.snitt")
+        // And absent decodes as "the document decides", not as "off".
+        #expect(captions == nil)
+        #expect(banners == nil)
+    }
 }

@@ -328,13 +328,24 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             // transcript and the input-event log — including keystroke timing
             // and click coordinates — so it is a disclosure verb, not a
             // neutral one, and it was reachable by any same-user process.
-            guard policy().allowsAgentAccess else {
-                return .failure(AutomationError(
-                    code: .consentRequired,
-                    message: "Agent access is off, so Snitt will not read recordings for an agent.",
-                    hint: "Turn on \"Allow agent recording\" in Snitt's menu or Settings."))
-            }
+            guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
             return inspect(bundlePath: path)
+
+        case .transcript(let path):
+            // Gated for the same reason `.inspect` is, and more sharply.
+            // `.inspect` counts as a disclosure verb for returning keystroke
+            // TIMING; this returns what was actually SAID, which is the most
+            // disclosive thing in the bundle, through an app holding a
+            // Files-and-Folders grant the caller may not have.
+            guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
+            return transcript(bundlePath: path)
+
+        case .addNarration(let bundlePath, let text, let atSeconds):
+            // A WRITE, so the gate is not about disclosure here: with agent
+            // access off, nothing should be editing a person's recordings on
+            // an agent's behalf either.
+            guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
+            return addNarration(bundlePath: bundlePath, text: text, atSeconds: atSeconds)
 
         case .trim(let bundlePath, let start, let end, let auto):
             return await trim(bundlePath: bundlePath, start: start, end: end, auto: auto)
@@ -349,11 +360,13 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             return await estimateExport(bundlePath: bundlePath, scale: scale, format: format)
 
         case .export(let bundlePath, let format, let outputPath, let scale, let chapters,
-                     let subtitles, let maxSizeBytes, let resolution, let clicks):
+                     let subtitles, let maxSizeBytes, let resolution, let clicks,
+                     let captions, let markerBanners):
             return await export(bundlePath: bundlePath, format: format, outputPath: outputPath,
                                 scale: scale, chapters: chapters, subtitles: subtitles,
                                 maxSizeBytes: maxSizeBytes, resolution: resolution,
-                                clicks: clicks)
+                                clicks: clicks, captions: captions,
+                                markerBanners: markerBanners)
 
         case .diagnostics(let outputPath):
             return await diagnosticsExport(outputPath: outputPath)
@@ -702,7 +715,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     private func export(bundlePath: String, format: String, outputPath: String,
                         scale: Double, chapters: Bool, subtitles: Bool,
                         maxSizeBytes: Int?, resolution: ExportResolution,
-                        clicks: Bool) async -> AutomationResponse {
+                        clicks: Bool, captions: Bool?,
+                        markerBanners: Bool?) async -> AutomationResponse {
         // Opening the gif seam must not open it to everything else. The CLI
         // and MCP frontends refuse anything else with matching wording
         // (§8) — this must match too, or a client could send a format the
@@ -726,7 +740,13 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
 
         let edl: EditDecisionList
         do {
+            // `drawing(...)` applies THIS export's overlay overrides and is
+            // never written back: an export is not an edit (D107). A `nil`
+            // override leaves the document's own flag standing, so an agent
+            // that says nothing about captions does not take away captions a
+            // person turned on in the editor.
             edl = try Self.readEDL(for: bundle)
+                .drawing(captions: captions, markerBanners: markerBanners)
         } catch {
             return .failure(AutomationError(
                 code: .unusableRecording,
@@ -832,6 +852,131 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                     + "it as empty would hide a real problem: \(String(describing: error))"))
         }
     }
+
+    /// The refusal every bundle-reading and bundle-writing verb shares.
+    ///
+    /// One value rather than three copies, for the reason `healthFields`
+    /// exists: three hand-written refusals drift, and this one is the sentence
+    /// that tells a person which switch to flick.
+    private static let agentAccessOffError = AutomationError(
+        code: .consentRequired,
+        message: "Agent access is off, so Snitt will not read recordings for an agent.",
+        hint: "Turn on \"Allow agent recording\" in Snitt's menu or Settings.")
+
+    /// Reads `transcript.json` and returns it as LINES (D107).
+    ///
+    /// In the app rather than the client, like `inspect`: the output directory
+    /// is user-configurable and may sit behind the Files-and-Folders TCC
+    /// service, so a frontend that opened the file itself would work on the
+    /// developer's machine and return nothing on a user's.
+    ///
+    /// A MISSING `transcript.json` is a legitimate answer, no speech, or
+    /// nobody has run the recogniser, and comes back as a report with a nil
+    /// locale. A file that EXISTS and fails to decode is refused, the same
+    /// absent-versus-unreadable distinction `readEDL` and
+    /// `InspectReport.readEvents` draw; D60's version gate lives in
+    /// `Transcript.init(from:)`, and swallowing it here would tell an agent
+    /// "this recording says nothing" when the truth is "this build is too old
+    /// to read it".
+    private func transcript(bundlePath: String) -> AutomationResponse {
+        let bundle: SnittBundle
+        do {
+            bundle = try SnittBundle(opening: URL(fileURLWithPath: bundlePath))
+        } catch {
+            return .failure(Self.noSuchBundleError)
+        }
+        do {
+            let edl = try Self.readEDL(for: bundle)
+            guard FileManager.default.fileExists(atPath: bundle.transcriptURL.path) else {
+                return .transcriptRead(TranscriptReport(
+                    bundlePath: bundle.url.path, locale: nil, wordCount: 0,
+                    authoredWordCount: 0, captionsEnabled: edl.showSubtitles, lines: []))
+            }
+            let transcript = try Transcript.read(from: bundle)
+            return .transcriptRead(TranscriptReport(
+                bundlePath: bundle.url.path,
+                locale: transcript.locale,
+                wordCount: transcript.words.count,
+                authoredWordCount: transcript.words.filter(\.isAuthored).count,
+                captionsEnabled: edl.showSubtitles,
+                lines: TranscriptReport.lines(of: transcript.words,
+                                              trackStates: edl.trackStates)))
+        } catch {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "Could not read this recording's transcript.",
+                hint: "The file exists but could not be read, reporting it as empty "
+                    + "would hide a real problem: \(String(describing: error))"))
+        }
+    }
+
+    /// Writes a line of narration at a moment in the recording (D107, D100).
+    ///
+    /// The same two calls the editor's `+` gesture makes,
+    /// `AuthoredNarration.words` then `.inserting`, so a line an agent writes
+    /// and a line a person types are the same thing in the file, and
+    /// `isAuthored` is set by the one function that knows to set it. Reusing
+    /// that pair rather than building words here is what keeps the agent from
+    /// being able to write a word the editor's delete rules would mishandle.
+    ///
+    /// SOURCE time, taken as given rather than mapped through `keptRanges`.
+    /// The editor converts because a playhead reads in output time; an agent
+    /// has no playhead and every other time it holds, marker offsets from
+    /// `inspect`, a screenshot's `timeSeconds`, is already source time.
+    private func addNarration(bundlePath: String, text: String,
+                              atSeconds: Double) -> AutomationResponse {
+        let bundle: SnittBundle
+        do {
+            bundle = try SnittBundle(opening: URL(fileURLWithPath: bundlePath))
+        } catch {
+            return .failure(Self.noSuchBundleError)
+        }
+
+        let words = AuthoredNarration.words(text, sourceStart: atSeconds)
+        // Blank text yields no words. Both frontends already refuse it, so
+        // reaching here means a client built a request by hand; refusing is
+        // still better than writing a file and reporting a line that is not
+        // in it.
+        guard let first = words.first, let last = words.last else {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "That narration has no words in it.",
+                hint: "An empty line places nothing on the recording."))
+        }
+
+        do {
+            let edl = try Self.readEDL(for: bundle)
+            // A recording may have no transcript at all: writing narration is
+            // the one way to get one without running the recogniser, and
+            // refusing here would mean a demo with no speech could never be
+            // given any. `Locale.current` matches what `Transcriber.merge`
+            // stamps when it mints a transcript for the same reason.
+            let existing = FileManager.default.fileExists(atPath: bundle.transcriptURL.path)
+                ? try Transcript.read(from: bundle)
+                : Transcript(words: [], locale: Locale.current.identifier)
+            var updated = existing
+            updated.words = AuthoredNarration.inserting(words, into: existing.words)
+            try updated.write(to: bundle)
+            return .narrationAdded(NarrationSummary(
+                bundlePath: bundle.url.path,
+                wordCount: words.count,
+                startSeconds: first.start,
+                endSeconds: last.end,
+                totalWordCount: updated.words.count,
+                captionsEnabled: edl.showSubtitles))
+        } catch {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "Could not write narration into this recording.",
+                hint: String(describing: error)))
+        }
+    }
+
+    /// The refusal for a path that is not a readable `.snitt` bundle.
+    private static let noSuchBundleError = AutomationError(
+        code: .targetNotFound,
+        message: "Could not read a recording at that path.",
+        hint: "Use the path `snitt record stop` printed.")
 
     private func policy() -> ConsentPolicy {
         let current = settings()

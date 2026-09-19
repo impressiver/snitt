@@ -273,6 +273,34 @@ public struct EditDecisionList: Codable, Sendable {
         return copy
     }
 
+    /// This edit as ONE export was asked to draw it (D107).
+    ///
+    /// `showSubtitles` and `showMarkers` are document properties: set in the
+    /// editor, carried into every export of that document. An agent has no
+    /// editor, so before this there was no way for it to caption a recording
+    /// at all, the README demo resorted to hand-writing `edit.json`.
+    ///
+    /// **`nil` leaves the document's own choice alone.** That is the whole
+    /// reason these are Optionals rather than plain `Bool`s with a `false`
+    /// default: a default would mean an agent exporting a recording a PERSON
+    /// had already set captions on would silently get none, which is the
+    /// confidently-wrong outcome §8 forbids. Absent means absent here exactly
+    /// as it does in `healthFields` and `MCPBridge.booleanValue`.
+    ///
+    /// A VALUE, never saved, the same discipline `silencingMicrophone()`
+    /// states above. An export is not an edit: asking for captions on one
+    /// export must not quietly turn them on in the editor for a person who
+    /// opens the recording afterwards. The editor's own export sheet DOES
+    /// write them back, and that is right there, because a person chose them
+    /// in the document's own window.
+    public func drawing(captions: Bool?, markerBanners: Bool?) -> EditDecisionList {
+        guard captions != nil || markerBanners != nil else { return self }
+        var copy = self
+        if let captions { copy.showSubtitles = captions }
+        if let markerBanners { copy.showMarkers = markerBanners }
+        return copy
+    }
+
     private enum CodingKeys: String, CodingKey {
         case schemaVersion, cuts, trackStates, crop, showClicks
         case showSubtitles, showMarkers, overdubs

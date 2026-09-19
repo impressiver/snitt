@@ -39,8 +39,10 @@ func everyToolMaps() {
         case "snitt_stop_recording", "snitt_mark",
              "snitt_pause_recording", "snitt_resume_recording", "snitt_screenshot":
             json = #"{"sessionId": "abc"}"#
-        case "snitt_inspect":
+        case "snitt_inspect", "snitt_transcript":
             json = #"{"bundlePath": "/tmp/x.snitt"}"#
+        case "snitt_narrate":
+            json = #"{"bundlePath": "/tmp/x.snitt", "text": "a line", "atSeconds": 1}"#
         case "snitt_report_input":
             json = #"{"bundlePath": "", "sessionId": "abc", "kind": "click", "x": 0.5, "y": 0.5}"#
         case "snitt_crop":
@@ -77,7 +79,8 @@ func toolNamesAreStable() {
                       "snitt_auto_deep_trim", "snitt_estimate",
                       "snitt_pause_recording", "snitt_resume_recording",
                       "snitt_screenshot", "snitt_report_input",
-                      "snitt_diagnostics_export"])
+                      "snitt_diagnostics_export",
+                      "snitt_transcript", "snitt_narrate"])
 }
 
 @Test("The MCP tool maps to the same request the CLI would send")
@@ -170,7 +173,7 @@ func exportResolvesRelativePaths() {
         arguments: jsonArguments(#"{"bundlePath": "d.snitt", "format": "mp4", "outputPath": "out.mp4"}"#),
         workingDirectory: workingDirectory)
     else { Issue.record("MCP could not express an export"); return }
-    guard case .export(let resolvedBundlePath, _, let resolvedOutputPath, _, _, _, _, _, _) = body else {
+    guard case .export(let resolvedBundlePath, _, let resolvedOutputPath, _, _, _, _, _, _, _, _) = body else {
         Issue.record("expected .export, got \(body)"); return
     }
 
@@ -262,7 +265,7 @@ func integerScaleOfOneAcceptedFromRealJSON() {
         forTool: "snitt_export",
         arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
             + #""outputPath": "/tmp/demo.mp4", "scale": 1}"#))
-    guard case .success(.export(_, _, _, let scale, _, _, _, _, _)) = mapped else {
+    guard case .success(.export(_, _, _, let scale, _, _, _, _, _, _, _)) = mapped else {
         Issue.record("scale: 1, decoded from JSON, must be accepted as a number"); return
     }
     #expect(scale == 1.0)
@@ -462,7 +465,7 @@ func numericChaptersOneAcceptedAsTrue() {
         forTool: "snitt_export",
         arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
             + #""outputPath": "/tmp/demo.mp4", "chapters": 1}"#))
-    guard case .success(.export(_, _, _, _, let chapters, _, _, _, _)) = mapped else {
+    guard case .success(.export(_, _, _, _, let chapters, _, _, _, _, _, _)) = mapped else {
         Issue.record("chapters: 1, decoded from JSON, must be accepted as true"); return
     }
     #expect(chapters == true)
@@ -474,7 +477,7 @@ func mcpAcceptsGifAndMaxSize() {
     {"bundlePath":"/tmp/b.snitt","format":"gif","outputPath":"/tmp/o.gif","maxSize":"5MB"}
     """)
     guard case .success(let request) = MCPBridge.request(forTool: "snitt_export", arguments: args),
-          case .export(_, let format, _, _, _, _, let maxSize, _, _) = request else {
+          case .export(_, let format, _, _, _, _, let maxSize, _, _, _, _) = request else {
         Issue.record("expected a successful export request"); return
     }
     #expect(format == "gif")
@@ -498,7 +501,7 @@ func mcpAbsentMaxSizeIsNoLimit() {
     {"bundlePath":"/tmp/b.snitt","format":"mp4","outputPath":"/tmp/o.mp4"}
     """)
     guard case .success(let request) = MCPBridge.request(forTool: "snitt_export", arguments: args),
-          case .export(_, _, _, _, _, _, let maxSize, _, _) = request else {
+          case .export(_, _, _, _, _, _, let maxSize, _, _, _, _) = request else {
         Issue.record("expected success"); return
     }
     // A `?? 0` default would make every export target zero bytes and walk
@@ -572,7 +575,7 @@ func numericSubtitlesOneAcceptedAsTrue() {
         forTool: "snitt_export",
         arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
             + #""outputPath": "/tmp/demo.mp4", "subtitles": 1}"#))
-    guard case .success(.export(_, _, _, _, _, let subtitles, _, _, _)) = mapped else {
+    guard case .success(.export(_, _, _, _, _, let subtitles, _, _, _, _, _)) = mapped else {
         Issue.record("subtitles: 1, decoded from JSON, must be accepted as true"); return
     }
     #expect(subtitles == true)
@@ -778,14 +781,14 @@ func clicksDefaultToOn() {
     // drew none of it unless asked a second time. Only clicks that were
     // REPORTED can be drawn, so this default cannot surface anything the caller
     // did not itself hand over.
-    guard case .success(.export(_, _, _, _, _, _, _, _, let mcpClicks)) = MCPBridge.request(
+    guard case .success(.export(_, _, _, _, _, _, _, _, let mcpClicks, _, _)) = MCPBridge.request(
         forTool: "snitt_export",
         arguments: jsonArguments(
             #"{"bundlePath": "/tmp/x.snitt", "format": "mp4", "outputPath": "/tmp/d.mp4"}"#))
     else { Issue.record("mapping failed"); return }
     #expect(mcpClicks == true)
 
-    guard case .success(.export(_, _, _, _, _, _, _, _, let cliClicks)) = CommandLineParser.parse(
+    guard case .success(.export(_, _, _, _, _, _, _, _, let cliClicks, _, _)) = CommandLineParser.parse(
         ["export", "/tmp/x.snitt", "--format", "mp4", "--out", "/tmp/d.mp4"])
     else { Issue.record("the CLI could not express an export"); return }
     #expect(cliClicks == true, "§4.8: the two frontends must not diverge on a default")
@@ -795,14 +798,14 @@ func clicksDefaultToOn() {
 func clicksCanStillBeTurnedOff() {
     // The control. Without it, `clicksDefaultToOn` passes just as well against
     // an implementation that ignores the parameter entirely and always draws.
-    guard case .success(.export(_, _, _, _, _, _, _, _, let clicks)) = MCPBridge.request(
+    guard case .success(.export(_, _, _, _, _, _, _, _, let clicks, _, _)) = MCPBridge.request(
         forTool: "snitt_export",
         arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
             + #""outputPath": "/tmp/d.mp4", "clicks": false}"#))
     else { Issue.record("mapping failed"); return }
     #expect(clicks == false)
 
-    guard case .success(.export(_, _, _, _, _, _, _, _, let cliClicks)) = CommandLineParser.parse(
+    guard case .success(.export(_, _, _, _, _, _, _, _, let cliClicks, _, _)) = CommandLineParser.parse(
         ["export", "/tmp/x.snitt", "--format", "mp4", "--out", "/tmp/d.mp4", "--no-clicks"])
     else { Issue.record("the CLI could not express --no-clicks"); return }
     #expect(cliClicks == false)
@@ -874,4 +877,103 @@ func bareParametersAreDocumented() {
         let text = (properties[name] as? [String: Any])?["description"] as? String
         #expect((text?.count ?? 0) > 40, "\(name) still has no real description: \(text ?? "none")")
     }
+}
+
+// MARK: - D107: captions, marker banners, and narration
+
+@Test("Absent captions means the DOCUMENT decides, not off")
+func captionsAbsentIsNilNotFalse() {
+    // DISCRIMINATES AGAINST: `booleanValue(...) ?? false`, which is what every
+    // other flag on this tool does and is wrong for exactly these two. A
+    // `false` here would make an agent's export silently drop captions a
+    // person had already turned on in the editor, §8's confidently-wrong
+    // outcome, and the one the whole Optional exists to avoid. With `?? false`
+    // this reads `captions == false` and fails.
+    guard case .success(.export(_, _, _, _, _, _, _, _, _, let captions, let banners)) =
+        MCPBridge.request(
+            forTool: "snitt_export",
+            arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
+                + #""outputPath": "/tmp/d.mp4"}"#)) else {
+        Issue.record("mapping failed"); return
+    }
+    #expect(captions == nil)
+    #expect(banners == nil)
+}
+
+@Test("captions and markerBanners carry both values through")
+func captionsCarryThrough() {
+    // The control: a bridge that hardcoded nil would pass the test above.
+    guard case .success(.export(_, _, _, _, _, _, _, _, _, let captions, let banners)) =
+        MCPBridge.request(
+            forTool: "snitt_export",
+            arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "format": "mp4","#
+                + #""outputPath": "/tmp/d.mp4", "captions": true, "markerBanners": false}"#))
+    else { Issue.record("mapping failed"); return }
+    #expect(captions == true)
+    #expect(banners == false)
+}
+
+@Test("snitt_narrate refuses to invent a time")
+func narrateRequiresATime() {
+    // DISCRIMINATES AGAINST: `numericValue(...) ?? 0`. Zero is a perfectly
+    // valid anchor, so a default silently stacks every line an agent forgot to
+    // place on the recording's first frame, and the call reports success. The
+    // refusal has to name the parameter so the agent can fix it.
+    guard case .failure(let error) = MCPBridge.request(
+        forTool: "snitt_narrate",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "text": "hello"}"#))
+    else { Issue.record("a narration with no time was accepted"); return }
+    #expect(error.message.contains("atSeconds"))
+}
+
+@Test("snitt_narrate refuses blank text instead of writing nothing")
+func narrateRefusesBlankText() {
+    // DISCRIMINATES AGAINST: passing the text straight through.
+    // `AuthoredNarration.words` returns [] for whitespace, so the write would
+    // succeed, add no line, and report a cheerful success, the silent no-op
+    // an agent hits by interpolating an empty variable.
+    guard case .failure = MCPBridge.request(
+        forTool: "snitt_narrate",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "text": "   ","#
+            + #""atSeconds": 4}"#))
+    else { Issue.record("blank narration was accepted"); return }
+}
+
+@Test("snitt_narrate refuses a negative time")
+func narrateRefusesNegativeTime() {
+    // Seconds are measured from the start of the recording, so there is no
+    // time before it. Accepting one would place a line the transcript sorts
+    // first and nothing ever reaches.
+    guard case .failure = MCPBridge.request(
+        forTool: "snitt_narrate",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "text": "hi","#
+            + #""atSeconds": -1}"#))
+    else { Issue.record("a negative narration time was accepted"); return }
+}
+
+@Test("snitt_narrate and snitt_transcript resolve a relative bundle path")
+func transcriptToolsResolvePaths() {
+    // DISCRIMINATES AGAINST: passing `bundlePath` through unresolved, which
+    // `snitt_inspect` still does and which works only because the app happens
+    // to be handed absolute paths today. A relative path would otherwise
+    // resolve against `Snitt.app`'s own cwd, `/`, and the recording would
+    // not be found (M3c finding #3, `PathResolver`).
+    guard case .success(.transcript(let readPath)) = MCPBridge.request(
+        forTool: "snitt_transcript",
+        arguments: jsonArguments(#"{"bundlePath": "demo.snitt"}"#),
+        workingDirectory: "/Users/x/project") else {
+        Issue.record("mapping failed"); return
+    }
+    #expect(readPath == "/Users/x/project/demo.snitt")
+
+    guard case .success(.addNarration(let writePath, let text, let at)) = MCPBridge.request(
+        forTool: "snitt_narrate",
+        arguments: jsonArguments(#"{"bundlePath": "demo.snitt", "text": "two words","#
+            + #""atSeconds": 4.5}"#),
+        workingDirectory: "/Users/x/project") else {
+        Issue.record("mapping failed"); return
+    }
+    #expect(writePath == "/Users/x/project/demo.snitt")
+    #expect(text == "two words")
+    #expect(at == 4.5)
 }

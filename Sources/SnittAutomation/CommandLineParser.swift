@@ -47,7 +47,17 @@ public enum ParsedCommand: Equatable {
     case recordInput(sessionID: String, kind: String, x: Double?, y: Double?)
     case export(bundlePath: String, format: String, outputPath: String,
                 scale: Double, chapters: Bool, subtitles: Bool, maxSizeBytes: Int?,
-                resolution: ExportResolution, clicks: Bool)
+                resolution: ExportResolution, clicks: Bool,
+                /// D107. `nil` means the document's own `showSubtitles` /
+                /// `showMarkers` stands, `--captions` and `--no-captions` are
+                /// two flags rather than one for exactly that reason, the same
+                /// shape `--no-system-audio` already uses on `record start`.
+                captions: Bool?, markerBanners: Bool?)
+    /// D107: read what the recording says, as lines.
+    case transcript(bundlePath: String)
+    /// D107: write a line of narration at a moment in the recording, in SOURCE
+    /// seconds.
+    case narrate(bundlePath: String, text: String, atSeconds: Double)
     /// `outputPath` here is still the RAW string typed on the command line —
     /// `main.swift` resolves it against the caller's cwd before it reaches
     /// the wire, the same as `.export`'s `outputPath`/`.trim`'s
@@ -161,6 +171,26 @@ public enum CommandLineParser {
                   + "Use the path `snitt record stop` printed."))
             }
             return .success(.inspect(bundlePath: path))
+
+        case "transcript":
+            guard let path = args.first else {
+                return .failure(ParseFailure(
+                    "`transcript` needs a path to a .snitt bundle. "
+                  + "Use the path `snitt record stop` printed."))
+            }
+            guard args.count == 1 else {
+                return .failure(ParseFailure(
+                    "`transcript` takes only a bundle path, got \(args[1])."))
+            }
+            return .success(.transcript(bundlePath: path))
+
+        case "narrate":
+            guard let path = args.first else {
+                return .failure(ParseFailure(
+                    "`narrate` needs a path to a .snitt bundle. "
+                  + "Use the path `snitt record stop` printed."))
+            }
+            return parseNarrate(path: path, args: Array(args.dropFirst()))
 
         case "trim":
             guard let path = args.first else {
@@ -529,6 +559,59 @@ public enum CommandLineParser {
             .mapError { ParseFailure($0.message) }
     }
 
+    /// `snitt narrate <bundle> --at <seconds> --text <line>` (D107).
+    ///
+    /// Both flags are REQUIRED and neither has a default. A missing `--at`
+    /// could only default to 0, which silently anchors every line an agent
+    /// forgot to place at the first frame of the recording; a missing `--text`
+    /// would write an empty line, and `AuthoredNarration.words` already
+    /// refuses blank text rather than deciding what a blank phrase means.
+    private static func parseNarrate(path: String,
+                                     args: [String]) -> Result<ParsedCommand, ParseFailure> {
+        var text: String?
+        var atSeconds: Double?
+        var index = 0
+        while index < args.count {
+            switch args[index] {
+            case "--text":
+                index += 1
+                guard index < args.count else {
+                    return .failure(ParseFailure("--text needs the line to narrate"))
+                }
+                text = args[index]
+            case "--at":
+                index += 1
+                // `.isFinite`, for the reason `--start` gives: `Double(_:)`
+                // reads "inf" and "nan" happily, and a non-finite anchor would
+                // put the line at no time at all while reporting success.
+                guard index < args.count, let value = Double(args[index]), value.isFinite else {
+                    return .failure(ParseFailure("--at needs a finite number of seconds"))
+                }
+                guard value >= 0 else {
+                    return .failure(ParseFailure(
+                        "--at must be zero or greater, seconds are measured from the "
+                      + "start of the recording, so there is no time before it."))
+                }
+                atSeconds = value
+            default:
+                return .failure(ParseFailure("Unknown option: \(args[index])"))
+            }
+            index += 1
+        }
+        guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .failure(ParseFailure(
+                "`narrate` needs --text <line>, e.g. "
+              + "`snitt narrate demo.snitt --at 4.5 --text \"the tests are green\"`"))
+        }
+        guard let atSeconds else {
+            return .failure(ParseFailure(
+                "`narrate` needs --at <seconds>: where in the recording the line belongs, "
+              + "measured from its start. `snitt inspect` prints marker times on that "
+              + "same clock."))
+        }
+        return .success(.narrate(bundlePath: path, text: text, atSeconds: atSeconds))
+    }
+
     private static func parseExport(path: String, args: [String]) -> Result<ParsedCommand, ParseFailure> {
         var format: String?
         var outputPath: String?
@@ -542,6 +625,10 @@ public enum CommandLineParser {
         var clicks = true
         var resolution = ExportResolution.source
         var maxSizeBytes: Int?
+        // Optionals, not `false`: absent must leave the document's own
+        // `showSubtitles`/`showMarkers` alone. See `ParsedCommand.export`.
+        var captions: Bool?
+        var markerBanners: Bool?
         var index = 0
         while index < args.count {
             switch args[index] {
@@ -567,6 +654,35 @@ public enum CommandLineParser {
                 clicks = true
             case "--no-clicks":
                 clicks = false
+            // Refused rather than last-one-wins: `--captions --no-captions` on
+            // one line is a caller who does not know what they asked for, and
+            // silently honouring the second is the confidently-wrong outcome
+            // §8 forbids.
+            //
+            // `--clicks`/`--no-clicks` above is deliberately left alone rather
+            // than given the same guard. D105 landed it days ago and widening
+            // its behaviour here would be this branch editing that decision by
+            // the side door. The asymmetry is real and worth a line of its own
+            // if it ever irritates anybody: these two are a TRI-STATE, where
+            // absent means "the document decides", so a contradiction leaves
+            // no safe reading at all, while `clicks` has a plain default to
+            // fall back to.
+            case "--captions", "--no-captions":
+                let value = args[index] == "--captions"
+                guard captions == nil || captions == value else {
+                    return .failure(ParseFailure(
+                        "--captions and --no-captions contradict each other. Pass one, "
+                      + "or neither to leave this recording's own setting alone."))
+                }
+                captions = value
+            case "--marker-banners", "--no-marker-banners":
+                let value = args[index] == "--marker-banners"
+                guard markerBanners == nil || markerBanners == value else {
+                    return .failure(ParseFailure(
+                        "--marker-banners and --no-marker-banners contradict each other. "
+                      + "Pass one, or neither to leave this recording's own setting alone."))
+                }
+                markerBanners = value
             case "--resolution":
                 index += 1
                 guard index < args.count else {
@@ -618,7 +734,8 @@ public enum CommandLineParser {
         }
         return .success(.export(bundlePath: path, format: format, outputPath: outputPath,
                                  scale: scale, chapters: chapters, subtitles: subtitles, maxSizeBytes: maxSizeBytes,
-                                resolution: resolution, clicks: clicks))
+                                resolution: resolution, clicks: clicks,
+                                captions: captions, markerBanners: markerBanners))
     }
 
     private static func parseDiagnosticsExport(_ args: [String]) -> Result<ParsedCommand, ParseFailure> {
