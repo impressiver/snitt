@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Builds Resources/AppIcon.icns by running Scripts/generate-app-icon.swift and
 # compiling what it renders.
 #

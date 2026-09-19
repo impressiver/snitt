@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Decides whether R9's com.apple.security.cs.disable-library-validation
 # workaround is needed, given one line of `codesign -dvv` output containing
 # the TeamIdentifier field (e.g. "TeamIdentifier=not set" or

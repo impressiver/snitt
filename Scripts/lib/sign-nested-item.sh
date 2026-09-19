@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Signs one nested code object with Snitt's own identity, hardened runtime,
 # and (by default) a secure timestamp. Callers: the Sparkle items (an XPC
 # service, Updater.app, Autoupdate, or the framework bundle itself) and

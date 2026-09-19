@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Prints a stable codesign identity: the self-signed local dev identity by
 # default, or an explicitly-requested identity (e.g. a real Developer ID for
 # a release build) when SNITT_SIGN_IDENTITY names one.

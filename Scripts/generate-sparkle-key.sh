@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Generate Snitt's Sparkle EdDSA update-signing key, or report the existing
 # one, and print what the maintainer has to do next.

@@ -415,7 +415,17 @@ func notarizeFailsWhenXcrunAbsent() throws {
 
     // A PATH with no xcrun at all — but real coreutils still resolvable so
     // notarize.sh's OWN logic (not a missing `basename`) is what's exercised.
+    //
+    // `bash` is symlinked in deliberately. The scripts use
+    // `#!/usr/bin/env bash`, so the interpreter itself is resolved through
+    // PATH: a PATH with no bash on it means the script never STARTS, and this
+    // test would then pass or fail for a reason that has nothing to do with
+    // xcrun. The hostile thing here is the absence of xcrun, not the absence
+    // of a shell.
     let emptyBin = try makeFakeBin(name: "placeholder-not-a-real-tool", script: "#!/bin/sh\nexit 0\n")
+    try FileManager.default.createSymbolicLink(
+        at: emptyBin.appending(path: "bash"),
+        withDestinationURL: URL(fileURLWithPath: "/bin/bash"))
     defer { try? FileManager.default.removeItem(at: emptyBin) }
 
     let process = Process()

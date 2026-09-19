@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Builds Snitt-<version>.dmg — the drag-to-Applications installer a person
 # downloads from GitHub Releases.
 #

@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Generates a Sparkle appcast (RSS, not Atom — see below) for one release.
 # The maintainer's decision (binding, see task-5-brief.md): GitHub Releases
 # is the host, so the item's enclosure URL is a release asset URL the

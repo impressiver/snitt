@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 #
 # Cut a Snitt release: build, notarize, staple, package, publish — and then
 # CHECK that what landed on the Releases page is what was meant to.
