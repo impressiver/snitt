@@ -1,6 +1,6 @@
 # One writer for a recording
 
-**Status:** design, not built. Split out of the agent-drives-the-editor spec on
+**Status:** design, W4 settled. Split out of the agent-drives-the-editor spec on
 2026-09-19, because this is a data-loss bug and that is a feature.
 
 ## The bug
@@ -46,10 +46,37 @@ choice:
   is the whole point". Route therefore needs a non-UI result path FIRST, or an
   unattended agent hits a modal nobody dismisses.
 
-**Open question for the product owner.** Refuse ends the data loss today and
-costs almost nothing. Route ends it and makes agent edits visible, which is
-what the editor-control work wants, at three preconditions. Refuse does not
-block Route later; Route makes Refuse unnecessary.
+**Settled: Refuse.** Product owner, 2026-09-19. It ends the data loss today,
+needs none of the three preconditions, and does not block Route later if the
+editor-control work wants edits to land visibly instead.
+
+## What Refuse means
+
+A document verb whose bundle is open in a window fails, before it writes
+anything:
+
+```
+snitt trim main.snitt --auto
+
+error: bundle_open_in_editor
+  main-1b5f7d9.snitt is open in Snitt's editor.
+  Close the window, or edit it there.
+
+exit 4
+```
+
+Four things that are not optional:
+
+- **The check runs before the write, not after.** A verb that writes and then
+  reports a conflict has already lost the data it was meant to protect.
+- **It is a new error code, not `internal_error`.** The agent-API audit's
+  finding 2 is that `internal_error` already spans "fix your request", "do not
+  retry" and "wait and retry"; this is squarely the first, and the hint tells
+  the caller exactly what to do about it.
+- **It raises no alert.** `presentEditRejection` is a modal, and an unattended
+  agent would hang on it. Refusal travels as an `AutomationError`.
+- **A closed bundle is untouched.** Every headless use — which is most of them —
+  takes the same path it takes today.
 
 ## What is already built
 
@@ -70,8 +97,10 @@ against it.
   the first test and break every headless use.
 - `EditorPersistenceTests.laterTrimIsNotOverwrittenByAnEarlierSave` (line 274)
   keeps passing. It walks into the save-ordering inversion deliberately.
-- If Route: a refused agent edit returns an error and raises no alert. Fails
-  against reusing `presentEditRejection`, which is the hang.
+- A refused agent edit returns `bundle_open_in_editor` and raises no alert.
+  Fails against reusing `presentEditRejection`, which is the hang.
+- A refused agent edit leaves `edit.json` byte-identical. Fails against
+  checking after the write instead of before it, which still loses the data.
 
 `SnittAppTests` cannot run in CI, so this merges on a local
 `Scripts/run-tests.sh`.
@@ -83,4 +112,6 @@ against it.
 | W1 | Split from the control-surface spec | A data-loss bug should not need a feature's justification, nor inherit its review | Red team and Pragmatist, independently; product owner 2026-09-19 | Decided |
 | W2 | No §4.8 amendment here | Write ordering is not scope | §4.8 | Decided |
 | W3 | ~~Route reuses the window's existing edit path~~ | Refuted: both save methods are `private`, the host is off-MainActor, and rejection is a modal with no caller channel | W4 | Superseded |
-| W4 | Refuse-versus-Route is reopened, product owner to settle | W3's premise was the reason Route looked cheap, and it was false | `EditorWindowController.swift:1032,2004,2669,2958` | Open |
+| W4 | Refuse, not Route | Ends the data loss today, needs none of Route's three preconditions, and does not block Route later | Product owner, 2026-09-19 | Decided |
+| W5 | `bundle_open_in_editor` is its own code, not `internal_error` | The audit's finding 2: `internal_error` already spans three unrelated classes; this one is "fix your request" and its hint says how | Agent-API audit, finding 2 | Decided |
+| W6 | The check runs before the write | A verb that writes and then reports the conflict has already lost the data | W4 | Decided |
