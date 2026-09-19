@@ -232,7 +232,8 @@ func sparkleNeverLinksIntoThinClients() throws {
         process.waitUntilExit()
         let output = String(data: data, encoding: .utf8) ?? ""
 
-        #expect(!output.lowercased().contains("sparkle"), "\(binaryName) links Sparkle — §4.9 thin-client boundary broken:\n\(output)")
+        #expect(!linkedLibraries(output).lowercased().contains("sparkle"),
+                "\(binaryName) links Sparkle — §4.9 thin-client boundary broken:\n\(output)")
     }
 }
 
@@ -891,6 +892,24 @@ func embeddedClientsCarryAppsSigningIdentity() throws {
     }
 }
 
+/// The libraries `otool -L` lists, without the path it echoes back first.
+///
+/// `otool -L` prints the binary's OWN path as its first line, so searching the
+/// raw output for a library name also searches the checkout's directory path.
+/// A clone in any directory whose name contains "sparkle" then fails these two
+/// assertions with no Sparkle linkage anywhere — which is a spurious failure on
+/// an architectural invariant, and it looks exactly like a real one. Found
+/// while evaluating a Sparkle bump from a worktree named `snitt-sparkle`.
+///
+/// Dependency lines are indented; the header is not. That is the whole
+/// distinction, and it is otool's documented output shape.
+private func linkedLibraries(_ rawOtoolOutput: String) -> String {
+    rawOtoolOutput
+        .split(separator: "\n", omittingEmptySubsequences: false)
+        .filter { $0.hasPrefix("\t") || $0.hasPrefix(" ") }
+        .joined(separator: "\n")
+}
+
 @Test("Sparkle never links into the embedded clients either (§4.9)", .enabled(if: appIsBuilt || requireAppBundle, appBundleSkipReason))
 func sparkleNeverLinksIntoEmbeddedClients() throws {
     try #require(appIsBuilt, appBundleSkipReason)
@@ -909,7 +928,8 @@ func sparkleNeverLinksIntoEmbeddedClients() throws {
         try process.run()
         let output = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         process.waitUntilExit()
-        #expect(!output.lowercased().contains("sparkle"), "embedded \(name) links Sparkle:\n\(output)")
+        #expect(!linkedLibraries(output).lowercased().contains("sparkle"),
+                "embedded \(name) links Sparkle:\n\(output)")
     }
 }
 
@@ -1120,4 +1140,37 @@ func plistVersionKeysComeFromDifferentSources() throws {
             "CFBundleVersion is not stamped from the build number: \(buildLine)")
     #expect(!buildLine.contains("$APP_VERSION"),
             "CFBundleVersion is stamped from the marketing version — the keys were re-merged")
+}
+
+@Suite
+struct OtoolOutputParsing {
+    /// Pins the distinction the two §4.9 linkage assertions depend on.
+    ///
+    /// Without it, a checkout path containing a library's name fails those
+    /// assertions with no linkage present — a false alarm on an architectural
+    /// invariant, indistinguishable from the real thing.
+    @Test("The binary's own path is not mistaken for a linked library")
+    func headerLineIsNotSearched() {
+        // Discriminates against searching the raw output: that implementation
+        // finds "sparkle" here, in the path, and reports a linkage breach.
+        let output = """
+            /Users/someone/src/snitt-sparkle/build/Snitt.app/Contents/Helpers/snitt:
+            \t/System/Library/Frameworks/Foundation.framework/Versions/C/Foundation (compatibility version 300.0.0, current version 5027.0.69)
+            \t/usr/lib/libobjc.A.dylib (compatibility version 1.0.0, current version 228.0.0)
+            """
+        #expect(!linkedLibraries(output).lowercased().contains("sparkle"),
+                "the path header must not count as a dependency")
+    }
+
+    @Test("A real linkage is still caught")
+    func genuineLinkageIsStillFound() {
+        // The control. A filter that dropped everything would pass the test
+        // above while silently disarming both §4.9 assertions.
+        let output = """
+            /Users/someone/src/snitt/build/Snitt.app/Contents/Helpers/snitt:
+            \t@rpath/Sparkle.framework/Versions/B/Sparkle (compatibility version 1.0.0, current version 2.0.0)
+            """
+        #expect(linkedLibraries(output).lowercased().contains("sparkle"),
+                "an actual Sparkle dependency must still be reported")
+    }
 }
