@@ -337,7 +337,7 @@ do {
     case .trimmed(let summary):
         emit(summary)
         note("Kept \(Int(summary.keptSeconds))s, cut \(Int(summary.cutSeconds))s")
-    case .screenshotTaken(let path, let timeSeconds):
+    case .screenshotTaken(let path, let timeSeconds, _):
         emitObject(["path": path, "timeSeconds": timeSeconds])
         note("Screenshot at \(String(format: "%.2f", timeSeconds))s → \(path)")
     case .cropped(let summary):

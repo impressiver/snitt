@@ -628,6 +628,7 @@ private let booleanGuardFixtures: [String: String] = [
     // A full rect, for the reason spelled out in `stringCropResetRefused`.
     "snitt_crop": #"{"bundlePath": "/tmp/x.snitt", "x": 0, "y": 0, "width": 0.5, "height": 0.5}"#,
     "snitt_export": #"{"bundlePath": "/tmp/x.snitt", "format": "mp4", "outputPath": "/tmp/d.mp4"}"#,
+    "snitt_screenshot": #"{"sessionId": "abc123"}"#,
 ]
 
 @Test("EVERY boolean parameter on EVERY tool refuses a JSON string")
@@ -674,4 +675,34 @@ func everyBooleanParameterRefusesAString() {
     // Guards the guard: a refactor that stopped finding boolean properties
     // would otherwise make this test vacuously pass.
     #expect(checked >= 7, "expected at least 7 boolean parameters across the tool surface")
+}
+
+
+@Test("snitt_screenshot does not return the frame unless asked")
+func inlineScreenshotIsOptIn() {
+    // A9: returning pixels makes "screen content leaves this machine" the
+    // default rather than the caller's choice, and an MCP host is usually a
+    // cloud model. `screenshotForAgent` already calls a screenshot "the most
+    // obviously sensitive thing this surface could hand out" and puts that on
+    // Snitt rather than the caller; §5.6 makes input rendering opt-in for the
+    // same reason.
+    //
+    // Discriminates against defaulting `inline` to true, which would send the
+    // frame on every call an agent makes without ever saying so.
+    guard case .success(.screenshot(_, _, let inline)) = MCPBridge.request(
+        forTool: "snitt_screenshot",
+        arguments: jsonArguments(#"{"sessionId": "abc123"}"#)) else {
+        Issue.record("mapping failed"); return
+    }
+    #expect(inline == false)
+}
+
+@Test("snitt_screenshot returns the frame when inline is asked for")
+func inlineScreenshotHonoursTheFlag() {
+    guard case .success(.screenshot(_, _, let inline)) = MCPBridge.request(
+        forTool: "snitt_screenshot",
+        arguments: jsonArguments(#"{"sessionId": "abc123", "inline": true}"#)) else {
+        Issue.record("mapping failed"); return
+    }
+    #expect(inline == true)
 }

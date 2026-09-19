@@ -315,6 +315,16 @@ public enum MCPBridge {
                         "sessionId": ["type": "string"],
                         "label": ["type": "string",
                                   "description": "What this moment shows. Defaults to \"Screenshot\"."],
+                        "inline": [
+                            "type": "boolean",
+                            "description": "Return the frame ITSELF, not just a path to it. "
+                                + "Pass true when you actually need to look — a path is of "
+                                + "no use to you unless your host happens to read files. "
+                                + "The image is embedded in the response, which means it "
+                                + "goes wherever your model runs: ask for it when you need "
+                                + "to see, not by habit. Downscaled to 1280px on its "
+                                + "longest edge. Off by default.",
+                        ],
                     ],
                     "required": ["sessionId"],
                 ]),
@@ -708,8 +718,14 @@ public enum MCPBridge {
             guard let session = arguments["sessionId"] as? String else {
                 return .failure(MCPBridgeError("snitt_screenshot requires sessionId"))
             }
+            let inlineFlag: Bool
+            switch booleanValue(arguments["inline"], parameter: "inline") {
+            case .success(let value): inlineFlag = value ?? false
+            case .failure(let error): return .failure(error)
+            }
             return .success(.screenshot(sessionID: session,
-                                        label: arguments["label"] as? String))
+                                        label: arguments["label"] as? String,
+                                        inline: inlineFlag))
 
         case "snitt_pause_recording", "snitt_resume_recording":
             guard let session = arguments["sessionId"] as? String else {

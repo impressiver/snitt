@@ -317,8 +317,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         case .resumeRecording(let sessionID):
             return await setPaused(sessionID: sessionID, paused: false)
 
-        case .screenshot(let sessionID, let label):
-            return await screenshot(sessionID: sessionID, label: label)
+        case .screenshot(let sessionID, let label, let inline):
+            return await screenshot(sessionID: sessionID, label: label, inline: inline)
 
         case .reportInput(let sessionID, let kind, let x, let y, let label):
             return await reportInput(sessionID: sessionID, kind: kind, x: x, y: y, label: label)
@@ -997,13 +997,15 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         }
     }
 
-    private func screenshot(sessionID: String, label: String?) async -> AutomationResponse {
+    private func screenshot(sessionID: String, label: String?,
+                            inline: Bool = false) async -> AutomationResponse {
         if let refusal = policy().evaluate(StartOptions(bundleIdentifier: "probe")) {
             return .failure(refusal)
         }
-        switch await coordinator.screenshotForAgent(sessionID: sessionID, label: label) {
-        case .taken(let path, let timeSeconds):
-            return .screenshotTaken(path: path, timeSeconds: timeSeconds)
+        switch await coordinator.screenshotForAgent(sessionID: sessionID, label: label,
+                                                    inline: inline) {
+        case .taken(let path, let timeSeconds, let inlinePNG):
+            return .screenshotTaken(path: path, timeSeconds: timeSeconds, imagePNG: inlinePNG)
         case .noFrameYet:
             return .failure(AutomationError(
                 code: .internalError,
@@ -1278,7 +1280,8 @@ private actor NullCoordinator: AgentRecordingControlling {
         .notRecording
     }
 
-    func screenshotForAgent(sessionID: String, label: String?) async -> AgentScreenshotResult {
+    func screenshotForAgent(sessionID: String, label: String?,
+                            inline: Bool) async -> AgentScreenshotResult {
         .notRecording
     }
 
