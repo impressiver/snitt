@@ -4,7 +4,19 @@
 # that launched the binary, not to Snitt (see spec 4.9).
 set -euo pipefail
 
-APP="build/Snitt.app"
+# Overridable so a test can point it somewhere disposable. Not a preference:
+# `cleanup_on_failure` below removes $APP whenever this script exits non-zero,
+# and `MakeAppFreshnessTests` exists to make it exit non-zero. Because the
+# script cd's to the repo root, a test running it with the default path
+# deleted the developer's real build/Snitt.app as a side effect of asserting a
+# refusal — mid-run, while BundleLayoutTests was reading it, which is why that
+# suite failed intermittently and only ever on a machine that had built the
+# app. CI and fresh worktrees have no bundle, so those tests skipped silently
+# and the whole thing stayed invisible.
+#
+# Production sets nothing and gets build/Snitt.app exactly as before;
+# release.sh never sets it.
+APP="${SNITT_APP_PATH:-build/Snitt.app}"
 BUNDLE_ID="com.impressiver.snitt"
 VERSION_SOURCE="Sources/SnittDocument/AppVersion.swift"
 
