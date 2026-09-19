@@ -34,7 +34,7 @@ let package = Package(
         // should come with re-checking `make-app.sh`'s nested paths against
         // the new version, not an automatic side effect of a routine
         // update.
-        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.6"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.0"),
     ],
     targets: [
         // Brand colours, depending on nothing, so any layer that draws can
