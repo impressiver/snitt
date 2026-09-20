@@ -33,12 +33,23 @@ public final class AssetWriterSink: SampleBufferSink, @unchecked Sendable {
         return acceptedVideoFrames
     }
 
+    /// How often an unfinalized movie flushes a fragment.
+    ///
+    /// Public so a test can key its expectations off the REAL value instead of
+    /// restating it. `unfinalizedFileHasBytesOnDisk` has to push more than this
+    /// much media through before a flush can possibly have happened, and it
+    /// previously hardcoded a frame count that stood in for two seconds. A
+    /// second copy of a constant drifts: changing this interval would have left
+    /// that test asserting against the old one, still passing, and no longer
+    /// testing what it says.
+    public static let movieFragmentInterval = CMTime(seconds: 1, preferredTimescale: 600)
+
     public init(outputURL: URL, videoSize: CGSize) throws {
         writer = try AVAssetWriter(outputURL: outputURL, fileType: .mov)
 
         // Flush a fragment every second. Without this, an unfinalized movie
         // has no moov atom and cannot be played at all.
-        writer.movieFragmentInterval = CMTime(seconds: 1, preferredTimescale: 600)
+        writer.movieFragmentInterval = Self.movieFragmentInterval
 
         let videoInput = AVAssetWriterInput(
             mediaType: .video,
