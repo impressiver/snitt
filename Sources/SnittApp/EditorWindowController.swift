@@ -6,6 +6,7 @@
 
 import AppKit
 import Combine
+import SnittAutomation
 import SnittCapture
 import SnittDocument
 import SnittExport
@@ -46,6 +47,13 @@ final class EditorTimelineState: ObservableObject {
     /// on it and `TimelineViewRepresentable` can feed it back down to the
     /// view for drawing.
     @Published var selection: Selection?
+    /// Shown in the chrome while an agent is driving this window (E10).
+    ///
+    /// A timed flag rather than a lasting mode, because agent commands arrive
+    /// one at a time over IPC and there is no "session" to bracket: an agent
+    /// that seeks, trims and exports should read as continuously active, and
+    /// one that touched the window a minute ago should not.
+    @Published var agentIsDriving = false
 
     /// Playback ▸ Show Clicks, which lives in `edit.json` — so it is read
     /// from the EDL rather than mirrored beside it. A second copy is how a
@@ -476,6 +484,30 @@ final class EditorTimelineState: ObservableObject {
     func togglePlayback() {
         if controller.player.rate == 0 { controller.play() } else { controller.pause() }
     }
+
+    /// Raises the "Agent editing" cue and keeps it up for a few seconds past
+    /// the last command, so a burst of verbs reads as one continuous activity
+    /// rather than flickering once per call.
+    ///
+    /// The timer is replaced, not stacked: each command pushes the expiry out.
+    func noteAgentActivity() {
+        agentIsDriving = true
+        agentCueExpiry?.cancel()
+        agentCueExpiry = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            self?.agentIsDriving = false
+        }
+    }
+
+    private var agentCueExpiry: Task<Void, Never>?
+
+    /// Unconditional, unlike `togglePlayback`. An agent asking to play wants
+    /// the window playing, not flipped: a toggle would make the outcome depend
+    /// on a state the agent cannot see, so two identical commands would leave
+    /// it stopped.
+    func playForAgent() { controller.play() }
+    func pauseForAgent() { controller.pause() }
 
     /// Steps to the previous or next mark (D84).
     ///
@@ -2109,6 +2141,16 @@ final class EditorTimelineState: ObservableObject {
         undoManager?.setActionName(actionName)
         undoManager?.registerUndo(withTarget: self) { $0.restore(snapshot) }
         edl = transform(edl)
+        // The selection is cleared, not remapped (E13). It names OUTPUT
+        // seconds, and ANY cut shifts output time, so a selection kept across
+        // an edit silently points at different footage than the one the caller
+        // selected — and `auto-deep-trim` can remove exactly the selected
+        // range, leaving it pointing at seconds the timeline no longer has.
+        // Remapping through the edit is the other defensible answer and is a
+        // larger piece of work; clearing is the one that cannot be subtly
+        // wrong, and an agent that wants a selection afterwards can set one.
+        selection = nil
+        selectedFoldID = nil
         undoManager?.endUndoGrouping()
 
         lastSaveError = nil
@@ -2480,6 +2522,7 @@ struct EditorContentView: View {
                 canApplyCrop: cropBox != .full,
                 hasCrop: state.edl.crop != nil,
                 trimCaption: state.lastTrimOutcome.map(Self.trimCaption),
+                agentIsDriving: state.agentIsDriving,
                 onAutoTrim: { state.autoDeepTrim(preset: $0) },
                 onApplyCrop: {
                     state.applyCrop(cropBox)
@@ -2853,6 +2896,47 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// Looks up an already-open window for `url`, standardizing both sides
     /// of the comparison so `/tmp/x.snitt` and `/private/tmp/x.snitt` — the
     /// same document under two spellings — are recognized as one.
+    // MARK: - Agent view control (D109)
+
+    /// The editor's VIEW state, which is the part that is not in the document.
+    ///
+    /// Reported by every `editor` verb, because an agent cannot watch the
+    /// window: a verb returning nothing would leave it unable to tell
+    /// "seeked" from "silently did nothing", which is the confidently-wrong
+    /// outcome §8 forbids.
+    var agentVisibleState: EditorState {
+        EditorState(bundlePath: bundleURL.path,
+                    isOpen: true,
+                    isPlaying: state.isPlaying,
+                    playheadSeconds: state.currentOutputSeconds,
+                    selectionStartSeconds: state.selection?.range.start,
+                    selectionEndSeconds: state.selection?.range.end)
+    }
+
+    /// Starts playback. Idempotent: playing an already-playing window is not
+    /// an error, because an agent retrying a command it could not observe the
+    /// result of is ordinary rather than exceptional.
+    func agentPlay() { state.noteAgentActivity(); state.playForAgent() }
+    func agentPause() { state.noteAgentActivity(); state.pauseForAgent() }
+
+    /// Moves the playhead, in OUTPUT time — the recording with its cuts
+    /// removed, which is what a person watching the window sees.
+    func agentSeek(toOutput seconds: Double) {
+        state.noteAgentActivity()
+        state.seek(toOutput: seconds)
+    }
+
+    /// Sets or clears the timeline selection.
+    ///
+    /// Through `onSelect` rather than assigning `selection` directly, so an
+    /// agent's selection clears `selectedFoldID` exactly as a person's drag
+    /// does. Assigning the property would leave Delete meaning "remove that
+    /// cut" while the highlight showed something else.
+    func agentSelect(_ range: TimeRange?) {
+        state.noteAgentActivity()
+        state.onSelect(range.map { Selection(range: $0) })
+    }
+
     /// Forwards an agent's edit to this window's document state (W7).
     ///
     /// The window owns the lookup (`existing(for:)`) and the state owns the
@@ -2862,13 +2946,15 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     func applyFromAgent(_ actionName: String,
                         _ transform: (EditDecisionList) -> EditDecisionList) async throws
         -> EditDecisionList {
-        try await state.applyFromAgent(actionName, transform)
+        state.noteAgentActivity()
+        return try await state.applyFromAgent(actionName, transform)
     }
 
     func applyTranscriptFromAgent(_ actionName: String,
                                   _ transform: (Transcript?) -> Transcript) async throws
         -> Transcript {
-        try await state.applyTranscriptFromAgent(actionName, transform)
+        state.noteAgentActivity()
+        return try await state.applyTranscriptFromAgent(actionName, transform)
     }
 
     static func existing(for url: URL) -> EditorWindowController? {

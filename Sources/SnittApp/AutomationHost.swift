@@ -384,6 +384,56 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
             return inspect(bundlePath: path)
 
+        case .editorOpen(let path):
+            guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
+            return await editorOpen(bundlePath: path)
+
+        case .editorPlay(let path):
+            guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
+            return await editorCommand(bundlePath: path) { $0.agentPlay() }
+
+        case .editorPause(let path):
+            guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
+            return await editorCommand(bundlePath: path) { $0.agentPause() }
+
+        case .editorSeek(let path, let seconds):
+            guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
+            guard seconds >= 0, seconds.isFinite else {
+                return .failure(AutomationError(
+                    code: .invalidArguments,
+                    message: "A playhead position must be a finite number of seconds, not \(seconds).",
+                    hint: "Seconds are OUTPUT time: the recording with its cuts removed, "
+                        + "counted from zero."))
+            }
+            return await editorCommand(bundlePath: path) { $0.agentSeek(toOutput: seconds) }
+
+        case .editorSelect(let path, let from, let to):
+            guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
+            let range: TimeRange?
+            switch (from, to) {
+            case (nil, nil):
+                range = nil
+            case (let start?, let end?):
+                guard start.isFinite, end.isFinite, start >= 0, end > start else {
+                    return .failure(AutomationError(
+                        code: .invalidArguments,
+                        message: "A selection needs a start before its end, got \(start) to \(end).",
+                        hint: "Pass both ends in OUTPUT seconds, or neither to clear the "
+                            + "selection."))
+                }
+                range = TimeRange(start: start, end: end)
+            default:
+                // HALF a selection is refused rather than guessed. Defaulting
+                // the missing end to the recording's duration would be a
+                // different selection from the one asked for, applied silently
+                // — §8's confidently-wrong outcome.
+                return .failure(AutomationError(
+                    code: .invalidArguments,
+                    message: "A selection needs both ends or neither.",
+                    hint: "Pass `--from` and `--to` together to select, or neither to clear."))
+            }
+            return await editorCommand(bundlePath: path) { $0.agentSelect(range) }
+
         case .listRecordings(let limit):
             // Gated, and not only because the verb is a read. A bundle's
             // FILENAME is derived from the git branch and commit
@@ -1122,6 +1172,102 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         let updated = transform(existing)
         try updated.write(to: bundle)
         return updated
+    }
+
+    // MARK: - Editor control (D109)
+
+    /// Opens a recording in the editor, if the agent is allowed to.
+    ///
+    /// **An agent may open only a recording an agent made.** `editor open` is
+    /// the one verb here that is not bounded by what the agent could already
+    /// reach: it puts a recording ON SCREEN, so a prompt-injected agent could
+    /// display a recording its owner never meant shown, while they are
+    /// screen-sharing or being watched.
+    ///
+    /// The precedent is exact. `RecordingCoordinator.screenshotForAgent`
+    /// refuses to photograph a session the agent did not start, because "a
+    /// screenshot of someone else's screen is the most obviously sensitive
+    /// thing this surface could hand out, and §5's posture makes that Snitt's
+    /// problem rather than the caller's". Showing a whole recording is the
+    /// same disclosure, slower.
+    ///
+    /// **The test is `initiator`, not the session id**, and that is weaker on
+    /// purpose. Ownership elsewhere on this surface is per-session, which
+    /// works while a recording is running; `editor open` happens after one has
+    /// stopped, often in a later process, when no session exists to compare
+    /// against. `RecordingMetadata.initiator` is the only ownership fact that
+    /// survives in the bundle. So this grants "made by an agent" rather than
+    /// "made by THIS agent", which still refuses every human recording — the
+    /// case that carries the sensitivity — and does not pretend to more.
+    private func editorOpen(bundlePath: String) async -> AutomationResponse {
+        let bundle: SnittBundle
+        do {
+            bundle = try SnittBundle(opening: URL(fileURLWithPath: bundlePath))
+        } catch {
+            return .failure(Self.noSuchBundleError)
+        }
+
+        // A bundle with unreadable metadata is refused rather than opened. The
+        // absent-versus-unreadable distinction this repo draws for every other
+        // sidecar applies with more force here: "I could not tell who made
+        // this" must not resolve to "show it".
+        guard let meta = try? RecordingMetadata.read(from: bundle) else {
+            return .failure(AutomationError(
+                code: .unusableRecording,
+                message: "Could not read who made \(bundle.url.lastPathComponent).",
+                hint: "meta.json is missing or unreadable, and Snitt will not put a "
+                    + "recording on screen for an agent without knowing an agent made it."))
+        }
+        guard meta.initiator == .agent else {
+            return .failure(AutomationError(
+                code: .consentRequired,
+                message: "\(bundle.url.lastPathComponent) was not recorded by an agent.",
+                hint: "An agent may open only a recording it made. Opening someone "
+                    + "else's puts it on their screen, which is a disclosure Snitt "
+                    + "will not make on a caller's say-so. Open it yourself from "
+                    + "Snitt, or from the Finder."))
+        }
+
+        do {
+            _ = try await DocumentOpener.open(bundle: bundle)
+        } catch {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "Could not open \(bundle.url.lastPathComponent) in the editor.",
+                hint: String(describing: error)))
+        }
+        return await editorCommand(bundlePath: bundlePath) { _ in }
+    }
+
+    /// Runs `command` against the window showing `bundlePath`, and reports
+    /// what the editor is doing afterwards.
+    ///
+    /// Reports state rather than a bare success, because an agent cannot watch
+    /// the window: "seeked" and "silently did nothing" are indistinguishable
+    /// without it, which is exactly §8's confidently-wrong outcome.
+    ///
+    /// A bundle that is not open is `target_not_found`, not a silent no-op.
+    /// The remedy is a different call (`editor open`), which is what a hint
+    /// can say and a no-op cannot.
+    /// `command` is `@MainActor` because `EditorWindowController` is, and it
+    /// runs inside the hop below.
+    private func editorCommand(bundlePath: String,
+                               _ command: @escaping @MainActor @Sendable (EditorWindowController) -> Void)
+        async -> AutomationResponse {
+        let url = URL(fileURLWithPath: bundlePath)
+        let state: EditorState? = await MainActor.run {
+            guard let window = EditorWindowController.existing(for: url) else { return nil }
+            command(window)
+            return window.agentVisibleState
+        }
+        guard let state else {
+            return .failure(AutomationError(
+                code: .targetNotFound,
+                message: "\(url.lastPathComponent) is not open in the editor.",
+                hint: "Call `snitt editor open <bundle>` first. Snitt does not open a "
+                    + "recording as a side effect of being told to play it."))
+        }
+        return .editorState(state)
     }
 
     /// The refusal for a path that is not a readable `.snitt` bundle.

@@ -1,6 +1,6 @@
 # An agent drives Snitt's own editor
 
-**Status:** design, not built. Product-owner direction 2026-09-19.
+**Status:** built. Product-owner direction 2026-09-19.
 
 ## Why
 
@@ -112,11 +112,14 @@ playhead is moving.
 The minimum is a cue on the window being driven; reusing the menu-bar indicator
 is the cheaper option and says less about which window.
 
-**Unspecified, and it must not stay that way:** what happens to a live
-selection when a document verb changes the timeline under it. `editor select`
-names absolute seconds and an `auto-deep-trim` can remove exactly that range.
-Either the selection clears or it is remapped through the edit; pick one and
-test it.
+**Settled (E13): a routed edit CLEARS the selection.** It names OUTPUT
+seconds, and any cut shifts output time, so a selection kept across an edit
+silently points at different footage than the one the caller chose — and
+`auto-deep-trim` can remove exactly the selected range, leaving it pointing at
+seconds the timeline no longer has. Remapping through the edit is the other
+defensible answer and is a larger piece of work; clearing is the one that
+cannot be subtly wrong, and an agent that wants a selection afterwards can set
+one.
 
 ## Undo
 
@@ -180,4 +183,7 @@ E1-E4 moved to the one-writer spec as W1-W4, with the bugfix they belong to.
 | E9 | Split: the bugfix is its own spec | A data-loss bug should not need a feature's justification | Red team + Pragmatist independently; product owner | Decided |
 | E10 | Legibility is required here, not filed separately | This surface creates the need; `RecordingState` is recording-only so nothing would show | Operator + Product/UX independently; product owner | Decided |
 | E11 | `editor open` may only open a recording the agent made | `screenshotForAgent` sets the precedent: "a screenshot of someone else's screen is the most obviously sensitive thing this surface could hand out" | `RecordingCoordinator.swift:354` | Decided |
+| E13 | A routed edit clears the selection rather than remapping it | Output time shifts under any cut, so a kept selection points at different footage; clearing cannot be subtly wrong | E10's open item | Decided |
+| E14 | A closed document is `target_not_found`, not a silent success | An agent cannot watch the window, so a cheerful no-op is indistinguishable from a seek that worked (§8) | §8 | Decided |
+| E15 | `editor open` tests `initiator`, not the session id | Ownership elsewhere is per-session and a bundle is opened after its session ended; `initiator` is the only ownership fact that survives in the bundle. Grants "made by an agent", not "by THIS agent", and refuses every human recording | `RecordingMetadata.initiator` | Decided |
 | E12 | D109 must answer D49's blast-radius half, and cite D71 | The FOREIGN-UI rebuttal answers only the Accessibility half; D71 is OPEN on adjacent ground and was uncited | D49, D71 | Decided |

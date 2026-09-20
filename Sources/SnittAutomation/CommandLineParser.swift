@@ -60,6 +60,12 @@ public enum ParsedCommand: Equatable {
     case narrate(bundlePath: String, text: String, atSeconds: Double)
     /// D108: list the recordings in the output directory. `nil` is "all of
     /// them", which is distinct from a limit of zero.
+    /// D109's editor control. Each names its bundle (E8).
+    case editorOpen(bundlePath: String)
+    case editorPlay(bundlePath: String)
+    case editorPause(bundlePath: String)
+    case editorSeek(bundlePath: String, toSeconds: Double)
+    case editorSelect(bundlePath: String, fromSeconds: Double?, toSeconds: Double?)
     case recordingsList(limit: Int?)
     /// `outputPath` here is still the RAW string typed on the command line —
     /// `main.swift` resolves it against the caller's cwd before it reaches
@@ -193,6 +199,18 @@ public enum CommandLineParser {
                     "`transcript` takes only a bundle path, got \(args[1])."))
             }
             return .success(.transcript(bundlePath: path))
+
+        case "editor":
+            // A subcommand group, like `recordings`, because these five share
+            // a noun: they all act on an open editor window rather than on a
+            // bundle's files. Flattening them to top-level verbs would put
+            // `play` next to `trim` and suggest they are the same kind of
+            // thing.
+            guard let sub = args.first else {
+                return .failure(ParseFailure(
+                    "`editor` needs a subcommand: open, play, pause, seek or select."))
+            }
+            return parseEditor(sub, args: Array(args.dropFirst()))
 
         case "narrate":
             guard let path = args.first else {
@@ -601,6 +619,106 @@ public enum CommandLineParser {
     /// forgot to place at the first frame of the recording; a missing `--text`
     /// would write an empty line, and `AuthoredNarration.words` already
     /// refuses blank text rather than deciding what a blank phrase means.
+    /// `editor <verb> <bundle> [flags]` (D109).
+    ///
+    /// Every verb names its bundle (E8), so a command is unambiguous when more
+    /// than one document is open. A verb targeting "whatever is frontmost"
+    /// would make an agent's result depend on window order, which is a
+    /// property of somebody else's clicking.
+    private static func parseEditor(_ verb: String, args: [String])
+        -> Result<ParsedCommand, ParseFailure> {
+        guard let path = args.first else {
+            return .failure(ParseFailure(
+                "`editor \(verb)` needs a path to a .snitt bundle. "
+              + "Every editor verb names its bundle, so the command means the same "
+              + "thing however many windows are open."))
+        }
+        let rest = Array(args.dropFirst())
+
+        switch verb {
+        case "open":
+            guard rest.isEmpty else {
+                return .failure(ParseFailure("`editor open` takes only a bundle path, got \(rest[0])."))
+            }
+            return .success(.editorOpen(bundlePath: path))
+        case "play":
+            guard rest.isEmpty else {
+                return .failure(ParseFailure("`editor play` takes only a bundle path, got \(rest[0])."))
+            }
+            return .success(.editorPlay(bundlePath: path))
+        case "pause":
+            guard rest.isEmpty else {
+                return .failure(ParseFailure("`editor pause` takes only a bundle path, got \(rest[0])."))
+            }
+            return .success(.editorPause(bundlePath: path))
+        case "seek":
+            var to: Double?
+            var index = 0
+            while index < rest.count {
+                switch rest[index] {
+                case "--to":
+                    guard index + 1 < rest.count, let value = Double(rest[index + 1]) else {
+                        return .failure(ParseFailure("`--to` needs a number of seconds."))
+                    }
+                    to = value
+                    index += 2
+                default:
+                    return .failure(ParseFailure("Unknown flag for `editor seek`: \(rest[index])."))
+                }
+            }
+            guard let to else {
+                return .failure(ParseFailure(
+                    "`editor seek` needs `--to <seconds>`. Seconds are OUTPUT time: the "
+                  + "recording with its cuts removed."))
+            }
+            return .success(.editorSeek(bundlePath: path, toSeconds: to))
+        case "select":
+            var from: Double?
+            var to: Double?
+            var clear = false
+            var index = 0
+            while index < rest.count {
+                switch rest[index] {
+                case "--from":
+                    guard index + 1 < rest.count, let value = Double(rest[index + 1]) else {
+                        return .failure(ParseFailure("`--from` needs a number of seconds."))
+                    }
+                    from = value
+                    index += 2
+                case "--to":
+                    guard index + 1 < rest.count, let value = Double(rest[index + 1]) else {
+                        return .failure(ParseFailure("`--to` needs a number of seconds."))
+                    }
+                    to = value
+                    index += 2
+                case "--clear":
+                    clear = true
+                    index += 1
+                default:
+                    return .failure(ParseFailure("Unknown flag for `editor select`: \(rest[index])."))
+                }
+            }
+            // `--clear` is spelled out rather than inferred from "no flags",
+            // because a bare `editor select <bundle>` is far more likely to be
+            // a caller that forgot its arguments than one that meant to clear.
+            if clear {
+                guard from == nil, to == nil else {
+                    return .failure(ParseFailure(
+                        "`--clear` cannot be combined with `--from`/`--to`."))
+                }
+                return .success(.editorSelect(bundlePath: path, fromSeconds: nil, toSeconds: nil))
+            }
+            guard from != nil || to != nil else {
+                return .failure(ParseFailure(
+                    "`editor select` needs `--from <seconds> --to <seconds>`, or `--clear`."))
+            }
+            return .success(.editorSelect(bundlePath: path, fromSeconds: from, toSeconds: to))
+        default:
+            return .failure(ParseFailure(
+                "Unknown editor subcommand `\(verb)`. Try open, play, pause, seek or select."))
+        }
+    }
+
     private static func parseNarrate(path: String,
                                      args: [String]) -> Result<ParsedCommand, ParseFailure> {
         var text: String?

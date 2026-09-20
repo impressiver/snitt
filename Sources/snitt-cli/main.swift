@@ -374,6 +374,23 @@ func requestBody(for command: ParsedCommand,
         return .addNarration(
             bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
             text: text, atSeconds: atSeconds)
+    case .editorOpen(let path):
+        return .editorOpen(
+            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory))
+    case .editorPlay(let path):
+        return .editorPlay(
+            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory))
+    case .editorPause(let path):
+        return .editorPause(
+            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory))
+    case .editorSeek(let path, let seconds):
+        return .editorSeek(
+            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
+            toSeconds: seconds)
+    case .editorSelect(let path, let from, let to):
+        return .editorSelect(
+            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
+            fromSeconds: from, toSeconds: to)
     case .trim(let path, let start, let end, let auto):
         return .trim(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
                      start: start, end: end, auto: auto)
@@ -484,6 +501,18 @@ do {
     case .narrationAdded(let summary):
         emit(summary)
         note(narrationNote(summary))
+    case .editorState(let state):
+        emit(state)
+        // The playhead is the one number a person reading stderr wants, and
+        // the selection only when there is one: printing "selection: none"
+        // on every seek is noise that hides the line that matters.
+        var line = state.isPlaying ? "Playing" : "Paused"
+        line += " at \(String(format: "%.2f", state.playheadSeconds))s"
+        if let start = state.selectionStartSeconds, let end = state.selectionEndSeconds {
+            line += ", selected \(String(format: "%.2f", start))s"
+                + "-\(String(format: "%.2f", end))s"
+        }
+        note(line)
     case .trimmed(let summary):
         emit(summary)
         note("Kept \(Int(summary.keptSeconds))s, cut \(Int(summary.cutSeconds))s")

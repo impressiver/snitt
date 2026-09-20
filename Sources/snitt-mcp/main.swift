@@ -205,9 +205,26 @@ func structuredContent(_ response: AutomationResponse) -> [String: Any]? {
         return jsonObject(report)
     case .narrationAdded(let summary):
         return jsonObject(summary)
+    case .editorState(let state):
+        return jsonObject(state)
     case .recordings(let list):
         return jsonObject(list)
     }
+}
+
+/// Renders `.editorState` as the sentence an agent reads back (D109).
+///
+/// Says what the editor IS DOING, not what it was asked to do: an agent cannot
+/// watch the window, and "seeked" would be a claim about the request rather
+/// than about the result.
+func editorStateSummary(_ state: EditorState) -> String {
+    var line = state.isPlaying ? "Playing" : "Paused"
+    line += " at \(String(format: "%.2f", state.playheadSeconds))s"
+    if let start = state.selectionStartSeconds, let end = state.selectionEndSeconds {
+        line += ". Selected \(String(format: "%.2f", start))s to "
+            + "\(String(format: "%.2f", end))s"
+    }
+    return line + "."
 }
 
 /// Renders `.recordings` as the text an agent reads back (D108).
@@ -385,6 +402,8 @@ func describe(_ response: AutomationResponse) -> String {
         return transcriptSummary(report)
     case .narrationAdded(let summary):
         return narrationSummary(summary)
+    case .editorState(let state):
+        return editorStateSummary(state)
     case .recordings(let list):
         return recordingsSummary(list)
     case .diagnosticsWritten(let report):

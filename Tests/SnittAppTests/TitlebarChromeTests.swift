@@ -34,7 +34,7 @@ struct TitlebarChromeTests {
                       hasTranscript: true,
                       canApplyCrop: false,
                       hasCrop: false,
-                      trimCaption: nil,
+                      trimCaption: nil, agentIsDriving: false,
                       onAutoTrim: { _ in },
                       onApplyCrop: {},
                       onResetCrop: {},
