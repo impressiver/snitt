@@ -14,7 +14,7 @@ cross-section.
 `snitt` — including the recording of Snitt's own editor doing the cut. The
 "Agent editing" badge beside the filename is the editor saying so.</sup>
 
-> **Status: early.** v0.2.0 is signed, notarized and shipping, and it is used
+> **Status: early.** v0.7.0 is signed, notarized and shipping, and it is used
 > daily by the person who writes it. Interfaces still move. If you find a defect
 > the honest place to look for what is already known is
 > [`docs/superpowers/notes/field-notes.md`](docs/superpowers/notes/field-notes.md).
@@ -29,7 +29,9 @@ than any single feature:
 
 - **An agent can drive it.** Claude Code or Codex can record a demo of a feature
   it just built and attach it to a pull request — over MCP or a CLI, with the
-  same core the GUI uses.
+  same core the GUI uses. It can also drive **the editor**, so the editing is
+  something a person can watch rather than something that happens to a file.
+  The demo above was made that way, start to finish.
 - **Transcription is on-device.** Speech never goes to a hosted service. Words
   carry timings, so you can click a word to seek, or select a phrase and delete
   it to cut those seconds.
@@ -75,8 +77,14 @@ snitt setup --apply
 ```
 
 Then an agent can call `snitt_start_recording`, `snitt_mark`,
-`snitt_stop_recording`, `snitt_export` and a dozen more. Markers an agent drops
-as it works become chapters in the exported video.
+`snitt_stop_recording`, `snitt_export` and a couple of dozen more. Markers an
+agent drops as it works become chapters in the exported video. It can read and
+write the transcript too, so a recording with no microphone behind it can still
+be captioned — an agent has no voice, so a written line is its microphone.
+
+Every tool reports what it did rather than what it was asked to do, because an
+agent cannot watch the screen. Nothing is ever guessed at: given two windows
+and no window id, Snitt refuses rather than picking the larger one.
 
 **From a shell.**
 
@@ -91,6 +99,29 @@ snitt export recording.snitt --format mp4 --out demo.mp4 \
       --resolution 1080p --chapters
 ```
 
+## Driving the editor
+
+Everything above works headless. When you want the work to be **visible** —
+filming a demo, or letting somebody watch — open the recording first and the
+same verbs land in the window on screen:
+
+```bash
+snitt editor open recording.snitt --width 1000 --height 660
+snitt editor seek   recording.snitt --to 24
+snitt editor select recording.snitt --from 24 --to 26.5
+snitt editor cut    recording.snitt
+```
+
+Each is one undo entry, so a person can take any of it back. While it happens
+the editor shows an **"Agent editing"** badge beside the filename, because
+nobody should have their timeline cut from under them without being told.
+
+Only view state gets its own verbs — a playhead and a selection are not part of
+the document. `trim`, `crop` and `narrate` are the same verbs as ever; open the
+recording and they simply become visible. An agent may only open a recording an
+agent made: putting somebody's recording on screen is a disclosure, and Snitt
+will not make it on a caller's say-so.
+
 `snitt --help` lists every verb. Output is JSON on stdout and human text on
 stderr, so a script can parse one while a person reads the other.
 
@@ -102,7 +133,10 @@ capture** — trimming and cropping write to `edit.json`, so every edit is
 reversible and the original is always there. Export renders the result.
 
 Because the edit list is plain JSON beside the video, a script or an agent can
-read and change an edit without going near the GUI.
+read and change an edit without going near the GUI. If the bundle happens to be
+open in the editor, the edit is routed **through that window** rather than
+written underneath it — one writer at a time, so the CLI and the GUI stay one
+model instead of two.
 
 ## Privacy
 
@@ -110,8 +144,14 @@ read and change an edit without going near the GUI.
 - **Input logging records keystroke *timing*, never the characters** — and is
   off by default. Timing alone can narrow a guess at what was typed, so the log
   stays inside the recording's bundle and is never sent anywhere.
-- **The picker appears on every recording**, so nothing is ever captured that you
-  did not just select.
+- **The picker appears on every recording you start**, so nothing is ever
+  captured that you did not just select.
+- **An agent's recording skips the picker, and is gated instead.** It is off
+  until you turn it on, it is limited to a single window unless you separately
+  allow full-display capture, and the menu bar shows a live indicator with a
+  stop button while it runs. Letting an agent record while nobody is watching
+  is a further opt-in that **expires after 30 days** — a standing grant cannot
+  know what the screen will be showing six weeks later.
 - **No analytics, no telemetry.** The only network call Snitt makes is Sparkle
   checking for updates.
 
