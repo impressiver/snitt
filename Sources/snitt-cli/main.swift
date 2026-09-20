@@ -374,9 +374,10 @@ func requestBody(for command: ParsedCommand,
         return .addNarration(
             bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
             text: text, atSeconds: atSeconds)
-    case .editorOpen(let path):
+    case .editorOpen(let path, let width, let height):
         return .editorOpen(
-            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory))
+            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
+            widthPoints: width, heightPoints: height)
     case .editorPlay(let path):
         return .editorPlay(
             bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory))
@@ -514,6 +515,11 @@ do {
         if let start = state.selectionStartSeconds, let end = state.selectionEndSeconds {
             line += ", selected \(String(format: "%.2f", start))s"
                 + "-\(String(format: "%.2f", end))s"
+        }
+        // The APPLIED size, so a caller that asked for one can see what it got
+        // after the floor and the screen had their say.
+        if let width = state.widthPoints, let height = state.heightPoints {
+            line += ". Window \(Int(width.rounded())) x \(Int(height.rounded()))pt"
         }
         note(line)
     case .trimmed(let summary):

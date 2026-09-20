@@ -61,7 +61,7 @@ public enum ParsedCommand: Equatable {
     /// D108: list the recordings in the output directory. `nil` is "all of
     /// them", which is distinct from a limit of zero.
     /// D109's editor control. Each names its bundle (E8).
-    case editorOpen(bundlePath: String)
+    case editorOpen(bundlePath: String, widthPoints: Double?, heightPoints: Double?)
     case editorPlay(bundlePath: String)
     case editorPause(bundlePath: String)
     case editorSeek(bundlePath: String, toSeconds: Double)
@@ -638,10 +638,33 @@ public enum CommandLineParser {
 
         switch verb {
         case "open":
-            guard rest.isEmpty else {
-                return .failure(ParseFailure("`editor open` takes only a bundle path, got \(rest[0])."))
+            var width: Double?
+            var height: Double?
+            var index = 0
+            while index < rest.count {
+                switch rest[index] {
+                case "--width":
+                    guard index + 1 < rest.count, let value = Double(rest[index + 1]) else {
+                        return .failure(ParseFailure("`--width` needs a number of points."))
+                    }
+                    width = value
+                    index += 2
+                case "--height":
+                    guard index + 1 < rest.count, let value = Double(rest[index + 1]) else {
+                        return .failure(ParseFailure("`--height` needs a number of points."))
+                    }
+                    height = value
+                    index += 2
+                default:
+                    return .failure(ParseFailure("Unknown flag for `editor open`: \(rest[index])."))
+                }
             }
-            return .success(.editorOpen(bundlePath: path))
+            guard (width == nil) == (height == nil) else {
+                return .failure(ParseFailure(
+                    "`editor open` needs --width and --height together, or neither."))
+            }
+            return .success(.editorOpen(bundlePath: path,
+                                        widthPoints: width, heightPoints: height))
         case "cut":
             guard rest.isEmpty else {
                 return .failure(ParseFailure("`editor cut` takes only a bundle path, got \(rest[0])."))

@@ -2923,12 +2923,29 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// "seeked" from "silently did nothing", which is the confidently-wrong
     /// outcome §8 forbids.
     var agentVisibleState: EditorState {
-        EditorState(bundlePath: bundleURL.path,
-                    isOpen: true,
-                    isPlaying: state.isPlaying,
-                    playheadSeconds: state.currentOutputSeconds,
-                    selectionStartSeconds: state.selection?.range.start,
-                    selectionEndSeconds: state.selection?.range.end)
+        let content = window.contentRect(forFrameRect: window.frame)
+        return EditorState(bundlePath: bundleURL.path,
+                           isOpen: true,
+                           isPlaying: state.isPlaying,
+                           playheadSeconds: state.currentOutputSeconds,
+                           selectionStartSeconds: state.selection?.range.start,
+                           selectionEndSeconds: state.selection?.range.end,
+                           widthPoints: Double(content.width),
+                           heightPoints: Double(content.height))
+    }
+
+    /// Resizes this editor, centred, clamped to the floor and the screen.
+    ///
+    /// Applies to an ALREADY-OPEN window as well as a fresh one: an agent that
+    /// opens a recording, sees it is too large to film legibly, and asks again
+    /// with a size should get the resize rather than a no-op — and re-opening
+    /// an open bundle is how it would naturally ask.
+    func agentResize(width: Double, height: Double) {
+        state.noteAgentActivity()
+        let rect = Self.requestedContentRect(
+            width: width, height: height,
+            on: window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame)
+        window.setFrame(window.frameRect(forContentRect: rect), display: true)
     }
 
     /// Starts playback. Idempotent: playing an already-playing window is not
@@ -3091,6 +3108,50 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         let folder = bundleURL.deletingLastPathComponent()
         let name = bundleURL.deletingPathExtension().lastPathComponent
         return folder.appending(path: name).appendingPathExtension("mp4")
+    }
+
+    /// Centres a REQUESTED content size on the screen, clamped to what will
+    /// actually fit (D110).
+    ///
+    /// An agent filming the editor needs it smaller than the 75% default: at
+    /// full size, scaled down to a README-width GIF, the transcript pane and
+    /// the timeline labels are illegible. That is the "showing the interface"
+    /// problem this whole demo exists inside, and cropping around it loses the
+    /// panes that make the editor worth showing.
+    ///
+    /// **Clamped, then REPORTED, never silently obeyed.** `CropRect` sets the
+    /// precedent: it clamps rather than throwing, and `CropSummary` returns
+    /// the APPLIED rect so the adjustment is visible instead of silent. The
+    /// same rule here — `EditorState` carries the size the window actually
+    /// got, so an agent that asked for something impossible finds out rather
+    /// than filming a window it has the wrong dimensions for.
+    ///
+    /// Pure and screen-free for the same reason `openingContentRect` is: a
+    /// test host has no screen and `NSScreen.main` is nil there.
+    static func requestedContentRect(width: Double,
+                                     height: Double,
+                                     on visibleFrame: NSRect?) -> NSRect {
+        // The floor is the window's OWN `minimumContentSize`, not a number
+        // invented here. That property already derives what the chrome, the
+        // rail and the panes need, and enforces a flat 800x600 under it —
+        // measured from where the transport row started dropping controls. A
+        // second answer would drift from it, and this one would drift LOWER,
+        // handing an agent a window macOS then silently resizes anyway.
+        let floor = minimumContentSize
+        let wanted = NSSize(width: max(floor.width, width),
+                            height: max(floor.height, height))
+        guard let visibleFrame, visibleFrame.width > 0, visibleFrame.height > 0 else {
+            return NSRect(origin: .zero, size: wanted)
+        }
+        // Clamped to the SCREEN as well as to the floor. A window larger than
+        // the space it sits in cannot be filmed whole, and the point of asking
+        // for a size is to control what the frame contains.
+        let size = NSSize(width: min(wanted.width, visibleFrame.width),
+                          height: min(wanted.height, visibleFrame.height))
+        return NSRect(x: visibleFrame.minX + (visibleFrame.width - size.width) / 2,
+                      y: visibleFrame.minY + (visibleFrame.height - size.height) / 2,
+                      width: size.width,
+                      height: size.height)
     }
 
         static func openingContentRect(on visibleFrame: NSRect?,

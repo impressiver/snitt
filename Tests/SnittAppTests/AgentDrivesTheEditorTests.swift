@@ -5,6 +5,7 @@
 // Copyright © 2026 Ian White.
 
 import Testing
+import AppKit
 import Foundation
 import SnittAutomation
 import SnittCapture
@@ -59,7 +60,7 @@ struct AgentDrivesTheEditorTests {
         defer { try? FileManager.default.removeItem(at: recording.url) }
 
         let response = await host().handle(
-            .editorOpen(bundlePath: recording.url.path), caller: nil)
+            .editorOpen(bundlePath: recording.url.path, widthPoints: nil, heightPoints: nil), caller: nil)
         guard case .failure(let error) = response else {
             Issue.record("a human recording must not open, got \(response)"); return
         }
@@ -82,7 +83,7 @@ struct AgentDrivesTheEditorTests {
         try Data("not json".utf8).write(to: recording.url.appending(path: "meta.json"))
 
         let response = await host().handle(
-            .editorOpen(bundlePath: recording.url.path), caller: nil)
+            .editorOpen(bundlePath: recording.url.path, widthPoints: nil, heightPoints: nil), caller: nil)
         guard case .failure(let error) = response else {
             Issue.record("unreadable metadata must refuse, got \(response)"); return
         }
@@ -107,7 +108,7 @@ struct AgentDrivesTheEditorTests {
                 .appending(path: "drives-audit-\(UUID().uuidString).jsonl"))
 
         let verbs: [(String, AutomationRequest.Body)] = [
-            ("open", .editorOpen(bundlePath: recording.url.path)),
+            ("open", .editorOpen(bundlePath: recording.url.path, widthPoints: nil, heightPoints: nil)),
             ("play", .editorPlay(bundlePath: recording.url.path)),
             ("pause", .editorPause(bundlePath: recording.url.path)),
             ("seek", .editorSeek(bundlePath: recording.url.path, toSeconds: 1)),
@@ -228,7 +229,7 @@ struct AgentDrivesTheEditorTests {
     @Test("Editor verbs parse into the requests they name")
     func theParserBuildsTheRightRequests() {
         #expect(CommandLineParser.parse(["editor", "open", "a.snitt"])
-            == .success(.editorOpen(bundlePath: "a.snitt")))
+            == .success(.editorOpen(bundlePath: "a.snitt", widthPoints: nil, heightPoints: nil)))
         #expect(CommandLineParser.parse(["editor", "seek", "a.snitt", "--to", "4.2"])
             == .success(.editorSeek(bundlePath: "a.snitt", toSeconds: 4.2)))
         #expect(CommandLineParser.parse(
@@ -303,6 +304,110 @@ struct AgentDrivesTheEditorTests {
         guard case .success(.editorCut) = CommandLineParser.parse(
             ["editor", "cut", "a.snitt"]) else {
             Issue.record("no verb removes a chosen interior span"); return
+        }
+    }
+
+    // MARK: Sizing the window before filming it (D110)
+
+    @MainActor
+    @Test("A requested size is centred, and raised to the window's own minimum")
+    func aRequestedSizeIsClampedToTheFloor() {
+        // WRONG IMPLEMENTATION: inventing a minimum here. The window already
+        // has `minimumContentSize`, derived from what the rail and panes need
+        // with a flat 800x600 under it, measured from where the transport row
+        // started dropping controls. A second answer drifts from the first,
+        // and a LOWER one hands an agent a size macOS silently overrides —
+        // so the agent films a window with the wrong dimensions and nothing
+        // says so.
+        let screen = NSRect(x: 0, y: 0, width: 2000, height: 1400)
+        let tiny = EditorWindowController.requestedContentRect(
+            width: 200, height: 150, on: screen)
+        let floor = EditorWindowController.minimumContentSize
+        #expect(tiny.width == floor.width)
+        #expect(tiny.height == floor.height)
+        #expect(floor.width >= 800, "the floor moved: \(floor)")
+    }
+
+    @MainActor
+    @Test("A size larger than the screen is clamped to it")
+    func aRequestedSizeIsClampedToTheScreen() {
+        // WRONG IMPLEMENTATION: obeying the request. A window bigger than the
+        // space it sits in cannot be filmed whole, and controlling what the
+        // frame contains is the entire reason for asking.
+        let screen = NSRect(x: 0, y: 0, width: 1400, height: 900)
+        let huge = EditorWindowController.requestedContentRect(
+            width: 9000, height: 9000, on: screen)
+        #expect(huge.width == 1400)
+        #expect(huge.height == 900)
+    }
+
+    @MainActor
+    @Test("A requested size is centred on the screen it is given")
+    func aRequestedSizeIsCentred() {
+        let screen = NSRect(x: 100, y: 50, width: 2000, height: 1400)
+        let rect = EditorWindowController.requestedContentRect(
+            width: 1000, height: 700, on: screen)
+        #expect(rect.midX == screen.midX)
+        #expect(rect.midY == screen.midY)
+    }
+
+    @MainActor
+    @Test("No screen still yields the requested size, not a crash or a zero")
+    func noScreenStillSizes() {
+        // A test host has no screen and `NSScreen.main` is nil there, which is
+        // why this function takes the frame rather than reading it.
+        let rect = EditorWindowController.requestedContentRect(
+            width: 1000, height: 700, on: nil)
+        #expect(rect.width == 1000)
+        #expect(rect.height == 700)
+    }
+
+    @MainActor
+    @Test("Half a size is refused, not completed from the screen")
+    func halfASizeIsRefused() async throws {
+        // WRONG IMPLEMENTATION: filling the missing side from the screen or
+        // from the aspect ratio. That is a window the caller did not ask for
+        // and cannot tell apart from the one it wanted.
+        let recording = try bundle(initiator: .agent)
+        defer { try? FileManager.default.removeItem(at: recording.url) }
+
+        guard case .failure(let error) = await host().handle(
+            .editorOpen(bundlePath: recording.url.path,
+                        widthPoints: 900, heightPoints: nil), caller: nil) else {
+            Issue.record("half a size must be refused"); return
+        }
+        #expect(error.code == .invalidArguments)
+    }
+
+    @MainActor
+    @Test("A zero or non-finite size is refused")
+    func aBadSizeIsRefused() async throws {
+        let recording = try bundle(initiator: .agent)
+        defer { try? FileManager.default.removeItem(at: recording.url) }
+        let subject = host()
+
+        for (w, h) in [(0.0, 600.0), (-900.0, 600.0), (900.0, Double.nan)] {
+            guard case .failure(let error) = await subject.handle(
+                .editorOpen(bundlePath: recording.url.path,
+                            widthPoints: w, heightPoints: h), caller: nil) else {
+                Issue.record("\(w)x\(h) was accepted"); continue
+            }
+            #expect(error.code == .invalidArguments)
+        }
+    }
+
+    @Test("`editor open` parses a size, and refuses half of one")
+    func sizeParses() {
+        #expect(CommandLineParser.parse(
+            ["editor", "open", "a.snitt", "--width", "900", "--height", "640"])
+            == .success(.editorOpen(bundlePath: "a.snitt",
+                                    widthPoints: 900, heightPoints: 640)))
+        #expect(CommandLineParser.parse(["editor", "open", "a.snitt"])
+            == .success(.editorOpen(bundlePath: "a.snitt",
+                                    widthPoints: nil, heightPoints: nil)))
+        guard case .failure = CommandLineParser.parse(
+            ["editor", "open", "a.snitt", "--width", "900"]) else {
+            Issue.record("half a size must be refused at the parser too"); return
         }
     }
 

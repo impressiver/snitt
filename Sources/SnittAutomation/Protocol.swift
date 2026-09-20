@@ -248,7 +248,18 @@ public struct AutomationRequest: Codable, Sendable {
         /// SCREEN, so an agent may open only a recording it made. See
         /// `RecordingCoordinator.screenshotForAgent`, which refuses to
         /// photograph a session the agent did not start for the same reason.
-        case editorOpen(bundlePath: String)
+        /// `widthPoints`/`heightPoints` size the window, in POINTS, centred
+        /// on screen (D110). Both or neither; omitted leaves the window at
+        /// whatever size it would otherwise have.
+        ///
+        /// Points rather than pixels, because window geometry is in points on
+        /// macOS and a Retina display would otherwise halve what the caller
+        /// asked for. Clamped to a usable floor and to the screen, and the
+        /// APPLIED size comes back in `EditorState` — `CropRect`'s precedent,
+        /// which clamps rather than throwing and reports what it did.
+        case editorOpen(bundlePath: String,
+                        widthPoints: Double? = nil,
+                        heightPoints: Double? = nil)
         case editorPlay(bundlePath: String)
         case editorPause(bundlePath: String)
         case editorSeek(bundlePath: String, toSeconds: Double)
@@ -781,17 +792,30 @@ public struct EditorState: Codable, Sendable, Equatable {
     public var playheadSeconds: Double
     public var selectionStartSeconds: Double?
     public var selectionEndSeconds: Double?
+    /// The window's CONTENT size in points, as applied (D110).
+    ///
+    /// Reported on every editor verb, not just the one that sets it, because
+    /// an agent about to film the window needs to know what it is filming and
+    /// a person can resize it at any time. A requested size is clamped to a
+    /// usable floor and to the screen, so this is what the window actually
+    /// got rather than what was asked for.
+    public var widthPoints: Double?
+    public var heightPoints: Double?
 
     public init(bundlePath: String, isOpen: Bool, isPlaying: Bool,
                 playheadSeconds: Double,
                 selectionStartSeconds: Double? = nil,
-                selectionEndSeconds: Double? = nil) {
+                selectionEndSeconds: Double? = nil,
+                widthPoints: Double? = nil,
+                heightPoints: Double? = nil) {
         self.bundlePath = bundlePath
         self.isOpen = isOpen
         self.isPlaying = isPlaying
         self.playheadSeconds = playheadSeconds
         self.selectionStartSeconds = selectionStartSeconds
         self.selectionEndSeconds = selectionEndSeconds
+        self.widthPoints = widthPoints
+        self.heightPoints = heightPoints
     }
 }
 

@@ -547,13 +547,28 @@ public enum MCPBridge {
                            + "undo it. You may only open a recording an agent made: "
                            + "opening someone else's puts it on their screen, which "
                            + "Snitt refuses. Nothing else here opens a window, so call "
-                           + "this first.",
+                           + "this first. Pass widthPoints and heightPoints to SIZE the "
+                           + "window, which is what you want before filming it: the "
+                           + "editor opens at 75% of the screen, and scaled down to a "
+                           + "README-width GIF the transcript and timeline labels are "
+                           + "illegible. Sizes are POINTS, not pixels, and the size "
+                           + "actually applied comes back in the response.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
                         "bundlePath": [
                             "type": "string",
                             "description": "Path printed by snitt_stop_recording",
+                        ],
+                        "widthPoints": [
+                            "type": "number",
+                            "description": "Window content width in points. Raised to a "
+                                + "usable minimum and clamped to the screen; pass with "
+                                + "heightPoints or not at all.",
+                        ],
+                        "heightPoints": [
+                            "type": "number",
+                            "description": "Window content height in points",
                         ],
                     ],
                     "required": ["bundlePath"],
@@ -1119,7 +1134,19 @@ public enum MCPBridge {
             }
             let resolved = PathResolver.resolve(path, workingDirectory: workingDirectory)
             switch name {
-            case "snitt_editor_open": return .success(.editorOpen(bundlePath: resolved))
+            case "snitt_editor_open":
+                let width: Double?
+                let height: Double?
+                switch numericValue(arguments["widthPoints"], parameter: "widthPoints") {
+                case .failure(let error): return .failure(error)
+                case .success(let value): width = value
+                }
+                switch numericValue(arguments["heightPoints"], parameter: "heightPoints") {
+                case .failure(let error): return .failure(error)
+                case .success(let value): height = value
+                }
+                return .success(.editorOpen(bundlePath: resolved,
+                                            widthPoints: width, heightPoints: height))
             case "snitt_editor_play": return .success(.editorPlay(bundlePath: resolved))
             default: return .success(.editorPause(bundlePath: resolved))
             }

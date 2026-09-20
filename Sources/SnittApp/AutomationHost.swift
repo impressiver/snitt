@@ -384,9 +384,33 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
             return inspect(bundlePath: path)
 
-        case .editorOpen(let path):
+        case .editorOpen(let path, let width, let height):
             guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
-            return await editorOpen(bundlePath: path)
+            switch (width, height) {
+            case (nil, nil): break
+            case (let w?, let h?):
+                guard w.isFinite, h.isFinite, w > 0, h > 0 else {
+                    return .failure(AutomationError(
+                        code: .invalidArguments,
+                        message: "A window size must be two positive numbers of points, "
+                               + "got \(w) by \(h).",
+                        hint: "Points, not pixels: window geometry is in points on macOS, "
+                            + "so a Retina display would otherwise halve what you asked "
+                            + "for. Small sizes are raised to a usable floor and the "
+                            + "applied size comes back in the response."))
+                }
+            default:
+                // HALF a size is refused rather than completed. Filling the
+                // missing side from the screen, or from the aspect ratio,
+                // gives a window the caller did not ask for and cannot tell
+                // apart from the one it wanted.
+                return .failure(AutomationError(
+                    code: .invalidArguments,
+                    message: "A window size needs both a width and a height.",
+                    hint: "Pass --width and --height together, or neither to leave the "
+                        + "window as it is."))
+            }
+            return await editorOpen(bundlePath: path, width: width, height: height)
 
         case .editorPlay(let path):
             guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
@@ -1203,7 +1227,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// survives in the bundle. So this grants "made by an agent" rather than
     /// "made by THIS agent", which still refuses every human recording — the
     /// case that carries the sensitivity — and does not pretend to more.
-    private func editorOpen(bundlePath: String) async -> AutomationResponse {
+    private func editorOpen(bundlePath: String,
+                            width: Double?, height: Double?) async -> AutomationResponse {
         let bundle: SnittBundle
         do {
             bundle = try SnittBundle(opening: URL(fileURLWithPath: bundlePath))
@@ -1240,7 +1265,14 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                 message: "Could not open \(bundle.url.lastPathComponent) in the editor.",
                 hint: String(describing: error)))
         }
-        return await editorCommand(bundlePath: bundlePath) { _ in }
+        // Sizing runs through `editorCommand` like every other verb, so it
+        // applies to an ALREADY-OPEN window too: an agent that opens a
+        // recording, finds it too large to film legibly and asks again with a
+        // size gets the resize rather than a no-op.
+        return await editorCommand(bundlePath: bundlePath) { window in
+            guard let width, let height else { return }
+            window.agentResize(width: width, height: height)
+        }
     }
 
     /// Cuts whatever `editor select` selected.
