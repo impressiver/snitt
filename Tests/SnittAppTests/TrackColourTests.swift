@@ -115,7 +115,7 @@ struct AudioLaneOrderTests {
         // place a human reads the track order disagreed with the only place it
         // is load-bearing.
         let states = AudioTrackOrder.canonical.map { TrackState(track: $0) }
-        let lanes = TimelineTrackLayout.audioTracks(in: states)
+        let lanes = AudioTrackOrder.recorded(in: states, health: nil, overdubbed: false)
         let indices = lanes.map { AudioTrackOrder.canonical.firstIndex(of: $0)! }
         #expect(indices == indices.sorted(), "lanes are not in composition order: \(lanes)")
         #expect(lanes == ["systemAudio", "microphone", "voiceover"])
@@ -129,7 +129,7 @@ struct AudioLaneOrderTests {
         // `canonical` rather than from the caller.
         let shuffled = [TrackState(track: "voiceover"), TrackState(track: "microphone"),
                         TrackState(track: "systemAudio")]
-        #expect(TimelineTrackLayout.audioTracks(in: shuffled) == AudioTrackOrder.canonical)
+        #expect(AudioTrackOrder.recorded(in: shuffled, health: nil, overdubbed: false) == AudioTrackOrder.canonical)
     }
 
     @Test("A recording without a microphone still orders what it has")
@@ -137,8 +137,9 @@ struct AudioLaneOrderTests {
         // Dropping a track must close the gap, not leave a hole or reshuffle
         // the survivors.
         let states = [TrackState(track: "voiceover"), TrackState(track: "systemAudio")]
-        #expect(TimelineTrackLayout.audioTracks(in: states) == ["systemAudio", "voiceover"])
-        #expect(TimelineTrackLayout.audioTracks(in: [TrackState(track: "video")]).isEmpty,
+        #expect(AudioTrackOrder.recorded(in: states, health: nil, overdubbed: false) == ["systemAudio", "voiceover"])
+        #expect(AudioTrackOrder.recorded(in: [TrackState(track: "video")],
+                                         health: nil, overdubbed: false).isEmpty,
                 "video is not an audio lane")
     }
 
@@ -149,7 +150,7 @@ struct AudioLaneOrderTests {
         // meter would control the lane next to it — a bug that looks like
         // nothing at all until you drag one.
         let states = AudioTrackOrder.canonical.map { TrackState(track: $0) }
-        let tracks = TimelineTrackLayout.audioTracks(in: states)
+        let tracks = AudioTrackOrder.recorded(in: states, health: nil, overdubbed: false)
         let plan = TimelineLaneBudget.plan(availableHeight: 240, audioTracks: tracks,
                                            hasTranscript: false)
         let planned = plan.lanes.compactMap { lane -> String? in

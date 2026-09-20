@@ -395,6 +395,12 @@ final class EditorTimelineState: ObservableObject {
         /// draws one band per source, so muting has a visible effect — until
         /// now `TrackState.muted` changed the export and nothing on screen.
         let trackStates: [TrackState]
+        /// Which of those sources get a LANE, already resolved (D110).
+        ///
+        /// Carried rather than re-derived by the view: the evidence is
+        /// `CaptureHealth` and whether a take is open, neither of which a
+        /// timeline view has or should have.
+        let audioLanes: [String]
         /// Source-time peaks per track; empty until sampling finishes.
         let waveforms: [WaveformSamples]
         /// Source-time thumbnails; nil until decoding finishes.
@@ -426,6 +432,7 @@ final class EditorTimelineState: ObservableObject {
                     expandedCutIDs: expandedCutIDs,
                     selectedFoldID: selectedFoldID,
                     trackStates: edl.trackStates,
+                    audioLanes: audioLaneNames,
                     waveforms: waveforms,
                     filmstrip: filmstrip)
     }
@@ -1943,9 +1950,46 @@ final class EditorTimelineState: ObservableObject {
     /// derivation the timeline uses, so the controls and the bands cannot
     /// disagree about which sources exist.
     var audioTracks: [TrackState] {
-        TimelineTrackLayout.audioTracks(in: edl.trackStates).compactMap { name in
+        audioLaneNames.compactMap { name in
             edl.trackStates.first { $0.track == name }
         }
+    }
+
+    /// The ONE derivation of which audio lanes this recording has (D110).
+    ///
+    /// Everything that counts lanes reads this: the bands the timeline draws,
+    /// the rows the gutter puts a mute and a gain slider on, and the height
+    /// budget that divides the timeline between them. They used to each call
+    /// `TimelineTrackLayout.audioTracks(in:)` with whatever they had to hand,
+    /// which is three chances to disagree about how many rows exist — and a
+    /// gutter one row taller than the bands beside it is a control wired to
+    /// nothing.
+    var audioLaneNames: [String] {
+        AudioTrackOrder.recorded(in: edl.trackStates,
+                                 health: captureHealth,
+                                 // A take that is still OPEN counts. It is
+                                 // being written to the microphone right now,
+                                 // and a lane that appeared only once the take
+                                 // was committed would hide the recording
+                                 // while it was being made.
+                                 overdubbed: edl.hasOverdubs || overdubState != .idle)
+    }
+
+    /// What the capture measured, or `nil` for a bundle that predates
+    /// `CaptureHealth` and for an imported video.
+    ///
+    /// Read once, from `loadCaptureHealth()`, rather than computed: this
+    /// decides how many lanes are drawn, and `draw` runs on every scrub.
+    private(set) var captureHealth: CaptureHealth?
+
+    /// Reads `meta.json`'s health, if it has any.
+    ///
+    /// Called by the controller after `init`, exactly as `loadTranscript()`
+    /// is and for the same reason — a state built by a test must not do file
+    /// I/O as a side effect of existing. A state that never loads it keeps
+    /// every lane, which is the pre-D110 behaviour.
+    func loadCaptureHealth() {
+        captureHealth = (try? RecordingMetadata.read(from: controller.snittBundle))?.health
     }
 
     /// Removes the crop entirely. Distinct from cropping to the full frame only
@@ -2508,7 +2552,7 @@ struct EditorContentView: View {
     private var timelineHeight: Double {
         TimelineLaneBudget.timelineHeight(
             forWindowHeight: windowHeight,
-            audioTracks: TimelineTrackLayout.audioTracks(in: state.audioTracks),
+            audioTracks: state.audioLaneNames,
             hasTranscript: state.transcript != nil)
     }
 
@@ -2639,7 +2683,7 @@ struct EditorContentView: View {
                 TimelineGutter(
                     plan: TimelineLaneBudget.plan(
                         availableHeight: timelineHeight,
-                        audioTracks: TimelineTrackLayout.audioTracks(in: state.audioTracks),
+                        audioTracks: state.audioLaneNames,
                         hasTranscript: state.transcript != nil),
                     trackStates: state.audioTracks,
                     onGain: { state.setGain(track: $0, gain: $1) },
@@ -3211,6 +3255,7 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         // here rather than the state's init, so the TCC-gated recognizer is
         // never constructed as a side effect of a test building a state.
         state.loadTranscript()
+        state.loadCaptureHealth()
         state.beginTranscriptionIfNeeded()
         let hosting = NSHostingView(rootView: EditorContentView(state: state))
         let window = Self.makeWindow(

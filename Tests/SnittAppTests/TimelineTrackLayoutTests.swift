@@ -21,17 +21,17 @@ struct TimelineTrackLayoutTests {
     private let bounds = CGRect(x: 0, y: 0, width: 400, height: 56)
     private let markerHeight = 14.0
 
-    @Test("Audio sources come from the recording, not from a fixed list")
-    func audioTracksAreDerived() {
-        // A recording made with the microphone off must not get an empty mic
-        // lane implying a source that was never captured.
-        let withMic = [TrackState(track: "video"), TrackState(track: "microphone"),
-                       TrackState(track: "systemAudio")]
-        #expect(TimelineTrackLayout.audioTracks(in: withMic) == ["systemAudio", "microphone"])
-
-        let withoutMic = [TrackState(track: "video"), TrackState(track: "systemAudio")]
-        #expect(TimelineTrackLayout.audioTracks(in: withoutMic) == ["systemAudio"])
-    }
+    // WHICH sources get a lane is asserted in `AudioTrackVisibilityTests`
+    // now (D110), in `SnittDocumentTests`, which CI can actually run.
+    //
+    // The test that stood here is worth remembering rather than just
+    // deleting. It said "a recording made with the microphone off must not get
+    // an empty mic lane", and it passed for years while exactly that happened
+    // on every such recording — because what it actually checked was that the
+    // filter removes a microphone from a list that has no microphone in it.
+    // No mic-off recording ever produced that list: `fullRange()` writes both
+    // audio states at `start()`. A proxy stood in for the property, the proxy
+    // held, and the property never did.
 
     @Test("Two audio sources get two bands, and they do not overlap")
     func twoSourcesGetTwoBands() {

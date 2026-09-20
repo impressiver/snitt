@@ -16,41 +16,17 @@ import SnittDocument
 /// M3) had no representation at all: muting a source changed the export and
 /// nothing on screen.
 ///
+/// **WHICH sources get a band is not decided here** (D110). This type takes
+/// the list and divides the height; `AudioTrackOrder.recorded` decides what is
+/// on the list, from evidence — `CaptureHealth` and the document's takes —
+/// that geometry has no business reading. The filter that used to live here
+/// consulted `trackStates` alone and could never remove anything, because
+/// `EditDecisionList.fullRange()` writes both audio states at `start()`.
+///
 /// Pure, and returns rects rather than drawing them, so band geometry is
 /// testable without a window — the same split that made `CropGeometry` and
 /// `openingContentRect` testable.
 enum TimelineTrackLayout {
-    /// Which audio sources a recording actually has, in draw order.
-    ///
-    /// Derived from `trackStates` rather than assumed, because a recording made
-    /// with the microphone off has no `microphone` state and must not be given
-    /// an empty band implying a source that was never captured.
-    static func audioTracks(in states: [TrackState]) -> [String] {
-        // `AudioTrackOrder.canonical`, rather than a second list that happens
-        // to agree — system audio, then the microphone, then the synthesised
-        // voice.
-        //
-        // THE LANES NOW READ IN THE ORDER THE TRACKS EXIST IN THE FILE. That
-        // is the order `AssetWriterSink` writes and the order an audio mix
-        // addresses, so "the second lane" and "track 1" are finally the same
-        // thing. This list used to put the microphone first, which meant the
-        // one place a human reads the track order disagreed with the only
-        // place it is load-bearing.
-        //
-        // Keeping it derived also makes "voiceover LAST" a consequence rather
-        // than a coincidence: it is appended third, so it draws third.
-        //
-        // Nothing adds that lane today. A recorded take lands on the
-        // microphone (D102), and the third track is reserved for synthesised
-        // speech (D101) — which has no `TrackState` until there is something
-        // in it, so the filter below leaves the lane out until then.
-        //
-        // Filtered by what the recording actually has, because a lane for a
-        // source that was never captured implies one that was.
-        let order = AudioTrackOrder.canonical
-        return order.filter { name in states.contains { $0.track == name } }
-    }
-
     /// Band rects, bottom-up in AppKit's flipped-off coordinate space, matching
     /// how `TimelineView.draw` already lays out marker/video/audio.
     ///
