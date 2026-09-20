@@ -60,16 +60,18 @@ snitt trim main.snitt --auto
 
 error: bundle_open_in_editor
   main-1b5f7d9.snitt is open in Snitt's editor.
-  Close the window, or edit it there.
+  Close the window, or make this edit in the editor.
 
-exit 4
+exit 20
 ```
 
 Four things that are not optional:
 
 - **The check runs before the write, not after.** A verb that writes and then
   reports a conflict has already lost the data it was meant to protect.
-- **It is a new error code, not `internal_error`.** The agent-API audit's
+- **It is a new error code, not `internal_error`.** `bundle_open_in_editor`,
+  exit 20 — appended, because §15 makes these a public interface and the codes
+  that shipped keep the numbers they shipped. The agent-API audit's
   finding 2 is that `internal_error` already spans "fix your request", "do not
   retry" and "wait and retry"; this is squarely the first, and the hint tells
   the caller exactly what to do about it.
