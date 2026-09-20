@@ -62,7 +62,8 @@ func everyToolMaps() {
             json = #"{"outputPath": "/tmp/diagnostics.json"}"#
         case "snitt_list_recordings":
             json = "{}"
-        case "snitt_editor_open", "snitt_editor_play", "snitt_editor_pause":
+        case "snitt_editor_open", "snitt_editor_play", "snitt_editor_pause",
+             "snitt_editor_cut":
             json = #"{"bundlePath": "/tmp/x.snitt"}"#
         case "snitt_editor_seek":
             json = #"{"bundlePath": "/tmp/x.snitt", "toSeconds": 4.2}"#
@@ -93,7 +94,7 @@ func toolNamesAreStable() {
                       // D109's editor control. Five verbs, all view state.
                       "snitt_editor_open", "snitt_editor_play",
                       "snitt_editor_pause", "snitt_editor_seek",
-                      "snitt_editor_select"])
+                      "snitt_editor_select", "snitt_editor_cut"])
 }
 
 @Test("The MCP tool maps to the same request the CLI would send")

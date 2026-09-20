@@ -391,6 +391,9 @@ func requestBody(for command: ParsedCommand,
         return .editorSelect(
             bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
             fromSeconds: from, toSeconds: to)
+    case .editorCut(let path):
+        return .editorCut(
+            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory))
     case .trim(let path, let start, let end, let auto):
         return .trim(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
                      start: start, end: end, auto: auto)

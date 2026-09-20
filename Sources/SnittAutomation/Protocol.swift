@@ -254,6 +254,15 @@ public struct AutomationRequest: Codable, Sendable {
         case editorSeek(bundlePath: String, toSeconds: Double)
         /// `nil` for both ends clears the selection.
         case editorSelect(bundlePath: String, fromSeconds: Double?, toSeconds: Double?)
+        /// Removes the selected range, the way pressing Delete does.
+        ///
+        /// The verb `editor select` exists FOR. Without it a selection is a
+        /// highlight nothing can act on, and an agent has no way to remove an
+        /// interior span at all: `trim` sets the KEEP range, so it can only
+        /// take material off the ends, and `auto-deep-trim` finds dead air
+        /// rather than a span the caller chose. Found by filming the demo,
+        /// where "select the stumble, cut it" turned out to be unreachable.
+        case editorCut(bundlePath: String)
         case export(bundlePath: String, format: String, outputPath: String,
                     scale: Double, chapters: Bool, subtitles: Bool, maxSizeBytes: Int?,
                     /// Output size to target. `.source` keeps the recording's

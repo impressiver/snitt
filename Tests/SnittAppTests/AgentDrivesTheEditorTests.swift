@@ -256,6 +256,56 @@ struct AgentDrivesTheEditorTests {
         }
     }
 
+    // MARK: Cutting what was selected
+
+    @MainActor
+    @Test("Cutting with nothing selected is refused, not reported as done")
+    func cutWithNoSelectionIsRefused() async throws {
+        // WRONG IMPLEMENTATION: reusing `cutSelection()`, which is a no-op
+        // with no selection. That is right for a KEYSTROKE — pressing Delete
+        // with nothing selected is a harmless mistake — and wrong for a
+        // COMMAND: an agent cannot see the timeline, so "cut" and "cut
+        // nothing" reported identically is §8's confidently-wrong outcome.
+        let recording = try bundle(initiator: .agent)
+        defer { try? FileManager.default.removeItem(at: recording.url) }
+
+        // Not open, so this exercises the earlier guard; the selection guard
+        // is unreachable from a host test without a real window, and is
+        // covered by the editor-level behaviour instead.
+        guard case .failure(let error) = await host().handle(
+            .editorCut(bundlePath: recording.url.path), caller: nil) else {
+            Issue.record("cutting a closed document must fail"); return
+        }
+        #expect(error.code == .targetNotFound)
+    }
+
+    @Test("`editor cut` parses, and takes nothing but a bundle")
+    func cutParses() {
+        #expect(CommandLineParser.parse(["editor", "cut", "a.snitt"])
+            == .success(.editorCut(bundlePath: "a.snitt")))
+        guard case .failure = CommandLineParser.parse(["editor", "cut"]) else {
+            Issue.record("`editor cut` must name its bundle"); return
+        }
+    }
+
+    @Test("An interior span is reachable at all")
+    func anInteriorSpanIsReachable() {
+        // THE REASON THIS VERB EXISTS, pinned so it cannot quietly regress to
+        // the state the demo hit: `trim` sets the range to KEEP, so it removes
+        // material only from the ENDS, and `auto-deep-trim` finds dead air
+        // rather than a span the caller chose. With neither able to remove a
+        // chosen interior range, `editor select` was a highlight nothing could
+        // act on.
+        //
+        // Found by filming the demo, where "select the stumble, cut it" was
+        // the central beat and turned out to be unreachable. `snitt trim
+        // --start 0 --end 9` removed the stumble AND everything after it.
+        guard case .success(.editorCut) = CommandLineParser.parse(
+            ["editor", "cut", "a.snitt"]) else {
+            Issue.record("no verb removes a chosen interior span"); return
+        }
+    }
+
     // MARK: The wire
 
     @Test("The editor verbs are new REQUEST cases, so the protocol version bumped")

@@ -434,6 +434,10 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             }
             return await editorCommand(bundlePath: path) { $0.agentSelect(range) }
 
+        case .editorCut(let path):
+            guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
+            return await editorCut(bundlePath: path)
+
         case .listRecordings(let limit):
             // Gated, and not only because the verb is a read. A bundle's
             // FILENAME is derived from the git branch and commit
@@ -1237,6 +1241,51 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                 hint: String(describing: error)))
         }
         return await editorCommand(bundlePath: bundlePath) { _ in }
+    }
+
+    /// Cuts whatever `editor select` selected.
+    ///
+    /// Refuses when nothing is selected, rather than succeeding quietly. A
+    /// person pressing Delete with no selection gets a harmless no-op, which
+    /// is right for a keystroke; an agent cannot see the timeline, so "cut"
+    /// and "cut nothing" reported the same way is §8's confidently-wrong
+    /// outcome.
+    private func editorCut(bundlePath: String) async -> AutomationResponse {
+        let url = URL(fileURLWithPath: bundlePath)
+        enum Outcome { case notOpen, nothingSelected, cut(EditorState) }
+        let outcome: Outcome
+        do {
+            outcome = try await MainActor.run { () -> Task<Outcome, Error> in
+                guard let window = EditorWindowController.existing(for: url) else {
+                    return Task { .notOpen }
+                }
+                return Task { @MainActor in
+                    guard try await window.agentCutSelection() else { return .nothingSelected }
+                    return .cut(window.agentVisibleState)
+                }
+            }.value
+        } catch {
+            return .failure(AutomationError(
+                code: .unusableRecording,
+                message: "The editor refused that cut.",
+                hint: String(describing: error)))
+        }
+
+        switch outcome {
+        case .notOpen:
+            return .failure(AutomationError(
+                code: .targetNotFound,
+                message: "\(url.lastPathComponent) is not open in the editor.",
+                hint: "Call `snitt editor open <bundle>` first."))
+        case .nothingSelected:
+            return .failure(AutomationError(
+                code: .invalidArguments,
+                message: "Nothing is selected in \(url.lastPathComponent).",
+                hint: "Call `snitt editor select <bundle> --from <s> --to <s>` first. "
+                    + "Cutting nothing would report success and change nothing."))
+        case .cut(let state):
+            return .editorState(state)
+        }
     }
 
     /// Runs `command` against the window showing `bundlePath`, and reports

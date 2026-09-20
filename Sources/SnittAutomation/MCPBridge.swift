@@ -628,6 +628,24 @@ public enum MCPBridge {
                     "required": ["bundlePath"],
                 ]),
             ToolDefinition(
+                name: "snitt_editor_cut",
+                description: "Remove the selected range from an open recording, the "
+                           + "way pressing Delete does. This is what snitt_editor_select "
+                           + "is FOR: select the span you want gone, then cut it, and a "
+                           + "person watching sees both halves happen. It is the only "
+                           + "way to remove an INTERIOR span — snitt_trim sets the range "
+                           + "to KEEP, so it can only take material off the ends, and "
+                           + "snitt_auto_deep_trim finds dead air rather than a span you "
+                           + "chose. Fails if nothing is selected, rather than reporting "
+                           + "a success that changed nothing. Undoable as one step.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "bundlePath": ["type": "string", "description": "The open recording"],
+                    ],
+                    "required": ["bundlePath"],
+                ]),
+            ToolDefinition(
                 name: "snitt_narrate",
                 description: "Write a line of narration into a recording at a moment in "
                            + "it. This is how you say something on a demo: you have no "
@@ -1086,6 +1104,13 @@ public enum MCPBridge {
                 return .failure(MCPBridgeError("snitt_transcript requires bundlePath"))
             }
             return .success(.transcript(
+                bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory)))
+
+        case "snitt_editor_cut":
+            guard let path = arguments["bundlePath"] as? String else {
+                return .failure(MCPBridgeError("snitt_editor_cut requires bundlePath"))
+            }
+            return .success(.editorCut(
                 bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory)))
 
         case "snitt_editor_open", "snitt_editor_play", "snitt_editor_pause":

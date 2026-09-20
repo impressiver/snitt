@@ -66,6 +66,7 @@ public enum ParsedCommand: Equatable {
     case editorPause(bundlePath: String)
     case editorSeek(bundlePath: String, toSeconds: Double)
     case editorSelect(bundlePath: String, fromSeconds: Double?, toSeconds: Double?)
+    case editorCut(bundlePath: String)
     case recordingsList(limit: Int?)
     /// `outputPath` here is still the RAW string typed on the command line —
     /// `main.swift` resolves it against the caller's cwd before it reaches
@@ -208,7 +209,7 @@ public enum CommandLineParser {
             // thing.
             guard let sub = args.first else {
                 return .failure(ParseFailure(
-                    "`editor` needs a subcommand: open, play, pause, seek or select."))
+                    "`editor` needs a subcommand: open, play, pause, seek, select or cut."))
             }
             return parseEditor(sub, args: Array(args.dropFirst()))
 
@@ -641,6 +642,11 @@ public enum CommandLineParser {
                 return .failure(ParseFailure("`editor open` takes only a bundle path, got \(rest[0])."))
             }
             return .success(.editorOpen(bundlePath: path))
+        case "cut":
+            guard rest.isEmpty else {
+                return .failure(ParseFailure("`editor cut` takes only a bundle path, got \(rest[0])."))
+            }
+            return .success(.editorCut(bundlePath: path))
         case "play":
             guard rest.isEmpty else {
                 return .failure(ParseFailure("`editor play` takes only a bundle path, got \(rest[0])."))
@@ -715,7 +721,7 @@ public enum CommandLineParser {
             return .success(.editorSelect(bundlePath: path, fromSeconds: from, toSeconds: to))
         default:
             return .failure(ParseFailure(
-                "Unknown editor subcommand `\(verb)`. Try open, play, pause, seek or select."))
+                "Unknown editor subcommand `\(verb)`. Try open, play, pause, seek, select or cut."))
         }
     }
 

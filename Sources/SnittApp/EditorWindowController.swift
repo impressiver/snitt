@@ -2164,6 +2164,24 @@ final class EditorTimelineState: ObservableObject {
         return edl
     }
 
+    /// Cuts the current selection, as one undo entry, and reports whether
+    /// there was anything to cut.
+    ///
+    /// `false` means NOTHING WAS SELECTED, which the caller turns into a
+    /// refusal rather than a cheerful success: an agent cannot see the
+    /// timeline, so "cut" and "cut nothing" must not look the same (§8).
+    /// A person pressing Delete with no selection gets a harmless no-op,
+    /// which is right for a keystroke and wrong for a command.
+    func cutSelectionFromAgent() async throws -> Bool {
+        guard let selection else { return false }
+        _ = try await applyFromAgent("Cut") { edl in
+            var updated = edl
+            updated.cuts.append(Cut(range: selection.range, label: nil))
+            return updated
+        }
+        return true
+    }
+
     /// The transcript-side twin, for `narrate`.
     ///
     /// Needed for the same reason the EDL one is: the editor holds
@@ -2955,6 +2973,11 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         -> Transcript {
         state.noteAgentActivity()
         return try await state.applyTranscriptFromAgent(actionName, transform)
+    }
+
+    func agentCutSelection() async throws -> Bool {
+        state.noteAgentActivity()
+        return try await state.cutSelectionFromAgent()
     }
 
     static func existing(for url: URL) -> EditorWindowController? {
