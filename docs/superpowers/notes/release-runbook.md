@@ -215,24 +215,32 @@ is a tap: Homebrew resolves `brew tap <user>/<name>` to a repository
 literally named `homebrew-<name>`, so the cask has to be copied into
 `impressiver/homebrew-snitt` before anyone can install from it.
 
-That repo does not exist yet, and creating it is deliberately left out of
-this runbook — it is a public repository, which is a decision rather than
-a step, and it is pointless before this repo is public anyway (the cask's
-download URL 404s while releases are private).
+**That repo now exists**, created 2026-09-20 once this repo was public and a
+release's zip was reachable unauthenticated — the two things that made it
+pointless before. It holds a copy of `Casks/snitt.rb` and a README saying
+the copy is generated, because a cask that looks editable in the place
+people find it is a fix the next release overwrites.
 
-When it is time:
+**Per release, copy `Casks/snitt.rb` into that repo's `Casks/` directory.**
+`release.sh` does not do this, so it is the one step of a release still done
+by hand — and it is the step with no failure mode, which is what the script's
+own header says about the upload it was written to stop being skipped. Worth
+folding in.
+
+The install line is three commands, not two:
 
 ```sh
-gh repo create impressiver/homebrew-snitt --public \
-  --description "Homebrew tap for Snitt"
-# then, per release, copy Casks/snitt.rb into that repo's Casks/ directory
+brew tap impressiver/snitt
+brew trust impressiver/snitt
+brew install --cask snitt
 ```
 
-After which the install line is:
-
-```sh
-brew tap impressiver/snitt && brew install --cask snitt
-```
+**The trust line is not optional.** Homebrew 7 refuses to load a cask from a
+third-party tap until the tap is trusted, and fails with "Refusing to load
+cask impressiver/snitt/snitt from untrusted tap". Verified against Homebrew
+7.0.4 on 2026-09-20: `brew tap` succeeds and reports the cask, and
+`brew info --cask snitt` then refuses it. Any install snippet that omits it
+sends people to an error.
 
 A personal tap rather than a homebrew-cask submission, on purpose: a tap
 is one repo and one file with no review queue, and it can be promoted to
