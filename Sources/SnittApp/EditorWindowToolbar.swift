@@ -5,6 +5,7 @@
 // Copyright © 2026 Ian White.
 
 import AppKit
+import Combine
 import SnittDocument
 import SwiftUI
 
@@ -70,6 +71,10 @@ final class EditorChromeState: ObservableObject {
 final class EditorWindowToolbar: NSObject, NSToolbarDelegate {
     private let state: EditorTimelineState
     private let chrome: EditorChromeState
+    /// Held so its visibility can follow `agentIsDriving`. `isHidden` is the
+    /// writable one — `isVisible` reports what the toolbar decided.
+    private weak var agentItem: NSToolbarItem?
+    private var agentObserver: AnyCancellable?
 
     init(state: EditorTimelineState, chrome: EditorChromeState) {
         self.state = state
@@ -126,6 +131,11 @@ final class EditorWindowToolbar: NSObject, NSToolbarDelegate {
         window.toolbar = toolbar
         chrome.applySubtitle = { [weak window] subtitle in window?.subtitle = subtitle }
         chrome.applySubtitle?(state.documentSubtitle)
+        // The badge appears and disappears while the window is open, so its
+        // visibility has to follow rather than be set once at build time.
+        agentObserver = state.$agentIsDriving.sink { [weak self] driving in
+            self?.agentItem?.isHidden = !driving
+        }
     }
 
     // MARK: - NSToolbarDelegate
@@ -146,8 +156,16 @@ final class EditorWindowToolbar: NSObject, NSToolbarDelegate {
                  willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
         switch identifier {
         case Item.agentStatus:
-            return hosting(identifier, label: "Agent",
-                           AgentStatusToolbarItem(state: state))
+            let item = hosting(identifier, label: "Agent",
+                               AgentStatusToolbarItem(state: state))
+            // A SwiftUI view that renders nothing still leaves the item's own
+            // padding behind, and that gap sits at the LEADING edge of the
+            // capsule where it reads as a layout mistake rather than as a
+            // space reserved for something. `isVisible` takes the item out of
+            // the row entirely.
+            item.isHidden = !state.agentIsDriving
+            agentItem = item
+            return item
         case Item.autoTrim:
             return hosting(identifier, label: "Auto-Trim",
                            AutoTrimToolbarItem(state: state))
@@ -195,11 +213,11 @@ final class EditorWindowToolbar: NSObject, NSToolbarDelegate {
 /// in front of you, and status stranded at the far end of a row reads as
 /// unrelated.
 ///
-/// Collapses to nothing when no agent is driving. An `NSToolbarItem` whose
-/// view has no intrinsic width leaves the item's own spacing behind, so idle
-/// costs a few points of gap rather than none; the alternative is toggling
-/// `isVisible`, which reflows the row every time an agent touches the
-/// document. A steady row is worth more than those points.
+/// Taken out of the row entirely when no agent is driving, via the item's
+/// `isHidden`. Rendering an empty SwiftUI view instead was tried and looked
+/// wrong: the item keeps its own padding, and that gap lands at the LEADING
+/// edge of the capsule, where an unexplained space reads as a layout mistake
+/// rather than as room held for something.
 private struct AgentStatusToolbarItem: View {
     @ObservedObject var state: EditorTimelineState
 
@@ -236,7 +254,7 @@ private struct AutoTrimToolbarItem: View {
             }
             .menuStyle(.button)
             .fixedSize()
-            .help("Cut the spans where nothing happens")
+            .help(EditorCommand.autoTrim.tooltip)
 
             if let caption = state.lastTrimOutcome.map(EditorContentView.trimCaption) {
                 Text(caption)
@@ -271,7 +289,7 @@ private struct CropToolbarItem: View {
         }
         .toggleStyle(.button)
         .fixedSize()
-        .help("Draw a crop box on the picture — Return applies it, Escape cancels")
+        .help(EditorCommand.crop.tooltip)
     }
 }
 
@@ -291,7 +309,7 @@ private struct ExportToolbarItem: View {
         }
         .buttonStyle(.borderedProminent)
         .fixedSize()
-        .help("Write a video file — ⌘E")
+        .help(EditorCommand.export.tooltip)
     }
 }
 
@@ -313,8 +331,7 @@ private struct PanelToolbarItem: View {
         .labelStyle(.iconOnly)
         .fixedSize()
         .disabled(state.transcriptionStatus == .none)
-        .help(chrome.showRail ? "Hide the markers and transcript panel"
-                              : "Show the markers and transcript panel")
+        .help(EditorCommand.panel.tooltip)
         .accessibilityLabel("Markers and transcript panel")
         .accessibilityAddTraits(chrome.showRail ? [.isSelected] : [])
     }

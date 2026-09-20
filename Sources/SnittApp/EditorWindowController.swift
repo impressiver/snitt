@@ -3457,6 +3457,21 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// its neighbour.
     func resetCrop() { state.resetCrop() }
 
+    /// Edit ▸ Auto-Trim, at the preset the toolbar menu also calls Default.
+    func autoTrimAtDefaultPreset() { _ = state.autoDeepTrim(preset: .default) }
+
+    /// Edit ▸ Crop. Enters or leaves the mode; the box itself is committed by
+    /// Return and abandoned by Escape, both handled by the drag overlay.
+    func toggleCrop() { chrome.croppingActive.toggle() }
+
+    /// View ▸ Panel.
+    func togglePanel() { chrome.showRail.toggle() }
+
+    /// What View ▸ Panel should be called right now, so the menu says which
+    /// way it will go rather than always claiming one — the same rule
+    /// `deleteMenuTitle` follows.
+    var panelMenuTitle: String { chrome.showRail ? "Hide Panel" : "Show Panel" }
+
     /// Edit ▸ Cut Selection (Delete/Backspace), Task 5's second requirement:
     /// "Task 4 added a Cut button but no keyboard path." `EditorWindowController`
     /// is not in the responder chain (see `AppDelegate.exportDocument`'s doc

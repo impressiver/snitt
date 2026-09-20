@@ -607,6 +607,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `validateMenuItem(_:)` below, so in practice the menu item (and the
     /// bare delete key it's bound to) is disabled whenever this guard would
     /// fail, rather than relying on a user never triggering a no-op.
+    /// Edit ▸ Auto-Trim. The default preset: the toolbar menu offers all
+    /// three, and a key can only mean one.
+    @objc func autoTrimDocument(_ sender: Any?) {
+        keyEditor?.autoTrimAtDefaultPreset()
+    }
+
+    /// Edit ▸ Crop — enters and leaves the mode. Return and Escape then commit
+    /// or abandon the box, handled by the drag overlay rather than by a menu.
+    @objc func toggleCrop(_ sender: Any?) { keyEditor?.toggleCrop() }
+
+    /// View ▸ Panel.
+    @objc func togglePanel(_ sender: Any?) { keyEditor?.togglePanel() }
+
+    /// The editor the key window belongs to, if any.
+    ///
+    /// The same resolution `exportDocument` and `cutTimelineSelection` do by
+    /// hand; extracted once the fourth command needed it, because four copies
+    /// of a `first(where:)` over `openEditors` is where one of them quietly
+    /// stops matching the others.
+    private var keyEditor: EditorWindowController? {
+        EditorWindowController.openEditors.first { $0.window == NSApp.keyWindow }
+    }
+
     /// Puts the whole picture back, for a recording that has a crop.
     ///
     /// A menu item because the titlebar no longer has room for one that comes
@@ -844,9 +867,19 @@ extension AppDelegate: NSMenuItemValidation {
             return EditorWindowController.openEditors.contains { $0.window == NSApp.keyWindow }
         }
         if menuItem.action == #selector(resetCrop(_:)) {
-            return EditorWindowController.openEditors.first(where: {
-                $0.window == NSApp.keyWindow
-            })?.hasCrop ?? false
+            return keyEditor?.hasCrop ?? false
+        }
+        // The rest need an editor and nothing more. The panel item's TITLE
+        // follows the state, the way Edit ▸ Cut Selection's already does: a
+        // menu permanently reading "Panel" says nothing about which way it
+        // will go.
+        if menuItem.action == #selector(togglePanel(_:)) {
+            if let editor = keyEditor { menuItem.title = editor.panelMenuTitle }
+            return keyEditor != nil
+        }
+        if menuItem.action == #selector(autoTrimDocument(_:))
+            || menuItem.action == #selector(toggleCrop(_:)) {
+            return keyEditor != nil
         }
         guard menuItem.action == #selector(cutTimelineSelection(_:)) else { return true }
         // The title follows the highlight: one key, one item, two edits. A
