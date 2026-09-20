@@ -1148,6 +1148,27 @@ final class EditorTimelineState: ObservableObject {
     /// It only looked right during playback, where the 20Hz playhead poll was
     /// re-rendering the transport anyway.
     @Published var timelineZoomFraction: Double = 0
+
+    /// Where the timeline is scrolled to and how much of it is on screen.
+    ///
+    /// PUBLISHED, because the transport's scroll indicator used to read these
+    /// three straight off the view during a render — and an `NSView`'s plain
+    /// properties publish nothing, so side-scrolling moved the timeline and
+    /// left the indicator behind. It appeared to work while playing, because
+    /// the 20Hz playhead tick was re-rendering the transport anyway; paused,
+    /// the indicator simply stopped reporting where you were.
+    ///
+    /// That is the same defect `onZoomChanged` was added for, and its comment
+    /// says so in as many words. Only the zoom slider got the fix.
+    @Published private(set) var timelineViewport = TimelineView.Viewport(
+        scrollFraction: 0, visibleFraction: 1, isScrollable: false)
+
+    /// Guarded, so a layout pass that moved nothing publishes nothing —
+    /// SwiftUI treats a change made during a view update as a mistake.
+    func updateViewport(_ viewport: TimelineView.Viewport) {
+        guard viewport != timelineViewport else { return }
+        timelineViewport = viewport
+    }
     /// Where in OUTPUT time the current take began, so the live lane knows
     /// where to start drawing.
     @Published private(set) var voiceoverStartedAt: Double = 0
@@ -2398,6 +2419,7 @@ struct TimelineViewRepresentable: NSViewRepresentable {
         // that existed because the existing one was not looked for.
         view.onCreateMarker = { [weak state] in state?.addMarker(atOutput: $0) }
         view.onZoomChanged = { [weak state] in state?.timelineZoomFraction = $0 }
+        view.onViewportChanged = { [weak state] in state?.updateViewport($0) }
         view.onRemoveCut = { [weak state] in state?.removeCut(id: $0) }
         // D50/D56 (M5f Task 6): a marker drag reports the OUTPUT time it was
         // dropped at, converted back to SOURCE time by `moveMarker` itself
@@ -2731,9 +2753,11 @@ struct EditorContentView: View {
                 zoomFraction: Binding(
                     get: { state.timelineZoomFraction },
                     set: { state.timelineView?.setZoomFraction($0) }),
-                isScrollable: state.timelineView?.isScrollable ?? false,
-                visibleFraction: state.timelineView?.visibleFraction ?? 1,
-                scrollFraction: state.timelineView?.scrollFraction ?? 0,
+                // The PUBLISHED mirror, not the view, for exactly the reason
+                // the zoom binding above reads one.
+                isScrollable: state.timelineViewport.isScrollable,
+                visibleFraction: state.timelineViewport.visibleFraction,
+                scrollFraction: state.timelineViewport.scrollFraction,
                 onScroll: { state.timelineView?.setScrollFraction($0) },
                 onZoomStep: { state.zoomTimeline(by: $0) },
                 canCut: state.selection != nil,
