@@ -222,6 +222,14 @@ public final class TimelineView: NSView {
     /// Which audio sources this recording has, and whether each is muted —
     /// one band each in `draw`.
     private var trackStates: [TrackState] = []
+    /// Which of those sources get a band, resolved by
+    /// `EditorTimelineState.audioLaneNames` (D110).
+    ///
+    /// Handed to this view rather than derived here. Whether a source was
+    /// captured at all is a fact about `meta.json`, and whether a take covers
+    /// the microphone is a fact about the document — a timeline view has
+    /// neither and should not learn to read them.
+    private var audioLanes: [String] = []
     /// Source-time peaks per audio track. Empty until sampling finishes, which
     /// draws as a plain band — see `EditorTimelineState.waveforms`.
     private var waveforms: [WaveformSamples] = []
@@ -330,6 +338,7 @@ public final class TimelineView: NSView {
                expandedCutIDs: display.expandedCutIDs,
                selectedFoldID: display.selectedFoldID,
                trackStates: display.trackStates,
+               audioLanes: display.audioLanes,
                waveforms: display.waveforms,
                filmstrip: display.filmstrip)
     }
@@ -339,6 +348,7 @@ public final class TimelineView: NSView {
                        expandedCutIDs: Set<UUID> = [],
                        selectedFoldID: UUID? = nil,
                        trackStates: [TrackState] = [],
+                       audioLanes: [String]? = nil,
                        waveforms: [WaveformSamples] = [],
                        filmstrip: FilmstripFrames? = nil) {
         self.duration = duration
@@ -349,6 +359,14 @@ public final class TimelineView: NSView {
         self.expandedCutIDs = expandedCutIDs
         self.selectedFoldID = selectedFoldID
         self.trackStates = trackStates
+        // Unspecified means EVERY audio track handed in, not none. The
+        // production path is `update(display:)`, which always resolves the
+        // list; this default serves the fifty-odd callers that set up a
+        // timeline without caring how its audio was captured, and it is the
+        // pre-D110 rule rather than a second one — through the same function,
+        // so there is still only one place lanes are derived.
+        self.audioLanes = audioLanes
+            ?? AudioTrackOrder.recorded(in: trackStates, health: nil, overdubbed: false)
         self.waveforms = waveforms
         self.filmstrip = filmstrip
         rebuildGeometry()
@@ -1600,10 +1618,14 @@ public final class TimelineView: NSView {
         // rather than a single undifferentiated strip: D56 Tier 1 asked for
         // separate tracks, and drawing both sources as one meant a muted
         // source looked exactly like an unmuted one while exporting
-        // differently. Sources are derived from `trackStates`, so a recording
-        // made without the microphone gets no empty mic lane implying a source
-        // that was never captured.
-        let tracks = TimelineTrackLayout.audioTracks(in: trackStates)
+        // differently.
+        //
+        // The lanes arrive RESOLVED (D110). They used to be derived here from
+        // `trackStates`, with a comment claiming a recording made without the
+        // microphone got no mic lane — which was never true: `fullRange()`
+        // writes both audio states at `start()`, before a sample exists, so
+        // the filter could not remove anything.
+        let tracks = audioLanes
         let bands = TimelineTrackLayout.bands(in: bounds,
                                               markerHeight: markerTrackHeight,
                                               audioTracks: tracks,

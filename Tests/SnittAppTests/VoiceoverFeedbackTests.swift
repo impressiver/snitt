@@ -31,10 +31,10 @@ struct VoiceoverFeedbackTests {
         // Deliberately handed in an order the answer must NOT preserve, so a
         // version that simply returned its input would fail here.
         let states = [TrackState(track: "microphone"), TrackState(track: "systemAudio")]
-        #expect(TimelineTrackLayout.audioTracks(in: states) == ["systemAudio", "microphone"])
+        #expect(AudioTrackOrder.recorded(in: states, health: nil, overdubbed: false) == ["systemAudio", "microphone"])
 
         let withVoiceover = states + [TrackState(track: "voiceover")]
-        #expect(TimelineTrackLayout.audioTracks(in: withVoiceover)
+        #expect(AudioTrackOrder.recorded(in: withVoiceover, health: nil, overdubbed: false)
                 == ["systemAudio", "microphone", "voiceover"],
                 "narration must come last: it is added under the recording, not a source it was made from")
     }
@@ -43,7 +43,8 @@ struct VoiceoverFeedbackTests {
     func noLaneWithoutNarration() {
         // Same rule the microphone band follows: a lane for a source that was
         // never captured implies one.
-        #expect(!TimelineTrackLayout.audioTracks(in: [TrackState(track: "systemAudio")])
+        #expect(!AudioTrackOrder.recorded(in: [TrackState(track: "systemAudio")],
+                                          health: nil, overdubbed: false)
             .contains("voiceover"))
     }
 
@@ -78,7 +79,7 @@ struct VoiceoverFeedbackTests {
         var edl = EditDecisionList()
         edl.trackStates = [TrackState(track: "systemAudio"), TrackState(track: "voiceover")]
         edl.trackStates.removeAll { $0.track == "voiceover" }
-        #expect(!TimelineTrackLayout.audioTracks(in: edl.trackStates).contains("voiceover"))
+        #expect(!AudioTrackOrder.recorded(in: edl.trackStates, health: nil, overdubbed: false).contains("voiceover"))
     }
 }
 
@@ -217,9 +218,9 @@ struct LegacyVoiceoverDiscardTests {
         // empty lane claiming a track exists is worse than no lane.
         let edl = try JSONDecoder().decode(EditDecisionList.self, from: narratedUnderD93())
         #expect(!edl.trackStates.contains { $0.track == "voiceover" })
-        #expect(!TimelineTrackLayout.audioTracks(in: edl.trackStates).contains("voiceover"))
+        #expect(!AudioTrackOrder.recorded(in: edl.trackStates, health: nil, overdubbed: false).contains("voiceover"))
         // The capture's own lanes survive — this drops a lane, not the file.
-        #expect(TimelineTrackLayout.audioTracks(in: edl.trackStates)
+        #expect(AudioTrackOrder.recorded(in: edl.trackStates, health: nil, overdubbed: false)
                 == ["systemAudio", "microphone"])
     }
 
