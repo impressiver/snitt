@@ -14,18 +14,20 @@ editor is where the work is visible, and nothing an agent can do reaches it.
 underneath this: an agent's edit to a document open in the editor is silently
 overwritten. That is a bug and this is a feature, so they were split. This spec
 assumes that one has landed and that an agent's edit to an open document
-survives; how it survives (refuse or route) is settled there.
+survives. It survives by ROUTING through the window (W7), which is what makes
+a document verb visible rather than merely safe.
 
 Three findings from that spec bind here, because this surface makes agent edits
 land in a window a person is watching:
 
-- The window lookup exists (`existing(for:)`, line 2727). The apply path does
-  not: `applyAndSave` is `private` and needs new internal surface.
+- The window lookup exists (`existing(for:)`). The apply path did not:
+  `applyAndSave` is private, so W7 added `applyFromAgent` and its two sidecar
+  twins, which this surface reuses rather than rebuilds.
 - `AutomationHost` is off the main actor; `EditorWindowController` is
   `@MainActor`. Undo bracketing must enclose the synchronous mutation, not the
   enqueued `pendingSaveTask`.
-- A refused edit currently raises a modal with no channel back to the caller,
-  which would hang an unattended agent.
+- A refused edit raises a modal with no channel back to the caller, which
+  would hang an unattended agent. W7's `lastSaveError` is that channel.
 
 ## What gets new verbs, and what deliberately does not
 
@@ -45,6 +47,10 @@ would make an agent's result depend on window order.
 Everything that changes the recording (`trim`, `auto-deep-trim`, `crop`,
 `narrate`, deleting words) is unchanged and simply becomes visible when the
 document is open. No new verbs, no new scope.
+
+That sentence is true because of W7, and was briefly false: W4 shipped
+REFUSING an edit to an open document, which would have made every document verb
+fail rather than show. W7 routes instead, which is what this surface needs.
 
 That split is what keeps the §4.8 amendment narrow. The new claim is not that
 Snitt drives a GUI. It is that Snitt can be told where to put its own playhead.
