@@ -53,6 +53,18 @@ eddsa_priv*
 *.mp4
 *.gif
 
+# ...except the curated ones. `docs/assets` is where a deliberately produced
+# demo lives, and the README's hero is one: D3 chose a committed GIF over a
+# GitHub-hosted mp4 so it renders on forks, mirrors and clones, which only
+# works if the file is actually in the tree.
+#
+# The negation is needed because `git add -A` skips an ignored file SILENTLY.
+# The README then points at an image the repo does not have, and the first
+# person to notice is a reader looking at a broken image — which is how this
+# was found.
+!docs/assets/*.gif
+!docs/assets/*.mp4
+
 # Scratch space for manual verification. macOS gates ~/Desktop behind the
 # Files-and-Folders TCC service, so a shell cannot read the .snitt bundles
 # Snitt writes there — copying one here is how you inspect it. Finder also
