@@ -145,13 +145,17 @@ struct TranscriptPane: View {
             state.beginWritingNarration()
         } label: {
             Image(systemName: "plus")
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
         // Disabled rather than hidden while the body is a prompt or a spinner:
         // a control that vanishes reads as a different pane, and this one comes
         // back as soon as there is somewhere for the line to appear.
         .disabled(!presentation.acceptsWrittenNarration)
-        .help("Write a line of narration at the playhead")
+        .help(KeyboardShortcutRegistry.tooltip(
+            "Write a line of narration at the playhead",
+            key: KeyboardShortcutRegistry.addNarrationTitle))
     }
 
     /// Where a written line is typed.

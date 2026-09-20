@@ -45,6 +45,8 @@ struct TransportBar: View {
     let visibleFraction: Double
     let scrollFraction: Double
     let onScroll: (Double) -> Void
+    /// One press of zoom in (+1) or out (-1).
+    var onZoomStep: (Double) -> Void = { _ in }
     let canCut: Bool
     let onRewind: () -> Void
     let onPreviousMark: () -> Void
@@ -98,6 +100,8 @@ struct TransportBar: View {
             scrollBar
             Button("Cut", systemImage: "scissors", action: onCut)
                 .labelStyle(.iconOnly)
+                .frame(width: 26, height: 22)
+                .contentShape(Rectangle())
                 .buttonStyle(.plain)
                 // Red once it can actually remove something, slate while it
                 // cannot — the one control here that destroys, saying so only
@@ -106,7 +110,8 @@ struct TransportBar: View {
                                  ? SnittPalette.Swatch.redBright
                                  : SnittPalette.Swatch.slateText.opacity(0.35))
                 .disabled(!canCut)
-                .help("Cut the selected range — Delete")
+                .help(Self.help("Cut the selected range",
+                            KeyboardShortcutRegistry.cutSelectionTitle))
             zoomSlider
         }
         .buttonStyle(.borderless)
@@ -143,9 +148,12 @@ struct TransportBar: View {
     ///
     /// `shortcutDisplay(titled:)` returns empty for a title nothing claims, so
     /// a renamed shortcut leaves the tooltip short rather than stale.
+    /// `label (key)`, from the registry — which is also where the titlebar's
+    /// buttons get theirs, so the whole window speaks one way. This used to
+    /// build the string itself with an em dash while the toolbar used
+    /// parentheses.
     static func help(_ label: String, _ registryTitle: String) -> String {
-        let key = KeyboardShortcutRegistry.shortcutDisplay(titled: registryTitle)
-        return key.isEmpty ? label : "\(label) — \(key)"
+        KeyboardShortcutRegistry.tooltip(label, key: registryTitle)
     }
 
     /// One rounded container, in the order the playhead moves. Grouping is the
@@ -186,6 +194,7 @@ struct TransportBar: View {
                 .foregroundStyle(SnittPalette.Swatch.ink0)
                 .background(SnittPalette.Swatch.signalBright,
                             in: RoundedRectangle(cornerRadius: 5))
+                .contentShape(Rectangle())
             }
             .help(Self.help("Play or pause", "Play / Pause"))
             .accessibilityLabel(playAccessibilityLabel)
@@ -204,10 +213,12 @@ struct TransportBar: View {
                                      ? Color.white : SnittPalette.Swatch.slateText)
                     .background(overdubState.isRecordActive ? Color.red : Color.clear,
                                 in: RoundedRectangle(cornerRadius: 5))
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(overdubState.isRecordActive ? "Stop over-dubbing"
-                                              : Self.help("Over-dub", "Over-dub"))
+            .help(overdubState.isRecordActive
+                  ? Self.help("Stop over-dubbing", KeyboardShortcutRegistry.overdubTitle)
+                  : Self.help("Over-dub", KeyboardShortcutRegistry.overdubTitle))
             .accessibilityLabel(overdubState.isRecordActive
                                 ? "Stop over-dubbing" : "Over-dub the microphone")
             // Not `.borderedProminent`: that draws in the system accent, which
@@ -246,6 +257,11 @@ struct TransportBar: View {
                 .foregroundStyle(enabled
                                  ? SnittPalette.Swatch.slateText
                                  : SnittPalette.Swatch.slateText.opacity(0.35))
+                // The whole 26x22, not the glyph. `.frame` sets the LAYOUT
+                // bounds; hit testing follows the drawn shape, so without this
+                // a transport button only answered to a press that landed on
+                // the arrow itself.
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
@@ -355,16 +371,33 @@ struct TransportBar: View {
     /// travel at the far end.
     private var zoomSlider: some View {
         HStack(spacing: 6) {
-            Image(systemName: "minus.magnifyingglass")
-                .foregroundStyle(SnittPalette.Swatch.slateText)
+            // BUTTONS, which the doc comment above has claimed since it was
+            // written: these were `Image`s, so "the ± buttons double per
+            // press" described two decorations either side of the only
+            // control that did anything.
+            zoomButton("minus.magnifyingglass", by: -1,
+                       Self.help("Zoom out", KeyboardShortcutRegistry.zoomOutTitle))
             Slider(value: $zoomFraction, in: 0...1)
                 .frame(width: 90)
                 .controlSize(.mini)
                 .tint(SnittPalette.Swatch.signal)
-            Image(systemName: "plus.magnifyingglass")
-                .foregroundStyle(SnittPalette.Swatch.slateText)
+                .help("Zoom the timeline")
+            zoomButton("plus.magnifyingglass", by: 1,
+                       Self.help("Zoom in", KeyboardShortcutRegistry.zoomInTitle))
         }
-        .help("Zoom the timeline")
+    }
+
+    private func zoomButton(_ symbol: String, by direction: Double,
+                            _ help: String) -> some View {
+        Button { onZoomStep(direction) } label: {
+            Image(systemName: symbol)
+                .frame(width: 20, height: 20)
+                .foregroundStyle(SnittPalette.Swatch.slateText)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 

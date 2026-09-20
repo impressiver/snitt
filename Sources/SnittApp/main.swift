@@ -620,6 +620,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// View ▸ Panel.
     @objc func togglePanel(_ sender: Any?) { keyEditor?.togglePanel() }
 
+    /// Edit ▸ Add Marker — the same decision the markers pane's `+` makes.
+    @objc func addMarker(_ sender: Any?) { keyEditor?.addMarkerAtPlayhead() }
+
+    /// Edit ▸ Add Narration — opens the field the transcript pane's `+` opens.
+    @objc func addNarration(_ sender: Any?) { keyEditor?.beginWritingNarration() }
+
+    /// View ▸ Zoom In / Zoom Out.
+    @objc func zoomTimelineIn(_ sender: Any?) { keyEditor?.zoomTimeline(by: 1) }
+    @objc func zoomTimelineOut(_ sender: Any?) { keyEditor?.zoomTimeline(by: -1) }
+
     /// The editor the key window belongs to, if any.
     ///
     /// The same resolution `exportDocument` and `cutTimelineSelection` do by
@@ -878,8 +888,18 @@ extension AppDelegate: NSMenuItemValidation {
             return keyEditor != nil
         }
         if menuItem.action == #selector(autoTrimDocument(_:))
-            || menuItem.action == #selector(toggleCrop(_:)) {
+            || menuItem.action == #selector(toggleCrop(_:))
+            || menuItem.action == #selector(addMarker(_:))
+            || menuItem.action == #selector(zoomTimelineIn(_:))
+            || menuItem.action == #selector(zoomTimelineOut(_:)) {
             return keyEditor != nil
+        }
+        // Narration needs somewhere to land: the pane's own `+` is disabled
+        // when the transcript cannot take a written line, and a menu item that
+        // stayed live would be the same button that did nothing, one surface
+        // over.
+        if menuItem.action == #selector(addNarration(_:)) {
+            return keyEditor?.acceptsWrittenNarration ?? false
         }
         guard menuItem.action == #selector(cutTimelineSelection(_:)) else { return true }
         // The title follows the highlight: one key, one item, two edits. A

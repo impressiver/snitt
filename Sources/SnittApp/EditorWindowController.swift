@@ -463,6 +463,7 @@ final class EditorTimelineState: ObservableObject {
         pendingSeekTarget = trimmedTime
         controller.pause()
         Task { await controller.seek(toSeconds: trimmedTime) }
+        refreshPlaybackState()
     }
 
     /// Sends the playhead back to the start.
@@ -481,6 +482,9 @@ final class EditorTimelineState: ObservableObject {
         // wherever the playhead had not yet left.
         pendingSeekTarget = 0
         Task { await controller.seek(toSeconds: 0) }
+        // A rewind while watching is a replay, not a stop — so the flag is
+        // refreshed rather than cleared, and stays whatever the player is.
+        refreshPlaybackState()
     }
 
     /// One toggle, not two buttons.
@@ -490,6 +494,7 @@ final class EditorTimelineState: ObservableObject {
     /// no way to tell that from a broken button.
     func togglePlayback() {
         if controller.player.rate == 0 { controller.play() } else { controller.pause() }
+        refreshPlaybackState()
     }
 
     /// Raises the "Agent editing" cue and keeps it up for a few seconds past
@@ -1045,6 +1050,7 @@ final class EditorTimelineState: ObservableObject {
         pendingSeekTarget = seconds
         controller.pause()
         Task { await controller.seek(toSeconds: seconds) }
+        refreshPlaybackState()
     }
 
     /// The events-side twin of `restore(_:)`: pushes the CURRENT `events`
@@ -1631,7 +1637,70 @@ final class EditorTimelineState: ObservableObject {
     /// Whether the preview is actually playing, so the transcript follows only
     /// then — auto-scrolling while someone is reading and selecting would drag
     /// the text out from under them.
-    var isPlaying: Bool { controller.player.rate != 0 }
+    /// Whether the player is running, PUBLISHED rather than computed.
+    ///
+    /// It was `controller.player.rate != 0`, read during a render — and the
+    /// only thing causing renders was the playhead changing on the 20Hz tick.
+    /// So when playback ran off the end, the rate dropped to zero, the
+    /// playhead stopped moving, nothing re-rendered, and the transport kept
+    /// showing Pause over a stopped player. The button was right until the
+    /// moment it mattered.
+    ///
+    /// A value the tick pushes in is not the "cached flag" the old comment
+    /// warned about. That warning was about a flag set when somebody pressed
+    /// play, which goes stale because nothing tells it the player stopped.
+    /// This is told, twenty times a second.
+    @Published private(set) var isPlaying = false
+
+    /// Where playback is, in OUTPUT seconds — for the commands that act at the
+    /// playhead without a view to ask.
+    var outputPlayhead: Double {
+        let seconds = controller.player.currentTime().seconds
+        return seconds.isFinite ? seconds : 0
+    }
+
+    /// Follows the player's rate. Takes the rate rather than reading it, so
+    /// the rule — non-zero means playing — is testable without a player that
+    /// can be made to run on demand.
+    ///
+    /// Guarded, because `@Published` notifies on every assignment: an
+    /// unguarded write would re-render the whole editor twenty times a second
+    /// while nothing was happening.
+    func updatePlayback(rate: Float) {
+        let playing = rate != 0
+        if isPlaying != playing { isPlaying = playing }
+    }
+
+    /// Reads the flag off the player it belongs to.
+    ///
+    /// Called from every method here that starts or stops playback, so the
+    /// flag is right IMMEDIATELY rather than within one tick — the tick is the
+    /// backstop for the change nothing here causes, which is the player
+    /// running off the end of the recording. That was the whole bug: nothing
+    /// in this file tells you playback finished.
+    func refreshPlaybackState() { updatePlayback(rate: controller.player.rate) }
+
+    /// Whether a written line has anywhere to go — the transcript pane's own
+    /// gate, so Edit ▸ Add Narration and the pane's `+` cannot disagree.
+    var acceptsWrittenNarration: Bool {
+        TranscriptPanePresentation.decide(
+            status: transcriptionStatus,
+            hasTranscript: transcript != nil,
+            wordCount: transcript?.words.count ?? 0).acceptsWrittenNarration
+    }
+
+    /// One press of zoom in (+1) or out (-1).
+    ///
+    /// A sixth of the range per press, which is what makes the slider's own
+    /// doc comment true: "the ± buttons double per press, so crossing the
+    /// range takes six clicks each way".
+    static let zoomStep = 1.0 / 6.0
+
+    func zoomTimeline(by direction: Double) {
+        let target = min(1, max(0, timelineZoomFraction + direction * Self.zoomStep))
+        timelineView?.setZoomFraction(target)
+        timelineZoomFraction = target
+    }
 
     /// Corrects one recognized word's text (D62 second slice).
     ///
@@ -2383,7 +2452,7 @@ struct EditorContentView: View {
     /// Re-derived from the player on every tick rather than stored: a cached
     /// flag goes stale the moment playback ends at the last frame, leaving a
     /// button labelled "Pause" over a stopped player.
-    private var isPlaying: Bool { state.controller.player.rate != 0 }
+    private var isPlaying: Bool { state.isPlaying }
     /// Which marker the edit sheet is open for, if any (Task 6). UI-only,
     /// like `expandedCutIDs`'s spirit but one level further out: nothing
     /// tests WHICH marker is currently open in a sheet, only that
@@ -2666,6 +2735,7 @@ struct EditorContentView: View {
                 visibleFraction: state.timelineView?.visibleFraction ?? 1,
                 scrollFraction: state.timelineView?.scrollFraction ?? 0,
                 onScroll: { state.timelineView?.setScrollFraction($0) },
+                onZoomStep: { state.zoomTimeline(by: $0) },
                 canCut: state.selection != nil,
                 onRewind: { state.rewind() },
                 onPreviousMark: { state.goToPreviousMark() },
@@ -2735,6 +2805,10 @@ struct EditorContentView: View {
             // needs a ten-minute recording to answer, and is in field-notes.
             let seconds = controller.player.currentTime().seconds
             playhead = seconds.isFinite ? seconds : 0
+            // Pushed rather than read at render. `playhead` stops changing the
+            // instant playback ends, so a render-time read of the rate had
+            // nothing left to trigger it — see `EditorTimelineState.isPlaying`.
+            state.updatePlayback(rate: controller.player.rate)
             // The voiceover lane advances on the SAME tick as the playhead, so
             // the two cannot drift apart: a level drawn at a position the
             // playhead has not reached is a lane that describes a different
@@ -3466,6 +3540,24 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
 
     /// View ▸ Panel.
     func togglePanel() { chrome.showRail.toggle() }
+
+    /// Edit ▸ Add Marker, at wherever playback is.
+    func addMarkerAtPlayhead() {
+        state.addMarker(atOutput: state.outputPlayhead)
+    }
+
+    /// Edit ▸ Add Narration. Opens the field; the pane focuses it on appear.
+    func beginWritingNarration() { state.beginWritingNarration() }
+
+    /// Whether a written line has anywhere to go, which is what greys out
+    /// Edit ▸ Add Narration — the same gate the pane's `+` uses, so the menu
+    /// and the button cannot disagree about whether the feature is available.
+    var acceptsWrittenNarration: Bool { state.acceptsWrittenNarration }
+
+    /// View ▸ Zoom In / Zoom Out. `direction` is +1 or -1.
+    func zoomTimeline(by direction: Double) {
+        state.zoomTimeline(by: direction)
+    }
 
     /// What View ▸ Panel should be called right now, so the menu says which
     /// way it will go rather than always claiming one — the same rule

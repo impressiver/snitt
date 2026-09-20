@@ -204,22 +204,6 @@ final class EditorWindowToolbar: NSObject, NSToolbarDelegate {
     }
 }
 
-/// A button's tooltip: what it does, then the key that also does it.
-///
-/// The key is looked up in `KeyboardShortcutRegistry`, which is where every
-/// binding in the app is written down — so a button cannot advertise a
-/// shortcut the menus did not register. That was worth going back for: this
-/// file first grew a second little registry of its own, which is exactly the
-/// drift D84 built the first one to prevent.
-///
-/// A title nothing claims renders as the label alone rather than as a stale
-/// key, which is the degradation `shortcutDisplay(titled:)` documents.
-@MainActor
-private func tooltip(_ label: String, key title: String) -> String {
-    let shortcut = KeyboardShortcutRegistry.shortcutDisplay(titled: title)
-    return shortcut.isEmpty ? label : "\(label) (\(shortcut))"
-}
-
 // MARK: - The items
 
 /// D109's "Agent editing" badge, which used to sit beside the document name.
@@ -270,7 +254,7 @@ private struct AutoTrimToolbarItem: View {
             }
             .menuStyle(.button)
             .fixedSize()
-            .help(tooltip("Auto-Trim", key: KeyboardShortcutRegistry.autoTrimTitle))
+            .help(KeyboardShortcutRegistry.tooltip("Auto-Trim", key: KeyboardShortcutRegistry.autoTrimTitle))
 
             if let caption = state.lastTrimOutcome.map(EditorContentView.trimCaption) {
                 Text(caption)
@@ -305,7 +289,7 @@ private struct CropToolbarItem: View {
         }
         .toggleStyle(.button)
         .fixedSize()
-        .help(tooltip("Crop", key: KeyboardShortcutRegistry.cropTitle))
+        .help(KeyboardShortcutRegistry.tooltip("Crop", key: KeyboardShortcutRegistry.cropTitle))
     }
 }
 
@@ -325,7 +309,7 @@ private struct ExportToolbarItem: View {
         }
         .buttonStyle(.borderedProminent)
         .fixedSize()
-        .help(tooltip("Export", key: KeyboardShortcutRegistry.exportTitle))
+        .help(KeyboardShortcutRegistry.tooltip("Export", key: KeyboardShortcutRegistry.exportTitle))
     }
 }
 
@@ -347,7 +331,7 @@ private struct PanelToolbarItem: View {
         .labelStyle(.iconOnly)
         .fixedSize()
         .disabled(state.transcriptionStatus == .none)
-        .help(tooltip("Panel", key: KeyboardShortcutRegistry.panelTitle))
+        .help(KeyboardShortcutRegistry.tooltip("Panel", key: KeyboardShortcutRegistry.panelTitle))
         .accessibilityLabel("Markers and transcript panel")
         .accessibilityAddTraits(chrome.showRail ? [.isSelected] : [])
     }

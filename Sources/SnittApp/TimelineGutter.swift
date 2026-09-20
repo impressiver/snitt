@@ -119,9 +119,13 @@ struct GainMeterView: View {
                 })
             .onTapGesture(count: 2) { onToggleMute() }
         }
+        // No em dashes. Every tooltip in the app reads `label (how)`, so a
+        // lane's reads that way too even though its "how" is a gesture rather
+        // than a key.
         .help(muted
-              ? "\(title) is muted — double-click to unmute"
-              : "\(title): \(GainMeter.label(forGain: gain)) — drag to adjust, double-click to mute")
+              ? "\(title) is muted (double-click to unmute)"
+              : "\(title): \(GainMeter.label(forGain: gain)) "
+                + "(drag to adjust, double-click to mute)")
     }
 
     /// Brand ink, the TRACK's own colour, brand red (rev 5, W13).

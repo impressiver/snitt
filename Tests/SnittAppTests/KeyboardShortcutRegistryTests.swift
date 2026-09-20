@@ -182,4 +182,34 @@ struct KeyboardShortcutRegistryTests {
             titled: KeyboardShortcutRegistry.exportTitle) == "⌘E")
         #expect(KeyboardShortcutRegistry.shortcutDisplay(titled: "nothing claims this") == "")
     }
+    @Test("Every tooltip is label-then-key in parentheses")
+    func tooltipFormatIsOneStyle() {
+        // It was written at four call sites, two with an em dash and two with
+        // parentheses, so hovering two buttons in the same row gave two house
+        // styles. One function builds it now.
+        let rendered = KeyboardShortcutRegistry.tooltip(
+            "Back to start", key: "Back to Start")
+        #expect(rendered == "Back to start (Home)")
+        #expect(!rendered.contains("—"), "the em dash is back")
+
+        // And a title nothing claims degrades to the bare label rather than
+        // to a dangling "()" or a stale key.
+        #expect(KeyboardShortcutRegistry.tooltip("Orphan", key: "no such command")
+                == "Orphan")
+    }
+
+    @Test("Every control the product owner asked for has a key")
+    func theRequestedCommandsAreAllBound() {
+        // Listed by name rather than counted, so adding a binding does not
+        // quietly satisfy a missing one.
+        for title in [KeyboardShortcutRegistry.cutSelectionTitle,
+                      KeyboardShortcutRegistry.addMarkerTitle,
+                      KeyboardShortcutRegistry.addNarrationTitle,
+                      KeyboardShortcutRegistry.zoomInTitle,
+                      KeyboardShortcutRegistry.zoomOutTitle,
+                      "Back to Start"] {
+            #expect(!KeyboardShortcutRegistry.shortcutDisplay(titled: title).isEmpty,
+                    "\(title) has no key, so its button's tooltip is bare")
+        }
+    }
 }
