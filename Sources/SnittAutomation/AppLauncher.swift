@@ -43,8 +43,24 @@ public enum AppLauncher {
     /// `-g` keeps Snitt in the background: §4.13 focuses the RECORDING TARGET
     /// when capture starts, and an app that raised itself first would leave the
     /// agent filming Snitt's own window.
+    /// The argument an agent-initiated launch carries, so the app can tell
+    /// that nobody asked for a window.
+    ///
+    /// Without it, a cold start from any agent command wedges the whole
+    /// surface: the app launches bare, `offerToOpenADocumentIfLaunchedBare`
+    /// runs a modal Open panel, and that panel blocks the MAIN ACTOR — so
+    /// `snitt status` still answers (it never hops) while every verb that
+    /// needs the main actor times out. It also calls
+    /// `NSApp.activate(ignoringOtherApps:)`, so an agent working quietly in
+    /// the background yanks a person's focus to a dialog they did not ask for.
+    ///
+    /// `-g` alone cannot carry this. It asks LaunchServices not to bring the
+    /// app forward, which the app cannot read back, and the prompt then
+    /// activates over it anyway.
+    public static let agentLaunchArgument = "--launched-by-agent"
+
     public static func launchCommand(for bundleURL: URL) -> [String] {
-        ["/usr/bin/open", "-g", "-a", bundleURL.path]
+        ["/usr/bin/open", "-g", "-a", bundleURL.path, "--args", agentLaunchArgument]
     }
 
     /// Launches and waits until `isReady` says the app is reachable. Returns

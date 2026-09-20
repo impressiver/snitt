@@ -6,6 +6,8 @@
 
 import Testing
 import AppKit
+import Foundation
+import SnittAutomation
 @testable import SnittApp
 
 /// Which launches get an Open dialog (2026-09-11).
@@ -120,3 +122,74 @@ struct ExportMenuValidationTests {
 // very next run. A 1452-test suite that fails once in a while is worse than a
 // missing demonstration — this project has spent whole sessions chasing
 // exactly that, and the field notes say so.
+
+// MARK: - An agent's launch must not open a panel
+
+@Suite("An agent-initiated launch is silent")
+struct AgentLaunchPromptTests {
+
+    @Test("An agent's launch does not get the Open dialog")
+    func agentLaunchDoesNotPrompt() {
+        // WRONG IMPLEMENTATION: the shipped one, which had no notion of who
+        // launched the app. Every agent command that found Snitt not running
+        // launched it, got a bare launch, and ran a MODAL Open panel — which
+        // blocks the MAIN ACTOR. `snitt status` kept answering, because it
+        // never hops to it, so the app looked alive while every verb that
+        // touches a window timed out. An unattended agent waits there forever.
+        //
+        // Found by driving the real demo: `snitt targets list` timed out three
+        // times in a row against an app that answered `snitt status` instantly.
+        #expect(LaunchOpenPrompt.decide(openingDocument: false,
+                                        hasVisibleWindows: false,
+                                        isRecording: false,
+                                        launchedByAgent: true) == .agentLaunch)
+    }
+
+    @Test("A person's bare launch still gets it")
+    func aPersonStillGetsThePrompt() {
+        // THE CONTROL. Suppressing the panel outright would pass the test
+        // above and delete a feature people rely on: launching Snitt from the
+        // Dock with nothing open is how you get to your recordings.
+        #expect(LaunchOpenPrompt.decide(openingDocument: false,
+                                        hasVisibleWindows: false,
+                                        isRecording: false,
+                                        launchedByAgent: false) == .prompt)
+    }
+
+    @Test("The agent's launch outranks every other reason, including recording")
+    func agentLaunchOutranksTheRest() {
+        // WRONG IMPLEMENTATION: checking `launchedByAgent` last, after the
+        // three existing reasons. The others describe what the app is already
+        // doing; this one says the panel is actively harmful, so it cannot sit
+        // downstream of a condition that merely happens to be false.
+        //
+        // Recording is the sharpest instance: an agent that starts a recording
+        // on a cold launch would race the panel against its own capture, and
+        // which reason won would depend on how fast the coordinator answered.
+        #expect(LaunchOpenPrompt.decide(openingDocument: true,
+                                        hasVisibleWindows: true,
+                                        isRecording: true,
+                                        launchedByAgent: true) == .agentLaunch)
+    }
+
+    @Test("The launch command carries the flag the app reads")
+    func theLaunchCommandCarriesTheFlag() {
+        // WRONG IMPLEMENTATION: teaching the app to read a flag nothing sends.
+        // Both halves have to agree or the fix is decorative, and the app half
+        // would still LOOK right in review. This is the half that is easy to
+        // forget, because the app-side tests above pass without it.
+        let command = AppLauncher.launchCommand(
+            for: URL(fileURLWithPath: "/Applications/Snitt.app"))
+        #expect(command.contains(AppLauncher.agentLaunchArgument),
+                "the launcher must send what the app reads: \(command)")
+        // `--args` must come before it, or `open` treats it as its own flag
+        // and refuses the launch entirely.
+        guard let argsIndex = command.firstIndex(of: "--args"),
+              let flagIndex = command.firstIndex(of: AppLauncher.agentLaunchArgument) else {
+            Issue.record("expected --args and the flag in \(command)"); return
+        }
+        #expect(argsIndex < flagIndex, "--args must precede the flag: \(command)")
+        #expect(command.contains("-g"),
+                "an agent's launch stays in the background: \(command)")
+    }
+}
