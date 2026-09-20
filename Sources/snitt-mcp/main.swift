@@ -207,6 +207,8 @@ func structuredContent(_ response: AutomationResponse) -> [String: Any]? {
         return jsonObject(summary)
     case .editorState(let state):
         return jsonObject(state)
+    case .overlays(let summary):
+        return jsonObject(summary)
     case .recordings(let list):
         return jsonObject(list)
     }
@@ -404,6 +406,13 @@ func describe(_ response: AutomationResponse) -> String {
         return narrationSummary(summary)
     case .editorState(let state):
         return editorStateSummary(state)
+    case .overlays(let summary):
+        var line = "Captions \(summary.captions ? "on" : "off"), "
+            + "marker banners \(summary.markers ? "on" : "off")."
+        if summary.captions && summary.transcriptLines == 0 {
+            line += " This recording has no transcript, so nothing will be drawn."
+        }
+        return line
     case .recordings(let list):
         return recordingsSummary(list)
     case .diagnosticsWritten(let report):

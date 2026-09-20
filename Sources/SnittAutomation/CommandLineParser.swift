@@ -67,6 +67,7 @@ public enum ParsedCommand: Equatable {
     case editorSeek(bundlePath: String, toSeconds: Double)
     case editorSelect(bundlePath: String, fromSeconds: Double?, toSeconds: Double?)
     case editorCut(bundlePath: String)
+    case setOverlays(bundlePath: String, captions: Bool?, markers: Bool?)
     case recordingsList(limit: Int?)
     /// `outputPath` here is still the RAW string typed on the command line —
     /// `main.swift` resolves it against the caller's cwd before it reaches
@@ -212,6 +213,14 @@ public enum CommandLineParser {
                     "`editor` needs a subcommand: open, play, pause, seek, select or cut."))
             }
             return parseEditor(sub, args: Array(args.dropFirst()))
+
+        case "overlays":
+            guard let path = args.first else {
+                return .failure(ParseFailure(
+                    "`overlays` needs a path to a .snitt bundle. "
+                  + "Use the path `snitt record stop` printed."))
+            }
+            return parseOverlays(path: path, args: Array(args.dropFirst()))
 
         case "narrate":
             guard let path = args.first else {
@@ -626,6 +635,43 @@ public enum CommandLineParser {
     /// than one document is open. A verb targeting "whatever is frontmost"
     /// would make an agent's result depend on window order, which is a
     /// property of somebody else's clicking.
+    /// `overlays <bundle> [--captions on|off] [--markers on|off]` (D111).
+    ///
+    /// `on`/`off` spelled out rather than a bare `--captions` flag, because
+    /// this SETS a stored value rather than requesting an action: a bare flag
+    /// can only ever turn things on, and turning them back off is the other
+    /// half of the feature.
+    private static func parseOverlays(path: String, args: [String])
+        -> Result<ParsedCommand, ParseFailure> {
+        var captions: Bool?
+        var markers: Bool?
+        var index = 0
+        while index < args.count {
+            let flag = args[index]
+            guard flag == "--captions" || flag == "--markers" else {
+                return .failure(ParseFailure("Unknown flag for `overlays`: \(flag)."))
+            }
+            guard index + 1 < args.count else {
+                return .failure(ParseFailure("`\(flag)` needs `on` or `off`."))
+            }
+            let value: Bool
+            switch args[index + 1] {
+            case "on", "true", "yes": value = true
+            case "off", "false", "no": value = false
+            default:
+                return .failure(ParseFailure(
+                    "`\(flag)` takes `on` or `off`, got \(args[index + 1])."))
+            }
+            if flag == "--captions" { captions = value } else { markers = value }
+            index += 2
+        }
+        guard captions != nil || markers != nil else {
+            return .failure(ParseFailure(
+                "`overlays` needs --captions on|off, --markers on|off, or both."))
+        }
+        return .success(.setOverlays(bundlePath: path, captions: captions, markers: markers))
+    }
+
     private static func parseEditor(_ verb: String, args: [String])
         -> Result<ParsedCommand, ParseFailure> {
         guard let path = args.first else {

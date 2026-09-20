@@ -62,6 +62,8 @@ func everyToolMaps() {
             json = #"{"outputPath": "/tmp/diagnostics.json"}"#
         case "snitt_list_recordings":
             json = "{}"
+        case "snitt_overlays":
+            json = #"{"bundlePath": "/tmp/x.snitt", "captions": true}"#
         case "snitt_editor_open", "snitt_editor_play", "snitt_editor_pause",
              "snitt_editor_cut":
             json = #"{"bundlePath": "/tmp/x.snitt"}"#
@@ -94,7 +96,7 @@ func toolNamesAreStable() {
                       // D109's editor control. Five verbs, all view state.
                       "snitt_editor_open", "snitt_editor_play",
                       "snitt_editor_pause", "snitt_editor_seek",
-                      "snitt_editor_select", "snitt_editor_cut"])
+                      "snitt_editor_select", "snitt_editor_cut", "snitt_overlays"])
 }
 
 @Test("The MCP tool maps to the same request the CLI would send")
@@ -647,6 +649,10 @@ private let booleanGuardFixtures: [String: String] = [
     "snitt_export": #"{"bundlePath": "/tmp/x.snitt", "format": "mp4", "outputPath": "/tmp/d.mp4"}"#,
     "snitt_screenshot": #"{"sessionId": "abc123"}"#,
     "snitt_auto_deep_trim": #"{"bundlePath": "/tmp/x.snitt"}"#,
+    // Both booleans are optional and at least one is required, so the OTHER
+    // one is supplied here: without it the call is refused for having changed
+    // nothing, and this guard would pass on the wrong refusal.
+    "snitt_overlays": #"{"bundlePath": "/tmp/x.snitt", "markers": true}"#,
 ]
 
 @Test("EVERY boolean parameter on EVERY tool refuses a JSON string")

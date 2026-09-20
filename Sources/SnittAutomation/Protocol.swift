@@ -274,6 +274,19 @@ public struct AutomationRequest: Codable, Sendable {
         /// rather than a span the caller chose. Found by filming the demo,
         /// where "select the stumble, cut it" turned out to be unreachable.
         case editorCut(bundlePath: String)
+        /// Turns the picture's overlays on or off IN THE DOCUMENT (D111).
+        ///
+        /// A DOCUMENT verb, not an `editor` one, because these are not view
+        /// state: `showSubtitles` and `showMarkers` live in `edit.json`, they
+        /// travel with the bundle, and an export reads them with no window
+        /// open at all. E5's rule is that only view state earns an `editor`
+        /// verb.
+        ///
+        /// Until this existed an agent could OVERRIDE them for a single
+        /// export (`--captions`) and could not SET them, so captions and
+        /// marker banners never appeared in the editor — the one place a
+        /// person watching would see them. `nil` leaves that side alone.
+        case setOverlays(bundlePath: String, captions: Bool?, markers: Bool?)
         case export(bundlePath: String, format: String, outputPath: String,
                     scale: Double, chapters: Bool, subtitles: Bool, maxSizeBytes: Int?,
                     /// Output size to target. `.source` keeps the recording's
@@ -774,6 +787,30 @@ public enum AutomationResponse: Codable, Sendable, Equatable {
     /// What the editor is doing now, so an agent that cannot watch the window
     /// can still tell whether its command took effect (§8).
     case editorState(EditorState)
+    case overlays(OverlaySummary)
+}
+
+/// Which overlays the picture draws, after the change (D111).
+///
+/// Both are reported even when only one was set, because "captions on" is not
+/// the question an agent is really asking — "what will this export look like"
+/// is, and half an answer invites a second call to find out.
+public struct OverlaySummary: Codable, Sendable, Equatable {
+    public var bundlePath: String
+    public var captions: Bool
+    public var markers: Bool
+    /// How many caption lines there are to draw. Zero with `captions` true is
+    /// a real state and a common mistake — an agent that turned captions on
+    /// for a recording with no transcript would otherwise be told it
+    /// succeeded and see nothing in the export.
+    public var transcriptLines: Int
+
+    public init(bundlePath: String, captions: Bool, markers: Bool, transcriptLines: Int) {
+        self.bundlePath = bundlePath
+        self.captions = captions
+        self.markers = markers
+        self.transcriptLines = transcriptLines
+    }
 }
 
 /// The editor's VIEW state: the part that is not in the document.

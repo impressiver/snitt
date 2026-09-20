@@ -411,6 +411,100 @@ struct AgentDrivesTheEditorTests {
         }
     }
 
+    // MARK: Overlays live in the document, not in an export flag (D111)
+
+    @MainActor
+    @Test("Turning captions on writes them to the recording, not just an export")
+    func overlaysReachTheDocument() async throws {
+        // WRONG IMPLEMENTATION: telling an agent to use `snitt_export
+        // --captions`. That is an OVERRIDE for one export and changes nothing
+        // about the document, so the editor still shows no captions — and the
+        // editor is the one place a person watching would see them. That gap
+        // is how the demo came out with an uncaptioned preview.
+        let recording = try bundle(initiator: .agent)
+        defer { try? FileManager.default.removeItem(at: recording.url) }
+
+        let response = await host().handle(
+            .setOverlays(bundlePath: recording.url.path, captions: true, markers: true),
+            caller: nil)
+        guard case .overlays(let summary) = response else {
+            Issue.record("expected overlays, got \(response)"); return
+        }
+        #expect(summary.captions)
+        #expect(summary.markers)
+
+        let onDisk = try EditDecisionList.read(from: recording)
+        #expect(onDisk.showSubtitles, "captions never reached edit.json")
+        #expect(onDisk.showMarkers, "markers never reached edit.json")
+    }
+
+    @MainActor
+    @Test("Omitting one side leaves it alone")
+    func overlaysAreIndependent() async throws {
+        // WRONG IMPLEMENTATION: defaulting the absent side to false. An agent
+        // turning captions on would silently switch marker banners off, and
+        // the response would report that as success.
+        let recording = try bundle(initiator: .agent)
+        defer { try? FileManager.default.removeItem(at: recording.url) }
+        let subject = host()
+
+        _ = await subject.handle(
+            .setOverlays(bundlePath: recording.url.path, captions: nil, markers: true),
+            caller: nil)
+        guard case .overlays(let summary) = await subject.handle(
+            .setOverlays(bundlePath: recording.url.path, captions: true, markers: nil),
+            caller: nil) else {
+            Issue.record("expected overlays"); return
+        }
+        #expect(summary.captions)
+        #expect(summary.markers, "setting captions switched markers off")
+    }
+
+    @MainActor
+    @Test("Captions on with no transcript says so, rather than reporting plain success")
+    func captionsWithNothingToDrawAreReported() async throws {
+        // The mistake this verb invites: captions on, nothing to draw, an
+        // export that looks unchanged and an agent with no way to tell why.
+        // §8 again — a success that is not the success the caller wanted.
+        let recording = try bundle(initiator: .agent)
+        defer { try? FileManager.default.removeItem(at: recording.url) }
+
+        guard case .overlays(let summary) = await host().handle(
+            .setOverlays(bundlePath: recording.url.path, captions: true, markers: nil),
+            caller: nil) else {
+            Issue.record("expected overlays"); return
+        }
+        #expect(summary.transcriptLines == 0,
+                "a recording with no transcript must report zero lines to draw")
+    }
+
+    @MainActor
+    @Test("Changing neither overlay is refused")
+    func settingNothingIsRefused() async throws {
+        let recording = try bundle(initiator: .agent)
+        defer { try? FileManager.default.removeItem(at: recording.url) }
+        guard case .failure(let error) = await host().handle(
+            .setOverlays(bundlePath: recording.url.path, captions: nil, markers: nil),
+            caller: nil) else {
+            Issue.record("changing nothing must be refused"); return
+        }
+        #expect(error.code == .invalidArguments)
+    }
+
+    @Test("`overlays` spells out on and off")
+    func overlaysParse() {
+        #expect(CommandLineParser.parse(
+            ["overlays", "a.snitt", "--captions", "on", "--markers", "on"])
+            == .success(.setOverlays(bundlePath: "a.snitt", captions: true, markers: true)))
+        #expect(CommandLineParser.parse(["overlays", "a.snitt", "--captions", "off"])
+            == .success(.setOverlays(bundlePath: "a.snitt", captions: false, markers: nil)))
+        // WRONG IMPLEMENTATION: a bare `--captions` flag. It can only ever
+        // turn things ON, and turning them back off is the other half.
+        guard case .failure = CommandLineParser.parse(["overlays", "a.snitt", "--captions"]) else {
+            Issue.record("a bare --captions must be refused"); return
+        }
+    }
+
     // MARK: The wire
 
     @Test("The editor verbs are new REQUEST cases, so the protocol version bumped")

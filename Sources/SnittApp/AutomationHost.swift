@@ -458,6 +458,17 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             }
             return await editorCommand(bundlePath: path) { $0.agentSelect(range) }
 
+        case .setOverlays(let path, let captions, let markers):
+            guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
+            guard captions != nil || markers != nil else {
+                return .failure(AutomationError(
+                    code: .invalidArguments,
+                    message: "Nothing to change: pass captions, markers, or both.",
+                    hint: "Omitting one leaves that overlay as it is; omitting both "
+                        + "would report success having changed nothing."))
+            }
+            return await setOverlays(bundlePath: path, captions: captions, markers: markers)
+
         case .editorCut(let path):
             guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
             return await editorCut(bundlePath: path)
@@ -1200,6 +1211,45 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         let updated = transform(existing)
         try updated.write(to: bundle)
         return updated
+    }
+
+    /// Turns captions and marker banners on or off in the document (D111).
+    ///
+    /// Routed like every other document edit, so it lands in an open window
+    /// and a person watching sees the overlays appear — which is the whole
+    /// point: an export override could never do that.
+    private func setOverlays(bundlePath: String,
+                             captions: Bool?, markers: Bool?) async -> AutomationResponse {
+        let bundle: SnittBundle
+        do {
+            bundle = try SnittBundle(opening: URL(fileURLWithPath: bundlePath))
+        } catch {
+            return .failure(Self.noSuchBundleError)
+        }
+
+        do {
+            let updated = try await applyEDL(bundle, actionName: "Show Overlays") { edl in
+                var next = edl
+                if let captions { next.showSubtitles = captions }
+                if let markers { next.showMarkers = markers }
+                return next
+            }
+            // Counted rather than assumed: captions ON with nothing to draw is
+            // a real state and the likeliest mistake here.
+            let lines = (try? Transcript.read(from: bundle)).map {
+                TranscriptReport.lines(of: $0.words, trackStates: updated.trackStates).count
+            } ?? 0
+            return .overlays(OverlaySummary(
+                bundlePath: bundle.url.path,
+                captions: updated.showSubtitles,
+                markers: updated.showMarkers,
+                transcriptLines: lines))
+        } catch {
+            return .failure(AutomationError(
+                code: .internalError,
+                message: "Could not change the overlays on this recording.",
+                hint: String(describing: error)))
+        }
     }
 
     // MARK: - Editor control (D109)

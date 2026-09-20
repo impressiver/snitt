@@ -18,7 +18,22 @@ no history or session is either. The page sizes its own window with
 running and an Apple Event needs a permission an agent cannot grant itself.
 
 That take is recorded, then narrated with `snitt narrate` — including one
-deliberately fluffed line, which is what the demo goes on to remove.
+deliberately fluffed line, which is what the demo goes on to remove — and then
+its overlays are turned on:
+
+```sh
+snitt overlays <inner>.snitt --captions on --markers on
+```
+
+That last step is not optional and is easy to miss. `snitt export --captions`
+is an OVERRIDE for one export and writes nothing to the document, so a take
+without this shows no captions and no marker banners in the editor — which is
+the one place the demo is pointing a camera at.
+
+The page loops, retyping itself a few seconds after it finishes, so a
+recording can start at any moment and still catch a whole pass. Relaunching
+the window to replay it kept changing the window id out from under the
+recorder.
 
 **The outer take** opens the inner one in Snitt's editor at a size chosen for
 filming:
@@ -30,6 +45,16 @@ snitt editor open <inner>.snitt --width 1000 --height 660
 Sizing is the whole reason the GIF is legible. The editor opens at 75% of the
 screen by default, and scaled down to README width its transcript pane and
 timeline labels cannot be read.
+
+Chrome's window size is the fiddly part. `--window-size` is ignored when an
+instance of that profile is already running, and the profile remembers the
+last geometry — so the `--user-data-dir` has to be **deleted** before each
+launch for the page's own `resizeTo` to take. Check what you actually captured
+before shooting the real take:
+
+```sh
+snitt crop <probe>.snitt --reset     # prints the natural pixel size
+```
 
 Then, while recording Snitt's own editor window:
 

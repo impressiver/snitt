@@ -643,6 +643,36 @@ public enum MCPBridge {
                     "required": ["bundlePath"],
                 ]),
             ToolDefinition(
+                name: "snitt_overlays",
+                description: "Turn captions and marker banners on or off FOR THE "
+                           + "RECORDING. This is what makes them visible in Snitt's "
+                           + "editor as well as in an export — snitt_export's captions "
+                           + "flag only overrides one export and changes nothing about "
+                           + "the document, so an agent that used it alone would film an "
+                           + "editor showing no captions at all. Captions are drawn from "
+                           + "the transcript, so turn them on AFTER snitt_narrate or "
+                           + "there is nothing to draw; the response says how many lines "
+                           + "there are, and zero means the export will look unchanged. "
+                           + "Omit either side to leave it as it is.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "bundlePath": [
+                            "type": "string",
+                            "description": "Path printed by snitt_stop_recording",
+                        ],
+                        "captions": [
+                            "type": "boolean",
+                            "description": "Draw the transcript over the picture",
+                        ],
+                        "markers": [
+                            "type": "boolean",
+                            "description": "Draw a banner as each marker passes",
+                        ],
+                    ],
+                    "required": ["bundlePath"],
+                ]),
+            ToolDefinition(
                 name: "snitt_editor_cut",
                 description: "Remove the selected range from an open recording, the "
                            + "way pressing Delete does. This is what snitt_editor_select "
@@ -1120,6 +1150,29 @@ public enum MCPBridge {
             }
             return .success(.transcript(
                 bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory)))
+
+        case "snitt_overlays":
+            guard let path = arguments["bundlePath"] as? String else {
+                return .failure(MCPBridgeError("snitt_overlays requires bundlePath"))
+            }
+            let captions: Bool?
+            let markers: Bool?
+            switch booleanValue(arguments["captions"], parameter: "captions") {
+            case .failure(let error): return .failure(error)
+            case .success(let value): captions = value
+            }
+            switch booleanValue(arguments["markers"], parameter: "markers") {
+            case .failure(let error): return .failure(error)
+            case .success(let value): markers = value
+            }
+            guard captions != nil || markers != nil else {
+                return .failure(MCPBridgeError(
+                    "snitt_overlays needs captions, markers, or both. Passing neither "
+                  + "would report success having changed nothing."))
+            }
+            return .success(.setOverlays(
+                bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory),
+                captions: captions, markers: markers))
 
         case "snitt_editor_cut":
             guard let path = arguments["bundlePath"] as? String else {
