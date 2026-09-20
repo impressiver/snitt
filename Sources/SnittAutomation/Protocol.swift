@@ -482,6 +482,22 @@ public struct AutomationError: Codable, Sendable, Equatable, Error {
         /// failures it must not: the hint already said "try again in a
         /// moment" while the code said `internal_error`.
         case busy = "busy"
+        /// The recording is OPEN IN SNITT'S EDITOR, and a person may be
+        /// editing it. The request was well-formed and the recording is fine;
+        /// it is refused so it cannot be silently overwritten by the window's
+        /// next save (W4).
+        ///
+        /// It earns its own code under the same rule as `busy` — the codes are
+        /// named for the ANSWER, and no existing one gives the right one.
+        /// `invalidArguments` says "sending these again cannot work", and the
+        /// identical request succeeds the moment the window closes.
+        /// `unusableRecording` blames a recording that is undamaged. `busy`
+        /// says "nothing is wrong, retry shortly", and this is the one failure
+        /// an agent must NOT spin on: it clears when a PERSON closes the
+        /// window, not on its own.
+        ///
+        /// The answer is: close the window, or make the edit in the editor.
+        case bundleOpenInEditor = "bundle_open_in_editor"
         /// Something unexpected. Neither the request nor the recording is
         /// known to be at fault, so there is no advice beyond the hint, which
         /// carries the underlying error.
@@ -552,6 +568,7 @@ public struct AutomationError: Codable, Sendable, Equatable, Error {
         .invalidArguments: 17,
         .unusableRecording: 18,
         .busy: 19,
+        .bundleOpenInEditor: 20,
     ]
 }
 
