@@ -8,6 +8,12 @@ from a script. Transcription runs on your Mac and the recording never leaves it.
 *Snitt* is Swedish and Norwegian for **cut** — as in a film edit, or a
 cross-section.
 
+![An agent records a window, opens it in Snitt's editor, finds a fluffed line, selects it and cuts it — with no pointer and no typing](docs/assets/agent-drives-the-editor.gif)
+
+<sup>Recorded, edited, captioned and exported by an agent, using nothing but
+`snitt` — including the recording of Snitt's own editor doing the cut. The
+"Agent editing" badge beside the filename is the editor saying so.</sup>
+
 > **Status: early.** v0.2.0 is signed, notarized and shipping, and it is used
 > daily by the person who writes it. Interfaces still move. If you find a defect
 > the honest place to look for what is already known is

@@ -1,0 +1,48 @@
+<!doctype html><meta charset="utf-8"><title>Snitt</title>
+<style>
+  html,body{margin:0;height:100%;background:#1e1f22;color:#e6e6e6;
+    font:16px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace}
+  #page{max-width:760px;margin:0 auto;padding:52px 44px}
+  h1{font-size:32px;margin:0 0 4px;color:#fff;letter-spacing:-.5px}
+  .sub{color:#8b8f96;margin:0 0 28px;font-size:15px}
+  pre{margin:0;white-space:pre-wrap;font:inherit;display:inline}
+  .cur{display:inline-block;width:9px;height:19px;background:#7aa2f7;
+    vertical-align:-4px;animation:b 1.05s steps(1) infinite;margin-left:1px}
+  @keyframes b{50%{opacity:0}}
+</style>
+<div id="page">
+  <h1>Snitt</h1>
+  <p class="sub">A native macOS screen recorder a coding agent can drive.</p>
+  <pre id="t"></pre><span class="cur"></span>
+</div>
+<script>
+// App-mode windows honour resizeTo, and Chrome ignored --window-size here
+// because an instance was already running. Sizing from inside the page is the
+// one lever that does not need an Apple Event.
+try { window.resizeTo(1180, 800); window.moveTo(70, 70); } catch (e) {}
+
+const SCRIPT = `Records a window or a whole display to a .snitt bundle.
+
+What it does
+  - Transcribes speech on device, no upload
+  - Cut a word from the transcript, the video follows
+  - Auto-trim dead air, and the gaps between clicks
+  - Crop, caption, drop markers a reviewer can jump to
+  - Export mp4 or GIF, fitted to a size budget
+
+Who drives it
+  - You, from the editor
+  - Or an agent, from a CLI or an MCP server
+`;
+const el = document.getElementById('t');
+let i = 0;
+function tick() {
+  if (i >= SCRIPT.length) return;
+  const ch = SCRIPT[i++];
+  el.textContent += ch;
+  // A newline pauses like a person drawing breath; punctuation a touch less.
+  const wait = ch === '\n' ? 190 : '.,-'.includes(ch) ? 90 : 26 + Math.random() * 34;
+  setTimeout(tick, wait);
+}
+setTimeout(tick, 1400);
+</script>
