@@ -107,13 +107,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         + "\(UnattendedRecordingGrant.renewalDays) days until you renew it."
     static let eventLoggingDetail = "Records which keys and clicks happened, so "
         + "auto-trim can tell working from idle. Keystrokes are stored as "
-        + "content-free beats — never the characters."
+        + "content-free beats, never the characters."
     static let microphoneDetail = "Captures the microphone alongside system audio. "
         + "Snitt warns you if your speakers will bleed into the mic."
     static let automaticUpdatesDetail = "Looks for a newer version in the background. "
         + "Nothing is downloaded or installed until you choose it."
     static let crashReportsDetail = "Attaches recent crash logs when you export a "
-        + "diagnostics bundle. Nothing is sent anywhere — the bundle is a file you "
+        + "diagnostics bundle. Nothing is sent anywhere: the bundle is a file you "
         + "choose to share."
     /// The line under the unattended checkbox saying where the grant stands.
     ///
@@ -133,7 +133,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
                  + "\(daysRemaining == 1 ? "day" : "days"), while you are at the keyboard."
         case .lapsed(let daysAgo):
             let when = daysAgo == 0 ? "today" : "\(daysAgo) \(daysAgo == 1 ? "day" : "days") ago"
-            return "Renewal overdue — it lapsed \(when). Switch it back on to renew."
+            return "Renewal overdue. It lapsed \(when). Switch it back on to renew."
         }
     }
 
@@ -292,7 +292,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
         let alert = NSAlert()
         alert.messageText = "Snitt could not use \(combination.displayString) for the "
-                           + "\(action.label) — another app may already be using it."
+                           + "\(action.label). Another app may already be using it."
         alert.addButton(withTitle: "OK")
         alert.runModal()
     }

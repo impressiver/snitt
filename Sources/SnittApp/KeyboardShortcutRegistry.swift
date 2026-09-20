@@ -30,8 +30,10 @@ public struct KeyboardShortcut: Equatable, Sendable {
     public var startsGroup: Bool = false
 
     public enum Menu: String, CaseIterable, Sendable {
-        case playback = "Playback"
+        case file = "File"
         case edit = "Edit"
+        case view = "View"
+        case playback = "Playback"
     }
 }
 
@@ -63,12 +65,35 @@ public enum KeyboardShortcutRegistry {
     /// two bindings — which is how a menu ends up offering "Over-dub"
     /// while one is already recording.
     public static let overdubTitle = "Over-dub"
+    public static let autoTrimTitle = "Auto-Trim"
+    public static let cropTitle = "Crop"
+    public static let resetCropTitle = "Reset Crop"
+    public static let panelTitle = "Panel"
+    /// File ▸ Export… — in the registry so the titlebar's Export button can
+    /// read its key from the same place as every other button, even though
+    /// the File menu builds that item itself.
+    public static let exportTitle = "Export…"
+    public static let cutSelectionTitle = "Cut Selection"
+    public static let addMarkerTitle = "Add Marker"
+    public static let addNarrationTitle = "Add Narration"
+    public static let zoomInTitle = "Zoom In"
+    public static let zoomOutTitle = "Zoom Out"
     public static let stopOverdubTitle = "Stop Over-dubbing"
 
     public static let shortcuts: [KeyboardShortcut] = [
         .init(title: "Play / Pause", key: " ", modifiers: [], menu: .playback,
               selector: #selector(AppDelegate.togglePlayback(_:))),
-        .init(title: "Back to Start", key: "\u{1}", modifiers: [], menu: .playback,
+        // ⌘←, not Home. Home is the desktop convention and it still FIRES —
+        // fn+← sends the same keycode — but a MacBook has no key with that
+        // name on it, so the tooltip was naming something the person could not
+        // find. A shortcut nobody can see is one nobody has.
+        //
+        // ⌘← is free: Previous Mark takes the same arrow with ⌥, and the two
+        // are told apart by their modifiers, which is what `bindingsAreUnique`
+        // checks.
+        .init(title: "Back to Start",
+              key: String(UnicodeScalar(NSLeftArrowFunctionKey)!),
+              modifiers: [.command], menu: .playback,
               selector: #selector(AppDelegate.rewindToStart(_:))),
         .init(title: "Previous Mark", key: String(UnicodeScalar(NSLeftArrowFunctionKey)!),
               modifiers: [.option], menu: .playback,
@@ -93,39 +118,137 @@ public enum KeyboardShortcutRegistry {
         .init(title: showMarkersTitle, key: "m",
               modifiers: [.command, .shift], menu: .playback,
               selector: #selector(AppDelegate.toggleShowMarkers(_:))),
-        // D102. ⇧⌘V — V for voice; plain ⌘V is Paste and the shifted form
-        // is unclaimed, which `shortcutsDoNotCollide` proves rather than this
-        // comment. Its own group: the three above change what you SEE, and
-        // this RECORDS something into the document.
-        .init(title: overdubTitle, key: "v",
-              modifiers: [.command, .shift], menu: .playback,
-              selector: #selector(AppDelegate.toggleVoiceover(_:)),
-              startsGroup: true),
     ]
 
-    /// Builds the Playback menu from `shortcuts`, so an item cannot exist
-    /// without a binding or a binding without an item.
-    public static func playbackMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(title: KeyboardShortcut.Menu.playback.rawValue,
-                              action: nil, keyEquivalent: "")
-        let menu = NSMenu(title: KeyboardShortcut.Menu.playback.rawValue)
-        for shortcut in shortcuts where shortcut.menu == .playback {
-            if shortcut.startsGroup { menu.addItem(.separator()) }
+    /// Edit — the commands that CHANGE the recording.
+    ///
+    /// Over-dub sits here rather than under Playback, where it shipped. It
+    /// records a take into the document, which is an edit; Playback is where
+    /// you are in the recording and what is drawn over it. Being one menu away
+    /// from Undo is the useful adjacency, because that is what a take you did
+    /// not want needs next.
+    public static let editShortcuts: [KeyboardShortcut] = [
+        // ⌥⌘T. Plain ⌘T is unclaimed here but belongs to the system's font
+        // panel by convention, so the option-ed form is the safe one. The
+        // titlebar's Auto-Trim offers three presets and a key can only mean
+        // one: this is Default, which is the preset that menu already names.
+        .init(title: autoTrimTitle, key: "t",
+              modifiers: [.command, .option], menu: .edit,
+              selector: #selector(AppDelegate.autoTrimDocument(_:))),
+        // ⌥⌘C and its shifted form. Plain ⌘C is Copy and ⇧⌘C is Show Clicks,
+        // so crop takes the option-ed one and reset takes the shifted form of
+        // that — the platform's own way of writing "the opposite of this".
+        //
+        // Return and Escape commit and abandon the box and are NOT here: the
+        // drag overlay handles them while the mode is on, and a bare Return
+        // registered as a menu key equivalent would swallow every Return in
+        // the app.
+        .init(title: cropTitle, key: "c",
+              modifiers: [.command, .option], menu: .edit,
+              selector: #selector(AppDelegate.toggleCrop(_:))),
+        .init(title: resetCropTitle, key: "c",
+              modifiers: [.command, .option, .shift], menu: .edit,
+              selector: #selector(AppDelegate.resetCrop(_:))),
+        // D102, moved out of Playback. Its own group: the two above change the
+        // picture, this one records audio into the document.
+        .init(title: overdubTitle, key: "v",
+              modifiers: [.command, .shift], menu: .edit,
+              selector: #selector(AppDelegate.toggleVoiceover(_:)),
+              startsGroup: true),
+        // ⌥⌘M and ⌥⌘N. ⇧⌘M is Show Markers and ⇧⌘N is New from Clipboard, so
+        // both take the option-ed form. Their own group: the three above
+        // change the recording that exists, these two put something new in it.
+        .init(title: addMarkerTitle, key: "m",
+              modifiers: [.command, .option], menu: .edit,
+              selector: #selector(AppDelegate.addMarker(_:)),
+              startsGroup: true),
+        .init(title: addNarrationTitle, key: "n",
+              modifiers: [.command, .option], menu: .edit,
+              selector: #selector(AppDelegate.addNarration(_:))),
+    ]
+
+    /// View — what is on screen beside the recording.
+    ///
+    /// ⌥⌘S because plain ⌘S is Save and ⇧⌘S is Show Subtitles. The panel is
+    /// where Finder and Xcode put a sidebar toggle.
+    /// Bindings a hand-built menu already owns, recorded but not assembled.
+    ///
+    /// Recorded here anyway so the titlebar's Export button reads its key from
+    /// the same place as every other button, and so Help ▸ Keyboard Shortcuts
+    /// lists ⌘E under File where it actually lives. `assembledShortcuts` is
+    /// what the menu builders read, and it leaves this out — a second Export…
+    /// in the Edit menu would be a duplicate item AND a ⌘E collision.
+    public static let handBuiltShortcuts: [KeyboardShortcut] = [
+        .init(title: exportTitle, key: "e", modifiers: [.command], menu: .file,
+              selector: #selector(AppDelegate.exportDocument(_:))),
+        // Bare Delete, and the item's TITLE follows the highlight — it reads
+        // "Remove Cut" over a selected fold — which is why `AppShell` builds
+        // it by hand. Recorded here so the transport's Cut button can quote
+        // the key rather than spelling it out beside the registry that owns
+        // every other one.
+        .init(title: cutSelectionTitle, key: "\u{8}", modifiers: [], menu: .edit,
+              selector: #selector(AppDelegate.cutTimelineSelection(_:))),
+    ]
+
+    public static let viewShortcuts: [KeyboardShortcut] = [
+        .init(title: panelTitle, key: "s",
+              modifiers: [.command, .option], menu: .view,
+              selector: #selector(AppDelegate.togglePanel(_:))),
+        // ⌘= and ⌘-, which is what every Mac app binds zoom to. `=` rather
+        // than `+` because `+` is the shifted key and AppKit matches the
+        // unshifted one.
+        .init(title: zoomInTitle, key: "=", modifiers: [.command], menu: .view,
+              selector: #selector(AppDelegate.zoomTimelineIn(_:)),
+              startsGroup: true),
+        .init(title: zoomOutTitle, key: "-", modifiers: [.command], menu: .view,
+              selector: #selector(AppDelegate.zoomTimelineOut(_:))),
+    ]
+
+    /// Every binding, whichever menu it lands in.
+    ///
+    /// `shortcuts` above is the Playback list and stays named that way because
+    /// the menu builder and three tests read it; this is what "the one list"
+    /// means now that there are three menus.
+    public static var allShortcuts: [KeyboardShortcut] {
+        assembledShortcuts + handBuiltShortcuts
+    }
+
+    /// The bindings this type turns into menu items. Everything in
+    /// `allShortcuts` except the ones a hand-built menu already owns.
+    public static var assembledShortcuts: [KeyboardShortcut] {
+        shortcuts + editShortcuts + viewShortcuts
+    }
+
+    /// Builds a whole menu from the registry, so an item cannot exist without
+    /// a binding or a binding without an item.
+    public static func menuItem(for menu: KeyboardShortcut.Menu) -> NSMenuItem {
+        let item = NSMenuItem(title: menu.rawValue, action: nil, keyEquivalent: "")
+        let submenu = NSMenu(title: menu.rawValue)
+        for entry in items(in: menu) { submenu.addItem(entry) }
+        item.submenu = submenu
+        return item
+    }
+
+    public static func playbackMenuItem() -> NSMenuItem { menuItem(for: .playback) }
+
+    /// The registry's items for one menu, for a menu that is PART hand-built —
+    /// Edit already owns Undo, Cut, Paste and the rest from AppKit, and those
+    /// have no business in a list about this app's own commands.
+    public static func items(in menu: KeyboardShortcut.Menu) -> [NSMenuItem] {
+        assembledShortcuts.filter { $0.menu == menu }.flatMap { shortcut -> [NSMenuItem] in
             let entry = NSMenuItem(title: shortcut.title,
                                    action: shortcut.selector,
                                    keyEquivalent: shortcut.key)
             entry.keyEquivalentModifierMask = shortcut.modifiers
-            menu.addItem(entry)
+            return shortcut.startsGroup ? [.separator(), entry] : [entry]
         }
-        item.submenu = menu
-        return item
     }
 
     /// What Help ▸ Keyboard Shortcuts shows — rendered from the same array the
     /// menu was built from, which is the whole reason this type exists.
     public static var helpText: String {
         KeyboardShortcut.Menu.allCases.compactMap { menu -> String? in
-            let rows = shortcuts.filter { $0.menu == menu }
+            let rows = allShortcuts.filter { $0.menu == menu }
             guard !rows.isEmpty else { return nil }
             let body = rows
                 .map { "  \(display(of: $0))\t\($0.title)" }
@@ -139,7 +262,21 @@ public enum KeyboardShortcutRegistry {
     /// a renamed shortcut leaves a tooltip short rather than showing a stale
     /// key.
     public static func shortcutDisplay(titled title: String) -> String {
-        shortcuts.first { $0.title == title }.map(display) ?? ""
+        allShortcuts.first { $0.title == title }.map(display) ?? ""
+    }
+
+    /// A control's tooltip: what it does, then the key that also does it.
+    ///
+    /// **One spelling of the format, `label (key)`.** It was written at four
+    /// call sites, two of them with an em dash and two with parentheses, so
+    /// hovering two buttons in the same row gave two house styles. Here
+    /// because this is where the key comes from anyway.
+    ///
+    /// A title nothing claims renders as the label alone rather than as a
+    /// stale key — the degradation `shortcutDisplay(titled:)` documents.
+    public static func tooltip(_ label: String, key title: String) -> String {
+        let shortcut = shortcutDisplay(titled: title)
+        return shortcut.isEmpty ? label : "\(label) (\(shortcut))"
     }
 
     /// A key rendered the way macOS writes it, so the help reads like the menu

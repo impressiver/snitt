@@ -255,7 +255,7 @@ public enum MCPBridge {
                 description: "Start recording a window belonging to an application. "
                            + "Returns a session id used to stop it. "
                            + "EVERYTHING IN THE WINDOW IS RECORDED, including its "
-                           + "chrome — a browser's tab strip puts the titles of every "
+                           + "chrome: a browser's tab strip puts the titles of every "
                            + "other open tab into every frame, and those routinely name "
                            + "accounts, orders and internal tools. Before recording a "
                            + "browser, move the page you are demonstrating into its own "
@@ -266,14 +266,14 @@ public enum MCPBridge {
                         "bundleIdentifier": [
                             "type": "string",
                             "description": "Bundle id of the app whose window to record. "
-                                + "Preferred over displayID — window recording needs no "
+                                + "Preferred over displayID, because window recording needs no "
                                 + "extra opt-in.",
                         ],
                         "windowID": [
                             "type": "number",
                             "description": "Which window, from snitt_list_targets. "
                                 + "REQUIRED when the application has more than one "
-                                + "window open — without it Snitt refuses rather than "
+                                + "window open. Without it Snitt refuses rather than "
                                 + "guessing, because guessing records whichever window "
                                 + "is largest and you will not find out until you watch "
                                 + "the result.",
@@ -317,7 +317,7 @@ public enum MCPBridge {
                             "type": "array",
                             "items": ["type": "string"],
                             "description": "Words you are about to SAY that a general "
-                                + "speech model has never heard — symbol names, file "
+                                + "speech model has never heard: symbol names, file "
                                 + "names, product names. Biases transcription toward "
                                 + "them without restricting to them, so a term you "
                                 + "never say costs nothing and it is worth listing "
@@ -346,7 +346,7 @@ public enum MCPBridge {
                 name: "snitt_pause_recording",
                 description: "Stop filming without ending the recording. Use it "
                            + "while you think, read, or do work that is not worth "
-                           + "showing — the finished video jumps straight from "
+                           + "showing. The finished video jumps straight from "
                            + "pause to resume with no dead air. Drops a marker so "
                            + "the gap is visible in the timeline.",
                 inputSchema: [
@@ -370,7 +370,7 @@ public enum MCPBridge {
                 description: "Tell Snitt where you clicked or moved the pointer. "
                            + "Browser automation dispatches events into the page, so "
                            + "the real cursor never moves and the recording shows "
-                           + "buttons changing with nothing visibly causing it — "
+                           + "buttons changing with nothing visibly causing it. "
                            + "unwatchable as a demo. Reporting each click puts it on "
                            + "the recording's clock so it can be drawn. GIVE THE PIXELS "
                            + "YOU ALREADY HAVE: pass frameWidth and frameHeight naming "
@@ -379,7 +379,7 @@ public enum MCPBridge {
                            + "y are read as fractions of the recorded window (0-1, "
                            + "origin top-left). Either way a point outside the frame is "
                            + "refused rather than quietly moved to the edge. Snitt does "
-                           + "not click anything — it records what you say you did.",
+                           + "not click anything. It records what you say you did.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
@@ -422,7 +422,7 @@ public enum MCPBridge {
                 name: "snitt_screenshot",
                 description: "Save the frame the recording is currently on, and "
                            + "mark that instant. Use it to SEE the window you are "
-                           + "recording — you cannot watch the video, and this is "
+                           + "recording. You cannot watch the video, and this is "
                            + "the only way to check the demo looks right while it "
                            + "is still fixable. The image and its marker come from "
                            + "the same frame, so 'what I saw' and 'what I said "
@@ -436,7 +436,7 @@ public enum MCPBridge {
                         "inline": [
                             "type": "boolean",
                             "description": "Return the frame ITSELF, not just a path to it. "
-                                + "Pass true when you actually need to look — a path is of "
+                                + "Pass true when you actually need to look. A path is of "
                                 + "no use to you unless your host happens to read files. "
                                 + "The image is embedded in the response, which means it "
                                 + "goes wherever your model runs: ask for it when you need "
@@ -479,8 +479,8 @@ public enum MCPBridge {
                 ]),
             ToolDefinition(
                 name: "snitt_inspect",
-                description: "Read a recording's metadata — duration, markers, capture "
-                           + "health, git context — without watching it. Use this to "
+                description: "Read a recording's metadata (duration, markers, capture "
+                           + "health, git context) without watching it. Use this to "
                            + "describe a demo you made.",
                 inputSchema: [
                     "type": "object",
@@ -539,7 +539,7 @@ public enum MCPBridge {
             ToolDefinition(
                 name: "snitt_editor_open",
                 description: "Open a recording in Snitt's editor, on screen. Use this "
-                           + "when you want the EDITING to be visible — filming a demo "
+                           + "when you want the EDITING to be visible, as when filming a demo "
                            + "of Snitt itself, or letting a person watch what you "
                            + "change. Once it is open, snitt_trim, snitt_crop and "
                            + "snitt_narrate land in that window instead of writing the "
@@ -577,7 +577,7 @@ public enum MCPBridge {
                 name: "snitt_editor_play",
                 description: "Start playback in an open editor window. Returns where "
                            + "the playhead actually is, because you cannot watch the "
-                           + "window. Fails if the recording is not open — call "
+                           + "window. Fails if the recording is not open, so call "
                            + "snitt_editor_open first; Snitt will not open a window as "
                            + "a side effect of being told to play.",
                 inputSchema: [
@@ -646,7 +646,7 @@ public enum MCPBridge {
                 name: "snitt_overlays",
                 description: "Turn captions and marker banners on or off FOR THE "
                            + "RECORDING. This is what makes them visible in Snitt's "
-                           + "editor as well as in an export — snitt_export's captions "
+                           + "editor as well as in an export. snitt_export's captions "
                            + "flag only overrides one export and changes nothing about "
                            + "the document, so an agent that used it alone would film an "
                            + "editor showing no captions at all. Captions are drawn from "
@@ -678,7 +678,7 @@ public enum MCPBridge {
                            + "way pressing Delete does. This is what snitt_editor_select "
                            + "is FOR: select the span you want gone, then cut it, and a "
                            + "person watching sees both halves happen. It is the only "
-                           + "way to remove an INTERIOR span — snitt_trim sets the range "
+                           + "way to remove an INTERIOR span. snitt_trim sets the range "
                            + "to KEEP, so it can only take material off the ends, and "
                            + "snitt_auto_deep_trim finds dead air rather than a span you "
                            + "chose. Fails if nothing is selected, rather than reporting "
@@ -728,9 +728,9 @@ public enum MCPBridge {
                 ]),
             ToolDefinition(
                 name: "snitt_trim",
-                description: "Cut the setup and teardown off a recording — the "
+                description: "Cut the setup and teardown off a recording: the "
                            + "seconds before the first thing happened and after the last "
-                           + "— by editing its edit decision list. Never touches "
+                           + "by editing its edit decision list. Never touches "
                            + "capture.mov. Give it an explicit start/end range, or "
                            + "autoTrim to find the bookends from input events. "
                            + "IF YOU REPORTED YOUR CLICKS with snitt_report_input, "
@@ -752,7 +752,7 @@ public enum MCPBridge {
                                 + "event. Counts input you REPORTED as well as input the "
                                 + "OS saw, so this works on a recording you made if you "
                                 + "called snitt_report_input as you went. Refused only "
-                                + "when the recording has no input events at all — "
+                                + "when the recording has no input events at all. "
                                 + "markers do not count, since a marker says \"this "
                                 + "moment matters\", not \"something happened here\".",
                         ],
@@ -761,7 +761,7 @@ public enum MCPBridge {
                 ]),
             ToolDefinition(
                 name: "snitt_crop",
-                description: "Crop the recording to a region, non-destructively — "
+                description: "Crop the recording to a region, non-destructively: "
                            + "capture.mov is never modified and the crop can be "
                            + "removed again. Use it to cut away a cluttered "
                            + "desktop, a second monitor, or window chrome so the "
@@ -892,7 +892,7 @@ public enum MCPBridge {
                            + "encode instead of the whole file. Use it to pick a scale "
                            + "that fits an attachment limit before committing, rather "
                            + "than exporting and discovering. The size is an UPPER "
-                           + "BOUND, not a prediction — the real file comes in under "
+                           + "BOUND, not a prediction. The real file comes in under "
                            + "it, so a budget you fit here you will fit. Duration and "
                            + "dimensions are exact. mp4 only.",
                 inputSchema: [
@@ -929,7 +929,7 @@ public enum MCPBridge {
             ToolDefinition(
                 name: "snitt_export",
                 description: "Render the trimmed recording to a movie file and return a "
-                           + "manifest — duration, dimensions, byte size, chapters — that "
+                           + "manifest (duration, dimensions, byte size, chapters) that "
                            + "an agent can quote without watching the file. gif output has "
                            + "no audio track: a silent demo is inherent to the format, not "
                            + "a bug, so say so rather than let a viewer discover it.",
@@ -948,7 +948,7 @@ public enum MCPBridge {
                         "scale": ["type": "number", "default": 1.0,
                                   "description": "Pixel-dimension multiplier"],
                         "chapters": ["type": "boolean", "default": false,
-                                     "description": "Write a .vtt chapter list beside the output, from marker labels — navigation, not speech"],
+                                     "description": "Write a .vtt chapter list beside the output, from marker labels: navigation, not speech"],
                         "subtitles": ["type": "boolean", "default": false,
                                       "description": "Write a .subtitles.vtt beside the output from marker TRANSCRIPTS. Only markers that carry narration produce cues, so a demo with no transcripts produces an empty file."],
                         "resolution": [
@@ -956,7 +956,7 @@ public enum MCPBridge {
                             "enum": ExportResolution.allCases.map(\.rawValue),
                             "description": "Output size to target: 1080p, 720p, 540p, "
                                 + "480p, 2160p, or source to keep the recording's own "
-                                + "dimensions. Never enlarges — asking for more than "
+                                + "dimensions. Never enlarges: asking for more than "
                                 + "the recording has keeps what it has. Use "
                                 + "snitt_estimate first to see what each costs. "
                                 + "Defaults to source.",
@@ -1004,10 +1004,10 @@ public enum MCPBridge {
                 ]),
             ToolDefinition(
                 name: "snitt_diagnostics_export",
-                description: "Write a support bundle — recent app logs, app/CLI versions, "
+                description: "Write a support bundle (recent app logs, app/CLI versions, "
                            + "permission states, recent agent session history, and (only if "
                            + "the user has opted in) redacted summaries of Snitt's own crash "
-                           + "reports — to a JSON file. Contains no window titles, file "
+                           + "reports) to a JSON file. Contains no window titles, file "
                            + "paths, or input detail. Use this to hand a person something to "
                            + "attach to a support thread, or to see whether Screen Recording "
                            + "is granted.",
@@ -1292,7 +1292,7 @@ public enum MCPBridge {
             if isKeystroke, arguments["label"] != nil {
                 return .failure(MCPBridgeError(
                     "A reported keystroke cannot carry a label. Report WHEN you typed, "
-                  + "not what — saying what was typed is a claim about content Snitt "
+                  + "not what. Saying what was typed is a claim about content Snitt "
                   + "never saw. Use snitt_mark if the moment needs a name."))
             }
             let inputFrame: CoordinateFrame?

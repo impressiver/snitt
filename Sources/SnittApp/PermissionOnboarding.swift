@@ -43,7 +43,7 @@ public enum PermissionOnboarding {
                 // recorded window. "Never which keys" stays: it is still true
                 // and it is the half that matters most.
                 return "You turned on input logging, so Snitt can record WHEN "
-                     + "you click and type — never which keys. This covers "
+                     + "you click and type, never which keys. This covers "
                      + "activity anywhere on this Mac while recording, not "
                      + "just the window being recorded. Times are rounded so "
                      + "dead air can be trimmed later."
@@ -184,7 +184,7 @@ public enum PermissionOnboarding {
         let alert = NSAlert()
         alert.messageText = "\(service.displayName) is turned off for Snitt"
         alert.informativeText =
-            "macOS only asks once. Turn Snitt on in System Settings, then relaunch it — "
+            "macOS only asks once. Turn Snitt on in System Settings, then relaunch it: "
           + "the grant takes effect on the next launch, not immediately."
         alert.addButton(withTitle: "Open System Settings")
         alert.addButton(withTitle: "Cancel")

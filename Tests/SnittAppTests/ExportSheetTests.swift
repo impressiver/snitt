@@ -44,7 +44,7 @@ struct ExportSheetTests {
         // sorting-by-name view files under the wrong thing. It is one call
         // away from correct and looks right in a debugger.
         var request = ExportRequest(destination: file)
-        request.setFormat("gif")
+        request.choose(format: "gif")
         #expect(request.destination.lastPathComponent == "Demo.gif")
     }
 
@@ -54,8 +54,8 @@ struct ExportSheetTests {
         // end up at `Demo.gif.mp4`. This is the assertion the single-direction
         // test above cannot make.
         var request = ExportRequest(destination: file)
-        request.setFormat("gif")
-        request.setFormat("mp4")
+        request.choose(format: "gif")
+        request.choose(format: "mp4")
         #expect(request.destination.lastPathComponent == "Demo.mp4")
         #expect(request.format == "mp4")
     }
@@ -67,7 +67,7 @@ struct ExportSheetTests {
         // discards the part its owner used to tell versions apart.
         var request = ExportRequest(
             destination: URL(fileURLWithPath: "/tmp/Demo.v2.final.mp4"))
-        request.setFormat("gif")
+        request.choose(format: "gif")
         #expect(request.destination.lastPathComponent == "Demo.v2.final.gif")
     }
 
@@ -79,7 +79,7 @@ struct ExportSheetTests {
         // stops it presenting an H.264 figure as if it applied.
         var request = ExportRequest(destination: file)
         #expect(request.estimatesApply)
-        request.setFormat("gif")
+        request.choose(format: "gif")
         #expect(request.estimatesApply == false)
     }
 

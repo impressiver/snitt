@@ -400,7 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// conflict is discovered. Recording stays reachable from the menu bar
     /// either way — §5.3's kill switch never depended on either hotkey.
     private func reportHotkeyRegistrationFailure(_ action: HotkeyAction, _ combination: HotkeyCombination) {
-        notify("Snitt could not register \(combination.displayString) for the \(action.label) — "
+        notify("Snitt could not register \(combination.displayString) for the \(action.label). "
              + "another app may be using it. You can still start and stop recording, and drop "
              + "markers, from the menu bar.")
     }
@@ -607,6 +607,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `validateMenuItem(_:)` below, so in practice the menu item (and the
     /// bare delete key it's bound to) is disabled whenever this guard would
     /// fail, rather than relying on a user never triggering a no-op.
+    /// Edit ▸ Auto-Trim. The default preset: the toolbar menu offers all
+    /// three, and a key can only mean one.
+    @objc func autoTrimDocument(_ sender: Any?) {
+        keyEditor?.autoTrimAtDefaultPreset()
+    }
+
+    /// Edit ▸ Crop — enters and leaves the mode. Return and Escape then commit
+    /// or abandon the box, handled by the drag overlay rather than by a menu.
+    @objc func toggleCrop(_ sender: Any?) { keyEditor?.toggleCrop() }
+
+    /// View ▸ Panel.
+    @objc func togglePanel(_ sender: Any?) { keyEditor?.togglePanel() }
+
+    /// Edit ▸ Add Marker — the same decision the markers pane's `+` makes.
+    @objc func addMarker(_ sender: Any?) { keyEditor?.addMarkerAtPlayhead() }
+
+    /// Edit ▸ Add Narration — opens the field the transcript pane's `+` opens.
+    @objc func addNarration(_ sender: Any?) { keyEditor?.beginWritingNarration() }
+
+    /// View ▸ Zoom In / Zoom Out.
+    @objc func zoomTimelineIn(_ sender: Any?) { keyEditor?.zoomTimeline(by: 1) }
+    @objc func zoomTimelineOut(_ sender: Any?) { keyEditor?.zoomTimeline(by: -1) }
+
+    /// The editor the key window belongs to, if any.
+    ///
+    /// The same resolution `exportDocument` and `cutTimelineSelection` do by
+    /// hand; extracted once the fourth command needed it, because four copies
+    /// of a `first(where:)` over `openEditors` is where one of them quietly
+    /// stops matching the others.
+    private var keyEditor: EditorWindowController? {
+        EditorWindowController.openEditors.first { $0.window == NSApp.keyWindow }
+    }
+
+    /// Puts the whole picture back, for a recording that has a crop.
+    ///
+    /// A menu item because the titlebar no longer has room for one that comes
+    /// and goes: a toolbar item keeps the width it was built with, so a button
+    /// appearing beside the Crop toggle drew over the Export icon next to it.
+    /// Undo already reverses a crop; this is the affordance for a crop applied
+    /// several edits ago, which is the case Undo cannot reach without taking
+    /// everything since with it.
+    ///
+    /// Same nil-target resolution as `cutTimelineSelection` above, and gated
+    /// by `validateMenuItem(_:)` so it greys out when there is no crop.
+    @objc func resetCrop(_ sender: Any?) {
+        guard let editor = EditorWindowController.openEditors.first(where: {
+            $0.window == NSApp.keyWindow
+        }) else { return }
+        editor.resetCrop()
+    }
+
     @objc func cutTimelineSelection(_ sender: Any?) {
         guard let editor = EditorWindowController.openEditors.first(where: {
             $0.window == NSApp.keyWindow
@@ -824,6 +875,31 @@ extension AppDelegate: NSMenuItemValidation {
         if menuItem.action == #selector(exportDocument(_:))
             || menuItem.action == #selector(shareToService(_:)) {
             return EditorWindowController.openEditors.contains { $0.window == NSApp.keyWindow }
+        }
+        if menuItem.action == #selector(resetCrop(_:)) {
+            return keyEditor?.hasCrop ?? false
+        }
+        // The rest need an editor and nothing more. The panel item's TITLE
+        // follows the state, the way Edit ▸ Cut Selection's already does: a
+        // menu permanently reading "Panel" says nothing about which way it
+        // will go.
+        if menuItem.action == #selector(togglePanel(_:)) {
+            if let editor = keyEditor { menuItem.title = editor.panelMenuTitle }
+            return keyEditor != nil
+        }
+        if menuItem.action == #selector(autoTrimDocument(_:))
+            || menuItem.action == #selector(toggleCrop(_:))
+            || menuItem.action == #selector(addMarker(_:))
+            || menuItem.action == #selector(zoomTimelineIn(_:))
+            || menuItem.action == #selector(zoomTimelineOut(_:)) {
+            return keyEditor != nil
+        }
+        // Narration needs somewhere to land: the pane's own `+` is disabled
+        // when the transcript cannot take a written line, and a menu item that
+        // stayed live would be the same button that did nothing, one surface
+        // over.
+        if menuItem.action == #selector(addNarration(_:)) {
+            return keyEditor?.acceptsWrittenNarration ?? false
         }
         guard menuItem.action == #selector(cutTimelineSelection(_:)) else { return true }
         // The title follows the highlight: one key, one item, two edits. A

@@ -105,7 +105,7 @@ public enum ExportPreflight {
     /// Said next to the numbers, because a ceiling presented bare reads as a
     /// prediction and will be wrong every time in the same direction.
     public static let caveat =
-        "Sizes are an upper bound from AVFoundation, not a prediction — "
+        "Sizes are an upper bound from AVFoundation, not a prediction. "
         + "real files come in well under. Use them to choose a resolution."
 
     /// Which row starts selected: the first, which is the source resolution

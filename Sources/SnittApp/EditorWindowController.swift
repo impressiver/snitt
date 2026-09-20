@@ -463,6 +463,7 @@ final class EditorTimelineState: ObservableObject {
         pendingSeekTarget = trimmedTime
         controller.pause()
         Task { await controller.seek(toSeconds: trimmedTime) }
+        refreshPlaybackState()
     }
 
     /// Sends the playhead back to the start.
@@ -481,6 +482,9 @@ final class EditorTimelineState: ObservableObject {
         // wherever the playhead had not yet left.
         pendingSeekTarget = 0
         Task { await controller.seek(toSeconds: 0) }
+        // A rewind while watching is a replay, not a stop — so the flag is
+        // refreshed rather than cleared, and stays whatever the player is.
+        refreshPlaybackState()
     }
 
     /// One toggle, not two buttons.
@@ -490,6 +494,7 @@ final class EditorTimelineState: ObservableObject {
     /// no way to tell that from a broken button.
     func togglePlayback() {
         if controller.player.rate == 0 { controller.play() } else { controller.pause() }
+        refreshPlaybackState()
     }
 
     /// Raises the "Agent editing" cue and keeps it up for a few seconds past
@@ -1045,6 +1050,7 @@ final class EditorTimelineState: ObservableObject {
         pendingSeekTarget = seconds
         controller.pause()
         Task { await controller.seek(toSeconds: seconds) }
+        refreshPlaybackState()
     }
 
     /// The events-side twin of `restore(_:)`: pushes the CURRENT `events`
@@ -1631,7 +1637,70 @@ final class EditorTimelineState: ObservableObject {
     /// Whether the preview is actually playing, so the transcript follows only
     /// then — auto-scrolling while someone is reading and selecting would drag
     /// the text out from under them.
-    var isPlaying: Bool { controller.player.rate != 0 }
+    /// Whether the player is running, PUBLISHED rather than computed.
+    ///
+    /// It was `controller.player.rate != 0`, read during a render — and the
+    /// only thing causing renders was the playhead changing on the 20Hz tick.
+    /// So when playback ran off the end, the rate dropped to zero, the
+    /// playhead stopped moving, nothing re-rendered, and the transport kept
+    /// showing Pause over a stopped player. The button was right until the
+    /// moment it mattered.
+    ///
+    /// A value the tick pushes in is not the "cached flag" the old comment
+    /// warned about. That warning was about a flag set when somebody pressed
+    /// play, which goes stale because nothing tells it the player stopped.
+    /// This is told, twenty times a second.
+    @Published private(set) var isPlaying = false
+
+    /// Where playback is, in OUTPUT seconds — for the commands that act at the
+    /// playhead without a view to ask.
+    var outputPlayhead: Double {
+        let seconds = controller.player.currentTime().seconds
+        return seconds.isFinite ? seconds : 0
+    }
+
+    /// Follows the player's rate. Takes the rate rather than reading it, so
+    /// the rule — non-zero means playing — is testable without a player that
+    /// can be made to run on demand.
+    ///
+    /// Guarded, because `@Published` notifies on every assignment: an
+    /// unguarded write would re-render the whole editor twenty times a second
+    /// while nothing was happening.
+    func updatePlayback(rate: Float) {
+        let playing = rate != 0
+        if isPlaying != playing { isPlaying = playing }
+    }
+
+    /// Reads the flag off the player it belongs to.
+    ///
+    /// Called from every method here that starts or stops playback, so the
+    /// flag is right IMMEDIATELY rather than within one tick — the tick is the
+    /// backstop for the change nothing here causes, which is the player
+    /// running off the end of the recording. That was the whole bug: nothing
+    /// in this file tells you playback finished.
+    func refreshPlaybackState() { updatePlayback(rate: controller.player.rate) }
+
+    /// Whether a written line has anywhere to go — the transcript pane's own
+    /// gate, so Edit ▸ Add Narration and the pane's `+` cannot disagree.
+    var acceptsWrittenNarration: Bool {
+        TranscriptPanePresentation.decide(
+            status: transcriptionStatus,
+            hasTranscript: transcript != nil,
+            wordCount: transcript?.words.count ?? 0).acceptsWrittenNarration
+    }
+
+    /// One press of zoom in (+1) or out (-1).
+    ///
+    /// A sixth of the range per press, which is what makes the slider's own
+    /// doc comment true: "the ± buttons double per press, so crossing the
+    /// range takes six clicks each way".
+    static let zoomStep = 1.0 / 6.0
+
+    func zoomTimeline(by direction: Double) {
+        let target = min(1, max(0, timelineZoomFraction + direction * Self.zoomStep))
+        timelineView?.setZoomFraction(target)
+        timelineZoomFraction = target
+    }
 
     /// Corrects one recognized word's text (D62 second slice).
     ///
@@ -2368,13 +2437,22 @@ struct TimelineViewRepresentable: NSViewRepresentable {
 /// around them stays SwiftUI.
 struct EditorContentView: View {
     @ObservedObject var state: EditorTimelineState
+    /// Crop mode, the proposed box and whether the rail is open.
+    ///
+    /// Shared with the toolbar rather than owned here (D97): those controls
+    /// live in the titlebar now, and an `NSToolbarItem` cannot see a SwiftUI
+    /// view's private `@State`.
+    @ObservedObject var chrome: EditorChromeState
 
-    init(state: EditorTimelineState) { self.state = state }
+    init(state: EditorTimelineState, chrome: EditorChromeState) {
+        self.state = state
+        self.chrome = chrome
+    }
     @State private var playhead: Double = 0
     /// Re-derived from the player on every tick rather than stored: a cached
     /// flag goes stale the moment playback ends at the last frame, leaving a
     /// button labelled "Pause" over a stopped player.
-    private var isPlaying: Bool { state.controller.player.rate != 0 }
+    private var isPlaying: Bool { state.isPlaying }
     /// Which marker the edit sheet is open for, if any (Task 6). UI-only,
     /// like `expandedCutIDs`'s spirit but one level further out: nothing
     /// tests WHICH marker is currently open in a sheet, only that
@@ -2383,15 +2461,8 @@ struct EditorContentView: View {
     /// `EditorTimelineState`, because it is presentation state a SwiftUI
     /// runtime test cannot exercise anyway.
     @State private var editingMarkerID: UUID?
-    /// Crop mode. UI-only, like `editingMarkerID`: what is asserted is that
-    /// `applyCrop`/`resetCrop` persist and undo, not which mode a view is in.
-    @State private var croppingActive = false
-    /// The crop the box is currently PROPOSING, normalized to the picture on
-    /// screen. Lives here rather than in `CropDragOverlay` because Apply is in
-    /// the toolbar and has to be able to read it — and because normalizing to
-    /// the picture keeps a placed box where the user put it when the window
-    /// resizes under it.
-    @State private var cropBox: CropRect = .full
+
+
     /// Whether the reading transcript is open. UI-only, like `croppingActive`:
     /// what is asserted elsewhere is that the transcript persists and edits,
     /// not which panes a window happens to be showing.
@@ -2470,11 +2541,7 @@ struct EditorContentView: View {
         }
     }
 
-    /// Whether the side panel is on screen at all. Defaults to TRUE because
-    /// the markers list always used to be: the toggle now governs the whole
-    /// rail, and a rail that started hidden would take away a list nobody
-    /// asked to lose.
-    @State private var showRail = true
+
     /// Which sections are open. Both can be, at once — see `AccordionSection`
     /// for why an either/or accordion would be the wrong shape for two indexes
     /// of the same recording.
@@ -2558,6 +2625,8 @@ struct EditorContentView: View {
 
     /// The window's content height, measured once and read by the timeline.
     @State private var windowHeight: Double = 731
+    /// Focus for the crop overlay, so Return and Escape reach it.
+    @FocusState private var cropFocused: Bool
 
     var body: some View {
         GeometryReader { geometry in
@@ -2570,30 +2639,11 @@ struct EditorContentView: View {
 
     private var content: some View {
         VStack(spacing: 0) {
-            // Document actions. Separated from the transport by WHAT THEY ACT
-            // ON — these change the recording, the transport bar below changes
-            // where you are in it. Everything used to sit in one row at the
-            // bottom, which made a control's position say nothing about what
-            // it did.
-            EditorToolbar(
-                title: state.documentTitle,
-                subtitle: state.documentSubtitle,
-                croppingActive: $croppingActive,
-                showTranscript: $showRail,
-                hasTranscript: state.transcriptionStatus != .none,
-                canApplyCrop: cropBox != .full,
-                hasCrop: state.edl.crop != nil,
-                trimCaption: state.lastTrimOutcome.map(Self.trimCaption),
-                agentIsDriving: state.agentIsDriving,
-                onAutoTrim: { state.autoDeepTrim(preset: $0) },
-                onApplyCrop: {
-                    state.applyCrop(cropBox)
-                    croppingActive = false
-                },
-                onResetCrop: { state.resetCrop() },
-                onExport: { state.requestExport() })
-            Divider()
-
+            // The document actions used to be a row right here, standing in
+            // for a titlebar. They are `EditorWindowToolbar`'s items now, so
+            // the content starts at the picture — and the `Divider()` that
+            // separated the row from it goes too, because the system draws the
+            // titlebar's own separator.
             HStack(alignment: .top, spacing: 0) {
                 PlayerLayerView(player: controller.player,
                                 clickMarks: state.clickMarks,
@@ -2604,17 +2654,52 @@ struct EditorContentView: View {
                     .overlay {
                         // Only while cropping: an always-live drag layer would
                         // swallow clicks meant for the player.
-                        if croppingActive {
+                        if chrome.croppingActive {
                             CropDragOverlay(
                                 videoSize: controller.player.currentItem?.presentationSize
                                     ?? CGSize(width: 16, height: 9),
-                                box: $cropBox)
+                                box: $chrome.cropBox)
+                                // Return commits the box, Escape abandons it.
+                                //
+                                // Here rather than on a button in the titlebar:
+                                // a commit button had to appear beside the Crop
+                                // toggle while the mode was on, and a toolbar
+                                // item keeps the width it was built with — so
+                                // the button drew over the Export icon next to
+                                // it. Keys cost no width.
+                                //
+                                // Focus is taken when the overlay appears and
+                                // the overlay exists exactly while the mode
+                                // does, so neither key can fire against a crop
+                                // that is not being drawn.
+                                .focusable()
+                                .focused($cropFocused)
+                                .onAppear { cropFocused = true }
+                                .onKeyPress(.return) {
+                                    // Nothing drawn yet is not a crop to the
+                                    // whole frame — it is a press with nothing
+                                    // to commit, and applying `.full` would
+                                    // write a crop key for a crop nobody made.
+                                    guard chrome.cropBox != .full else { return .handled }
+                                    state.applyCrop(chrome.cropBox)
+                                    chrome.croppingActive = false
+                                    return .handled
+                                }
+                                .onKeyPress(.escape) {
+                                    // The box goes back to whole-frame as well
+                                    // as the mode closing: a half-drawn box
+                                    // left behind would be what the NEXT press
+                                    // of Crop started from.
+                                    chrome.cropBox = .full
+                                    chrome.croppingActive = false
+                                    return .handled
+                                }
                         }
                     }
                 // The rail is on the TRAILING edge, which is where the toolbar
                 // toggle has always said it would be: that button's icon is
                 // `sidebar.trailing`, and it was opening a panel on the left.
-                if showRail {
+                if chrome.showRail {
                     // `direction: -1` — the rail is to the RIGHT of its
                     // divider, so dragging right makes it narrower.
                     ResizableDivider(direction: -1) { delta in
@@ -2650,6 +2735,7 @@ struct EditorContentView: View {
                 visibleFraction: state.timelineView?.visibleFraction ?? 1,
                 scrollFraction: state.timelineView?.scrollFraction ?? 0,
                 onScroll: { state.timelineView?.setScrollFraction($0) },
+                onZoomStep: { state.zoomTimeline(by: $0) },
                 canCut: state.selection != nil,
                 onRewind: { state.rewind() },
                 onPreviousMark: { state.goToPreviousMark() },
@@ -2693,6 +2779,14 @@ struct EditorContentView: View {
             }
             .frame(height: timelineHeight)
         }
+        // `documentSubtitle` counts markers and folds, so it changes on every
+        // mark and every cut. Pushed from here rather than observed by the
+        // controller because this view already re-reads it on each render —
+        // `initial: true` so a window that opens with markers shows them
+        // rather than waiting for the first edit.
+        .onChange(of: state.documentSubtitle, initial: true) { _, subtitle in
+            chrome.applySubtitle?(subtitle)
+        }
         .onReceive(Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()) { _ in
             // 20Hz, raised from 10 when the playhead stopped being decoration.
             // It now selects which transcript word is highlighted, and the
@@ -2711,6 +2805,10 @@ struct EditorContentView: View {
             // needs a ten-minute recording to answer, and is in field-notes.
             let seconds = controller.player.currentTime().seconds
             playhead = seconds.isFinite ? seconds : 0
+            // Pushed rather than read at render. `playhead` stops changing the
+            // instant playback ends, so a render-time read of the rate had
+            // nothing left to trigger it — see `EditorTimelineState.isPlaying`.
+            state.updatePlayback(rate: controller.player.rate)
             // The voiceover lane advances on the SAME tick as the playhead, so
             // the two cannot drift apart: a level drawn at a position the
             // playhead has not reached is a lane that describes a different
@@ -2911,6 +3009,13 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
 
     private let controller: PreviewController
     private let state: EditorTimelineState
+    /// Crop mode, the proposed box and whether the rail is open — shared by
+    /// the content view and the titlebar (D97).
+    private let chrome: EditorChromeState
+    /// HELD, not just installed. `NSWindow.toolbar` does not retain its
+    /// delegate, so a toolbar built and dropped on the floor would lose every
+    /// item the moment the window asked for one again.
+    private let toolbar: EditorWindowToolbar
     public let window: NSWindow
     private var isShown = false
 
@@ -3105,20 +3210,27 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     static func makeWindow(contentRect: NSRect, title: String) -> NSWindow {
         let window = NSWindow(
             contentRect: contentRect,
-            styleMask: [.titled, .closable, .resizable, .miniaturizable,
-                        .fullSizeContentView],
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered,
             defer: false)
-        window.titlebarAppearsTransparent = true
-        // HIDDEN, not empty. The title still has to be SET — Mission Control,
-        // the Window menu, ⌘-tab and VoiceOver all read it, and a window
-        // called "" is one you cannot find among six others. Clearing it
-        // instead of hiding it looks identical in the one place you are
-        // looking when you make the change.
-        window.titleVisibility = .hidden
+        // VISIBLE now, and drawn by the system (D97). It used to be hidden so
+        // that the app's own row could draw a title of its own without the
+        // window drawing a second copy above it — which meant the string
+        // Mission Control, the Window menu and ⌘-tab read was never the string
+        // anybody was looking at. One title, in one place, and the toolbar
+        // lays out beside it.
+        window.titleVisibility = .visible
         window.title = title
         return window
     }
+
+    /// `.fullSizeContentView` is deliberately GONE from the mask above.
+    ///
+    /// It existed to pull the content up under a transparent titlebar so a
+    /// hand-built row could stand in for one. With a real `NSToolbar` the
+    /// titlebar IS the row, and keeping the flag would put the content under
+    /// it — the toolbar drawing over the picture instead of above it.
+    static let usesFullSizeContentView = false
 
     /// The floor a Snitt window may be dragged to: 800x600, or whatever the
     /// parts actually need if that is larger.
@@ -3257,11 +3369,19 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         state.loadTranscript()
         state.loadCaptureHealth()
         state.beginTranscriptionIfNeeded()
-        let hosting = NSHostingView(rootView: EditorContentView(state: state))
+        let chrome = EditorChromeState()
+        self.chrome = chrome
+        let hosting = NSHostingView(
+            rootView: EditorContentView(state: state, chrome: chrome))
         let window = Self.makeWindow(
             contentRect: Self.openingContentRect(on: NSScreen.main?.visibleFrame),
             title: title)
         state.documentTitle = title
+        // Before the window is shown, so the first frame has its chrome rather
+        // than growing a titlebar a moment later.
+        let toolbar = EditorWindowToolbar(state: state, chrome: chrome)
+        self.toolbar = toolbar
+        toolbar.install(on: window)
         state.defaultExportURL = Self.defaultExportURL(forBundle: bundleURL)
         // Enforced by the window itself, not merely documented: a layout with
         // a stated minimum that nothing stops you dragging past has no
@@ -3399,6 +3519,50 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// time, a different window, or this editor's own window with nothing
     /// selected — falls through to normal text editing instead.
     var hasTimelineSelection: Bool { state.selection != nil }
+
+    /// Whether this recording has a crop to put back, which is what greys out
+    /// Edit ▸ Reset Crop when it does not.
+    var hasCrop: Bool { state.edl.crop != nil }
+
+    /// Edit ▸ Reset Crop. Same nil-target resolution as `cutTimelineSelection`
+    /// below: the menu picks the key window's editor and calls this, which is
+    /// the decision the titlebar's Reset button used to make before a toolbar
+    /// item's fixed width made an appearing-and-disappearing button draw over
+    /// its neighbour.
+    func resetCrop() { state.resetCrop() }
+
+    /// Edit ▸ Auto-Trim, at the preset the toolbar menu also calls Default.
+    func autoTrimAtDefaultPreset() { _ = state.autoDeepTrim(preset: .default) }
+
+    /// Edit ▸ Crop. Enters or leaves the mode; the box itself is committed by
+    /// Return and abandoned by Escape, both handled by the drag overlay.
+    func toggleCrop() { chrome.croppingActive.toggle() }
+
+    /// View ▸ Panel.
+    func togglePanel() { chrome.showRail.toggle() }
+
+    /// Edit ▸ Add Marker, at wherever playback is.
+    func addMarkerAtPlayhead() {
+        state.addMarker(atOutput: state.outputPlayhead)
+    }
+
+    /// Edit ▸ Add Narration. Opens the field; the pane focuses it on appear.
+    func beginWritingNarration() { state.beginWritingNarration() }
+
+    /// Whether a written line has anywhere to go, which is what greys out
+    /// Edit ▸ Add Narration — the same gate the pane's `+` uses, so the menu
+    /// and the button cannot disagree about whether the feature is available.
+    var acceptsWrittenNarration: Bool { state.acceptsWrittenNarration }
+
+    /// View ▸ Zoom In / Zoom Out. `direction` is +1 or -1.
+    func zoomTimeline(by direction: Double) {
+        state.zoomTimeline(by: direction)
+    }
+
+    /// What View ▸ Panel should be called right now, so the menu says which
+    /// way it will go rather than always claiming one — the same rule
+    /// `deleteMenuTitle` follows.
+    var panelMenuTitle: String { chrome.showRail ? "Hide Panel" : "Show Panel" }
 
     /// Edit ▸ Cut Selection (Delete/Backspace), Task 5's second requirement:
     /// "Task 4 added a Cut button but no keyboard path." `EditorWindowController`
@@ -3942,7 +4106,7 @@ final class EditorWindowTestGate {
             if Date() >= deadline {
                 throw Timeout(description: """
                     "\(label)" waited \(Int(timeout))s for EditorWindowTestGate and gave up. \
-                    It was held by "\(holderDescription)", which never released it — that holder \
+                    It was held by "\(holderDescription)", which never released it. That holder \
                     is the defect, not this test.
                     """)
             }

@@ -48,6 +48,11 @@ enum AppShell {
         main.addItem(appMenuItem())
         main.addItem(fileMenuItem())
         main.addItem(editMenuItem())
+        // Its own menu rather than an item in Window, which
+        // `WindowMenuDelegate` rebuilds from a fixed `staticItemCount` — a
+        // fifth static item there is a document list that silently loses its
+        // first entry.
+        main.addItem(KeyboardShortcutRegistry.menuItem(for: .view))
         // Built by `KeyboardShortcutRegistry` rather than here, so a binding
         // lives in exactly one place — see that type for why a hand-written
         // help dialog beside a hand-written menu is a drift waiting to happen.
@@ -222,6 +227,15 @@ enum AppShell {
                                       keyEquivalent: "\u{8}")
         cutSelection.keyEquivalentModifierMask = []
         menu.addItem(cutSelection)
+
+        menu.addItem(.separator())
+
+        // This app's own edits — Auto-Trim, Crop, Reset Crop, Over-dub — come
+        // from `KeyboardShortcutRegistry`, which is where every binding is
+        // written down and where the toolbar's tooltips read their keys from.
+        // The items above are AppKit's (Undo, Cut, Paste) and have no business
+        // in a list about Snitt's commands.
+        for entry in KeyboardShortcutRegistry.items(in: .edit) { menu.addItem(entry) }
         item.submenu = menu
         return item
     }

@@ -114,7 +114,7 @@ public struct ExportDestination: Equatable, Sendable, Identifiable {
         // away, so this exports at source.
         maxSizeBytes: 2_000_000_000, maxDurationSeconds: nil,
         resolution: .source,
-        note: "Exported at full quality — YouTube re-encodes anyway.")
+        note: "Exported at full quality. YouTube re-encodes anyway.")
 
     public static let tiktok = ExportDestination(
         id: "tiktok", name: "TikTok",

@@ -166,7 +166,7 @@ struct CropDragOverlay: View {
     .frame(width: 640, height: 420)
 }
 
-#Preview("Crop overlay — full frame") {
+#Preview("Crop overlay: full frame") {
     // The starting state, where all four handles sit on the picture's own
     // edges and are easiest to lose.
     @Previewable @State var box = CropRect(x: 0, y: 0, width: 1, height: 1)

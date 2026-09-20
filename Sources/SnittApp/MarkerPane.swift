@@ -82,9 +82,13 @@ struct MarkerPane: View {
             state.addMarker(atOutput: playhead)
         } label: {
             Image(systemName: "plus")
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
-        .help("Add a marker at the playhead")
+        .help(KeyboardShortcutRegistry.tooltip(
+            "Add a marker at the playhead",
+            key: KeyboardShortcutRegistry.addMarkerTitle))
     }
 
     private var empty: some View {
@@ -141,12 +145,18 @@ struct MarkerPane: View {
                 // one thing in this row that says WHEN looked exactly like
                 // the things that say what. A marker inside a cut keeps its
                 // quieter treatment, since that is a different fact again.
-                Text(Self.timestamp(chapter.outputTime))
-                    .font(.system(.caption, design: .monospaced).weight(.medium))
-                    .monospacedDigit()
-                    .foregroundStyle(chapter.isInsideCut
-                                     ? AnyShapeStyle(.tertiary)
-                                     : AnyShapeStyle(SnittPalette.Swatch.amberText))
+                // Only while NOT editing. The edit row puts an editable time
+                // field in the same place, so both were drawn: the amber
+                // timestamp and a box containing the same number, side by
+                // side, reading as two different times.
+                if editingID != chapter.id {
+                    Text(Self.timestamp(chapter.outputTime))
+                        .font(.system(.caption, design: .monospaced).weight(.medium))
+                        .monospacedDigit()
+                        .foregroundStyle(chapter.isInsideCut
+                                         ? AnyShapeStyle(.tertiary)
+                                         : AnyShapeStyle(SnittPalette.Swatch.amberText))
+                }
                 if editingID == chapter.id {
                     // The time is editable alongside the name: a chapter in the
                     // wrong place is as wrong as one with the wrong name, and
@@ -189,7 +199,7 @@ struct MarkerPane: View {
                     .lineLimit(2)
             }
             if chapter.isInsideCut {
-                Text("Inside a cut — shown at the fold")
+                Text("Inside a cut, shown at the fold")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }

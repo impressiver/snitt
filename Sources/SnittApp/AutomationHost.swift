@@ -924,7 +924,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             return .failure(AutomationError(
                 code: .unusableRecording,
                 message: "Could not read this recording's edit.json.",
-                hint: "The file exists but is not valid — exporting the whole "
+                hint: "The file exists but is not valid, so exporting the whole "
                     + "recording without applying it would silently discard trims "
                     + "the recording actually has: \(String(describing: error))"))
         }
@@ -953,7 +953,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             return .failure(AutomationError(
                 code: .unusableRecording,
                 message: "The current trim removes the entire recording.",
-                hint: "Widen the kept range with a `trim` request before exporting — "
+                hint: "Widen the kept range with a `trim` request before exporting: "
                     + "there is nothing left of this recording to write."))
         } catch CompositionError.noVideoTrack {
             return .failure(AutomationError(
@@ -1021,7 +1021,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             return .failure(AutomationError(
                 code: .unusableRecording,
                 message: "Could not build a report for this recording.",
-                hint: "One of its sidecar files exists but could not be read — reporting "
+                hint: "One of its sidecar files exists but could not be read, so reporting "
                     + "it as empty would hide a real problem: \(String(describing: error))"))
         }
     }
@@ -1598,7 +1598,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                 code: .noSuchSession,
                 message: "No agent recording with that session id.",
                 hint: "Only the session you started can be paused. A recording a "
-                    + "person started is theirs to control — check `snitt status`."))
+                    + "person started is theirs to control. Check `snitt status`."))
         }
     }
 
@@ -1615,7 +1615,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             return .failure(AutomationError(
                 code: .busy,
                 message: "The recording has not delivered a frame yet.",
-                hint: "Wait a moment and try again — this is normal in the first "
+                hint: "Wait a moment and try again. This is normal in the first "
                     + "fraction of a second, and the recording itself is fine."))
         case .notCurrentSession, .notRecording:
             return .failure(AutomationError(
@@ -1725,7 +1725,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             return AutomationError(
                 code: .targetNotFound,
                 message: "Could not start recording that target.",
-                hint: "Check `snitt targets list` — the application may not be running.")
+                hint: "Check `snitt targets list`. The application may not be running.")
         case .failed(let message, .internalError):
             return AutomationError(code: .internalError,
                                    message: "Could not start recording that target.",
@@ -1878,7 +1878,7 @@ extension AutomationHost {
 private actor NullCoordinator: AgentRecordingControlling {
     func startForAgent(sessionID: String, reference: TargetReference,
                        git: GitContext?, options: CaptureOptions) async -> CoordinatorOutcome {
-        .failed("NullCoordinator does not record — use a real fake for this test.",
+        .failed("NullCoordinator does not record. Use a real fake for this test.",
                reason: .internalError)
     }
 

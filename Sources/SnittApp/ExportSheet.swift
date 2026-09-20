@@ -139,7 +139,34 @@ struct ExportRequest: Equatable {
     /// nothing. `format` is `private(set)` so this is the only way to change
     /// it — a plain `var` lets a caller set the format and leave the
     /// extension behind, which is exactly the bug.
-    mutating func setFormat(_ format: String) {
+    /// Pick a format, as a person picking one means it.
+    ///
+    /// **One mutation, and that is the whole point.** The picker used to call
+    /// `setFormat` and then `clearPreset`, two `mutating` calls on a SwiftUI
+    /// `@Binding` — and the second re-READS the binding before it writes. The
+    /// read came back with the pre-write value, so `clearPreset` wrote the old
+    /// format back over the new one: the GIF segment lit up under the pointer
+    /// and snapped back to MP4, and no part of the sheet ever saw the change.
+    ///
+    /// `setFormat` is private now so no call site can rebuild that pair.
+    mutating func choose(format: String) {
+        setFormat(format)
+        // Changing a setting by hand is what makes this Custom.
+        clearPreset()
+    }
+
+    /// Pick a resolution by hand. One mutation, for the reason above — this
+    /// call site had the identical pair, so a resolution chosen by hand did
+    /// not stick either.
+    mutating func choose(resolution: ExportResolution) {
+        self.resolution = resolution
+        // Picking a resolution by hand is choosing QUALITY, not a byte budget
+        // — `maxSizeBytes`' own doc comment says so — and the two fight: the
+        // size ladder would walk back down from whatever was just chosen.
+        clearPreset()
+    }
+
+    private mutating func setFormat(_ format: String) {
         self.format = format
         destination = destination.deletingPathExtension()
             .appendingPathExtension(format)
@@ -283,7 +310,7 @@ struct ExportSheet: View {
               preset.exceedsDuration(durationSeconds) else { return nil }
         let limit = Int((preset.maxDurationSeconds ?? 0).rounded())
         return "Longer than \(preset.name) accepts (\(limit / 60)m \(limit % 60)s). "
-             + "It will export at full length — trim it yourself if that matters."
+             + "It will export at full length, so trim it yourself if that matters."
     }
 
     /// Not a destination id, and it must never collide with one — the picker's
@@ -296,19 +323,17 @@ struct ExportSheet: View {
             Text("Format").font(.caption).foregroundStyle(.secondary)
             Picker("", selection: Binding(
                 get: { request.format },
-                set: {
-                    request.setFormat($0)
-                    // Changing a setting by hand is what makes this Custom.
-                    // Clearing the budget here rather than asking the picker to
-                    // do it keeps the rule in ONE place: any path that changes
-                    // format goes through `setFormat`.
-                    request.clearPreset()
-                })) {
+                set: { request.choose(format: $0) })) {
                 Text("MP4").tag("mp4")
                 Text("GIF").tag("gif")
             }
             .pickerStyle(.segmented)
             .labelsHidden()
+            // Its natural width, not the row's. A segmented picker fills the
+            // space it is given, which turned two short words into a slab
+            // spanning the sheet — the system's own segmented controls sit at
+            // the width of what is in them.
+            .fixedSize()
         }
     }
 
@@ -357,12 +382,7 @@ struct ExportSheet: View {
     /// the rows do not reflow when the format changes.
     private func row(for option: ExportOption) -> some View {
         Button {
-            request.resolution = option.resolution
-            // Picking a resolution by hand is choosing QUALITY, not a byte
-            // budget — `maxSizeBytes`' own doc comment says so — and the two
-            // fight: the size ladder would walk back down from whatever was
-            // just chosen. Clearing the preset is what makes the choice stick.
-            request.clearPreset()
+            request.choose(resolution: option.resolution)
         } label: {
             HStack(spacing: 10) {
                 Image(systemName: option.resolution == request.resolution
@@ -506,7 +526,7 @@ struct ExportSheet: View {
 // Three previews rather than one: the measured state is what someone sees
 // almost always, the measuring state is what they see first, and the failed
 // measurement is the one nobody looks at until it ships wrong.
-#Preview("Export — measured") {
+#Preview("Export: measured") {
     @Previewable @State var request = ExportRequest(
         destination: URL(fileURLWithPath: "/Users/somebody/Desktop/Standup.mp4"))
     ExportSheet(title: "Standup 2026-09-10", options: PreviewFixtures.exportOptions,
@@ -514,7 +534,7 @@ struct ExportSheet: View {
                 onCancel: {}, onExport: {}, onChooseFolder: {})
 }
 
-#Preview("Export — measuring") {
+#Preview("Export: measuring") {
     @Previewable @State var request = ExportRequest(
         destination: URL(fileURLWithPath: "/Users/somebody/Desktop/Standup.mp4"))
     ExportSheet(title: "Standup 2026-09-10", options: [],
@@ -522,11 +542,11 @@ struct ExportSheet: View {
                 onCancel: {}, onExport: {}, onChooseFolder: {})
 }
 
-#Preview("Export — GIF, estimates disclaimed") {
+#Preview("Export: GIF, estimates disclaimed") {
     @Previewable @State var request: ExportRequest = {
         var request = ExportRequest(
             destination: URL(fileURLWithPath: "/Users/somebody/Desktop/Standup.mp4"))
-        request.setFormat("gif")
+        request.choose(format: "gif")
         return request
     }()
     ExportSheet(title: "Standup 2026-09-10", options: PreviewFixtures.exportOptions,

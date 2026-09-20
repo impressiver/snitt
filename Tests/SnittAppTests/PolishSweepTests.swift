@@ -48,7 +48,11 @@ struct PolishSweepTests {
             let help = TransportBar.help(label, title)
             let key = KeyboardShortcutRegistry.shortcutDisplay(titled: title)
             #expect(!key.isEmpty, "the registry lost its \(title) binding")
-            #expect(help == "\(label) — \(key)", "tooltip reads \(help)")
+            // Parentheses, not an em dash. The format changed on product-owner
+            // direction 2026-09-20 — one house style across the whole window,
+            // since the titlebar's buttons had always used parentheses while
+            // the transport's used a dash.
+            #expect(help == "\(label) (\(key))", "tooltip reads \(help)")
         }
     }
 

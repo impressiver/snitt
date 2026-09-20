@@ -23,149 +23,12 @@ import SnittDocument
 /// sits at the head of the timeline where the playhead lives.
 
 // MARK: - Toolbar
-
-/// Document-level actions. One accent-coloured control, and it is Export,
-/// because that is the only thing here that ends the session.
-struct EditorToolbar: View {
-    let title: String
-    let subtitle: String
-    @Binding var croppingActive: Bool
-    @Binding var showTranscript: Bool
-    let hasTranscript: Bool
-    let canApplyCrop: Bool
-    let hasCrop: Bool
-    let trimCaption: String?
-    /// Whether an agent is driving this window right now (E10).
-    ///
-    /// Required by the control-surface design rather than filed as a nicety:
-    /// once an agent can move a person's playhead and cut their timeline, a
-    /// person watching needs to know that is what is happening. §5.3 already
-    /// gives RECORDING a visible indicator; editing deserves the same, and
-    /// `RecordingState` cannot serve — it is `idle` or `recording`, set only
-    /// by an agent starting or stopping a recording, and every editor verb
-    /// works with no recording session at all.
-    let agentIsDriving: Bool
-    let onAutoTrim: (DeepTrimPreset) -> Void
-    let onApplyCrop: () -> Void
-    let onResetCrop: () -> Void
-    let onExport: () -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            VStack(alignment: .leading, spacing: 1) {
-                Text(verbatim: title).font(.headline).lineLimit(1)
-                Text(verbatim: subtitle)
-                    .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-            }
-            if agentIsDriving {
-                // Beside the document's name, not at the far end of the button
-                // row: this is a fact about the document in front of you, and
-                // status stranded across the window reads as unrelated.
-                Label("Agent editing", systemImage: "wand.and.rays")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(.quaternary, in: Capsule())
-                    .accessibilityLabel("An agent is editing this recording")
-                    .transition(.opacity)
-            }
-            if let trimCaption {
-                // Said next to the control that caused it, not stranded at the
-                // far end of a button row where it reads as unrelated status.
-                Text(trimCaption)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 8).padding(.vertical, 3)
-                    .background(.quaternary, in: Capsule())
-            }
-            Spacer(minLength: 12)
-
-            Menu {
-                Button("Conservative") { onAutoTrim(.conservative) }
-                Button("Default") { onAutoTrim(.default) }
-                Button("Aggressive") { onAutoTrim(.aggressive) }
-            } label: {
-                Label("Auto-Trim", systemImage: "wand.and.stars")
-            }
-            .menuStyle(.button)
-            .fixedSize()
-            .help("Cut the spans where nothing happens")
-
-            // Crop is a MODE, so it is a toggle, and its commit lives beside
-            // it only while the mode is on — rather than three permanent
-            // buttons, two of which do nothing most of the time.
-            Toggle(isOn: $croppingActive) {
-                Label("Crop", systemImage: "crop")
-            }
-            .toggleStyle(.button)
-            .help("Draw a crop box on the picture")
-
-            if croppingActive {
-                Button("Apply", action: onApplyCrop)
-                    .buttonStyle(.borderedProminent)
-                    .disabled(!canApplyCrop)
-                    .help("Crop the picture to the box you drew")
-            } else if hasCrop {
-                Button("Reset Crop", action: onResetCrop)
-                    .help("Show the whole picture again")
-            }
-
-            Button(action: onExport) {
-                Label("Export…", systemImage: "square.and.arrow.up")
-            }
-            .buttonStyle(.borderedProminent)
-            .keyboardShortcut("e", modifiers: .command)
-            .help("Write a video file — ⌘E")
-
-            if hasTranscript {
-                // A PANEL TOGGLE, not an action (rev 5, W3).
-                //
-                // It sat among Auto-Trim, Crop and Export wearing the same
-                // clothes — three things that change the recording and one
-                // that changes what you can see, all dressed identically.
-                // Icon-only at the trailing edge, past a divider, is where
-                // every Mac app puts its inspector toggle, and being there is
-                // most of what tells you what it does.
-                Divider().frame(height: 16)
-                // Governs the whole side panel now — markers AND transcript,
-                // as an accordion — rather than the transcript alone. The icon
-                // never changed: `sidebar.trailing` is what it always was, and
-                // the panel moving to the trailing edge is what finally makes
-                // it true.
-                Toggle(isOn: $showTranscript) {
-                    Label("Panel", systemImage: "sidebar.trailing")
-                }
-                .toggleStyle(.button)
-                .labelStyle(.iconOnly)
-                .help(showTranscript ? "Hide the markers and transcript panel"
-                                     : "Show the markers and transcript panel")
-                .accessibilityLabel("Markers and transcript panel")
-                .accessibilityAddTraits(showTranscript ? [.isSelected] : [])
-            }
-        }
-        .labelStyle(.titleAndIcon)
-        .controlSize(.regular)
-        // 78pt clears the traffic lights, which now float over this row
-        // rather than sitting in a strip above it (rev 5, W3).
-        .padding(.leading, Self.trafficLightInset)
-        .padding(.trailing, 12)
-        .padding(.vertical, 8)
-        .frame(minHeight: Self.height, alignment: .center)
-        // This row is the titlebar now, and a titlebar you cannot drag the
-        // window by is what would make `.fullSizeContentView` feel broken.
-        // Nothing here has to arrange that: AppKit turns a press into a window
-        // drag based on the hit view's `mouseDownCanMoveWindow`, and
-        // `NSHostingView` already answers true — measured, not assumed, and
-        // pinned by `TitlebarChromeTests` so a future wrapper view that
-        // answers false is caught rather than discovered by dragging.
-        .background(.bar)
-    }
-
-    /// Leading inset that clears the close/minimise/zoom buttons.
-    static let trafficLightInset: Double = 78
-    /// The chrome row's height — one deck, where there used to be two.
-    static let height: Double = 38
-}
+//
+// `EditorToolbar` used to live here: a hand-built `HStack` standing in for a
+// titlebar under `.fullSizeContentView`. It is `EditorWindowToolbar` now — a
+// real `NSToolbar` — so the title, the traffic-light inset, overflow and the
+// titlebar material are the system's rather than this file's approximations of
+// them (D97).
 
 // MARK: - Transport bar
 
@@ -182,6 +45,8 @@ struct TransportBar: View {
     let visibleFraction: Double
     let scrollFraction: Double
     let onScroll: (Double) -> Void
+    /// One press of zoom in (+1) or out (-1).
+    var onZoomStep: (Double) -> Void = { _ in }
     let canCut: Bool
     let onRewind: () -> Void
     let onPreviousMark: () -> Void
@@ -235,6 +100,8 @@ struct TransportBar: View {
             scrollBar
             Button("Cut", systemImage: "scissors", action: onCut)
                 .labelStyle(.iconOnly)
+                .frame(width: 26, height: 22)
+                .contentShape(Rectangle())
                 .buttonStyle(.plain)
                 // Red once it can actually remove something, slate while it
                 // cannot — the one control here that destroys, saying so only
@@ -243,7 +110,8 @@ struct TransportBar: View {
                                  ? SnittPalette.Swatch.redBright
                                  : SnittPalette.Swatch.slateText.opacity(0.35))
                 .disabled(!canCut)
-                .help("Cut the selected range — Delete")
+                .help(Self.help("Cut the selected range",
+                            KeyboardShortcutRegistry.cutSelectionTitle))
             zoomSlider
         }
         .buttonStyle(.borderless)
@@ -280,9 +148,12 @@ struct TransportBar: View {
     ///
     /// `shortcutDisplay(titled:)` returns empty for a title nothing claims, so
     /// a renamed shortcut leaves the tooltip short rather than stale.
+    /// `label (key)`, from the registry — which is also where the titlebar's
+    /// buttons get theirs, so the whole window speaks one way. This used to
+    /// build the string itself with an em dash while the toolbar used
+    /// parentheses.
     static func help(_ label: String, _ registryTitle: String) -> String {
-        let key = KeyboardShortcutRegistry.shortcutDisplay(titled: registryTitle)
-        return key.isEmpty ? label : "\(label) — \(key)"
+        KeyboardShortcutRegistry.tooltip(label, key: registryTitle)
     }
 
     /// One rounded container, in the order the playhead moves. Grouping is the
@@ -323,6 +194,7 @@ struct TransportBar: View {
                 .foregroundStyle(SnittPalette.Swatch.ink0)
                 .background(SnittPalette.Swatch.signalBright,
                             in: RoundedRectangle(cornerRadius: 5))
+                .contentShape(Rectangle())
             }
             .help(Self.help("Play or pause", "Play / Pause"))
             .accessibilityLabel(playAccessibilityLabel)
@@ -341,10 +213,12 @@ struct TransportBar: View {
                                      ? Color.white : SnittPalette.Swatch.slateText)
                     .background(overdubState.isRecordActive ? Color.red : Color.clear,
                                 in: RoundedRectangle(cornerRadius: 5))
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(overdubState.isRecordActive ? "Stop over-dubbing"
-                                              : Self.help("Over-dub", "Over-dub"))
+            .help(overdubState.isRecordActive
+                  ? Self.help("Stop over-dubbing", KeyboardShortcutRegistry.overdubTitle)
+                  : Self.help("Over-dub", KeyboardShortcutRegistry.overdubTitle))
             .accessibilityLabel(overdubState.isRecordActive
                                 ? "Stop over-dubbing" : "Over-dub the microphone")
             // Not `.borderedProminent`: that draws in the system accent, which
@@ -383,6 +257,11 @@ struct TransportBar: View {
                 .foregroundStyle(enabled
                                  ? SnittPalette.Swatch.slateText
                                  : SnittPalette.Swatch.slateText.opacity(0.35))
+                // The whole 26x22, not the glyph. `.frame` sets the LAYOUT
+                // bounds; hit testing follows the drawn shape, so without this
+                // a transport button only answered to a press that landed on
+                // the arrow itself.
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!enabled)
@@ -492,16 +371,33 @@ struct TransportBar: View {
     /// travel at the far end.
     private var zoomSlider: some View {
         HStack(spacing: 6) {
-            Image(systemName: "minus.magnifyingglass")
-                .foregroundStyle(SnittPalette.Swatch.slateText)
+            // BUTTONS, which the doc comment above has claimed since it was
+            // written: these were `Image`s, so "the ± buttons double per
+            // press" described two decorations either side of the only
+            // control that did anything.
+            zoomButton("minus.magnifyingglass", by: -1,
+                       Self.help("Zoom out", KeyboardShortcutRegistry.zoomOutTitle))
             Slider(value: $zoomFraction, in: 0...1)
                 .frame(width: 90)
                 .controlSize(.mini)
                 .tint(SnittPalette.Swatch.signal)
-            Image(systemName: "plus.magnifyingglass")
-                .foregroundStyle(SnittPalette.Swatch.slateText)
+                .help("Zoom the timeline")
+            zoomButton("plus.magnifyingglass", by: 1,
+                       Self.help("Zoom in", KeyboardShortcutRegistry.zoomInTitle))
         }
-        .help("Zoom the timeline")
+    }
+
+    private func zoomButton(_ symbol: String, by direction: Double,
+                            _ help: String) -> some View {
+        Button { onZoomStep(direction) } label: {
+            Image(systemName: symbol)
+                .frame(width: 20, height: 20)
+                .foregroundStyle(SnittPalette.Swatch.slateText)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 
@@ -510,36 +406,12 @@ struct TransportBar: View {
 // controls are in the wrong place and are unstyled", "transcript, crop, etc
 // buttons in the wrong place and unstyled". Previewed at a fixed width,
 // because both are horizontal layouts whose failure mode is crowding.
-#Preview("Toolbar") {
-    @Previewable @State var cropping = false
-    @Previewable @State var transcript = true
-    VStack(spacing: 0) {
-        EditorToolbar(title: "Standup 2026-09-10", subtitle: "42s · 1512 × 982",
-                      croppingActive: $cropping, showTranscript: $transcript,
-                      hasTranscript: true, canApplyCrop: false, hasCrop: false,
-                      trimCaption: "Auto-trim removed 5.9s", agentIsDriving: true,
-                      onAutoTrim: { _ in }, onApplyCrop: {}, onResetCrop: {},
-                      onExport: {})
-        Divider()
-    }
-    .frame(width: 900)
-}
+// The toolbar's own previews went with `EditorToolbar`. A titlebar cannot be
+// previewed in isolation: what is worth looking at is the row laid out beside
+// real traffic lights, in a real window, which is `Scripts/make-app.sh` and
+// not a canvas.
 
-#Preview("Toolbar — cropping, no transcript") {
-    // The other half of the state space: a crop in progress, and a recording
-    // that has never been transcribed, which is what disables the toggle.
-    @Previewable @State var cropping = true
-    @Previewable @State var transcript = false
-    EditorToolbar(title: "Untitled recording", subtitle: "8s · 2560 × 1440",
-                  croppingActive: $cropping, showTranscript: $transcript,
-                  hasTranscript: false, canApplyCrop: true, hasCrop: true,
-                  trimCaption: nil, agentIsDriving: false,
-                  onAutoTrim: { _ in }, onApplyCrop: {}, onResetCrop: {},
-                  onExport: {})
-        .frame(width: 900)
-}
-
-#Preview("Transport — zoomed and scrollable") {
+#Preview("Transport: zoomed and scrollable") {
     // Zoomed in far enough that the scrollbar appears, which is the state the
     // scroll affordance was added for and the one a default preview hides.
     @Previewable @State var zoom = 0.62
@@ -553,7 +425,7 @@ struct TransportBar: View {
         .frame(width: 900)
 }
 
-#Preview("Transport — playing, whole timeline visible") {
+#Preview("Transport: playing, whole timeline visible") {
     @Previewable @State var zoom = 0.0
     TransportBar(isPlaying: true, hasMarks: false,
                  currentTime: "00:04.00", totalTime: "00:36.10",

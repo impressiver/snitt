@@ -77,7 +77,12 @@ struct EditorTransportTests {
         // playhead walked away from where it had just been put and the click
         // read as ignored.
         let state = try await makeState()
-        state.controller.play()
+        // Started through `togglePlayback` rather than `controller.play()`.
+        // Playing is the state's own published fact now — it has to be, or
+        // nothing can tell the transport that playback ran off the end — and
+        // reaching past the state to the player leaves that fact unset. What
+        // each test asserts about the act that follows is unchanged.
+        state.togglePlayback()
         #expect(state.isPlaying, "the fixture never started playing")
 
         state.onScrub(2.0)
@@ -91,7 +96,12 @@ struct EditorTransportTests {
         // the obvious implementation, and one that reuses the code path that
         // now pauses. A rewind pressed while watching is a replay, not a stop.
         let state = try await makeState()
-        state.controller.play()
+        // Started through `togglePlayback` rather than `controller.play()`.
+        // Playing is the state's own published fact now — it has to be, or
+        // nothing can tell the transport that playback ran off the end — and
+        // reaching past the state to the player leaves that fact unset. What
+        // each test asserts about the act that follows is unchanged.
+        state.togglePlayback()
         #expect(state.isPlaying, "the fixture never started playing")
 
         state.rewind()
@@ -106,7 +116,12 @@ struct EditorTransportTests {
         // timeline's own path would leave the panes behaving differently from
         // the lane for no reason a user could predict.
         let state = try await makeState()
-        state.controller.play()
+        // Started through `togglePlayback` rather than `controller.play()`.
+        // Playing is the state's own published fact now — it has to be, or
+        // nothing can tell the transport that playback ran off the end — and
+        // reaching past the state to the player leaves that fact unset. What
+        // each test asserts about the act that follows is unchanged.
+        state.togglePlayback()
         #expect(state.isPlaying)
 
         state.seek(toOutput: 2.0)

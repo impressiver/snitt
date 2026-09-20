@@ -5,6 +5,11 @@
 // Copyright © 2026 Ian White.
 
 import Testing
+import AppKit
+import AVFoundation
+import SwiftUI
+import SnittDocument
+import SnittExport
 @testable import SnittApp
 
 /// What the transcript pane shows, for each state it can be in.
@@ -69,5 +74,93 @@ struct TranscriptPanePresentationTests {
         // than no message — it looks like the failure itself was empty.
         #expect(decide(.failed("locale unsupported")) == .failed("locale unsupported"))
         #expect(decide(.failed("a")) != .failed("b"))
+    }
+}
+
+
+/// Where a written line can actually be typed (the `+` regression).
+///
+/// **The bug.** `acceptsWrittenNarration` is true for `.transcript` AND
+/// `.noSpeechFound` — deliberately, because a recording the recogniser heard
+/// nothing in is the best reason to write the narration yourself. But the
+/// field it opens was rendered inside `transcriptBody`, one branch of the
+/// pane's switch. So in the `.noSpeechFound` state the `+` was enabled,
+/// pressing it set `isWritingNarration`, and nothing appeared.
+///
+/// Two conditions describing one thing, which is the shape worth pinning
+/// rather than the instance: the button's gate and the field's placement have
+/// to agree. The field is rendered from the pane's body now, and this asserts
+/// the pane hosts a text field in every state the button is live in.
+@Suite(.serialized)
+@MainActor
+struct WrittenNarrationReachabilityTests {
+    init() { _ = NSApplication.shared }
+
+    private func containsTextField(_ view: NSView) -> Bool {
+        if view is NSTextField { return true }
+        return view.subviews.contains { containsTextField($0) }
+    }
+
+    /// A state parked in one presentation, without going near the recogniser.
+    private func state(words: Int) async throws -> EditorTimelineState {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(SnittBundle.fileExtension)
+        let bundle = try SnittBundle(creatingAt: url)
+        try await writeSyntheticMovie(to: bundle.captureURL, seconds: 2)
+        let built = try await CompositionBuilder.build(
+            bundle: bundle, edl: EditDecisionList(), scale: 1.0)
+        let controller = PreviewController(built: built, jumpPoints: [],
+                                           bundle: bundle, scale: 1.0)
+        let state = EditorTimelineState(controller: controller,
+                                        edl: EditDecisionList(), events: [])
+        state.transcript = Transcript(
+            words: (0..<words).map {
+                TranscriptWord(text: "word", start: Double($0) * 0.2, duration: 0.2,
+                               confidence: 1.0, track: "microphone")
+            },
+            locale: "en-US")
+        state.transcriptionStatus = .ready
+        return state
+    }
+
+    private func hostsField(_ state: EditorTimelineState) -> Bool {
+        let host = NSHostingView(rootView: TranscriptPane(state: state, playhead: 0))
+        let frame = NSRect(x: 0, y: 0, width: 360, height: 480)
+        let window = NSWindow(contentRect: frame, styleMask: [.titled],
+                              backing: .buffered, defer: false)
+        window.contentView = host
+        host.frame = frame
+        host.layoutSubtreeIfNeeded()
+        defer { withExtendedLifetime(window) {} }
+        return containsTextField(host)
+    }
+
+    @Test("A recording with speech can be written into")
+    func theTranscriptStateOpensTheField() async throws {
+        // The CONTROL, and the reason it is not optional: the bug was that one
+        // of these two worked and the other did not, so a test covering only
+        // the broken state could be satisfied by breaking both.
+        let subject = try await state(words: 3)
+        #expect(TranscriptPanePresentation.decide(
+            status: subject.transcriptionStatus, hasTranscript: true,
+            wordCount: 3) == .transcript)
+        subject.beginWritingNarration()
+        #expect(hostsField(subject))
+    }
+
+    @Test("A recording the recogniser heard nothing in can be written into")
+    func theNoSpeechStateOpensTheField() async throws {
+        // THE BUG. Verified to fail against the shipped arrangement: with
+        // `narrationField` inside `transcriptBody`, this state hosts no text
+        // field at all and the `+` is a button that does nothing.
+        let subject = try await state(words: 0)
+        #expect(TranscriptPanePresentation.decide(
+            status: subject.transcriptionStatus, hasTranscript: true,
+            wordCount: 0) == .noSpeechFound)
+        #expect(TranscriptPanePresentation.noSpeechFound.acceptsWrittenNarration,
+                "the + is not offered here, so this test is asserting nothing")
+        subject.beginWritingNarration()
+        #expect(hostsField(subject), "the + is live and there is nowhere to type")
     }
 }

@@ -48,7 +48,7 @@ struct TimelineZoomAffordanceTests {
 
         // The real view hierarchy the editor window builds, so SwiftUI
         // constructs the representable and calls makeNSView for us.
-        let hosting = NSHostingView(rootView: EditorContentView(state: state))
+        let hosting = NSHostingView(rootView: EditorContentView(state: state, chrome: EditorChromeState()))
         hosting.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
         hosting.layoutSubtreeIfNeeded()
 

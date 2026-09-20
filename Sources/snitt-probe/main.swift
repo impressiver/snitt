@@ -55,7 +55,7 @@ do {
 
 print("Recording display: \(resolved.descriptor.width)x\(resolved.descriptor.height)")
 print(wantsMic
-      ? "Microphone: ON (--mic) — expect a second permission prompt"
+      ? "Microphone: ON (--mic), expect a second permission prompt"
       : "Microphone: off (pass --mic to enable; costs an extra permission prompt)")
 
 let output = FileManager.default.homeDirectoryForCurrentUser

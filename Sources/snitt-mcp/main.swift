@@ -119,7 +119,7 @@ func exportSummary(_ manifest: ExportManifest) -> String {
     var text = "Exported \(Int(manifest.durationSeconds))s to \(manifest.outputPath) "
              + "(\(String(format: "%.1f", megabytes)) MB)"
     if let note = sizeBudgetNote(manifest) {
-        text += " — \(note)"
+        text += ": \(note)"
     }
     text += chapters.isEmpty ? "" : ", chapters: \(chapters)"
     return text
@@ -352,7 +352,7 @@ func describe(_ response: AutomationResponse) -> String {
             .joined(separator: ", ")
         return "\(Int(report.durationSeconds ?? 0))s recording, "
              + "\(report.markerCount) markers, \(report.inputEventCount) input events"
-             + (chapters.isEmpty ? "" : " — \(chapters)")
+             + (chapters.isEmpty ? "" : ": \(chapters)")
     case .screenshotTaken(let path, let timeSeconds, _):
         // The offset is in the text, not only the filename: an agent quoting
         // the demo needs to say WHEN, and reading it back out of a path is
@@ -369,7 +369,7 @@ func describe(_ response: AutomationResponse) -> String {
                    Double($0.estimatedMaxBytes) / 1_000_000)
         }.joined(separator: "\n")
         return String(format: "%.1fs of footage. These are AVFoundation ceilings and run "
-                            + "generous (about 4x the real file on a 5K recording) — use "
+                            + "generous (about 4x the real file on a 5K recording), so use "
                             + "them to choose a resolution, and maxSize to fit a budget.\n%@",
                       first.durationSeconds, rows as NSString)
     case .autoTrimmed(let summary):
@@ -444,7 +444,7 @@ func diagnosticsSummary(_ report: DiagnosticsReport, outputPath: String) -> Stri
          + "\(report.logLines.count) log line(s), "
          + "\(crashReportsNote), "
          + "app \(report.appVersion), protocol \(report.protocolVersion)"
-         + (permissions.isEmpty ? "" : " — \(permissions)")
+         + (permissions.isEmpty ? "" : ": \(permissions)")
 }
 
 /// The `initialize` result. Extracted so a test can assert on it — the
@@ -525,7 +525,7 @@ while let line = readLine(strippingNewline: true) {
                 // answered. Telling an agent to launch it would send it down
                 // the wrong path entirely (task-8 ruling): distinct message.
                 result(id: id, textContent(
-                    "Snitt is running but did not respond in time. It may be stuck — "
+                    "Snitt is running but did not respond in time. It may be stuck. "
                   + "ask the person at the machine to check the menu bar item, or quit "
                   + "and relaunch Snitt if this keeps happening."))
             } catch ClientError.timeoutUnavailable {
@@ -538,7 +538,7 @@ while let line = readLine(strippingNewline: true) {
             } catch ClientError.malformedResponse {
                 result(id: id, textContent(
                     "Snitt sent a response that could not be understood. This usually "
-                  + "means Snitt and snitt-mcp are out of sync — try updating one or the other."))
+                  + "means Snitt and snitt-mcp are out of sync. Try updating one or the other."))
             } catch {
                 result(id: id, textContent("Could not talk to Snitt: \(error)"))
             }

@@ -40,7 +40,7 @@ struct KeyboardShortcutRegistryTests {
         // and missing from the help is the `ServerInstructionsTests` failure
         // one surface over — instructions describing tools that had moved.
         let help = KeyboardShortcutRegistry.helpText
-        for shortcut in KeyboardShortcutRegistry.shortcuts {
+        for shortcut in KeyboardShortcutRegistry.allShortcuts {
             #expect(help.contains(shortcut.title), "\(shortcut.title) is bound but undocumented")
         }
     }
@@ -106,7 +106,13 @@ struct KeyboardShortcutRegistryTests {
     func bindingsAreUnique() {
         // A duplicate means one of them silently never fires, and which one is
         // an AppKit implementation detail.
-        let keys = KeyboardShortcutRegistry.shortcuts.map { "\($0.modifiers.rawValue)-\($0.key)" }
+        //
+        // `allShortcuts`, not `shortcuts`. This read the Playback list alone
+        // while Edit, View and File entries existed beside it — so the one
+        // check that makes a new binding safe to add was blind to every menu
+        // a new binding was likely to land in.
+        let keys = KeyboardShortcutRegistry.allShortcuts
+            .map { "\($0.modifiers.rawValue)-\($0.key)" }
         #expect(Set(keys).count == keys.count, "two shortcuts share a key")
     }
 
@@ -114,9 +120,102 @@ struct KeyboardShortcutRegistryTests {
     func selectorsResolve() {
         // A registry entry pointing at a selector nobody implements installs a
         // permanently-disabled menu item — live-looking, and doing nothing.
-        for shortcut in KeyboardShortcutRegistry.shortcuts {
+        for shortcut in KeyboardShortcutRegistry.allShortcuts {
             #expect(AppDelegate.instancesRespond(to: shortcut.selector),
                     "\(shortcut.title) is bound to an unimplemented selector")
+        }
+    }
+    @Test("Every menu the registry assembles gets its items")
+    func assembledMenusAreComplete() {
+        // The Playback test above pins one menu by name. Edit and View arrived
+        // later and would have had no such check, which is how a binding ends
+        // up in the help and in no menu at all.
+        for menu in KeyboardShortcut.Menu.allCases {
+            let expected = KeyboardShortcutRegistry.assembledShortcuts
+                .filter { $0.menu == menu }.map(\.title)
+            guard !expected.isEmpty else { continue }
+            let built = KeyboardShortcutRegistry.items(in: menu)
+                .filter { !$0.isSeparatorItem }.map(\.title)
+            #expect(built == expected, "\(menu.rawValue) is not built from the registry")
+        }
+    }
+
+    @Test("A hand-built menu's binding is documented but not assembled twice")
+    func fileShortcutsAreNotDuplicated() {
+        // WRONG IMPLEMENTATION: putting Export… in the list the menu builders
+        // read. `AppShell.fileMenuItem` already owns its position among Save,
+        // Share and Close, so a second one appears in another menu AND makes
+        // ⌘E ambiguous — which is the one outcome `bindingsAreUnique` cannot
+        // see, because both entries would be the same entry.
+        let assembled = KeyboardShortcutRegistry.assembledShortcuts.map(\.title)
+        #expect(!assembled.contains(KeyboardShortcutRegistry.exportTitle))
+        #expect(KeyboardShortcutRegistry.helpText
+            .contains(KeyboardShortcutRegistry.exportTitle),
+            "Export's key is registered nowhere a person can read it")
+    }
+
+    @Test("Over-dub is an edit, not a playback control")
+    func overdubIsAnEdit() {
+        // It records a take INTO the document. Playback is where you are in
+        // the recording and what is drawn over it; nothing there changes what
+        // the file contains.
+        let overdub = KeyboardShortcutRegistry.allShortcuts
+            .first { $0.title == KeyboardShortcutRegistry.overdubTitle }
+        #expect(overdub?.menu == .edit)
+    }
+
+    @Test("A toolbar tooltip quotes the key the registry registered")
+    func tooltipsAreLookedUp() {
+        // The failure this prevents: a button advertising a shortcut the menus
+        // never registered, found out by pressing the key and having nothing
+        // happen. Every titlebar button reads its key through
+        // `shortcutDisplay(titled:)`, so a title that stops matching shows the
+        // label alone rather than a stale key.
+        for title in [KeyboardShortcutRegistry.autoTrimTitle,
+                      KeyboardShortcutRegistry.cropTitle,
+                      KeyboardShortcutRegistry.panelTitle,
+                      KeyboardShortcutRegistry.exportTitle] {
+            #expect(!KeyboardShortcutRegistry.shortcutDisplay(titled: title).isEmpty,
+                    "\(title) has no key, so its button's tooltip is bare")
+        }
+        #expect(KeyboardShortcutRegistry.shortcutDisplay(
+            titled: KeyboardShortcutRegistry.exportTitle) == "⌘E")
+        #expect(KeyboardShortcutRegistry.shortcutDisplay(titled: "nothing claims this") == "")
+    }
+    @Test("Every tooltip is label-then-key in parentheses")
+    func tooltipFormatIsOneStyle() {
+        // It was written at four call sites, two with an em dash and two with
+        // parentheses, so hovering two buttons in the same row gave two house
+        // styles. One function builds it now.
+        // The FORMAT is what is pinned, not the binding. Spelling the key out
+        // here made this test fail when Back to Start moved from Home to ⌘←,
+        // which is a rebinding rather than a formatting regression — and a
+        // test that cries about the wrong thing gets edited until it stops.
+        let key = KeyboardShortcutRegistry.shortcutDisplay(titled: "Back to Start")
+        #expect(!key.isEmpty, "the registry lost its Back to Start binding")
+        let rendered = KeyboardShortcutRegistry.tooltip(
+            "Back to start", key: "Back to Start")
+        #expect(rendered == "Back to start (\(key))")
+        #expect(!rendered.contains("—"), "the em dash is back")
+
+        // And a title nothing claims degrades to the bare label rather than
+        // to a dangling "()" or a stale key.
+        #expect(KeyboardShortcutRegistry.tooltip("Orphan", key: "no such command")
+                == "Orphan")
+    }
+
+    @Test("Every control the product owner asked for has a key")
+    func theRequestedCommandsAreAllBound() {
+        // Listed by name rather than counted, so adding a binding does not
+        // quietly satisfy a missing one.
+        for title in [KeyboardShortcutRegistry.cutSelectionTitle,
+                      KeyboardShortcutRegistry.addMarkerTitle,
+                      KeyboardShortcutRegistry.addNarrationTitle,
+                      KeyboardShortcutRegistry.zoomInTitle,
+                      KeyboardShortcutRegistry.zoomOutTitle,
+                      "Back to Start"] {
+            #expect(!KeyboardShortcutRegistry.shortcutDisplay(titled: title).isEmpty,
+                    "\(title) has no key, so its button's tooltip is bare")
         }
     }
 }

@@ -874,7 +874,7 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         }
         guard isDirectory.boolValue, fileManager.isWritableFile(atPath: directory.path) else {
             return .failed(
-                "Snitt cannot save recordings to \(directory.path) — it is either not a "
+                "Snitt cannot save recordings to \(directory.path). It is either not a "
                     + "folder or not writable. Choose a different folder for recordings "
                     + "in Snitt's Settings.",
                 reason: .internalError)
