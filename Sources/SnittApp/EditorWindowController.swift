@@ -1053,6 +1053,7 @@ final class EditorTimelineState: ObservableObject {
     /// visible refusal a rejected cut gets, not a silently reverted marker.
     private func eventEditWasRejected(_ error: Error) {
         events = lastSavedEvents
+        lastSaveError = error
         onEditRejected?(error)
     }
 
@@ -1656,6 +1657,7 @@ final class EditorTimelineState: ObservableObject {
 
     private func transcriptEditWasRejected(_ error: Error) {
         transcript = lastSavedTranscript
+        lastSaveError = error
         onEditRejected?(error)
     }
 
@@ -2050,7 +2052,134 @@ final class EditorTimelineState: ObservableObject {
     /// ⌘Z once after a refusal is a no-op rather than a surprise.
     private func editWasRejected(_ error: Error) {
         edl = lastSavedEDL
+        // Recorded BEFORE the callback, so `applyFromAgent` sees it whether or
+        // not anything is listening. `onEditRejected` is the person's path and
+        // is nil in a headless host.
+        lastSaveError = error
         onEditRejected?(error)
+    }
+
+    // MARK: - Agent control (D109)
+
+    /// The last save error, so an agent's edit can be told it failed.
+    ///
+    /// Route's third precondition. A person's refused edit reaches
+    /// `presentEditRejection`, which raises an `NSAlert` — documented there as
+    /// `nil` in production, "where the alert is the whole point". An
+    /// unattended agent would hang on it, so the agent path needs the error as
+    /// a VALUE. This carries it from `applyAndSave`'s detached save task to
+    /// `applyFromAgent` awaiting that task.
+    private var lastSaveError: Error?
+
+    /// Applies an agent's edit INSIDE this window, so it lands where a person
+    /// can see it instead of under them (W7).
+    ///
+    /// This is Route. `AutomationHost` used to read `edit.json`, compute a new
+    /// EDL and write the file — and the window's next `applyAndSave` took
+    /// `self.edl` and overwrote it, silently. W4 first settled that by
+    /// REFUSING such an edit, which ended the data loss and left an agent
+    /// unable to show its work; W7 supersedes it now that the control surface
+    /// pays for two of Route's three preconditions anyway.
+    ///
+    /// **The transform runs against the WINDOW's EDL, not the file's.** That
+    /// is what one writer means: the window holds edits that are applied but
+    /// not yet persisted, so an agent computing from disk would compute from a
+    /// stale document and reintroduce the divergence by a longer route. The
+    /// host therefore hands over a transform rather than a finished EDL, and
+    /// precomputes anything asynchronous (a media duration) BEFORE calling,
+    /// because this runs synchronously against the live value.
+    ///
+    /// **One agent command is one undo entry** (E7), grouped explicitly.
+    /// `UndoManager.groupsByEvent` is on by default and collapses whatever
+    /// lands in a single run-loop pass, so an `auto-deep-trim` making twenty
+    /// cuts would be one entry or twenty depending on the run loop rather than
+    /// on anyone's decision.
+    ///
+    /// Throws if the compositor refused the edit, so the agent gets a value
+    /// and no alert is raised.
+    func applyFromAgent(_ actionName: String,
+                        _ transform: (EditDecisionList) -> EditDecisionList) async throws
+        -> EditDecisionList {
+        let snapshot = edl
+
+        // The group brackets the MUTATION only. `applyAndSave` enqueues a task
+        // that finishes long after this returns; bracketing that instead would
+        // close the group on a run loop pass unrelated to this command.
+        undoManager?.beginUndoGrouping()
+        undoManager?.setActionName(actionName)
+        undoManager?.registerUndo(withTarget: self) { $0.restore(snapshot) }
+        edl = transform(edl)
+        undoManager?.endUndoGrouping()
+
+        lastSaveError = nil
+        applyAndSave()
+        await waitForPendingSave()
+
+        if let failure = lastSaveError {
+            lastSaveError = nil
+            throw failure
+        }
+        return edl
+    }
+
+    /// The transcript-side twin, for `narrate`.
+    ///
+    /// Needed for the same reason the EDL one is: the editor holds
+    /// `transcript` as published state and `applyAndSaveTranscript` writes it
+    /// WHOLE, so narration written to the file under an open window is
+    /// overwritten by that window's next transcript save. Leaving this one
+    /// verb refusing while the other three routed would be an inconsistency
+    /// nobody could predict from the outside.
+    ///
+    /// A recording may legitimately have no transcript yet — narration is the
+    /// one way to get one without running the recogniser — so the transform
+    /// takes and returns a value rather than requiring an existing one.
+    func applyTranscriptFromAgent(_ actionName: String,
+                                  _ transform: (Transcript?) -> Transcript) async throws
+        -> Transcript {
+        let snapshot = transcript
+
+        undoManager?.beginUndoGrouping()
+        undoManager?.setActionName(actionName)
+        undoManager?.registerUndo(withTarget: self) { target in
+            guard let snapshot else { return }
+            target.restoreTranscript(snapshot)
+        }
+        transcript = transform(transcript)
+        undoManager?.endUndoGrouping()
+
+        lastSaveError = nil
+        applyAndSaveTranscript()
+        await waitForPendingSave()
+
+        if let failure = lastSaveError {
+            lastSaveError = nil
+            throw failure
+        }
+        return transcript ?? transform(nil)
+    }
+
+    /// The events-side twin, for verbs that write `events.json` (markers).
+    func applyEventsFromAgent(_ actionName: String,
+                              _ transform: ([LoggedEvent]) -> [LoggedEvent]) async throws
+        -> [LoggedEvent] {
+        let snapshot = events
+
+        undoManager?.beginUndoGrouping()
+        undoManager?.setActionName(actionName)
+        undoManager?.registerUndo(withTarget: self) { $0.restoreEvents(snapshot) }
+        events = transform(events)
+        undoManager?.endUndoGrouping()
+
+        lastSaveError = nil
+        applyAndSaveEvents()
+        await waitForPendingSave()
+
+        if let failure = lastSaveError {
+            lastSaveError = nil
+            throw failure
+        }
+        return events
     }
 
     // MARK: - Testing seam
@@ -2724,6 +2853,24 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// Looks up an already-open window for `url`, standardizing both sides
     /// of the comparison so `/tmp/x.snitt` and `/private/tmp/x.snitt` — the
     /// same document under two spellings — are recognized as one.
+    /// Forwards an agent's edit to this window's document state (W7).
+    ///
+    /// The window owns the lookup (`existing(for:)`) and the state owns the
+    /// apply, so the agent path needs both and `state` is private. Forwarding
+    /// rather than exposing `state` keeps the agent surface to the three verbs
+    /// it actually needs, instead of handing out the whole document object.
+    func applyFromAgent(_ actionName: String,
+                        _ transform: (EditDecisionList) -> EditDecisionList) async throws
+        -> EditDecisionList {
+        try await state.applyFromAgent(actionName, transform)
+    }
+
+    func applyTranscriptFromAgent(_ actionName: String,
+                                  _ transform: (Transcript?) -> Transcript) async throws
+        -> Transcript {
+        try await state.applyTranscriptFromAgent(actionName, transform)
+    }
+
     static func existing(for url: URL) -> EditorWindowController? {
         let wanted = normalizedBundleURL(url)
         return open.first { $0.bundleURL == wanted }

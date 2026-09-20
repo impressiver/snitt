@@ -79,19 +79,39 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// `setStopOverride(.busy)`). `fire` is the actual expiry logic
     /// (`expire(sessionID)`); the returned `Task` is what
     /// `cancelWatchdog()`/`setWatchdog()` cancel to abort it.
-    /// Answers whether a bundle is currently open in an editor window.
+    /// Applies an EDL transform in the window that has `url` open, if any.
+    ///
+    /// `nil` means NO WINDOW: the caller writes the file itself, exactly as it
+    /// always has. A value means the edit landed in the window and is what the
+    /// caller should report. A throw means the compositor refused it.
+    ///
+    /// This is Route (W7). The transform runs against the WINDOW's EDL rather
+    /// than the file's, which is the whole point of one writer — see
+    /// `EditorWindowController.applyFromAgent`. It runs synchronously there,
+    /// so anything asynchronous (a media duration) is precomputed by the
+    /// caller BEFORE routing.
     ///
     /// Injectable for the same reason `GitResolving` is: the production
-    /// implementation needs a real `NSWindow` on the main actor, so a test
-    /// that could not substitute it could only ever exercise the
-    /// nothing-is-open branch — which is the branch that already worked. The
-    /// bug this guard fixes lives entirely in the other one.
-    typealias OpenDocumentProbe = @Sendable (URL) async -> Bool
+    /// implementation needs a real window on the main actor, so a test that
+    /// could not substitute it could only ever exercise the no-window branch,
+    /// which is the branch that already worked.
+    typealias EDLRouter = @Sendable (URL, String, @escaping @Sendable (EditDecisionList) -> EditDecisionList)
+        async throws -> EditDecisionList?
+    typealias TranscriptRouter = @Sendable (URL, String, @escaping @Sendable (Transcript?) -> Transcript)
+        async throws -> Transcript?
 
-    /// Hops to the main actor because `EditorWindowController` is
-    /// `@MainActor` and `AutomationHost` deliberately is not.
-    private static let realOpenDocumentProbe: OpenDocumentProbe = { url in
-        await MainActor.run { EditorWindowController.existing(for: url) != nil }
+    /// Hops to the main actor because `EditorWindowController` is `@MainActor`
+    /// and `AutomationHost` deliberately is not.
+    private static let realEDLRouter: EDLRouter = { url, actionName, transform in
+        guard let window = await MainActor.run(body: { EditorWindowController.existing(for: url) })
+        else { return nil }
+        return try await window.applyFromAgent(actionName, transform)
+    }
+
+    private static let realTranscriptRouter: TranscriptRouter = { url, actionName, transform in
+        guard let window = await MainActor.run(body: { EditorWindowController.existing(for: url) })
+        else { return nil }
+        return try await window.applyTranscriptFromAgent(actionName, transform)
     }
 
     typealias WatchdogScheduling = @Sendable (_ seconds: Double,
@@ -108,7 +128,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     private let coordinator: any AgentRecordingControlling
     private let settings: @Sendable () -> AgentSettings
     private let resolveGit: GitResolving
-    private let isOpenInEditor: OpenDocumentProbe
+    private let routeEDL: EDLRouter
+    private let routeTranscript: TranscriptRouter
     private let onRecordingState: RecordingStateSink
     private let registry = SessionRegistry()
     private var server: AutomationServer?
@@ -180,7 +201,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
          settings: @escaping @Sendable () -> AgentSettings,
          onRecordingState: @escaping RecordingStateSink = { _ in },
          resolveGit: @escaping GitResolving = { GitContextResolver.resolve(in: $0) },
-         isOpenInEditor: @escaping OpenDocumentProbe = AutomationHost.realOpenDocumentProbe,
+         routeEDL: @escaping EDLRouter = AutomationHost.realEDLRouter,
+         routeTranscript: @escaping TranscriptRouter = AutomationHost.realTranscriptRouter,
          now: @escaping @Sendable () -> Date = Date.init,
          watchdogScheduling: @escaping WatchdogScheduling = AutomationHost.realWatchdogScheduling,
          auditLogURL: URL = AuditLogLocation.url(),
@@ -192,7 +214,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         self.settings = settings
         self.onRecordingState = onRecordingState
         self.resolveGit = resolveGit
-        self.isOpenInEditor = isOpenInEditor
+        self.routeEDL = routeEDL
+        self.routeTranscript = routeTranscript
         self.now = now
         self.watchdogScheduling = watchdogScheduling
         self.auditLogURL = auditLogURL
@@ -489,12 +512,12 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                 hint: "Use the path `snitt record stop` printed."))
         }
 
-        if let refusal = await refusalIfOpenInEditor(bundle) { return .failure(refusal) }
-
         do {
-            var edl = try Self.readEDL(for: bundle)
-            edl.crop = rect
-            try edl.write(to: bundle)
+            _ = try await applyEDL(bundle, actionName: rect == nil ? "Reset Crop" : "Crop") {
+                var edl = $0
+                edl.crop = rect
+                return edl
+            }
 
             let natural = try await CompositionBuilder.naturalVideoSize(of: bundle)
             let width = Int((natural.width * (rect?.width ?? 1)).rounded())
@@ -574,8 +597,6 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                 hint: "Use the path `snitt record stop` printed."))
         }
 
-        if let refusal = await refusalIfOpenInEditor(bundle) { return .failure(refusal) }
-
         do {
             let duration = try await CompositionBuilder.mediaDuration(of: bundle)
             // Sampling ran to completion here, so an empty result means the
@@ -593,7 +614,10 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             let events = (try? EventLog.read(from: bundle).events) ?? []
             let transcript = try? Transcript.read(from: bundle)
 
-            var edl = try Self.readEDL(for: bundle)
+            // Read to DECIDE what to cut. The write goes through `applyEDL`,
+            // which re-derives from the window's EDL when one is open, so this
+            // value is never the one persisted.
+            let edl = try Self.readEDL(for: bundle)
             let kept = KeptRanges.compute(duration: duration, cuts: edl.cuts.map(\.range))
             let found = AutoDeepTrim.deadSpans(
                 duration: duration, audio: audio,
@@ -605,18 +629,29 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                 kept.contains { $0.start < span.end && span.start < $0.end }
             }
 
-            if !fresh.isEmpty {
-                edl.cuts.append(contentsOf: fresh.map {
-                Cut(range: $0, label: FoldLabel.describe(span: $0, markers: events))
-            })
-                try edl.write(to: bundle)
+            // The append goes through `applyEDL` so it lands in the open
+            // window when there is one. Nothing fresh means nothing to write
+            // AND nothing to route: routing an identity transform would still
+            // register an undo entry for a command that changed nothing.
+            let final: EditDecisionList
+            if fresh.isEmpty {
+                final = edl
+            } else {
+                let additions = fresh.map {
+                    Cut(range: $0, label: FoldLabel.describe(span: $0, markers: events))
+                }
+                final = try await applyEDL(bundle, actionName: "Auto Deep Trim") {
+                    var updated = $0
+                    updated.cuts.append(contentsOf: additions)
+                    return updated
+                }
             }
-            let remaining = KeptRanges.compute(duration: duration, cuts: edl.cuts.map(\.range))
+            let remaining = KeptRanges.compute(duration: duration, cuts: final.cuts.map(\.range))
                 .reduce(0) { $0 + ($1.end - $1.start) }
             return .autoTrimmed(AutoTrimSummary(
                 spans: fresh.count,
                 seconds: fresh.reduce(0) { $0 + ($1.end - $1.start) },
-                totalCuts: edl.cuts.count,
+                totalCuts: final.cuts.count,
                 remainingSeconds: remaining))
         } catch {
             return .failure(AutomationError(
@@ -638,8 +673,6 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                 hint: "Use the path `snitt record stop` printed."))
         }
 
-        if let refusal = await refusalIfOpenInEditor(bundle) { return .failure(refusal) }
-
         let duration: Double
         do {
             duration = try await CompositionBuilder.mediaDuration(of: bundle)
@@ -653,7 +686,6 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         }
 
         do {
-            let existing = try Self.readEDL(for: bundle)
 
             // Both branches end in `existing.trimmed(keeping:duration:)`
             // deliberately (D60): auto-trim only ever computes a new
@@ -672,11 +704,16 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             } else {
                 keep = TimeRange(start: start ?? 0, end: end ?? duration)
             }
-            let cuts = existing.trimmed(keeping: keep, duration: duration).cuts
-
-            var updated = existing
-            updated.cuts = cuts
-            try updated.write(to: bundle)
+            // `trimmed(keeping:duration:)` is applied INSIDE the transform,
+            // against whichever EDL is authoritative. Computing the cuts out
+            // here would bake in the disk copy's and drop any the window holds
+            // unpersisted — the divergence this whole change removes.
+            let updated = try await applyEDL(bundle, actionName: auto ? "Auto Trim" : "Trim") {
+                var edl = $0
+                edl.cuts = $0.trimmed(keeping: keep, duration: duration).cuts
+                return edl
+            }
+            let cuts = updated.cuts
 
             // `TrimSummary`/`KeptRanges.compute` predate cut identity and
             // only need the ranges — a CLI caller reads seconds, not ids.
@@ -979,8 +1016,6 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             return .failure(Self.noSuchBundleError)
         }
 
-        if let refusal = await refusalIfOpenInEditor(bundle) { return .failure(refusal) }
-
         let words = AuthoredNarration.words(text, sourceStart: atSeconds)
         // Blank text yields no words. Both frontends already refuse it, so
         // reaching here means a client built a request by hand; refusing is
@@ -1000,12 +1035,13 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             // refusing here would mean a demo with no speech could never be
             // given any. `Locale.current` matches what `Transcriber.merge`
             // stamps when it mints a transcript for the same reason.
-            let existing = FileManager.default.fileExists(atPath: bundle.transcriptURL.path)
-                ? try Transcript.read(from: bundle)
-                : Transcript(words: [], locale: Locale.current.identifier)
-            var updated = existing
-            updated.words = AuthoredNarration.inserting(words, into: existing.words)
-            try updated.write(to: bundle)
+            let updated = try await applyTranscript(bundle, actionName: "Narrate") { existing in
+                let base = existing
+                    ?? Transcript(words: [], locale: Locale.current.identifier)
+                var next = base
+                next.words = AuthoredNarration.inserting(words, into: base.words)
+                return next
+            }
             return .narrationAdded(NarrationSummary(
                 bundlePath: bundle.url.path,
                 wordCount: words.count,
@@ -1038,39 +1074,54 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         try? meta.write(to: bundle)
     }
 
-    /// Refuses a document edit when a person has the recording open (W4).
+    /// Applies an EDL change through the OPEN WINDOW when there is one, and
+    /// writes the file directly when there is not (W7).
     ///
-    /// `EditorWindowController.applyAndSave` takes `self.edl` and writes it
-    /// WHOLE — it does not re-read, and nothing in `SnittApp` watches the
-    /// bundle. So an agent that writes `edit.json` under an open window has
-    /// its work destroyed by that window's next save, silently. This is D60's
-    /// failure class in the other direction: D60 fixed `snitt trim` deleting
-    /// the GUI's cuts because "the CLI and GUI are one model, not two", and
-    /// the GUI deleting the CLI's edits is the same two models.
+    /// The one place that choice is made, so no verb can forget it. Before
+    /// this, `EditorWindowController.applyAndSave` took `self.edl` and wrote
+    /// it whole, so an agent's edit to an open document was silently
+    /// overwritten by the window's next save — D60's failure class in the
+    /// other direction ("the CLI and GUI are one model, not two").
     ///
-    /// **Called BEFORE the write, never after** (W6). A verb that writes and
-    /// then reports a conflict has already lost the data the check exists to
-    /// protect.
+    /// W4 first settled that by REFUSING such an edit. That ended the data
+    /// loss and left an agent unable to SHOW its work, which is what the
+    /// editor-control surface exists for; W7 supersedes it now that the
+    /// control verbs pay for two of Route's three preconditions anyway.
     ///
-    /// Refusing rather than routing the edit into the window was the product
-    /// owner's call (W4): routing needs new internal surface on
-    /// `EditorWindowController` (both save methods are `private`), an actor
-    /// hop, and a non-UI rejection path — `presentEditRejection` raises an
-    /// `NSAlert`, and an unattended agent would hang on it. Refusing ends the
-    /// data loss today and does not block routing later.
+    /// **The transform must be pure and synchronous.** It runs against the
+    /// window's live EDL on the main actor, so anything asynchronous — a media
+    /// duration, a waveform sample — is computed by the caller BEFORE calling
+    /// this, and captured.
     ///
-    /// Read-only verbs — `inspect`, `estimate`, `export`, `transcript` — do
-    /// NOT call this. They cannot lose anything, and refusing them would make
-    /// an open window mean "this recording is unreachable" rather than "this
-    /// recording is being edited elsewhere".
-    private func refusalIfOpenInEditor(_ bundle: SnittBundle) async -> AutomationError? {
-        guard await isOpenInEditor(bundle.url) else { return nil }
-        return AutomationError(
-            code: .bundleOpenInEditor,
-            message: "\(bundle.url.lastPathComponent) is open in Snitt's editor.",
-            hint: "Close the window, or make this edit in the editor. Snitt refuses "
-                + "rather than writing, because the open window saves the whole "
-                + "document and would overwrite this edit without saying so.")
+    /// **Summaries are computed from the RETURNED value, never from what the
+    /// caller read off disk.** Routed through a window, the base was the
+    /// window's EDL, which may hold applied-but-unpersisted edits; reporting
+    /// against the disk copy would describe a document that no longer exists.
+    private func applyEDL(_ bundle: SnittBundle,
+                          actionName: String,
+                          _ transform: @escaping @Sendable (EditDecisionList) -> EditDecisionList)
+        async throws -> EditDecisionList {
+        if let routed = try await routeEDL(bundle.url, actionName, transform) { return routed }
+        let updated = transform(try Self.readEDL(for: bundle))
+        try updated.write(to: bundle)
+        return updated
+    }
+
+    /// The transcript twin, for `narrate`. Same rule, same reason: the editor
+    /// holds `transcript` as published state and writes it whole.
+    private func applyTranscript(_ bundle: SnittBundle,
+                                 actionName: String,
+                                 _ transform: @escaping @Sendable (Transcript?) -> Transcript)
+        async throws -> Transcript {
+        if let routed = try await routeTranscript(bundle.url, actionName, transform) {
+            return routed
+        }
+        let existing = FileManager.default.fileExists(atPath: bundle.transcriptURL.path)
+            ? try Transcript.read(from: bundle)
+            : nil
+        let updated = transform(existing)
+        try updated.write(to: bundle)
+        return updated
     }
 
     /// The refusal for a path that is not a readable `.snitt` bundle.
