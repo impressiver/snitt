@@ -14,7 +14,7 @@ cross-section.
 `snitt` — including the recording of Snitt's own editor doing the cut. The
 "Agent editing" badge beside the filename is the editor saying so.</sup>
 
-> **Status: early.** v0.7.0 is signed, notarized and shipping, and it is used
+> **Status: early.** v0.8.0 is signed, notarized and shipping, and it is used
 > daily by the person who writes it. Interfaces still move. If you find a defect
 > the honest place to look for what is already known is
 > [`docs/superpowers/notes/field-notes.md`](docs/superpowers/notes/field-notes.md).
