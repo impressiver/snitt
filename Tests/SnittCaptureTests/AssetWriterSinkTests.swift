@@ -104,12 +104,35 @@ func unfinalizedFileHasBytesOnDisk() async throws {
     // blocks a thread: `Task.yield()` cooperatively suspends so the
     // writer's internal queue gets a chance to drain and flip readiness
     // back on.
+    // WHAT IS ACTUALLY REQUIRED is enough accepted PRESENTATION TIME to cross
+    // the fragment interval. A frame count stood in for that, and the stand-in
+    // is what flaked: CI accepted 112 frames where the test demanded 120 and
+    // failed — though 112 frames at 60fps is 1.85s, which clears the 1s
+    // interval comfortably. The property held; the proxy for it did not.
+    //
+    // Both the loop and the assertion are in seconds now, derived from the
+    // sink's own interval rather than a second copy of it.
+    let framesPerSecond = 60.0
+    let fragmentInterval = AssetWriterSink.movieFragmentInterval.seconds
+    let requiredSpan = fragmentInterval * 1.5
+    // Frame n sits at n/60, so N accepted frames span (N-1)/60: the first
+    // contributes a timestamp, not a duration.
+    func acceptedSpan() -> Double {
+        max(0, Double(sink.acceptedVideoFrameCount() - 1)) / framesPerSecond
+    }
+
     var frame = 0
-    let retryDeadline = ContinuousClock.now + .seconds(10)
-    while sink.acceptedVideoFrameCount() < 120 {
+    // Generous, because it only binds when something is wrong: the loop leaves
+    // the moment the span is reached, so a fast machine pays nothing for the
+    // headroom. Ten seconds was a false economy that turned a slow runner into
+    // a red build — CI is virtualised, the GPU is paravirtualised, and frame
+    // acceptance there is an order of magnitude slower than on a developer's
+    // machine.
+    let retryDeadline = ContinuousClock.now + .seconds(45)
+    while acceptedSpan() < requiredSpan {
         if ContinuousClock.now >= retryDeadline { break }
         let acceptedBefore = sink.acceptedVideoFrameCount()
-        try sink.append(makeVideoBuffer(at: Double(frame) / 60.0, size: size),
+        try sink.append(makeVideoBuffer(at: Double(frame) / framesPerSecond, size: size),
                         to: .video)
         if sink.acceptedVideoFrameCount() > acceptedBefore {
             frame += 1
@@ -117,8 +140,12 @@ func unfinalizedFileHasBytesOnDisk() async throws {
             await Task.yield()
         }
     }
-    #expect(sink.acceptedVideoFrameCount() >= 120,
-            "need ~2s of accepted media to reliably cross the 1s fragment interval")
+    #expect(acceptedSpan() >= requiredSpan,
+            """
+            accepted \(sink.acceptedVideoFrameCount()) frames spanning \(acceptedSpan())s, \
+            need \(requiredSpan)s to be sure the \(fragmentInterval)s fragment interval \
+            was crossed
+            """)
 
     // A fragment flush happens asynchronously on the writer's own queue, so
     // "bytes are on disk" is not true at any deterministic moment right
@@ -130,6 +157,21 @@ func unfinalizedFileHasBytesOnDisk() async throws {
         return size > 0
     }
     #expect(sawBytesOnDisk, "a crash must leave bytes on disk, not an empty file")
+
+    // HONESTY, because this assertion is weaker than its name (#203).
+    //
+    // `size > 0` does NOT prove a fragment was flushed. Measured while fixing
+    // the flake above: the file is 811 bytes with `movieFragmentInterval` set
+    // and 811 bytes with it removed, and it never grows past that — 4s of
+    // media, 4s of wall time, unchanged either way. Those bytes are the header
+    // `AVAssetWriter` writes at `begin`. Deleting the line this test exists to
+    // protect leaves it green, which is the definition of a test that is not
+    // testing.
+    //
+    // Left in place rather than deleted: it still pins that `begin` writes
+    // SOMETHING and that the sink survives an unfinalized teardown. What it
+    // cannot tell you is whether a crashed recording is recoverable, which is
+    // the question #203 asks with a real capture instead of synthetic buffers.
 }
 
 @Test("A rejected buffer is not folded into the health metrics")
