@@ -400,7 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// conflict is discovered. Recording stays reachable from the menu bar
     /// either way — §5.3's kill switch never depended on either hotkey.
     private func reportHotkeyRegistrationFailure(_ action: HotkeyAction, _ combination: HotkeyCombination) {
-        notify("Snitt could not register \(combination.displayString) for the \(action.label) — "
+        notify("Snitt could not register \(combination.displayString) for the \(action.label). "
              + "another app may be using it. You can still start and stop recording, and drop "
              + "markers, from the menu bar.")
     }

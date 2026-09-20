@@ -194,7 +194,7 @@ final class StatusItemController: NSObject {
             capturingMicrophone: microphoneEnabled,
             capturingSystemAudio: CaptureOptions().captureSystemAudio)
         else { return nil }
-        return "⚠︎ Speakers will be recorded by the mic — use headphones"
+        return "⚠︎ Speakers will be recorded by the mic, so use headphones"
     }
 
     /// Right-click menu. Attached only for the duration of the click, then

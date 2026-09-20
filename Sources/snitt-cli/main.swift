@@ -47,7 +47,7 @@ func note(_ message: String) {
 func exportNote(_ manifest: ExportManifest) -> String {
     var text = "Exported \(manifest.outputPath) (\(manifest.byteSize) bytes)"
     if let note = sizeBudgetNote(manifest) {
-        text += " — \(note)"
+        text += ": \(note)"
     }
     return text
 }
@@ -71,7 +71,7 @@ func diagnosticsNote(_ report: DiagnosticsReport, outputPath: String) -> String 
          + "\(report.logLines.count) log line(s), "
          + "\(crashReportsNote), "
          + "app \(report.appVersion), protocol \(report.protocolVersion)"
-         + (permissions.isEmpty ? "" : " — \(permissions)")
+         + (permissions.isEmpty ? "" : ": \(permissions)")
 }
 
 /// The human-readable lines printed to stderr for `.transcriptRead` (D107).
@@ -447,7 +447,7 @@ do {
     // timeout is 120s. A job-id-and-poll protocol is complexity v0 does not
     // need; if exports ever exceed ten minutes, that is the moment to add one.
     let client = AutomationClient(timeout: isExport ? 600 : 120,
-                                  onLaunch: { note("Snitt was not running — started \($0.lastPathComponent).") })
+                                  onLaunch: { note("Snitt was not running, so started \($0.lastPathComponent).") })
     let response = try await client.send(body)
     switch response {
     case .failure(let error):
@@ -516,7 +516,7 @@ do {
         // Said out loud, because it is the mistake this verb invites: captions
         // on with nothing to draw exports a video that looks unchanged.
         if summary.captions && summary.transcriptLines == 0 {
-            line += " This recording has no transcript, so nothing will be drawn —"
+            line += " This recording has no transcript, so nothing will be drawn."
                 + " use `snitt narrate` or transcribe it first."
         }
         note(line)
@@ -557,7 +557,7 @@ do {
         // a reader who skims one line should still see which way it errs.
         if let first = estimates.first {
             note(String(format: "%.1fs of footage. Estimates are AVFOUNDATION CEILINGS "
-                              + "and run generous — about 4x the real file on a 5K "
+                              + "and run generous, about 4x the real file on a 5K "
                               + "recording. Use --max-size to actually fit a budget.",
                         first.durationSeconds))
         }
@@ -590,7 +590,7 @@ do {
     // The app IS running — it accepted the connection and simply never
     // answered. Telling someone to launch it would send them down the wrong
     // path entirely (task-8 ruling). Distinct message, distinct exit code.
-    note("Snitt is running but did not respond in time. It may be stuck — "
+    note("Snitt is running but did not respond in time. It may be stuck. "
        + "check the menu bar item, or quit and relaunch Snitt if this keeps happening.")
     exit(4)
 } catch ClientError.timeoutUnavailable {
@@ -601,7 +601,7 @@ do {
     exit(5)
 } catch ClientError.malformedResponse {
     note("Snitt sent a response the CLI could not understand. This usually "
-       + "means Snitt and this CLI are out of sync — try updating one or the other.")
+       + "means Snitt and this CLI are out of sync. Try updating one or the other.")
     exit(6)
 } catch {
     note("Could not talk to Snitt: \(error)")

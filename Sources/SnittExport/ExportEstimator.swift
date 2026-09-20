@@ -87,7 +87,7 @@ public enum ExportEstimator {
             durationSeconds: built.duration,
             width: Int(size.width), height: Int(size.height),
             estimatedMaxBytes: Int(bytes),
-            basis: "AVFoundation's own ceiling for this preset — generous, "
+            basis: "AVFoundation's own ceiling for this preset: generous, "
                  + "measured at about 4x the real file on a 5K recording. Use it "
                  + "to choose between resolutions, not to predict a byte count.")
     }

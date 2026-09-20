@@ -64,6 +64,41 @@ struct ControlHitAreaTests {
                 "these buttons answer only to a press on the glyph: \(offenders)")
     }
 
+    @Test("No string a person or an agent reads uses an em dash")
+    func userFacingCopyHasNoEmDashes() throws {
+        // Widened from tooltips to every string literal in every module: the
+        // same punctuation turned up in settings copy, permission prompts,
+        // error hints, CLI help and the MCP tool descriptions, which is most
+        // of the writing the product ships.
+        //
+        // **Literals only, not comments.** The rule is about what is READ off
+        // a screen; the source's own commentary is a different register, and
+        // sweeping it would be a diff nobody could review for the sake of text
+        // no user sees.
+        var offenders: [String] = []
+        for module in ["SnittApp", "SnittAutomation", "SnittCapture", "SnittDocument",
+                       "SnittExport", "snitt-cli", "snitt-mcp", "snitt-probe"] {
+            let root = URL(fileURLWithPath: "Sources/\(module)")
+            let files = (FileManager.default.enumerator(atPath: root.path)?
+                .compactMap { $0 as? String }
+                .filter { $0.hasSuffix(".swift") }) ?? []
+            for file in files {
+                let text = try String(contentsOf: root.appending(path: file), encoding: .utf8)
+                for (index, line) in text.components(separatedBy: "\n").enumerated() {
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    guard !trimmed.hasPrefix("//") else { continue }
+                    // The one legitimate use: a lone em dash standing in for a
+                    // value there is none of, which is what every Mac app puts
+                    // in an empty stat field.
+                    guard line.contains("—"), !line.contains("\"—\"") else { continue }
+                    guard line.contains("\"") else { continue }
+                    offenders.append("\(module)/\(file):\(index + 1)")
+                }
+            }
+        }
+        #expect(offenders.isEmpty, "em dashes in shipped copy: \(offenders)")
+    }
+
     @Test("No tooltip uses an em dash")
     func tooltipsUseParentheses() throws {
         // The house format is `label (how)`. Tooltips were written at several

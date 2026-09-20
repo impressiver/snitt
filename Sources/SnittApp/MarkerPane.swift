@@ -199,7 +199,7 @@ struct MarkerPane: View {
                     .lineLimit(2)
             }
             if chapter.isInsideCut {
-                Text("Inside a cut — shown at the fold")
+                Text("Inside a cut, shown at the fold")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
             }

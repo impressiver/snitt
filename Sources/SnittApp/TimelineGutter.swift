@@ -163,7 +163,7 @@ struct GainMeterView: View {
 // with. "The vu meters should line up with the audio tracks they control,
 // same height as the audio track" is a geometric claim, and this is where it
 // is checkable without a recording open.
-#Preview("Gutter — two tracks") {
+#Preview("Gutter: two tracks") {
     TimelineGutter(
         plan: TimelineLaneBudget.plan(availableHeight: 180,
                                       audioTracks: PreviewFixtures.audioTracks,
@@ -174,7 +174,7 @@ struct GainMeterView: View {
         .background(EditorChromePalette.timelineSurface)
 }
 
-#Preview("Gutter — squeezed to the floor") {
+#Preview("Gutter: squeezed to the floor") {
     // The height at which the plan starts collapsing lanes. A gutter that
     // looks right at a comfortable size and overflows here is the bug this
     // preview exists to show.
@@ -188,7 +188,7 @@ struct GainMeterView: View {
         .background(EditorChromePalette.timelineSurface)
 }
 
-#Preview("Gain meter — boosted, unity, cut, muted, narration") {
+#Preview("Gain meter: boosted, unity, cut, muted, narration") {
     // Five ladders side by side, because the segment count is the whole
     // control and one ladder alone gives nothing to read it against. The last
     // is the synthesised voice, the only one that should not be amber.

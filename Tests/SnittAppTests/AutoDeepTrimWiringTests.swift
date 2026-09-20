@@ -104,7 +104,7 @@ struct AutoDeepTrimWiringTests {
 
         let cut = try #require(state.edl.cuts.first)
         let label = try #require(cut.label, "the fold has no label")
-        #expect(label.hasPrefix("running the build — "),
+        #expect(label.hasPrefix("running the build ("),
                 "named \(label), not for the marker that preceded it")
         // And it says how long, because that is the other thing a hole hides.
         #expect(label.contains("s") || label.contains("m"))

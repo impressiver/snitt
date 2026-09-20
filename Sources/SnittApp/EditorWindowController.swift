@@ -4106,7 +4106,7 @@ final class EditorWindowTestGate {
             if Date() >= deadline {
                 throw Timeout(description: """
                     "\(label)" waited \(Int(timeout))s for EditorWindowTestGate and gave up. \
-                    It was held by "\(holderDescription)", which never released it — that holder \
+                    It was held by "\(holderDescription)", which never released it. That holder \
                     is the defect, not this test.
                     """)
             }

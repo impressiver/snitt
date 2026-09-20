@@ -116,8 +116,8 @@ struct TranscriptPane: View {
         VStack(alignment: .leading, spacing: 6) {
             Text("No speech found")
                 .font(.headline)
-            Text("Snitt transcribes the microphone track. System audio — a call, "
-                 + "a video, anything playing on your Mac — is recorded but not "
+            Text("Snitt transcribes the microphone track. System audio (a call, "
+                 + "a video, anything playing on your Mac) is recorded but not "
                  + "transcribed.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -275,7 +275,7 @@ struct TranscriptPane: View {
                     .lineLimit(2...4)
                     .font(.caption)
                 Text("Comma separated. A word you never say costs nothing, so list "
-                     + "them generously — up to \(Vocabulary.limit).")
+                     + "them generously, up to \(Vocabulary.limit).")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                 HStack {

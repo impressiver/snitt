@@ -411,7 +411,7 @@ struct TransportBar: View {
 // real traffic lights, in a real window, which is `Scripts/make-app.sh` and
 // not a canvas.
 
-#Preview("Transport — zoomed and scrollable") {
+#Preview("Transport: zoomed and scrollable") {
     // Zoomed in far enough that the scrollbar appears, which is the state the
     // scroll affordance was added for and the one a default preview hides.
     @Previewable @State var zoom = 0.62
@@ -425,7 +425,7 @@ struct TransportBar: View {
         .frame(width: 900)
 }
 
-#Preview("Transport — playing, whole timeline visible") {
+#Preview("Transport: playing, whole timeline visible") {
     @Previewable @State var zoom = 0.0
     TransportBar(isPlaying: true, hasMarks: false,
                  currentTime: "00:04.00", totalTime: "00:36.10",

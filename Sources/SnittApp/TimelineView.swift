@@ -1827,11 +1827,11 @@ public final class TimelineView: NSView {
 // Four previews, chosen as the states that hide bugs from each other: a
 // comfortable window, the floor, a selected fold, and a selected fold left
 // collapsed.
-#Preview("Timeline — comfortable") {
+#Preview("Timeline: comfortable") {
     PreviewFixtures.timeline(size: NSSize(width: 900, height: 200))
 }
 
-#Preview("Timeline — at the floor") {
+#Preview("Timeline: at the floor") {
     // Where the lane budget starts collapsing. A stack that looks correct at
     // 200pt and overlaps here has failed the constraint the budget exists for.
     PreviewFixtures.timeline(
@@ -1839,7 +1839,7 @@ public final class TimelineView: NSView {
                      height: TimelineLaneBudget.minimumTimelineHeight))
 }
 
-#Preview("Timeline — cut expanded and selected") {
+#Preview("Timeline: cut expanded and selected") {
     // Both cuts open. The long one shows the band and its edge bars; the
     // 0.4s one shows what the band degenerates to at this zoom, which is the
     // case a single-cut fixture never reveals.
@@ -1849,7 +1849,7 @@ public final class TimelineView: NSView {
         expanded: Set(PreviewFixtures.cuts.map(\.id)))
 }
 
-#Preview("Timeline — cut selected but collapsed") {
+#Preview("Timeline: cut selected but collapsed") {
     // What a single click in the fold lane leaves behind, and the state
     // Delete acts on. The selected line must be distinguishable from its
     // unselected neighbour — that is the entire content of this preview.

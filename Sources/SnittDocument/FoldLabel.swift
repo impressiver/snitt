@@ -54,6 +54,6 @@ public enum FoldLabel {
             .max { $0.timeSeconds < $1.timeSeconds }
 
         guard let marker = inside ?? before, let text = marker.label else { return length }
-        return "\(text) — \(length)"
+        return "\(text) (\(length))"
     }
 }

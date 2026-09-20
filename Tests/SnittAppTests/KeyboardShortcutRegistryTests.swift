@@ -187,9 +187,15 @@ struct KeyboardShortcutRegistryTests {
         // It was written at four call sites, two with an em dash and two with
         // parentheses, so hovering two buttons in the same row gave two house
         // styles. One function builds it now.
+        // The FORMAT is what is pinned, not the binding. Spelling the key out
+        // here made this test fail when Back to Start moved from Home to ⌘←,
+        // which is a rebinding rather than a formatting regression — and a
+        // test that cries about the wrong thing gets edited until it stops.
+        let key = KeyboardShortcutRegistry.shortcutDisplay(titled: "Back to Start")
+        #expect(!key.isEmpty, "the registry lost its Back to Start binding")
         let rendered = KeyboardShortcutRegistry.tooltip(
             "Back to start", key: "Back to Start")
-        #expect(rendered == "Back to start (Home)")
+        #expect(rendered == "Back to start (\(key))")
         #expect(!rendered.contains("—"), "the em dash is back")
 
         // And a title nothing claims degrades to the bare label rather than

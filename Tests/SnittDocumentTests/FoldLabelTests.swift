@@ -23,7 +23,7 @@ struct FoldLabelTests {
         let text = FoldLabel.describe(
             span: TimeRange(start: 100, end: 352),
             markers: [marker(10, "opening the project"), marker(98, "running the build")])
-        #expect(text == "running the build — 4m 12s")
+        #expect(text == "running the build (4m 12s)")
     }
 
     @Test("A marker inside the fold wins over one before it")
@@ -35,7 +35,7 @@ struct FoldLabelTests {
         let text = FoldLabel.describe(
             span: TimeRange(start: 100, end: 160),
             markers: [marker(90, "before"), marker(120, "inside")])
-        #expect(text == "inside — 1m")
+        #expect(text == "inside (1m)")
     }
 
     @Test("With nothing to draw on, the duration alone")

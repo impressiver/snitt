@@ -395,16 +395,16 @@ private let previewHUDStart = Date(timeIntervalSince1970: 1_770_000_000)
 // GLANCE — a filled dot versus a hollow ring, not two shades of grey. That is
 // a claim about what something looks like, so these two previews are where it
 // is actually checkable.
-#Preview("HUD — recording") {
+#Preview("HUD: recording") {
     previewHUD(.recording(startedAt: previewHUDStart), secondsIn: 95)
 }
 
-#Preview("HUD — paused") {
+#Preview("HUD: paused") {
     previewHUD(.paused(startedAt: previewHUDStart, pausedSeconds: 12),
                secondsIn: 95)
 }
 
-#Preview("HUD — stopping") {
+#Preview("HUD: stopping") {
     // Every control disabled while the file is being finalised. The state
     // nobody designs for and everybody sees.
     previewHUD(.stopping, secondsIn: 95)

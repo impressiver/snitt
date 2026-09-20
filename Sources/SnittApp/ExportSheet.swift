@@ -310,7 +310,7 @@ struct ExportSheet: View {
               preset.exceedsDuration(durationSeconds) else { return nil }
         let limit = Int((preset.maxDurationSeconds ?? 0).rounded())
         return "Longer than \(preset.name) accepts (\(limit / 60)m \(limit % 60)s). "
-             + "It will export at full length — trim it yourself if that matters."
+             + "It will export at full length, so trim it yourself if that matters."
     }
 
     /// Not a destination id, and it must never collide with one — the picker's
@@ -526,7 +526,7 @@ struct ExportSheet: View {
 // Three previews rather than one: the measured state is what someone sees
 // almost always, the measuring state is what they see first, and the failed
 // measurement is the one nobody looks at until it ships wrong.
-#Preview("Export — measured") {
+#Preview("Export: measured") {
     @Previewable @State var request = ExportRequest(
         destination: URL(fileURLWithPath: "/Users/somebody/Desktop/Standup.mp4"))
     ExportSheet(title: "Standup 2026-09-10", options: PreviewFixtures.exportOptions,
@@ -534,7 +534,7 @@ struct ExportSheet: View {
                 onCancel: {}, onExport: {}, onChooseFolder: {})
 }
 
-#Preview("Export — measuring") {
+#Preview("Export: measuring") {
     @Previewable @State var request = ExportRequest(
         destination: URL(fileURLWithPath: "/Users/somebody/Desktop/Standup.mp4"))
     ExportSheet(title: "Standup 2026-09-10", options: [],
@@ -542,7 +542,7 @@ struct ExportSheet: View {
                 onCancel: {}, onExport: {}, onChooseFolder: {})
 }
 
-#Preview("Export — GIF, estimates disclaimed") {
+#Preview("Export: GIF, estimates disclaimed") {
     @Previewable @State var request: ExportRequest = {
         var request = ExportRequest(
             destination: URL(fileURLWithPath: "/Users/somebody/Desktop/Standup.mp4"))

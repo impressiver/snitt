@@ -83,7 +83,17 @@ public enum KeyboardShortcutRegistry {
     public static let shortcuts: [KeyboardShortcut] = [
         .init(title: "Play / Pause", key: " ", modifiers: [], menu: .playback,
               selector: #selector(AppDelegate.togglePlayback(_:))),
-        .init(title: "Back to Start", key: "\u{1}", modifiers: [], menu: .playback,
+        // ⌘←, not Home. Home is the desktop convention and it still FIRES —
+        // fn+← sends the same keycode — but a MacBook has no key with that
+        // name on it, so the tooltip was naming something the person could not
+        // find. A shortcut nobody can see is one nobody has.
+        //
+        // ⌘← is free: Previous Mark takes the same arrow with ⌥, and the two
+        // are told apart by their modifiers, which is what `bindingsAreUnique`
+        // checks.
+        .init(title: "Back to Start",
+              key: String(UnicodeScalar(NSLeftArrowFunctionKey)!),
+              modifiers: [.command], menu: .playback,
               selector: #selector(AppDelegate.rewindToStart(_:))),
         .init(title: "Previous Mark", key: String(UnicodeScalar(NSLeftArrowFunctionKey)!),
               modifiers: [.option], menu: .playback,
