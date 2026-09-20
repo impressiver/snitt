@@ -117,6 +117,8 @@ fi
 
 # shellcheck source=lib/drop-stale-module-cache.sh
 . "$(dirname "$0")/lib/drop-stale-module-cache.sh"
+# shellcheck source=lib/product-source-paths.sh
+. "$(dirname "$0")/lib/product-source-paths.sh"
 drop_stale_module_cache "$PWD"
 
 swift build -c "$CONFIG" ${ARCH_FLAGS[@]+"${ARCH_FLAGS[@]}"} --product SnittApp
@@ -141,16 +143,36 @@ for required in SnittApp snitt-cli snitt-mcp; do
   # file is newer than the binary we are about to copy, the binary is not the
   # source tree we are releasing.
   #
-  # `Sources` only, NOT the manifest. A manifest edit that changes a target's
-  # inputs makes SwiftPM relink, and the product comes out newer than the file
-  # either way. A manifest edit that does NOT — bumping a dependency a given
-  # product never imports, say — correctly relinks nothing, and comparing
-  # against it then reports a binary that is perfectly current as stale. That
-  # fired on the Sparkle 2.9.6 to 2.10.0 bump: `snitt-cli` does not link
-  # Sparkle (§4.9), so it was rightly left alone and this guard refused the
-  # build. A check that fails on correct behaviour gets disabled, which costs
-  # more than the case it was catching.
-  STALE_SOURCE="$(find Sources -type f -newer "$PRODUCT_DIR/$required" -print -quit 2>/dev/null || true)"
+  # Compared against THIS PRODUCT'S OWN SOURCES, not all of `Sources`.
+  #
+  # This is the same trap the manifest note below describes, one level down,
+  # and it bit for the same reason. Editing a file in `Sources/SnittApp`
+  # correctly relinks nothing in `snitt-cli`, which compiles neither SnittApp
+  # nor anything that imports it — so a whole-tree comparison reports a binary
+  # that is perfectly current as stale, and refuses a build that is correct.
+  # A check that fails on correct behaviour gets disabled, which costs more
+  # than the case it was catching. That is precisely what the Sparkle note
+  # below says, and scoping the manifest out did not go far enough.
+  #
+  # See Scripts/lib/product-source-paths.sh for why the closure comes from
+  # SwiftPM rather than a hand-written map.
+  #
+  # NOT the manifest either, for the reason that still holds: a manifest edit
+  # that changes a target's inputs makes SwiftPM relink, so the product comes
+  # out newer either way. A manifest edit that does NOT — bumping a dependency
+  # a given product never imports — correctly relinks nothing. That fired on
+  # the Sparkle 2.9.6 to 2.10.0 bump: `snitt-cli` does not link Sparkle
+  # (§4.9), so it was rightly left alone and this guard refused the build.
+  SOURCE_PATHS="$(product_source_paths "$required")"
+  if [ -z "$SOURCE_PATHS" ]; then
+    echo "error: could not determine which sources $required compiles." >&2
+    echo "       Refusing rather than falling back to the whole tree: that" >&2
+    echo "       comparison refuses correct builds, which is how this guard" >&2
+    echo "       gets switched off. Check 'swift package describe --type json'." >&2
+    exit 1
+  fi
+  # shellcheck disable=SC2086 -- deliberately word-split into path arguments.
+  STALE_SOURCE="$(find $SOURCE_PATHS -type f -newer "$PRODUCT_DIR/$required" -print -quit 2>/dev/null || true)"
   if [ -n "$STALE_SOURCE" ]; then
     echo "error: $PRODUCT_DIR/$required is OLDER than $STALE_SOURCE." >&2
     echo "       swift build reported success, so it wrote its output somewhere" >&2

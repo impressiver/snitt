@@ -49,10 +49,30 @@ struct MakeAppFreshnessTests {
             .appending(path: "snitt-stale-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let swift = dir.appending(path: "swift")
+        // Answers `package describe` as well as `--show-bin-path`, because the
+        // freshness guard now asks which sources each product compiles. A stub
+        // that stayed silent would make the guard refuse for the WRONG reason
+        // ("could not determine which sources") and the staleness assertion
+        // below would pass on a message about something else entirely.
         try """
             #!/bin/bash
             for a in "$@"; do
               if [ "$a" = "--show-bin-path" ]; then echo "\(productDir)"; exit 0; fi
+              if [ "$a" = "describe" ]; then
+                cat <<'JSON'
+            {"targets":[
+              {"name":"SnittApp","path":"Sources/SnittApp","target_dependencies":[]},
+              {"name":"snitt-cli","path":"Sources/snitt-cli","target_dependencies":[]},
+              {"name":"snitt-mcp","path":"Sources/snitt-mcp","target_dependencies":[]}
+             ],
+             "products":[
+              {"name":"SnittApp","targets":["SnittApp"]},
+              {"name":"snitt-cli","targets":["snitt-cli"]},
+              {"name":"snitt-mcp","targets":["snitt-mcp"]}
+             ]}
+            JSON
+                exit 0
+              fi
             done
             exit 0
             """.write(to: swift, atomically: true, encoding: .utf8)
@@ -317,9 +337,127 @@ struct ModuleCacheAndManifestFreshness {
         let line = try #require(
             source.split(separator: "\n").first { $0.contains("STALE_SOURCE=") },
             "make-app.sh no longer computes STALE_SOURCE")
-        #expect(line.contains("find Sources"),
+        #expect(line.contains("find "),
                 "the guard must still compare against sources: \(line)")
         #expect(!line.contains("Package.swift"),
                 "comparing against the manifest refuses correct builds: \(line)")
+        #expect(!line.contains("find Sources"),
+                "the whole tree refuses correct builds, like the manifest: \(line)")
+    }
+
+    // MARK: Which sources a product is compared against
+
+    /// A package graph shaped like this one: a CLI over the shared protocol,
+    /// and an app over everything.
+    ///
+    /// A FIXTURE rather than the real `swift package describe`, and not only
+    /// for speed. `describe` takes SwiftPM's lock on `.build`, which a test
+    /// running under `swift test` already holds — driving the real one here
+    /// did not fail, it HUNG, reporting nothing at all. The logic that can
+    /// actually break is the closure walk, and that is what this exercises;
+    /// the real graph is exercised by every `make-app.sh` run.
+    private let packageFixture = """
+    {"targets":[
+      {"name":"SnittDocument","path":"Sources/SnittDocument","target_dependencies":[]},
+      {"name":"SnittAutomation","path":"Sources/SnittAutomation","target_dependencies":["SnittDocument"]},
+      {"name":"SnittExport","path":"Sources/SnittExport","target_dependencies":["SnittDocument"]},
+      {"name":"snitt-cli","path":"Sources/snitt-cli","target_dependencies":["SnittAutomation"]},
+      {"name":"SnittApp","path":"Sources/SnittApp","target_dependencies":["SnittAutomation","SnittExport"]}
+     ],
+     "products":[
+      {"name":"snitt-cli","targets":["snitt-cli"]},
+      {"name":"SnittApp","targets":["SnittApp"]}
+     ]}
+    """
+
+    private func paths(of product: String) -> [String] {
+        let call = sh("""
+        export PRODUCT_SOURCE_PATHS_DESCRIPTION='\(packageFixture)'
+        . '\(sourcePathsLib())'
+        product_source_paths \(product)
+        """)
+        #expect(call.status == 0, "product_source_paths failed: \(call.out)")
+        return call.out.split(separator: "\n").map(String.init)
+    }
+
+    @Test("A product is compared only against the sources it compiles")
+    func theClosureExcludesModulesTheProductDoesNotCompile() {
+        // WRONG IMPLEMENTATION: `find Sources`, which is what the guard did.
+        // It refuses a build whenever any file anywhere is newer than any
+        // product — so editing `Sources/SnittApp` failed the build on
+        // `snitt-cli`, which compiles neither SnittApp nor anything importing
+        // it, and which SwiftPM therefore correctly did not relink.
+        //
+        // This is the manifest trap one level down, and it matters for the
+        // same reason: a check that fails on correct behaviour gets switched
+        // off, and this is the check standing between a release and a
+        // weeks-old binary. Verified to fail by restoring `find Sources`.
+        let cli = paths(of: "snitt-cli")
+        #expect(cli.contains("Sources/snitt-cli"), "got \(cli)")
+        #expect(!cli.contains("Sources/SnittApp"), "the CLI does not compile the app: \(cli)")
+        #expect(!cli.contains("Sources/SnittExport"),
+                "the CLI does not compile the exporter: \(cli)")
+    }
+
+    @Test("A product is still compared against everything it does compile")
+    func theClosureIsTransitive() {
+        // THE CONTROL, and the reason it is not optional: narrowing the
+        // comparison is only safe while it still covers everything the product
+        // builds from. A closure that returned just the product's own
+        // directory would pass the test above and let a stale SnittApp ship
+        // after an edit to SnittExport — the exact class this guard exists
+        // for. Verified to fail by dropping the recursion.
+        let app = paths(of: "SnittApp")
+        for module in ["Sources/SnittApp", "Sources/SnittAutomation", "Sources/SnittExport"] {
+            #expect(app.contains(module), "the app compiles \(module): \(app)")
+        }
+        // Two hops away, reached only through SnittAutomation and SnittExport.
+        #expect(app.contains("Sources/SnittDocument"),
+                "the walk must be transitive, not one level deep: \(app)")
+
+        // And the CLI reaches its own transitive dependency, so the exclusions
+        // above are narrowing rather than the walk simply being broken.
+        #expect(paths(of: "snitt-cli").contains("Sources/SnittDocument"))
+    }
+
+    @Test("An unknown product yields nothing, and the guard refuses rather than guessing")
+    func anUnknownProductIsNotSilentlyTheWholeTree() throws {
+        // WRONG IMPLEMENTATION: falling back to `find Sources` when the
+        // description cannot be read. It looks like the safe default and
+        // reinstates the bug on every machine where `swift package describe`
+        // fails, where it would then be blamed on something else entirely.
+        let unknown = sh("""
+        export PRODUCT_SOURCE_PATHS_DESCRIPTION='\(packageFixture)'
+        . '\(sourcePathsLib())'
+        product_source_paths not-a-product
+        """)
+        #expect(unknown.out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                "an unknown product must name no sources: \(unknown.out)")
+
+        let source = try String(
+            contentsOfFile: FileManager.default.currentDirectoryPath + "/Scripts/make-app.sh",
+            encoding: .utf8)
+        #expect(source.contains("could not determine which sources"),
+                "make-app.sh must refuse an empty closure rather than fall back")
+    }
+
+    @Test("Unreadable output is refused, not treated as an empty package")
+    func garbageDescriptionYieldsNothing() {
+        // A `swift` that printed a warning, or a truncated pipe, must not read
+        // as "this product compiles nothing" — which the guard would then
+        // refuse on. Refusing is the right outcome; doing it by accident is
+        // not, and the accident version silently passes stale binaries the day
+        // someone adds a fallback.
+        let call = sh("""
+        export PRODUCT_SOURCE_PATHS_DESCRIPTION='not json at all'
+        . '\(sourcePathsLib())'
+        product_source_paths SnittApp
+        """)
+        #expect(call.out.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                "got \(call.out)")
+    }
+
+    private func sourcePathsLib() -> String {
+        FileManager.default.currentDirectoryPath + "/Scripts/lib/product-source-paths.sh"
     }
 }
