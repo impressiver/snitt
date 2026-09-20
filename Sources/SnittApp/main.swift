@@ -607,6 +607,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `validateMenuItem(_:)` below, so in practice the menu item (and the
     /// bare delete key it's bound to) is disabled whenever this guard would
     /// fail, rather than relying on a user never triggering a no-op.
+    /// Puts the whole picture back, for a recording that has a crop.
+    ///
+    /// A menu item because the titlebar no longer has room for one that comes
+    /// and goes: a toolbar item keeps the width it was built with, so a button
+    /// appearing beside the Crop toggle drew over the Export icon next to it.
+    /// Undo already reverses a crop; this is the affordance for a crop applied
+    /// several edits ago, which is the case Undo cannot reach without taking
+    /// everything since with it.
+    ///
+    /// Same nil-target resolution as `cutTimelineSelection` above, and gated
+    /// by `validateMenuItem(_:)` so it greys out when there is no crop.
+    @objc func resetCrop(_ sender: Any?) {
+        guard let editor = EditorWindowController.openEditors.first(where: {
+            $0.window == NSApp.keyWindow
+        }) else { return }
+        editor.resetCrop()
+    }
+
     @objc func cutTimelineSelection(_ sender: Any?) {
         guard let editor = EditorWindowController.openEditors.first(where: {
             $0.window == NSApp.keyWindow
@@ -824,6 +842,11 @@ extension AppDelegate: NSMenuItemValidation {
         if menuItem.action == #selector(exportDocument(_:))
             || menuItem.action == #selector(shareToService(_:)) {
             return EditorWindowController.openEditors.contains { $0.window == NSApp.keyWindow }
+        }
+        if menuItem.action == #selector(resetCrop(_:)) {
+            return EditorWindowController.openEditors.first(where: {
+                $0.window == NSApp.keyWindow
+            })?.hasCrop ?? false
         }
         guard menuItem.action == #selector(cutTimelineSelection(_:)) else { return true }
         // The title follows the highlight: one key, one item, two edits. A

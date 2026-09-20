@@ -222,6 +222,15 @@ enum AppShell {
                                       keyEquivalent: "\u{8}")
         cutSelection.keyEquivalentModifierMask = []
         menu.addItem(cutSelection)
+
+        // Crop's own undo, for a crop applied several edits ago — which is the
+        // one Undo cannot reach without taking everything since along with it.
+        // No key equivalent: it is rare, and the two bare keys crop already
+        // uses (Return to apply, Escape to cancel) are handled by the drag
+        // overlay while the mode is on rather than by this menu.
+        menu.addItem(NSMenuItem(title: "Reset Crop",
+                                action: #selector(AppDelegate.resetCrop(_:)),
+                                keyEquivalent: ""))
         item.submenu = menu
         return item
     }

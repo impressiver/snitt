@@ -2368,8 +2368,17 @@ struct TimelineViewRepresentable: NSViewRepresentable {
 /// around them stays SwiftUI.
 struct EditorContentView: View {
     @ObservedObject var state: EditorTimelineState
+    /// Crop mode, the proposed box and whether the rail is open.
+    ///
+    /// Shared with the toolbar rather than owned here (D97): those controls
+    /// live in the titlebar now, and an `NSToolbarItem` cannot see a SwiftUI
+    /// view's private `@State`.
+    @ObservedObject var chrome: EditorChromeState
 
-    init(state: EditorTimelineState) { self.state = state }
+    init(state: EditorTimelineState, chrome: EditorChromeState) {
+        self.state = state
+        self.chrome = chrome
+    }
     @State private var playhead: Double = 0
     /// Re-derived from the player on every tick rather than stored: a cached
     /// flag goes stale the moment playback ends at the last frame, leaving a
@@ -2383,15 +2392,8 @@ struct EditorContentView: View {
     /// `EditorTimelineState`, because it is presentation state a SwiftUI
     /// runtime test cannot exercise anyway.
     @State private var editingMarkerID: UUID?
-    /// Crop mode. UI-only, like `editingMarkerID`: what is asserted is that
-    /// `applyCrop`/`resetCrop` persist and undo, not which mode a view is in.
-    @State private var croppingActive = false
-    /// The crop the box is currently PROPOSING, normalized to the picture on
-    /// screen. Lives here rather than in `CropDragOverlay` because Apply is in
-    /// the toolbar and has to be able to read it — and because normalizing to
-    /// the picture keeps a placed box where the user put it when the window
-    /// resizes under it.
-    @State private var cropBox: CropRect = .full
+
+
     /// Whether the reading transcript is open. UI-only, like `croppingActive`:
     /// what is asserted elsewhere is that the transcript persists and edits,
     /// not which panes a window happens to be showing.
@@ -2470,11 +2472,7 @@ struct EditorContentView: View {
         }
     }
 
-    /// Whether the side panel is on screen at all. Defaults to TRUE because
-    /// the markers list always used to be: the toggle now governs the whole
-    /// rail, and a rail that started hidden would take away a list nobody
-    /// asked to lose.
-    @State private var showRail = true
+
     /// Which sections are open. Both can be, at once — see `AccordionSection`
     /// for why an either/or accordion would be the wrong shape for two indexes
     /// of the same recording.
@@ -2558,6 +2556,8 @@ struct EditorContentView: View {
 
     /// The window's content height, measured once and read by the timeline.
     @State private var windowHeight: Double = 731
+    /// Focus for the crop overlay, so Return and Escape reach it.
+    @FocusState private var cropFocused: Bool
 
     var body: some View {
         GeometryReader { geometry in
@@ -2570,30 +2570,11 @@ struct EditorContentView: View {
 
     private var content: some View {
         VStack(spacing: 0) {
-            // Document actions. Separated from the transport by WHAT THEY ACT
-            // ON — these change the recording, the transport bar below changes
-            // where you are in it. Everything used to sit in one row at the
-            // bottom, which made a control's position say nothing about what
-            // it did.
-            EditorToolbar(
-                title: state.documentTitle,
-                subtitle: state.documentSubtitle,
-                croppingActive: $croppingActive,
-                showTranscript: $showRail,
-                hasTranscript: state.transcriptionStatus != .none,
-                canApplyCrop: cropBox != .full,
-                hasCrop: state.edl.crop != nil,
-                trimCaption: state.lastTrimOutcome.map(Self.trimCaption),
-                agentIsDriving: state.agentIsDriving,
-                onAutoTrim: { state.autoDeepTrim(preset: $0) },
-                onApplyCrop: {
-                    state.applyCrop(cropBox)
-                    croppingActive = false
-                },
-                onResetCrop: { state.resetCrop() },
-                onExport: { state.requestExport() })
-            Divider()
-
+            // The document actions used to be a row right here, standing in
+            // for a titlebar. They are `EditorWindowToolbar`'s items now, so
+            // the content starts at the picture — and the `Divider()` that
+            // separated the row from it goes too, because the system draws the
+            // titlebar's own separator.
             HStack(alignment: .top, spacing: 0) {
                 PlayerLayerView(player: controller.player,
                                 clickMarks: state.clickMarks,
@@ -2604,17 +2585,52 @@ struct EditorContentView: View {
                     .overlay {
                         // Only while cropping: an always-live drag layer would
                         // swallow clicks meant for the player.
-                        if croppingActive {
+                        if chrome.croppingActive {
                             CropDragOverlay(
                                 videoSize: controller.player.currentItem?.presentationSize
                                     ?? CGSize(width: 16, height: 9),
-                                box: $cropBox)
+                                box: $chrome.cropBox)
+                                // Return commits the box, Escape abandons it.
+                                //
+                                // Here rather than on a button in the titlebar:
+                                // a commit button had to appear beside the Crop
+                                // toggle while the mode was on, and a toolbar
+                                // item keeps the width it was built with — so
+                                // the button drew over the Export icon next to
+                                // it. Keys cost no width.
+                                //
+                                // Focus is taken when the overlay appears and
+                                // the overlay exists exactly while the mode
+                                // does, so neither key can fire against a crop
+                                // that is not being drawn.
+                                .focusable()
+                                .focused($cropFocused)
+                                .onAppear { cropFocused = true }
+                                .onKeyPress(.return) {
+                                    // Nothing drawn yet is not a crop to the
+                                    // whole frame — it is a press with nothing
+                                    // to commit, and applying `.full` would
+                                    // write a crop key for a crop nobody made.
+                                    guard chrome.cropBox != .full else { return .handled }
+                                    state.applyCrop(chrome.cropBox)
+                                    chrome.croppingActive = false
+                                    return .handled
+                                }
+                                .onKeyPress(.escape) {
+                                    // The box goes back to whole-frame as well
+                                    // as the mode closing: a half-drawn box
+                                    // left behind would be what the NEXT press
+                                    // of Crop started from.
+                                    chrome.cropBox = .full
+                                    chrome.croppingActive = false
+                                    return .handled
+                                }
                         }
                     }
                 // The rail is on the TRAILING edge, which is where the toolbar
                 // toggle has always said it would be: that button's icon is
                 // `sidebar.trailing`, and it was opening a panel on the left.
-                if showRail {
+                if chrome.showRail {
                     // `direction: -1` — the rail is to the RIGHT of its
                     // divider, so dragging right makes it narrower.
                     ResizableDivider(direction: -1) { delta in
@@ -2692,6 +2708,14 @@ struct EditorContentView: View {
                                           onEditMarker: { editingMarkerID = $0 })
             }
             .frame(height: timelineHeight)
+        }
+        // `documentSubtitle` counts markers and folds, so it changes on every
+        // mark and every cut. Pushed from here rather than observed by the
+        // controller because this view already re-reads it on each render —
+        // `initial: true` so a window that opens with markers shows them
+        // rather than waiting for the first edit.
+        .onChange(of: state.documentSubtitle, initial: true) { _, subtitle in
+            chrome.applySubtitle?(subtitle)
         }
         .onReceive(Timer.publish(every: 0.05, on: .main, in: .common).autoconnect()) { _ in
             // 20Hz, raised from 10 when the playhead stopped being decoration.
@@ -2911,6 +2935,13 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
 
     private let controller: PreviewController
     private let state: EditorTimelineState
+    /// Crop mode, the proposed box and whether the rail is open — shared by
+    /// the content view and the titlebar (D97).
+    private let chrome: EditorChromeState
+    /// HELD, not just installed. `NSWindow.toolbar` does not retain its
+    /// delegate, so a toolbar built and dropped on the floor would lose every
+    /// item the moment the window asked for one again.
+    private let toolbar: EditorWindowToolbar
     public let window: NSWindow
     private var isShown = false
 
@@ -3105,20 +3136,27 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     static func makeWindow(contentRect: NSRect, title: String) -> NSWindow {
         let window = NSWindow(
             contentRect: contentRect,
-            styleMask: [.titled, .closable, .resizable, .miniaturizable,
-                        .fullSizeContentView],
+            styleMask: [.titled, .closable, .resizable, .miniaturizable],
             backing: .buffered,
             defer: false)
-        window.titlebarAppearsTransparent = true
-        // HIDDEN, not empty. The title still has to be SET — Mission Control,
-        // the Window menu, ⌘-tab and VoiceOver all read it, and a window
-        // called "" is one you cannot find among six others. Clearing it
-        // instead of hiding it looks identical in the one place you are
-        // looking when you make the change.
-        window.titleVisibility = .hidden
+        // VISIBLE now, and drawn by the system (D97). It used to be hidden so
+        // that the app's own row could draw a title of its own without the
+        // window drawing a second copy above it — which meant the string
+        // Mission Control, the Window menu and ⌘-tab read was never the string
+        // anybody was looking at. One title, in one place, and the toolbar
+        // lays out beside it.
+        window.titleVisibility = .visible
         window.title = title
         return window
     }
+
+    /// `.fullSizeContentView` is deliberately GONE from the mask above.
+    ///
+    /// It existed to pull the content up under a transparent titlebar so a
+    /// hand-built row could stand in for one. With a real `NSToolbar` the
+    /// titlebar IS the row, and keeping the flag would put the content under
+    /// it — the toolbar drawing over the picture instead of above it.
+    static let usesFullSizeContentView = false
 
     /// The floor a Snitt window may be dragged to: 800x600, or whatever the
     /// parts actually need if that is larger.
@@ -3257,11 +3295,19 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         state.loadTranscript()
         state.loadCaptureHealth()
         state.beginTranscriptionIfNeeded()
-        let hosting = NSHostingView(rootView: EditorContentView(state: state))
+        let chrome = EditorChromeState()
+        self.chrome = chrome
+        let hosting = NSHostingView(
+            rootView: EditorContentView(state: state, chrome: chrome))
         let window = Self.makeWindow(
             contentRect: Self.openingContentRect(on: NSScreen.main?.visibleFrame),
             title: title)
         state.documentTitle = title
+        // Before the window is shown, so the first frame has its chrome rather
+        // than growing a titlebar a moment later.
+        let toolbar = EditorWindowToolbar(state: state, chrome: chrome)
+        self.toolbar = toolbar
+        toolbar.install(on: window)
         state.defaultExportURL = Self.defaultExportURL(forBundle: bundleURL)
         // Enforced by the window itself, not merely documented: a layout with
         // a stated minimum that nothing stops you dragging past has no
@@ -3399,6 +3445,17 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// time, a different window, or this editor's own window with nothing
     /// selected — falls through to normal text editing instead.
     var hasTimelineSelection: Bool { state.selection != nil }
+
+    /// Whether this recording has a crop to put back, which is what greys out
+    /// Edit ▸ Reset Crop when it does not.
+    var hasCrop: Bool { state.edl.crop != nil }
+
+    /// Edit ▸ Reset Crop. Same nil-target resolution as `cutTimelineSelection`
+    /// below: the menu picks the key window's editor and calls this, which is
+    /// the decision the titlebar's Reset button used to make before a toolbar
+    /// item's fixed width made an appearing-and-disappearing button draw over
+    /// its neighbour.
+    func resetCrop() { state.resetCrop() }
 
     /// Edit ▸ Cut Selection (Delete/Backspace), Task 5's second requirement:
     /// "Task 4 added a Cut button but no keyboard path." `EditorWindowController`
