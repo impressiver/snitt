@@ -79,6 +79,21 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// `setStopOverride(.busy)`). `fire` is the actual expiry logic
     /// (`expire(sessionID)`); the returned `Task` is what
     /// `cancelWatchdog()`/`setWatchdog()` cancel to abort it.
+    /// Answers whether a bundle is currently open in an editor window.
+    ///
+    /// Injectable for the same reason `GitResolving` is: the production
+    /// implementation needs a real `NSWindow` on the main actor, so a test
+    /// that could not substitute it could only ever exercise the
+    /// nothing-is-open branch — which is the branch that already worked. The
+    /// bug this guard fixes lives entirely in the other one.
+    typealias OpenDocumentProbe = @Sendable (URL) async -> Bool
+
+    /// Hops to the main actor because `EditorWindowController` is
+    /// `@MainActor` and `AutomationHost` deliberately is not.
+    private static let realOpenDocumentProbe: OpenDocumentProbe = { url in
+        await MainActor.run { EditorWindowController.existing(for: url) != nil }
+    }
+
     typealias WatchdogScheduling = @Sendable (_ seconds: Double,
                                               _ fire: @escaping @Sendable () async -> Void) -> Task<Void, Never>
 
@@ -93,6 +108,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     private let coordinator: any AgentRecordingControlling
     private let settings: @Sendable () -> AgentSettings
     private let resolveGit: GitResolving
+    private let isOpenInEditor: OpenDocumentProbe
     private let onRecordingState: RecordingStateSink
     private let registry = SessionRegistry()
     private var server: AutomationServer?
@@ -164,6 +180,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
          settings: @escaping @Sendable () -> AgentSettings,
          onRecordingState: @escaping RecordingStateSink = { _ in },
          resolveGit: @escaping GitResolving = { GitContextResolver.resolve(in: $0) },
+         isOpenInEditor: @escaping OpenDocumentProbe = AutomationHost.realOpenDocumentProbe,
          now: @escaping @Sendable () -> Date = Date.init,
          watchdogScheduling: @escaping WatchdogScheduling = AutomationHost.realWatchdogScheduling,
          auditLogURL: URL = AuditLogLocation.url(),
@@ -175,6 +192,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         self.settings = settings
         self.onRecordingState = onRecordingState
         self.resolveGit = resolveGit
+        self.isOpenInEditor = isOpenInEditor
         self.now = now
         self.watchdogScheduling = watchdogScheduling
         self.auditLogURL = auditLogURL
@@ -368,7 +386,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             // access off, nothing should be editing a person's recordings on
             // an agent's behalf either.
             guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) }
-            return addNarration(bundlePath: bundlePath, text: text, atSeconds: atSeconds)
+            return await addNarration(bundlePath: bundlePath, text: text, atSeconds: atSeconds)
 
         case .trim(let bundlePath, let start, let end, let auto):
             return await trim(bundlePath: bundlePath, start: start, end: end, auto: auto)
@@ -471,6 +489,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                 hint: "Use the path `snitt record stop` printed."))
         }
 
+        if let refusal = await refusalIfOpenInEditor(bundle) { return .failure(refusal) }
+
         do {
             var edl = try Self.readEDL(for: bundle)
             edl.crop = rect
@@ -554,6 +574,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                 hint: "Use the path `snitt record stop` printed."))
         }
 
+        if let refusal = await refusalIfOpenInEditor(bundle) { return .failure(refusal) }
+
         do {
             let duration = try await CompositionBuilder.mediaDuration(of: bundle)
             // Sampling ran to completion here, so an empty result means the
@@ -615,6 +637,8 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                 message: "Could not read a recording at that path.",
                 hint: "Use the path `snitt record stop` printed."))
         }
+
+        if let refusal = await refusalIfOpenInEditor(bundle) { return .failure(refusal) }
 
         let duration: Double
         do {
@@ -947,13 +971,15 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// has no playhead and every other time it holds, marker offsets from
     /// `inspect`, a screenshot's `timeSeconds`, is already source time.
     private func addNarration(bundlePath: String, text: String,
-                              atSeconds: Double) -> AutomationResponse {
+                              atSeconds: Double) async -> AutomationResponse {
         let bundle: SnittBundle
         do {
             bundle = try SnittBundle(opening: URL(fileURLWithPath: bundlePath))
         } catch {
             return .failure(Self.noSuchBundleError)
         }
+
+        if let refusal = await refusalIfOpenInEditor(bundle) { return .failure(refusal) }
 
         let words = AuthoredNarration.words(text, sourceStart: atSeconds)
         // Blank text yields no words. Both frontends already refuse it, so
@@ -1010,6 +1036,41 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
               var meta = try? RecordingMetadata.read(from: bundle) else { return }
         meta.outcome = outcome
         try? meta.write(to: bundle)
+    }
+
+    /// Refuses a document edit when a person has the recording open (W4).
+    ///
+    /// `EditorWindowController.applyAndSave` takes `self.edl` and writes it
+    /// WHOLE — it does not re-read, and nothing in `SnittApp` watches the
+    /// bundle. So an agent that writes `edit.json` under an open window has
+    /// its work destroyed by that window's next save, silently. This is D60's
+    /// failure class in the other direction: D60 fixed `snitt trim` deleting
+    /// the GUI's cuts because "the CLI and GUI are one model, not two", and
+    /// the GUI deleting the CLI's edits is the same two models.
+    ///
+    /// **Called BEFORE the write, never after** (W6). A verb that writes and
+    /// then reports a conflict has already lost the data the check exists to
+    /// protect.
+    ///
+    /// Refusing rather than routing the edit into the window was the product
+    /// owner's call (W4): routing needs new internal surface on
+    /// `EditorWindowController` (both save methods are `private`), an actor
+    /// hop, and a non-UI rejection path — `presentEditRejection` raises an
+    /// `NSAlert`, and an unattended agent would hang on it. Refusing ends the
+    /// data loss today and does not block routing later.
+    ///
+    /// Read-only verbs — `inspect`, `estimate`, `export`, `transcript` — do
+    /// NOT call this. They cannot lose anything, and refusing them would make
+    /// an open window mean "this recording is unreachable" rather than "this
+    /// recording is being edited elsewhere".
+    private func refusalIfOpenInEditor(_ bundle: SnittBundle) async -> AutomationError? {
+        guard await isOpenInEditor(bundle.url) else { return nil }
+        return AutomationError(
+            code: .bundleOpenInEditor,
+            message: "\(bundle.url.lastPathComponent) is open in Snitt's editor.",
+            hint: "Close the window, or make this edit in the editor. Snitt refuses "
+                + "rather than writing, because the open window saves the whole "
+                + "document and would overwrite this edit without saying so.")
     }
 
     /// The refusal for a path that is not a readable `.snitt` bundle.
