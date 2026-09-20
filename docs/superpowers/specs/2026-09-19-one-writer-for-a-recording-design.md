@@ -1,6 +1,6 @@
 # One writer for a recording
 
-**Status:** design, W4 settled. Split out of the agent-drives-the-editor spec on
+**Status:** built (Route). W4 superseded by W7. Split out of the agent-drives-the-editor spec on
 2026-09-19, because this is a data-loss bug and that is a feature.
 
 ## The bug
@@ -46,9 +46,27 @@ choice:
   is the whole point". Route therefore needs a non-UI result path FIRST, or an
   unattended agent hits a modal nobody dismisses.
 
-**Settled: Refuse.** Product owner, 2026-09-19. It ends the data loss today,
-needs none of the three preconditions, and does not block Route later if the
-editor-control work wants edits to land visibly instead.
+**Settled first as Refuse, now as Route.** Refuse shipped (#200) and was
+superseded within the day (W7).
+
+Refuse was the right call against the question as posed: it ended the data loss
+for almost nothing. What it could not do is let an agent SHOW its work, and
+that turned out to be load-bearing. With Refuse, `snitt trim` on a document
+open in the editor returns `bundle_open_in_editor` and nothing happens on
+screen, so the README demo's central beat — the transcript cut landing while
+the editor is being filmed — cannot be produced at all.
+
+The costing also changed. Route's three preconditions were what made it
+expensive, and the control surface pays for two of them regardless:
+
+| precondition | still Route-only? |
+|---|---|
+| new internal surface on the editor's document state | no, the view verbs need it |
+| actor hop from the off-MainActor host | no, same |
+| a non-UI rejection path instead of `NSAlert` | yes |
+
+That is the new evidence, and it is why this is a supersede rather than a
+reversal of an unsound decision.
 
 ## What Refuse means
 
@@ -99,10 +117,13 @@ against it.
   the first test and break every headless use.
 - `EditorPersistenceTests.laterTrimIsNotOverwrittenByAnEarlierSave` (line 274)
   keeps passing. It walks into the save-ordering inversion deliberately.
-- A refused agent edit returns `bundle_open_in_editor` and raises no alert.
-  Fails against reusing `presentEditRejection`, which is the hang.
-- A refused agent edit leaves `edit.json` byte-identical. Fails against
-  checking after the write instead of before it, which still loses the data.
+- An agent edit to an open document routes, and the host writes no file
+  itself. Fails against today's blind write, where the file really does say
+  what the agent asked for right up until the window's next save.
+- The transform is applied to the WINDOW's document, not the file's. The window
+  carries a cut `edit.json` does not; building on the file drops it.
+- Every mutating verb routes, `narrate` included. Fails against routing only
+  the verb the bug was noticed through.
 
 `SnittAppTests` cannot run in CI, so this merges on a local
 `Scripts/run-tests.sh`.
@@ -114,6 +135,9 @@ against it.
 | W1 | Split from the control-surface spec | A data-loss bug should not need a feature's justification, nor inherit its review | Red team and Pragmatist, independently; product owner 2026-09-19 | Decided |
 | W2 | No §4.8 amendment here | Write ordering is not scope | §4.8 | Decided |
 | W3 | ~~Route reuses the window's existing edit path~~ | Refuted: both save methods are `private`, the host is off-MainActor, and rejection is a modal with no caller channel | W4 | Superseded |
-| W4 | Refuse, not Route | Ends the data loss today, needs none of Route's three preconditions, and does not block Route later | Product owner, 2026-09-19 | Decided |
-| W5 | `bundle_open_in_editor` is its own code, not `internal_error` | The audit's finding 2: `internal_error` already spans three unrelated classes; this one is "fix your request" and its hint says how | Agent-API audit, finding 2 | Decided |
-| W6 | The check runs before the write | A verb that writes and then reports the conflict has already lost the data | W4 | Decided |
+| W4 | ~~Refuse, not Route~~ | Superseded by W7 the same day: Refuse cannot let an agent show its work, and the control surface pays for two of Route's three preconditions | W7 | Superseded |
+| W5 | ~~`bundle_open_in_editor` is its own code~~ | Nothing produces it under Route. Retained in the enum rather than removed: it shipped on `main` and the lenient decoder makes an unused code harmless, where removing one is a wire change for no gain | W7 | Superseded |
+| W6 | ~~The check runs before the write~~ | There is no check under Route; the window is simply the writer | W7 | Superseded |
+| W7 | Route, not Refuse | Refuse left the demo's central beat unfilmable, and two of Route's three preconditions are paid for by the control surface either way | Product owner, 2026-09-19 | Decided |
+| W8 | The host hands over a transform, not a finished EDL | A window holds applied-but-unpersisted edits; computing from disk and handing back the result reintroduces the divergence by a longer route | `applyAndSave` takes `self.edl` | Decided |
+| W9 | All three sidecars route, not just `edit.json` | `transcript.json` and `events.json` are held as published state and written whole too; `narrate` is a different file with the identical bug | `applyAndSaveTranscript`, `applyAndSaveEvents` | Decided |

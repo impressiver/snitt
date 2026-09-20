@@ -97,7 +97,14 @@ public enum AutomationProtocol {
     /// not available here: an unknown `Body` case has no sensible value to
     /// degrade to, and the refusal the version check already produces is a
     /// better answer than guessing at one.
-    public static let version = 4
+    /// 5: added the `editor` verbs (D109). A bump for the same reason 4 was:
+    /// these are new REQUEST cases, and v4 has shipped, so an old app receiving
+    /// `.editorSeek` cannot decode it and would report `internal_error` where
+    /// §10 wants a refusal that says what to do.
+    ///
+    /// The one-writer routing change (W7) landed on v4 and rightly did not
+    /// bump: it changed where a write goes, not the wire.
+    public static let version = 5
 }
 
 public struct StartOptions: Codable, Sendable, Equatable {
@@ -228,6 +235,58 @@ public struct AutomationRequest: Codable, Sendable {
         /// and an agent's other handles on the recording are already source
         /// times.
         case addNarration(bundlePath: String, text: String, atSeconds: Double)
+        /// D109's control surface. Only VIEW STATE gets verbs, because view
+        /// state is the part that is not in the document: a playhead position
+        /// and a selection are deliberately never written to `edit.json`, so
+        /// no existing verb can reach them.
+        ///
+        /// Every one names its bundle (E8). A verb targeting "whatever is
+        /// frontmost" would make an agent's result depend on window order,
+        /// which is a property of somebody else's clicking.
+        ///
+        /// `editorOpen` is the one with a consent rule: it puts a recording ON
+        /// SCREEN, so an agent may open only a recording it made. See
+        /// `RecordingCoordinator.screenshotForAgent`, which refuses to
+        /// photograph a session the agent did not start for the same reason.
+        /// `widthPoints`/`heightPoints` size the window, in POINTS, centred
+        /// on screen (D110). Both or neither; omitted leaves the window at
+        /// whatever size it would otherwise have.
+        ///
+        /// Points rather than pixels, because window geometry is in points on
+        /// macOS and a Retina display would otherwise halve what the caller
+        /// asked for. Clamped to a usable floor and to the screen, and the
+        /// APPLIED size comes back in `EditorState` — `CropRect`'s precedent,
+        /// which clamps rather than throwing and reports what it did.
+        case editorOpen(bundlePath: String,
+                        widthPoints: Double? = nil,
+                        heightPoints: Double? = nil)
+        case editorPlay(bundlePath: String)
+        case editorPause(bundlePath: String)
+        case editorSeek(bundlePath: String, toSeconds: Double)
+        /// `nil` for both ends clears the selection.
+        case editorSelect(bundlePath: String, fromSeconds: Double?, toSeconds: Double?)
+        /// Removes the selected range, the way pressing Delete does.
+        ///
+        /// The verb `editor select` exists FOR. Without it a selection is a
+        /// highlight nothing can act on, and an agent has no way to remove an
+        /// interior span at all: `trim` sets the KEEP range, so it can only
+        /// take material off the ends, and `auto-deep-trim` finds dead air
+        /// rather than a span the caller chose. Found by filming the demo,
+        /// where "select the stumble, cut it" turned out to be unreachable.
+        case editorCut(bundlePath: String)
+        /// Turns the picture's overlays on or off IN THE DOCUMENT (D111).
+        ///
+        /// A DOCUMENT verb, not an `editor` one, because these are not view
+        /// state: `showSubtitles` and `showMarkers` live in `edit.json`, they
+        /// travel with the bundle, and an export reads them with no window
+        /// open at all. E5's rule is that only view state earns an `editor`
+        /// verb.
+        ///
+        /// Until this existed an agent could OVERRIDE them for a single
+        /// export (`--captions`) and could not SET them, so captions and
+        /// marker banners never appeared in the editor — the one place a
+        /// person watching would see them. `nil` leaves that side alone.
+        case setOverlays(bundlePath: String, captions: Bool?, markers: Bool?)
         case export(bundlePath: String, format: String, outputPath: String,
                     scale: Double, chapters: Bool, subtitles: Bool, maxSizeBytes: Int?,
                     /// Output size to target. `.source` keeps the recording's
@@ -725,6 +784,76 @@ public enum AutomationResponse: Codable, Sendable, Equatable {
     case transcriptRead(TranscriptReport)
     case narrationAdded(NarrationSummary)
     case recordings(RecordingList)
+    /// What the editor is doing now, so an agent that cannot watch the window
+    /// can still tell whether its command took effect (§8).
+    case editorState(EditorState)
+    case overlays(OverlaySummary)
+}
+
+/// Which overlays the picture draws, after the change (D111).
+///
+/// Both are reported even when only one was set, because "captions on" is not
+/// the question an agent is really asking — "what will this export look like"
+/// is, and half an answer invites a second call to find out.
+public struct OverlaySummary: Codable, Sendable, Equatable {
+    public var bundlePath: String
+    public var captions: Bool
+    public var markers: Bool
+    /// How many caption lines there are to draw. Zero with `captions` true is
+    /// a real state and a common mistake — an agent that turned captions on
+    /// for a recording with no transcript would otherwise be told it
+    /// succeeded and see nothing in the export.
+    public var transcriptLines: Int
+
+    public init(bundlePath: String, captions: Bool, markers: Bool, transcriptLines: Int) {
+        self.bundlePath = bundlePath
+        self.captions = captions
+        self.markers = markers
+        self.transcriptLines = transcriptLines
+    }
+}
+
+/// The editor's VIEW state: the part that is not in the document.
+///
+/// Returned by every `editor` verb, so one round trip both acts and reports.
+/// An agent cannot see the window, so a verb that returned nothing would leave
+/// it unable to distinguish "seeked" from "silently did nothing" — the
+/// confidently-wrong outcome §8 forbids.
+public struct EditorState: Codable, Sendable, Equatable {
+    public var bundlePath: String
+    public var isOpen: Bool
+    public var isPlaying: Bool
+    /// OUTPUT time, which is what the playhead reads in: the recording with
+    /// its cuts removed. Source time would be a number that does not match
+    /// what a person watching the window sees.
+    public var playheadSeconds: Double
+    public var selectionStartSeconds: Double?
+    public var selectionEndSeconds: Double?
+    /// The window's CONTENT size in points, as applied (D110).
+    ///
+    /// Reported on every editor verb, not just the one that sets it, because
+    /// an agent about to film the window needs to know what it is filming and
+    /// a person can resize it at any time. A requested size is clamped to a
+    /// usable floor and to the screen, so this is what the window actually
+    /// got rather than what was asked for.
+    public var widthPoints: Double?
+    public var heightPoints: Double?
+
+    public init(bundlePath: String, isOpen: Bool, isPlaying: Bool,
+                playheadSeconds: Double,
+                selectionStartSeconds: Double? = nil,
+                selectionEndSeconds: Double? = nil,
+                widthPoints: Double? = nil,
+                heightPoints: Double? = nil) {
+        self.bundlePath = bundlePath
+        self.isOpen = isOpen
+        self.isPlaying = isPlaying
+        self.playheadSeconds = playheadSeconds
+        self.selectionStartSeconds = selectionStartSeconds
+        self.selectionEndSeconds = selectionEndSeconds
+        self.widthPoints = widthPoints
+        self.heightPoints = heightPoints
+    }
 }
 
 /// What a trim produced, for a caller that cannot inspect `edit.json` itself

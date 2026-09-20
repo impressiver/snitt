@@ -537,6 +537,160 @@ public enum MCPBridge {
                     "required": ["bundlePath"],
                 ]),
             ToolDefinition(
+                name: "snitt_editor_open",
+                description: "Open a recording in Snitt's editor, on screen. Use this "
+                           + "when you want the EDITING to be visible — filming a demo "
+                           + "of Snitt itself, or letting a person watch what you "
+                           + "change. Once it is open, snitt_trim, snitt_crop and "
+                           + "snitt_narrate land in that window instead of writing the "
+                           + "file behind it, so a person sees each edit happen and can "
+                           + "undo it. You may only open a recording an agent made: "
+                           + "opening someone else's puts it on their screen, which "
+                           + "Snitt refuses. Nothing else here opens a window, so call "
+                           + "this first. Pass widthPoints and heightPoints to SIZE the "
+                           + "window, which is what you want before filming it: the "
+                           + "editor opens at 75% of the screen, and scaled down to a "
+                           + "README-width GIF the transcript and timeline labels are "
+                           + "illegible. Sizes are POINTS, not pixels, and the size "
+                           + "actually applied comes back in the response.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "bundlePath": [
+                            "type": "string",
+                            "description": "Path printed by snitt_stop_recording",
+                        ],
+                        "widthPoints": [
+                            "type": "number",
+                            "description": "Window content width in points. Raised to a "
+                                + "usable minimum and clamped to the screen; pass with "
+                                + "heightPoints or not at all.",
+                        ],
+                        "heightPoints": [
+                            "type": "number",
+                            "description": "Window content height in points",
+                        ],
+                    ],
+                    "required": ["bundlePath"],
+                ]),
+            ToolDefinition(
+                name: "snitt_editor_play",
+                description: "Start playback in an open editor window. Returns where "
+                           + "the playhead actually is, because you cannot watch the "
+                           + "window. Fails if the recording is not open — call "
+                           + "snitt_editor_open first; Snitt will not open a window as "
+                           + "a side effect of being told to play.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "bundlePath": ["type": "string", "description": "The open recording"],
+                    ],
+                    "required": ["bundlePath"],
+                ]),
+            ToolDefinition(
+                name: "snitt_editor_pause",
+                description: "Stop playback in an open editor window, leaving the "
+                           + "playhead where it is.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "bundlePath": ["type": "string", "description": "The open recording"],
+                    ],
+                    "required": ["bundlePath"],
+                ]),
+            ToolDefinition(
+                name: "snitt_editor_seek",
+                description: "Move the playhead in an open editor window. Seconds are "
+                           + "OUTPUT time: the recording with its cuts already removed, "
+                           + "which is what a person watching sees and what the "
+                           + "timeline reads. That is NOT the same as source time once "
+                           + "you have trimmed, so seek after trimming, not before, or "
+                           + "you will land somewhere else.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "bundlePath": ["type": "string", "description": "The open recording"],
+                        "toSeconds": [
+                            "type": "number",
+                            "description": "Output seconds from the start of the edit",
+                        ],
+                    ],
+                    "required": ["bundlePath", "toSeconds"],
+                ]),
+            ToolDefinition(
+                name: "snitt_editor_select",
+                description: "Highlight a range on the timeline of an open editor "
+                           + "window, the way a person's drag does. Use it to SHOW what "
+                           + "you are about to cut before you cut it, which is the "
+                           + "difference between a demo a viewer can follow and one "
+                           + "where things vanish. Pass neither end to clear the "
+                           + "selection. The selection is view state: it is never "
+                           + "written into the recording, and a later trim that removes "
+                           + "the selected range clears it.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "bundlePath": ["type": "string", "description": "The open recording"],
+                        "fromSeconds": [
+                            "type": "number",
+                            "description": "Output seconds. Omit both ends to clear.",
+                        ],
+                        "toSeconds": [
+                            "type": "number",
+                            "description": "Output seconds, after fromSeconds",
+                        ],
+                    ],
+                    "required": ["bundlePath"],
+                ]),
+            ToolDefinition(
+                name: "snitt_overlays",
+                description: "Turn captions and marker banners on or off FOR THE "
+                           + "RECORDING. This is what makes them visible in Snitt's "
+                           + "editor as well as in an export — snitt_export's captions "
+                           + "flag only overrides one export and changes nothing about "
+                           + "the document, so an agent that used it alone would film an "
+                           + "editor showing no captions at all. Captions are drawn from "
+                           + "the transcript, so turn them on AFTER snitt_narrate or "
+                           + "there is nothing to draw; the response says how many lines "
+                           + "there are, and zero means the export will look unchanged. "
+                           + "Omit either side to leave it as it is.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "bundlePath": [
+                            "type": "string",
+                            "description": "Path printed by snitt_stop_recording",
+                        ],
+                        "captions": [
+                            "type": "boolean",
+                            "description": "Draw the transcript over the picture",
+                        ],
+                        "markers": [
+                            "type": "boolean",
+                            "description": "Draw a banner as each marker passes",
+                        ],
+                    ],
+                    "required": ["bundlePath"],
+                ]),
+            ToolDefinition(
+                name: "snitt_editor_cut",
+                description: "Remove the selected range from an open recording, the "
+                           + "way pressing Delete does. This is what snitt_editor_select "
+                           + "is FOR: select the span you want gone, then cut it, and a "
+                           + "person watching sees both halves happen. It is the only "
+                           + "way to remove an INTERIOR span — snitt_trim sets the range "
+                           + "to KEEP, so it can only take material off the ends, and "
+                           + "snitt_auto_deep_trim finds dead air rather than a span you "
+                           + "chose. Fails if nothing is selected, rather than reporting "
+                           + "a success that changed nothing. Undoable as one step.",
+                inputSchema: [
+                    "type": "object",
+                    "properties": [
+                        "bundlePath": ["type": "string", "description": "The open recording"],
+                    ],
+                    "required": ["bundlePath"],
+                ]),
+            ToolDefinition(
                 name: "snitt_narrate",
                 description: "Write a line of narration into a recording at a moment in "
                            + "it. This is how you say something on a demo: you have no "
@@ -996,6 +1150,94 @@ public enum MCPBridge {
             }
             return .success(.transcript(
                 bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory)))
+
+        case "snitt_overlays":
+            guard let path = arguments["bundlePath"] as? String else {
+                return .failure(MCPBridgeError("snitt_overlays requires bundlePath"))
+            }
+            let captions: Bool?
+            let markers: Bool?
+            switch booleanValue(arguments["captions"], parameter: "captions") {
+            case .failure(let error): return .failure(error)
+            case .success(let value): captions = value
+            }
+            switch booleanValue(arguments["markers"], parameter: "markers") {
+            case .failure(let error): return .failure(error)
+            case .success(let value): markers = value
+            }
+            guard captions != nil || markers != nil else {
+                return .failure(MCPBridgeError(
+                    "snitt_overlays needs captions, markers, or both. Passing neither "
+                  + "would report success having changed nothing."))
+            }
+            return .success(.setOverlays(
+                bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory),
+                captions: captions, markers: markers))
+
+        case "snitt_editor_cut":
+            guard let path = arguments["bundlePath"] as? String else {
+                return .failure(MCPBridgeError("snitt_editor_cut requires bundlePath"))
+            }
+            return .success(.editorCut(
+                bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory)))
+
+        case "snitt_editor_open", "snitt_editor_play", "snitt_editor_pause":
+            guard let path = arguments["bundlePath"] as? String else {
+                return .failure(MCPBridgeError("\(name) requires bundlePath"))
+            }
+            let resolved = PathResolver.resolve(path, workingDirectory: workingDirectory)
+            switch name {
+            case "snitt_editor_open":
+                let width: Double?
+                let height: Double?
+                switch numericValue(arguments["widthPoints"], parameter: "widthPoints") {
+                case .failure(let error): return .failure(error)
+                case .success(let value): width = value
+                }
+                switch numericValue(arguments["heightPoints"], parameter: "heightPoints") {
+                case .failure(let error): return .failure(error)
+                case .success(let value): height = value
+                }
+                return .success(.editorOpen(bundlePath: resolved,
+                                            widthPoints: width, heightPoints: height))
+            case "snitt_editor_play": return .success(.editorPlay(bundlePath: resolved))
+            default: return .success(.editorPause(bundlePath: resolved))
+            }
+
+        case "snitt_editor_seek":
+            guard let path = arguments["bundlePath"] as? String else {
+                return .failure(MCPBridgeError("snitt_editor_seek requires bundlePath"))
+            }
+            let seconds: Double
+            switch numericValue(arguments["toSeconds"], parameter: "toSeconds") {
+            case .failure(let error): return .failure(error)
+            case .success(let value):
+                guard let value else {
+                    return .failure(MCPBridgeError("snitt_editor_seek requires toSeconds"))
+                }
+                seconds = value
+            }
+            return .success(.editorSeek(
+                bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory),
+                toSeconds: seconds))
+
+        case "snitt_editor_select":
+            guard let path = arguments["bundlePath"] as? String else {
+                return .failure(MCPBridgeError("snitt_editor_select requires bundlePath"))
+            }
+            let from: Double?
+            let to: Double?
+            switch numericValue(arguments["fromSeconds"], parameter: "fromSeconds") {
+            case .failure(let error): return .failure(error)
+            case .success(let value): from = value
+            }
+            switch numericValue(arguments["toSeconds"], parameter: "toSeconds") {
+            case .failure(let error): return .failure(error)
+            case .success(let value): to = value
+            }
+            return .success(.editorSelect(
+                bundlePath: PathResolver.resolve(path, workingDirectory: workingDirectory),
+                fromSeconds: from, toSeconds: to))
 
         case "snitt_narrate":
             guard let path = arguments["bundlePath"] as? String else {

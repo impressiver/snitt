@@ -1,6 +1,6 @@
 # An agent drives Snitt's own editor
 
-**Status:** design, not built. Product-owner direction 2026-09-19.
+**Status:** built. Product-owner direction 2026-09-19.
 
 ## Why
 
@@ -14,18 +14,20 @@ editor is where the work is visible, and nothing an agent can do reaches it.
 underneath this: an agent's edit to a document open in the editor is silently
 overwritten. That is a bug and this is a feature, so they were split. This spec
 assumes that one has landed and that an agent's edit to an open document
-survives; how it survives (refuse or route) is settled there.
+survives. It survives by ROUTING through the window (W7), which is what makes
+a document verb visible rather than merely safe.
 
 Three findings from that spec bind here, because this surface makes agent edits
 land in a window a person is watching:
 
-- The window lookup exists (`existing(for:)`, line 2727). The apply path does
-  not: `applyAndSave` is `private` and needs new internal surface.
+- The window lookup exists (`existing(for:)`). The apply path did not:
+  `applyAndSave` is private, so W7 added `applyFromAgent` and its two sidecar
+  twins, which this surface reuses rather than rebuilds.
 - `AutomationHost` is off the main actor; `EditorWindowController` is
   `@MainActor`. Undo bracketing must enclose the synchronous mutation, not the
   enqueued `pendingSaveTask`.
-- A refused edit currently raises a modal with no channel back to the caller,
-  which would hang an unattended agent.
+- A refused edit raises a modal with no channel back to the caller, which
+  would hang an unattended agent. W7's `lastSaveError` is that channel.
 
 ## What gets new verbs, and what deliberately does not
 
@@ -45,6 +47,10 @@ would make an agent's result depend on window order.
 Everything that changes the recording (`trim`, `auto-deep-trim`, `crop`,
 `narrate`, deleting words) is unchanged and simply becomes visible when the
 document is open. No new verbs, no new scope.
+
+That sentence is true because of W7, and was briefly false: W4 shipped
+REFUSING an edit to an open document, which would have made every document verb
+fail rather than show. W7 routes instead, which is what this surface needs.
 
 That split is what keeps the §4.8 amendment narrow. The new claim is not that
 Snitt drives a GUI. It is that Snitt can be told where to put its own playhead.
@@ -106,11 +112,14 @@ playhead is moving.
 The minimum is a cue on the window being driven; reusing the menu-bar indicator
 is the cheaper option and says less about which window.
 
-**Unspecified, and it must not stay that way:** what happens to a live
-selection when a document verb changes the timeline under it. `editor select`
-names absolute seconds and an `auto-deep-trim` can remove exactly that range.
-Either the selection clears or it is remapped through the edit; pick one and
-test it.
+**Settled (E13): a routed edit CLEARS the selection.** It names OUTPUT
+seconds, and any cut shifts output time, so a selection kept across an edit
+silently points at different footage than the one the caller chose — and
+`auto-deep-trim` can remove exactly the selected range, leaving it pointing at
+seconds the timeline no longer has. Remapping through the edit is the other
+defensible answer and is a larger piece of work; clearing is the one that
+cannot be subtly wrong, and an agent that wants a selection afterwards can set
+one.
 
 ## Undo
 
@@ -174,4 +183,7 @@ E1-E4 moved to the one-writer spec as W1-W4, with the bugfix they belong to.
 | E9 | Split: the bugfix is its own spec | A data-loss bug should not need a feature's justification | Red team + Pragmatist independently; product owner | Decided |
 | E10 | Legibility is required here, not filed separately | This surface creates the need; `RecordingState` is recording-only so nothing would show | Operator + Product/UX independently; product owner | Decided |
 | E11 | `editor open` may only open a recording the agent made | `screenshotForAgent` sets the precedent: "a screenshot of someone else's screen is the most obviously sensitive thing this surface could hand out" | `RecordingCoordinator.swift:354` | Decided |
+| E13 | A routed edit clears the selection rather than remapping it | Output time shifts under any cut, so a kept selection points at different footage; clearing cannot be subtly wrong | E10's open item | Decided |
+| E14 | A closed document is `target_not_found`, not a silent success | An agent cannot watch the window, so a cheerful no-op is indistinguishable from a seek that worked (§8) | §8 | Decided |
+| E15 | `editor open` tests `initiator`, not the session id | Ownership elsewhere is per-session and a bundle is opened after its session ended; `initiator` is the only ownership fact that survives in the bundle. Grants "made by an agent", not "by THIS agent", and refuses every human recording | `RecordingMetadata.initiator` | Decided |
 | E12 | D109 must answer D49's blast-radius half, and cite D71 | The FOREIGN-UI rebuttal answers only the Accessibility half; D71 is OPEN on adjacent ground and was uncited | D49, D71 | Decided |

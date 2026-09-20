@@ -5,6 +5,7 @@
 // Copyright © 2026 Ian White.
 
 import AppKit
+import SnittAutomation
 import SnittExport
 import Foundation
 import SnittCapture
@@ -198,7 +199,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 let decision = LaunchOpenPrompt.decide(
                     openingDocument: !self.openTasks.isEmpty,
                     hasVisibleWindows: openDocuments,
-                    isRecording: recording)
+                    isRecording: recording,
+                    launchedByAgent: CommandLine.arguments.contains(
+                        AppLauncher.agentLaunchArgument))
                 guard decision == .prompt else { return }
                 // Bring the app forward first. A launch from Spotlight or the
                 // Dock usually activates it anyway, but a modal panel run by

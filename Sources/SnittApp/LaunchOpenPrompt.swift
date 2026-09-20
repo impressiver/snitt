@@ -39,6 +39,9 @@ enum LaunchOpenPrompt {
         case documentAlreadyOpening
         case windowAlreadyOpen
         case recording
+        /// An agent's command started the app. Nobody asked for a window, and
+        /// the panel would block the main actor that agent is about to use.
+        case agentLaunch
     }
 
     /// - Parameters:
@@ -49,10 +52,27 @@ enum LaunchOpenPrompt {
     ///   - hasVisibleWindows: anything already on screen, including an editor
     ///     that a just-finished recording opened.
     ///   - isRecording: a capture is running or stopping.
+    ///   - launchedByAgent: the process was started by an agent's command
+    ///     rather than by a person, which `AppLauncher.agentLaunchArgument`
+    ///     marks.
     static func decide(openingDocument: Bool,
                        hasVisibleWindows: Bool,
-                       isRecording: Bool) -> Decision {
-        // Recording first: it is the §4.11 case, and it outranks the others
+                       isRecording: Bool,
+                       launchedByAgent: Bool = false) -> Decision {
+        // FIRST, above even recording. The others are about what the app is
+        // already doing; this one is about the panel being actively harmful:
+        // it runs modally on the main actor, which is the actor every agent
+        // verb that touches a window needs, so the launch that was supposed to
+        // make Snitt reachable is what makes it unreachable. `snitt status`
+        // keeps answering, because it never hops, which makes the app look
+        // alive and the surface look broken.
+        //
+        // It also steals focus. `offerToOpenADocumentIfLaunchedBare` calls
+        // `NSApp.activate(ignoringOtherApps:)` so the panel cannot open
+        // behind something — correct for a person who double-clicked the app,
+        // and exactly wrong for an agent working quietly behind their work.
+        if launchedByAgent { return .agentLaunch }
+        // Recording next: it is the §4.11 case, and it outranks the rest
         // even if a window happens to be up as well.
         if isRecording { return .recording }
         if openingDocument { return .documentAlreadyOpening }

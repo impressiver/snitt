@@ -25,7 +25,15 @@ struct AppLauncherTests {
         #expect(command.first == "/usr/bin/open",
                 "launching the executable directly makes the caller TCC-responsible")
         #expect(command.contains("-a"))
-        #expect(command.last == "/Applications/Snitt.app")
+        // The bundle path, and it must come before `--args`: everything after
+        // that belongs to the app, so a bundle path on the wrong side of it is
+        // passed to Snitt as an argument instead of being launched.
+        guard let bundleIndex = command.firstIndex(of: "/Applications/Snitt.app") else {
+            Issue.record("the bundle is not in \(command)"); return
+        }
+        if let argsIndex = command.firstIndex(of: "--args") {
+            #expect(bundleIndex < argsIndex, "the bundle must precede --args: \(command)")
+        }
     }
 
     @Test("The launch does not steal focus")

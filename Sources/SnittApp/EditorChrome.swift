@@ -35,6 +35,16 @@ struct EditorToolbar: View {
     let canApplyCrop: Bool
     let hasCrop: Bool
     let trimCaption: String?
+    /// Whether an agent is driving this window right now (E10).
+    ///
+    /// Required by the control-surface design rather than filed as a nicety:
+    /// once an agent can move a person's playhead and cut their timeline, a
+    /// person watching needs to know that is what is happening. §5.3 already
+    /// gives RECORDING a visible indicator; editing deserves the same, and
+    /// `RecordingState` cannot serve — it is `idle` or `recording`, set only
+    /// by an agent starting or stopping a recording, and every editor verb
+    /// works with no recording session at all.
+    let agentIsDriving: Bool
     let onAutoTrim: (DeepTrimPreset) -> Void
     let onApplyCrop: () -> Void
     let onResetCrop: () -> Void
@@ -46,6 +56,18 @@ struct EditorToolbar: View {
                 Text(verbatim: title).font(.headline).lineLimit(1)
                 Text(verbatim: subtitle)
                     .font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+            if agentIsDriving {
+                // Beside the document's name, not at the far end of the button
+                // row: this is a fact about the document in front of you, and
+                // status stranded across the window reads as unrelated.
+                Label("Agent editing", systemImage: "wand.and.rays")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(.quaternary, in: Capsule())
+                    .accessibilityLabel("An agent is editing this recording")
+                    .transition(.opacity)
             }
             if let trimCaption {
                 // Said next to the control that caused it, not stranded at the
@@ -495,7 +517,7 @@ struct TransportBar: View {
         EditorToolbar(title: "Standup 2026-09-10", subtitle: "42s · 1512 × 982",
                       croppingActive: $cropping, showTranscript: $transcript,
                       hasTranscript: true, canApplyCrop: false, hasCrop: false,
-                      trimCaption: "Auto-trim removed 5.9s",
+                      trimCaption: "Auto-trim removed 5.9s", agentIsDriving: true,
                       onAutoTrim: { _ in }, onApplyCrop: {}, onResetCrop: {},
                       onExport: {})
         Divider()
@@ -511,7 +533,7 @@ struct TransportBar: View {
     EditorToolbar(title: "Untitled recording", subtitle: "8s · 2560 × 1440",
                   croppingActive: $cropping, showTranscript: $transcript,
                   hasTranscript: false, canApplyCrop: true, hasCrop: true,
-                  trimCaption: nil,
+                  trimCaption: nil, agentIsDriving: false,
                   onAutoTrim: { _ in }, onApplyCrop: {}, onResetCrop: {},
                   onExport: {})
         .frame(width: 900)

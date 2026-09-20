@@ -143,7 +143,14 @@ func protocolVersionIsFour() {
     // The two OPTIONAL fields added to `.export` in the same change did not
     // earn this and would not have earned it alone, see
     // `ResponseWireCompatibilityTests`, which proves that shape is additive.
-    #expect(AutomationProtocol.version == 4)
+    //
+    // 4 -> 5 for the `editor` verbs (D109). New REQUEST cases again, and v4
+    // has shipped, so the same rule applies: `AutomationServer` decodes the
+    // whole request before it compares versions, so an old app receiving
+    // `.editorSeek` reports `internal_error` where §10 wants a refusal that
+    // says what to do. W7's routing change landed on v4 and rightly did not
+    // bump — it changed where a write goes, not the wire.
+    #expect(AutomationProtocol.version == 5)
 }
 
 @Test("A transcript request round-trips")

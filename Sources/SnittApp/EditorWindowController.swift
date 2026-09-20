@@ -6,6 +6,7 @@
 
 import AppKit
 import Combine
+import SnittAutomation
 import SnittCapture
 import SnittDocument
 import SnittExport
@@ -46,6 +47,13 @@ final class EditorTimelineState: ObservableObject {
     /// on it and `TimelineViewRepresentable` can feed it back down to the
     /// view for drawing.
     @Published var selection: Selection?
+    /// Shown in the chrome while an agent is driving this window (E10).
+    ///
+    /// A timed flag rather than a lasting mode, because agent commands arrive
+    /// one at a time over IPC and there is no "session" to bracket: an agent
+    /// that seeks, trims and exports should read as continuously active, and
+    /// one that touched the window a minute ago should not.
+    @Published var agentIsDriving = false
 
     /// Playback ▸ Show Clicks, which lives in `edit.json` — so it is read
     /// from the EDL rather than mirrored beside it. A second copy is how a
@@ -476,6 +484,30 @@ final class EditorTimelineState: ObservableObject {
     func togglePlayback() {
         if controller.player.rate == 0 { controller.play() } else { controller.pause() }
     }
+
+    /// Raises the "Agent editing" cue and keeps it up for a few seconds past
+    /// the last command, so a burst of verbs reads as one continuous activity
+    /// rather than flickering once per call.
+    ///
+    /// The timer is replaced, not stacked: each command pushes the expiry out.
+    func noteAgentActivity() {
+        agentIsDriving = true
+        agentCueExpiry?.cancel()
+        agentCueExpiry = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(4))
+            guard !Task.isCancelled else { return }
+            self?.agentIsDriving = false
+        }
+    }
+
+    private var agentCueExpiry: Task<Void, Never>?
+
+    /// Unconditional, unlike `togglePlayback`. An agent asking to play wants
+    /// the window playing, not flipped: a toggle would make the outcome depend
+    /// on a state the agent cannot see, so two identical commands would leave
+    /// it stopped.
+    func playForAgent() { controller.play() }
+    func pauseForAgent() { controller.pause() }
 
     /// Steps to the previous or next mark (D84).
     ///
@@ -1053,6 +1085,7 @@ final class EditorTimelineState: ObservableObject {
     /// visible refusal a rejected cut gets, not a silently reverted marker.
     private func eventEditWasRejected(_ error: Error) {
         events = lastSavedEvents
+        lastSaveError = error
         onEditRejected?(error)
     }
 
@@ -1656,6 +1689,7 @@ final class EditorTimelineState: ObservableObject {
 
     private func transcriptEditWasRejected(_ error: Error) {
         transcript = lastSavedTranscript
+        lastSaveError = error
         onEditRejected?(error)
     }
 
@@ -2050,7 +2084,162 @@ final class EditorTimelineState: ObservableObject {
     /// ⌘Z once after a refusal is a no-op rather than a surprise.
     private func editWasRejected(_ error: Error) {
         edl = lastSavedEDL
+        // Recorded BEFORE the callback, so `applyFromAgent` sees it whether or
+        // not anything is listening. `onEditRejected` is the person's path and
+        // is nil in a headless host.
+        lastSaveError = error
         onEditRejected?(error)
+    }
+
+    // MARK: - Agent control (D109)
+
+    /// The last save error, so an agent's edit can be told it failed.
+    ///
+    /// Route's third precondition. A person's refused edit reaches
+    /// `presentEditRejection`, which raises an `NSAlert` — documented there as
+    /// `nil` in production, "where the alert is the whole point". An
+    /// unattended agent would hang on it, so the agent path needs the error as
+    /// a VALUE. This carries it from `applyAndSave`'s detached save task to
+    /// `applyFromAgent` awaiting that task.
+    private var lastSaveError: Error?
+
+    /// Applies an agent's edit INSIDE this window, so it lands where a person
+    /// can see it instead of under them (W7).
+    ///
+    /// This is Route. `AutomationHost` used to read `edit.json`, compute a new
+    /// EDL and write the file — and the window's next `applyAndSave` took
+    /// `self.edl` and overwrote it, silently. W4 first settled that by
+    /// REFUSING such an edit, which ended the data loss and left an agent
+    /// unable to show its work; W7 supersedes it now that the control surface
+    /// pays for two of Route's three preconditions anyway.
+    ///
+    /// **The transform runs against the WINDOW's EDL, not the file's.** That
+    /// is what one writer means: the window holds edits that are applied but
+    /// not yet persisted, so an agent computing from disk would compute from a
+    /// stale document and reintroduce the divergence by a longer route. The
+    /// host therefore hands over a transform rather than a finished EDL, and
+    /// precomputes anything asynchronous (a media duration) BEFORE calling,
+    /// because this runs synchronously against the live value.
+    ///
+    /// **One agent command is one undo entry** (E7), grouped explicitly.
+    /// `UndoManager.groupsByEvent` is on by default and collapses whatever
+    /// lands in a single run-loop pass, so an `auto-deep-trim` making twenty
+    /// cuts would be one entry or twenty depending on the run loop rather than
+    /// on anyone's decision.
+    ///
+    /// Throws if the compositor refused the edit, so the agent gets a value
+    /// and no alert is raised.
+    func applyFromAgent(_ actionName: String,
+                        _ transform: (EditDecisionList) -> EditDecisionList) async throws
+        -> EditDecisionList {
+        let snapshot = edl
+
+        // The group brackets the MUTATION only. `applyAndSave` enqueues a task
+        // that finishes long after this returns; bracketing that instead would
+        // close the group on a run loop pass unrelated to this command.
+        undoManager?.beginUndoGrouping()
+        undoManager?.setActionName(actionName)
+        undoManager?.registerUndo(withTarget: self) { $0.restore(snapshot) }
+        edl = transform(edl)
+        // The selection is cleared, not remapped (E13). It names OUTPUT
+        // seconds, and ANY cut shifts output time, so a selection kept across
+        // an edit silently points at different footage than the one the caller
+        // selected — and `auto-deep-trim` can remove exactly the selected
+        // range, leaving it pointing at seconds the timeline no longer has.
+        // Remapping through the edit is the other defensible answer and is a
+        // larger piece of work; clearing is the one that cannot be subtly
+        // wrong, and an agent that wants a selection afterwards can set one.
+        selection = nil
+        selectedFoldID = nil
+        undoManager?.endUndoGrouping()
+
+        lastSaveError = nil
+        applyAndSave()
+        await waitForPendingSave()
+
+        if let failure = lastSaveError {
+            lastSaveError = nil
+            throw failure
+        }
+        return edl
+    }
+
+    /// Cuts the current selection, as one undo entry, and reports whether
+    /// there was anything to cut.
+    ///
+    /// `false` means NOTHING WAS SELECTED, which the caller turns into a
+    /// refusal rather than a cheerful success: an agent cannot see the
+    /// timeline, so "cut" and "cut nothing" must not look the same (§8).
+    /// A person pressing Delete with no selection gets a harmless no-op,
+    /// which is right for a keystroke and wrong for a command.
+    func cutSelectionFromAgent() async throws -> Bool {
+        guard let selection else { return false }
+        _ = try await applyFromAgent("Cut") { edl in
+            var updated = edl
+            updated.cuts.append(Cut(range: selection.range, label: nil))
+            return updated
+        }
+        return true
+    }
+
+    /// The transcript-side twin, for `narrate`.
+    ///
+    /// Needed for the same reason the EDL one is: the editor holds
+    /// `transcript` as published state and `applyAndSaveTranscript` writes it
+    /// WHOLE, so narration written to the file under an open window is
+    /// overwritten by that window's next transcript save. Leaving this one
+    /// verb refusing while the other three routed would be an inconsistency
+    /// nobody could predict from the outside.
+    ///
+    /// A recording may legitimately have no transcript yet — narration is the
+    /// one way to get one without running the recogniser — so the transform
+    /// takes and returns a value rather than requiring an existing one.
+    func applyTranscriptFromAgent(_ actionName: String,
+                                  _ transform: (Transcript?) -> Transcript) async throws
+        -> Transcript {
+        let snapshot = transcript
+
+        undoManager?.beginUndoGrouping()
+        undoManager?.setActionName(actionName)
+        undoManager?.registerUndo(withTarget: self) { target in
+            guard let snapshot else { return }
+            target.restoreTranscript(snapshot)
+        }
+        transcript = transform(transcript)
+        undoManager?.endUndoGrouping()
+
+        lastSaveError = nil
+        applyAndSaveTranscript()
+        await waitForPendingSave()
+
+        if let failure = lastSaveError {
+            lastSaveError = nil
+            throw failure
+        }
+        return transcript ?? transform(nil)
+    }
+
+    /// The events-side twin, for verbs that write `events.json` (markers).
+    func applyEventsFromAgent(_ actionName: String,
+                              _ transform: ([LoggedEvent]) -> [LoggedEvent]) async throws
+        -> [LoggedEvent] {
+        let snapshot = events
+
+        undoManager?.beginUndoGrouping()
+        undoManager?.setActionName(actionName)
+        undoManager?.registerUndo(withTarget: self) { $0.restoreEvents(snapshot) }
+        events = transform(events)
+        undoManager?.endUndoGrouping()
+
+        lastSaveError = nil
+        applyAndSaveEvents()
+        await waitForPendingSave()
+
+        if let failure = lastSaveError {
+            lastSaveError = nil
+            throw failure
+        }
+        return events
     }
 
     // MARK: - Testing seam
@@ -2351,6 +2540,7 @@ struct EditorContentView: View {
                 canApplyCrop: cropBox != .full,
                 hasCrop: state.edl.crop != nil,
                 trimCaption: state.lastTrimOutcome.map(Self.trimCaption),
+                agentIsDriving: state.agentIsDriving,
                 onAutoTrim: { state.autoDeepTrim(preset: $0) },
                 onApplyCrop: {
                     state.applyCrop(cropBox)
@@ -2724,6 +2914,89 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// Looks up an already-open window for `url`, standardizing both sides
     /// of the comparison so `/tmp/x.snitt` and `/private/tmp/x.snitt` — the
     /// same document under two spellings — are recognized as one.
+    // MARK: - Agent view control (D109)
+
+    /// The editor's VIEW state, which is the part that is not in the document.
+    ///
+    /// Reported by every `editor` verb, because an agent cannot watch the
+    /// window: a verb returning nothing would leave it unable to tell
+    /// "seeked" from "silently did nothing", which is the confidently-wrong
+    /// outcome §8 forbids.
+    var agentVisibleState: EditorState {
+        let content = window.contentRect(forFrameRect: window.frame)
+        return EditorState(bundlePath: bundleURL.path,
+                           isOpen: true,
+                           isPlaying: state.isPlaying,
+                           playheadSeconds: state.currentOutputSeconds,
+                           selectionStartSeconds: state.selection?.range.start,
+                           selectionEndSeconds: state.selection?.range.end,
+                           widthPoints: Double(content.width),
+                           heightPoints: Double(content.height))
+    }
+
+    /// Resizes this editor, centred, clamped to the floor and the screen.
+    ///
+    /// Applies to an ALREADY-OPEN window as well as a fresh one: an agent that
+    /// opens a recording, sees it is too large to film legibly, and asks again
+    /// with a size should get the resize rather than a no-op — and re-opening
+    /// an open bundle is how it would naturally ask.
+    func agentResize(width: Double, height: Double) {
+        state.noteAgentActivity()
+        let rect = Self.requestedContentRect(
+            width: width, height: height,
+            on: window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame)
+        window.setFrame(window.frameRect(forContentRect: rect), display: true)
+    }
+
+    /// Starts playback. Idempotent: playing an already-playing window is not
+    /// an error, because an agent retrying a command it could not observe the
+    /// result of is ordinary rather than exceptional.
+    func agentPlay() { state.noteAgentActivity(); state.playForAgent() }
+    func agentPause() { state.noteAgentActivity(); state.pauseForAgent() }
+
+    /// Moves the playhead, in OUTPUT time — the recording with its cuts
+    /// removed, which is what a person watching the window sees.
+    func agentSeek(toOutput seconds: Double) {
+        state.noteAgentActivity()
+        state.seek(toOutput: seconds)
+    }
+
+    /// Sets or clears the timeline selection.
+    ///
+    /// Through `onSelect` rather than assigning `selection` directly, so an
+    /// agent's selection clears `selectedFoldID` exactly as a person's drag
+    /// does. Assigning the property would leave Delete meaning "remove that
+    /// cut" while the highlight showed something else.
+    func agentSelect(_ range: TimeRange?) {
+        state.noteAgentActivity()
+        state.onSelect(range.map { Selection(range: $0) })
+    }
+
+    /// Forwards an agent's edit to this window's document state (W7).
+    ///
+    /// The window owns the lookup (`existing(for:)`) and the state owns the
+    /// apply, so the agent path needs both and `state` is private. Forwarding
+    /// rather than exposing `state` keeps the agent surface to the three verbs
+    /// it actually needs, instead of handing out the whole document object.
+    func applyFromAgent(_ actionName: String,
+                        _ transform: (EditDecisionList) -> EditDecisionList) async throws
+        -> EditDecisionList {
+        state.noteAgentActivity()
+        return try await state.applyFromAgent(actionName, transform)
+    }
+
+    func applyTranscriptFromAgent(_ actionName: String,
+                                  _ transform: (Transcript?) -> Transcript) async throws
+        -> Transcript {
+        state.noteAgentActivity()
+        return try await state.applyTranscriptFromAgent(actionName, transform)
+    }
+
+    func agentCutSelection() async throws -> Bool {
+        state.noteAgentActivity()
+        return try await state.cutSelectionFromAgent()
+    }
+
     static func existing(for url: URL) -> EditorWindowController? {
         let wanted = normalizedBundleURL(url)
         return open.first { $0.bundleURL == wanted }
@@ -2835,6 +3108,50 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         let folder = bundleURL.deletingLastPathComponent()
         let name = bundleURL.deletingPathExtension().lastPathComponent
         return folder.appending(path: name).appendingPathExtension("mp4")
+    }
+
+    /// Centres a REQUESTED content size on the screen, clamped to what will
+    /// actually fit (D110).
+    ///
+    /// An agent filming the editor needs it smaller than the 75% default: at
+    /// full size, scaled down to a README-width GIF, the transcript pane and
+    /// the timeline labels are illegible. That is the "showing the interface"
+    /// problem this whole demo exists inside, and cropping around it loses the
+    /// panes that make the editor worth showing.
+    ///
+    /// **Clamped, then REPORTED, never silently obeyed.** `CropRect` sets the
+    /// precedent: it clamps rather than throwing, and `CropSummary` returns
+    /// the APPLIED rect so the adjustment is visible instead of silent. The
+    /// same rule here — `EditorState` carries the size the window actually
+    /// got, so an agent that asked for something impossible finds out rather
+    /// than filming a window it has the wrong dimensions for.
+    ///
+    /// Pure and screen-free for the same reason `openingContentRect` is: a
+    /// test host has no screen and `NSScreen.main` is nil there.
+    static func requestedContentRect(width: Double,
+                                     height: Double,
+                                     on visibleFrame: NSRect?) -> NSRect {
+        // The floor is the window's OWN `minimumContentSize`, not a number
+        // invented here. That property already derives what the chrome, the
+        // rail and the panes need, and enforces a flat 800x600 under it —
+        // measured from where the transport row started dropping controls. A
+        // second answer would drift from it, and this one would drift LOWER,
+        // handing an agent a window macOS then silently resizes anyway.
+        let floor = minimumContentSize
+        let wanted = NSSize(width: max(floor.width, width),
+                            height: max(floor.height, height))
+        guard let visibleFrame, visibleFrame.width > 0, visibleFrame.height > 0 else {
+            return NSRect(origin: .zero, size: wanted)
+        }
+        // Clamped to the SCREEN as well as to the floor. A window larger than
+        // the space it sits in cannot be filmed whole, and the point of asking
+        // for a size is to control what the frame contains.
+        let size = NSSize(width: min(wanted.width, visibleFrame.width),
+                          height: min(wanted.height, visibleFrame.height))
+        return NSRect(x: visibleFrame.minX + (visibleFrame.width - size.width) / 2,
+                      y: visibleFrame.minY + (visibleFrame.height - size.height) / 2,
+                      width: size.width,
+                      height: size.height)
     }
 
         static func openingContentRect(on visibleFrame: NSRect?,

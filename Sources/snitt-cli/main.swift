@@ -374,6 +374,31 @@ func requestBody(for command: ParsedCommand,
         return .addNarration(
             bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
             text: text, atSeconds: atSeconds)
+    case .editorOpen(let path, let width, let height):
+        return .editorOpen(
+            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
+            widthPoints: width, heightPoints: height)
+    case .editorPlay(let path):
+        return .editorPlay(
+            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory))
+    case .editorPause(let path):
+        return .editorPause(
+            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory))
+    case .editorSeek(let path, let seconds):
+        return .editorSeek(
+            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
+            toSeconds: seconds)
+    case .editorSelect(let path, let from, let to):
+        return .editorSelect(
+            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
+            fromSeconds: from, toSeconds: to)
+    case .editorCut(let path):
+        return .editorCut(
+            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory))
+    case .setOverlays(let path, let captions, let markers):
+        return .setOverlays(
+            bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
+            captions: captions, markers: markers)
     case .trim(let path, let start, let end, let auto):
         return .trim(bundlePath: PathResolver.resolve(path, workingDirectory: currentDirectory),
                      start: start, end: end, auto: auto)
@@ -484,6 +509,34 @@ do {
     case .narrationAdded(let summary):
         emit(summary)
         note(narrationNote(summary))
+    case .overlays(let summary):
+        emit(summary)
+        var line = "Captions \(summary.captions ? "on" : "off"), "
+            + "marker banners \(summary.markers ? "on" : "off")."
+        // Said out loud, because it is the mistake this verb invites: captions
+        // on with nothing to draw exports a video that looks unchanged.
+        if summary.captions && summary.transcriptLines == 0 {
+            line += " This recording has no transcript, so nothing will be drawn —"
+                + " use `snitt narrate` or transcribe it first."
+        }
+        note(line)
+    case .editorState(let state):
+        emit(state)
+        // The playhead is the one number a person reading stderr wants, and
+        // the selection only when there is one: printing "selection: none"
+        // on every seek is noise that hides the line that matters.
+        var line = state.isPlaying ? "Playing" : "Paused"
+        line += " at \(String(format: "%.2f", state.playheadSeconds))s"
+        if let start = state.selectionStartSeconds, let end = state.selectionEndSeconds {
+            line += ", selected \(String(format: "%.2f", start))s"
+                + "-\(String(format: "%.2f", end))s"
+        }
+        // The APPLIED size, so a caller that asked for one can see what it got
+        // after the floor and the screen had their say.
+        if let width = state.widthPoints, let height = state.heightPoints {
+            line += ". Window \(Int(width.rounded())) x \(Int(height.rounded()))pt"
+        }
+        note(line)
     case .trimmed(let summary):
         emit(summary)
         note("Kept \(Int(summary.keptSeconds))s, cut \(Int(summary.cutSeconds))s")
