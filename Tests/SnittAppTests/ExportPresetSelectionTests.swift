@@ -87,8 +87,16 @@ struct ExportPresetSelectionTests {
         var r = request()
         r.apply(try #require(ExportDestination.named("github")))
 
-        r.setFormat("gif")
-        r.clearPreset()
+        // Through `choose(format:)`, which is the only way now.
+        //
+        // This test used to call `setFormat` and then `clearPreset` — the pair
+        // the picker itself called — and it passed the whole time the picker
+        // was broken. Two mutations on a plain `var` always work; the defect
+        // only exists through a SwiftUI `@Binding`, where the second call
+        // re-reads before it writes and puts the old format back. A value-level
+        // test could not see it, which is why the regression test for it drives
+        // a real `NSSegmentedControl` instead.
+        r.choose(format: "gif")
 
         #expect(r.destinationPreset == nil)
         #expect(r.format == "gif")
