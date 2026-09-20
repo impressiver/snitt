@@ -92,6 +92,52 @@ public final class TimelineView: NSView {
     /// keys, a scroll, a pinch. See `setZoom`.
     public var onZoomChanged: (Double) -> Void = { _ in }
 
+    /// Everything the transport's scroll indicator draws itself from.
+    ///
+    /// One value rather than three callbacks: they change together, and a
+    /// thumb whose width and position arrived separately can be drawn from
+    /// two different moments.
+    public struct Viewport: Equatable, Sendable {
+        /// 0 is the start, 1 is as far as it goes.
+        public var scrollFraction: Double
+        /// The share of the timeline on screen, which is the thumb's width.
+        public var visibleFraction: Double
+        /// Whether there is anything off screen to scroll to at all.
+        public var isScrollable: Bool
+    }
+
+    public var viewport: Viewport {
+        Viewport(scrollFraction: scrollFraction,
+                 visibleFraction: visibleFraction,
+                 isScrollable: isScrollable)
+    }
+
+    /// Fires when the viewport MOVES, for the same reason `onZoomChanged`
+    /// exists — and this is the half of that fix which was missed.
+    ///
+    /// Its comment already diagnosed this exactly: a plain property on an
+    /// `NSView` publishes nothing, so a gesture moved the timeline and left
+    /// the control where it was, and it "only appeared to work during
+    /// PLAYBACK, where the 20Hz playhead poll was re-rendering the transport
+    /// for unrelated reasons". That was true of the zoom slider and equally
+    /// true of the scroll indicator beside it; only the slider was fixed.
+    public var onViewportChanged: (Viewport) -> Void = { _ in }
+
+    /// Last value handed out, so a rebuild that changed nothing says nothing.
+    private var lastViewport: Viewport?
+
+    /// Publishes the viewport if it actually moved.
+    ///
+    /// Guarded because the alternative is a publish on every layout pass, and
+    /// SwiftUI treats a change made during a view update as a mistake — which
+    /// it is, if the value did not change.
+    private func viewportDidChange() {
+        let current = viewport
+        guard current != lastViewport else { return }
+        lastViewport = current
+        onViewportChanged(current)
+    }
+
     /// Double-click a fold: reveal what it removed AND select it, so the
     /// segment can be acted on rather than merely looked at.
     public var onExpandAndSelectFold: (UUID) -> Void = { _ in }
@@ -376,6 +422,7 @@ public final class TimelineView: NSView {
     public override func layout() {
         super.layout()
         rebuildGeometry()
+        viewportDidChange()
         needsDisplay = true
     }
 
@@ -419,6 +466,7 @@ public final class TimelineView: NSView {
     public func scroll(bySeconds delta: Double) {
         scrollOffsetSeconds = geometry.scrollOffset + delta
         rebuildGeometry()
+        viewportDidChange()
         needsDisplay = true
     }
 
@@ -432,6 +480,7 @@ public final class TimelineView: NSView {
     public func setScrollFraction(_ fraction: Double) {
         scrollOffsetSeconds = min(max(fraction, 0), 1) * geometry.maximumScrollOffset
         rebuildGeometry()
+        viewportDidChange()
         needsDisplay = true
     }
 
@@ -907,6 +956,7 @@ public final class TimelineView: NSView {
         // previously scrolled to.
         scrollOffsetSeconds = nil
         rebuildGeometry()
+        viewportDidChange()
         needsDisplay = true
     }
 
