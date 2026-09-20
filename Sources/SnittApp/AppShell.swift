@@ -48,7 +48,11 @@ enum AppShell {
         main.addItem(appMenuItem())
         main.addItem(fileMenuItem())
         main.addItem(editMenuItem())
-        main.addItem(viewMenuItem())
+        // Its own menu rather than an item in Window, which
+        // `WindowMenuDelegate` rebuilds from a fixed `staticItemCount` — a
+        // fifth static item there is a document list that silently loses its
+        // first entry.
+        main.addItem(KeyboardShortcutRegistry.menuItem(for: .view))
         // Built by `KeyboardShortcutRegistry` rather than here, so a binding
         // lives in exactly one place — see that type for why a hand-written
         // help dialog beside a hand-written menu is a drift waiting to happen.
@@ -187,34 +191,6 @@ enum AppShell {
         return item
     }
 
-    /// One menu item, keyed from `EditorCommand`.
-    ///
-    /// `keyEquivalentModifierMask` is SET rather than left at the default,
-    /// because the default is ⌘ alone — so an item asking for ⌥⌘T and not
-    /// saying so registers ⌘T, which is a different key belonging to nobody.
-    private static func command(_ command: EditorCommand,
-                                title: String,
-                                action: Selector) -> NSMenuItem {
-        let item = NSMenuItem(title: title, action: action,
-                              keyEquivalent: command.key)
-        item.keyEquivalentModifierMask = command.modifiers
-        return item
-    }
-
-    /// Show or hide the document's side panel.
-    ///
-    /// Its own menu rather than an item in Window, which `WindowMenuDelegate`
-    /// rebuilds from a fixed `staticItemCount` — a fifth static item there is
-    /// a document list that silently loses its first entry.
-    private static func viewMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(title: "View", action: nil, keyEquivalent: "")
-        let menu = NSMenu(title: "View")
-        menu.addItem(command(.panel, title: "Panel",
-                             action: #selector(AppDelegate.togglePanel(_:))))
-        item.submenu = menu
-        return item
-    }
-
     private static func editMenuItem() -> NSMenuItem {
         let item = NSMenuItem(title: "Edit", action: nil, keyEquivalent: "")
         let menu = NSMenu(title: "Edit")
@@ -254,21 +230,12 @@ enum AppShell {
 
         menu.addItem(.separator())
 
-        // The three the titlebar also offers. Keys come from `EditorCommand`,
-        // which is also what the toolbar buttons put in their tooltips — one
-        // spelling, so a button cannot advertise a key the menu did not
-        // register.
-        //
-        // Return and Escape are deliberately NOT here. They apply and abandon
-        // a crop, and the drag overlay handles them while the mode is on; a
-        // bare Return registered as a menu key equivalent would swallow every
-        // Return in the app.
-        menu.addItem(command(.autoTrim, title: "Auto-Trim",
-                             action: #selector(AppDelegate.autoTrimDocument(_:))))
-        menu.addItem(command(.crop, title: "Crop",
-                             action: #selector(AppDelegate.toggleCrop(_:))))
-        menu.addItem(command(.resetCrop, title: "Reset Crop",
-                             action: #selector(AppDelegate.resetCrop(_:))))
+        // This app's own edits — Auto-Trim, Crop, Reset Crop, Over-dub — come
+        // from `KeyboardShortcutRegistry`, which is where every binding is
+        // written down and where the toolbar's tooltips read their keys from.
+        // The items above are AppKit's (Undo, Cut, Paste) and have no business
+        // in a list about Snitt's commands.
+        for entry in KeyboardShortcutRegistry.items(in: .edit) { menu.addItem(entry) }
         item.submenu = menu
         return item
     }

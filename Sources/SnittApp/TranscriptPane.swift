@@ -79,6 +79,22 @@ struct TranscriptPane: View {
                     transcriptBody(transcript)
                 }
             }
+            // OUTSIDE the switch, and that is the fix.
+            //
+            // It used to live inside `transcriptBody`, which is one branch of
+            // it — so on a recording the recogniser heard nothing in, the `+`
+            // was enabled, pressing it set `isWritingNarration`, and there was
+            // nowhere for the field to appear. The button did nothing, in
+            // exactly the state `acceptsWrittenNarration` deliberately allows
+            // it for: "a recording the recogniser heard nothing in is a good
+            // reason to write the narration yourself."
+            //
+            // Two conditions for one thing is how that happened. The button
+            // asked `acceptsWrittenNarration` and the field asked which branch
+            // of the switch had been taken. It self-guards on
+            // `isWritingNarration`, so out here it costs nothing in the states
+            // that cannot open it.
+            narrationField
         }
     }
 
@@ -215,7 +231,6 @@ struct TranscriptPane: View {
                 }
             }
         }
-        narrationField
         HStack {
             // No "Delete Words" button. Select the words and press delete —
             // the same gesture as everywhere else that has a selection, and
