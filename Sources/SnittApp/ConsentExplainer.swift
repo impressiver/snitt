@@ -28,7 +28,7 @@ enum ConsentExplainer {
         alert.messageText = "macOS will ask about screen recording periodically"
         alert.informativeText = """
         Snitt asks you to pick a window each time you record, and macOS \
-        re-confirms screen-recording access periodically — about once a month.
+        re-confirms screen-recording access periodically, about once a month.
 
         That prompt is macOS asking, not Snitt. Approving it keeps recording \
         working.

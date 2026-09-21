@@ -773,7 +773,7 @@ public actor RecordingCoordinator: AgentRecordingControlling {
 
 
                 Unattended agent recording is on, but macOS has withdrawn Screen Recording \
-                access. That needs someone at this Mac — it is not something Snitt can \
+                access. That needs someone at this Mac. It is not something Snitt can \
                 restore on its own.
                 """
         case .lapsed(let daysAgo):
@@ -792,10 +792,10 @@ public actor RecordingCoordinator: AgentRecordingControlling {
         Snitt needs permission to record the screen.
 
         1. Open System Settings › Privacy & Security › Screen & System Audio Recording
-        2. Switch Snitt on (if it is already listed and on, remove it with “−” and add it back — \
+        2. Switch Snitt on (if it is already listed and on, remove it with “−” and add it back, \
         macOS ties this permission to the app's signature, which changes when the app is rebuilt \
         with a different signing identity)
-        3. Quit Snitt and open it again — macOS does not apply this permission until the app restarts
+        3. Quit Snitt and open it again. macOS does not apply this permission until the app restarts
         """
 
     /// Turns an opaque capture failure into something a person can act on.

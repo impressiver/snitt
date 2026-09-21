@@ -171,45 +171,61 @@ public enum MCPBridge {
 
         Snitt films; it does not click or type. Drive the UI with your own \
         tools and use these to wrap a recording around that work. You do not \
-        need to ask anyone to open Snitt first — if it is not running, calling \
+        need to ask anyone to open Snitt first: if it is not running, calling \
         one of these starts it.
 
         The loop:
 
-        1. snitt_start_recording. Recording is scoped to one application's \
-           window by default — prefer bundleIdentifier over displayID, which \
+        1. MAKE the window you are going to film. Do not film one that was \
+           already open: it carries whatever its owner left in it, and none of \
+           that is yours to publish. A browser's tab strip names every other \
+           open tab in every frame, and those routinely name accounts, orders \
+           and internal tools; so do a bookmark bar, a window title, an unread \
+           badge. Open something single-purpose instead. For anything on the \
+           web that means a browser's app mode, which has no tab strip at all \
+           (Chrome: --app=URL with its own --user-data-dir, so it carries no \
+           history, no bookmarks and nobody's session). \
+           Cropping at step 7 is the fallback, not the plan. A crop takes the \
+           same rectangle out of every frame, so it can remove chrome that sat \
+           still for the whole recording and cannot take back a notification \
+           that slid in at 0:12. A window with nothing in it to leak needs no \
+           crop and cannot be got wrong.
+        2. snitt_start_recording. Recording is scoped to one application's \
+           window by default, so prefer bundleIdentifier over displayID, which \
            additionally requires a person to have turned on full-display agent \
            recording.
-        2. LOOK, before you do anything else: snitt_screenshot with \
+        3. LOOK, before you do anything else: snitt_screenshot with \
            inline: true hands you the frame itself. It is the only way to find \
            out that you are filming the wrong window, that a dialog is sitting \
            over the target, or that the picture is black, and all of that is \
-           still fixable now and is not fixable later. It is also where the \
-           crop at step 6 comes from: note what the chrome carries and where \
-           it sits, in pixels of the image you were handed, and pass that \
-           image's own width and height back as frameWidth/frameHeight.
-        3. Do the work. Call snitt_report_input as you go: your clicks and \
+           still fixable now and is not fixable later. Check here that step 1 \
+           worked: what you see is what everyone who watches this will see. \
+           It is also where any crop at step 7 comes from: note what the \
+           chrome carries and where it sits, in pixels of the image you were \
+           handed, and pass that image's own width and height back as \
+           frameWidth/frameHeight.
+        4. Do the work. Call snitt_report_input as you go: your clicks and \
            keystrokes never reach the screen, so without this the recording \
            shows things changing with no visible cause, which is what makes an \
-           agent demo unwatchable. It also earns you step 5: a take's ends are \
+           agent demo unwatchable. It also earns you step 6: a take's ends are \
            found from input events, and reported input counts.
-        4. snitt_mark at each step a reviewer should be able to jump to.
-        5. snitt_stop_recording, then snitt_auto_deep_trim. One call: it takes \
+        5. snitt_mark at each step a reviewer should be able to jump to.
+        6. snitt_stop_recording, then snitt_auto_deep_trim. One call: it takes \
            the setup and teardown off the ends AND removes the gaps in between, \
            the seconds spent waiting for a page to load. Non-destructive, \
            reversible, and safe to run twice. snitt_trim is still there when \
            you want to name an explicit start and end instead.
-        6. snitt_crop if the window's chrome carries anything that should not \
-           be shared. A browser's tab strip puts the titles of every other open \
-           tab into every frame. Give the rectangle in pixels of the screenshot \
-           you looked at, with frameWidth/frameHeight naming that image's size.
-        7. Say something. snitt_narrate writes a line at a moment in the \
+        7. snitt_crop if something got into frame anyway. Give the rectangle \
+           in pixels of the screenshot you looked at, with \
+           frameWidth/frameHeight naming that image's size. Needing this \
+           usually means step 1 was skipped.
+        8. Say something. snitt_narrate writes a line at a moment in the \
            recording: you have no voice, so a written line is your \
            microphone. snitt_transcript reads back everything the recording \
            says, written or spoken. A written line is CAPTIONED rather than \
            spoken, so it reaches a viewer only if you also pass captions to \
            snitt_export.
-        8. snitt_inspect, then snitt_export. You cannot watch what you \
+        9. snitt_inspect, then snitt_export. You cannot watch what you \
            recorded, so snitt_inspect is how you find out what you made, and \
            its output is what to quote when describing the demo. Pass maxSize \
            to snitt_export when the file is going somewhere with an attachment \
@@ -257,9 +273,14 @@ public enum MCPBridge {
                            + "EVERYTHING IN THE WINDOW IS RECORDED, including its "
                            + "chrome: a browser's tab strip puts the titles of every "
                            + "other open tab into every frame, and those routinely name "
-                           + "accounts, orders and internal tools. Before recording a "
-                           + "browser, move the page you are demonstrating into its own "
-                           + "window, or expect to crop the strip out before sharing.",
+                           + "accounts, orders and internal tools. So RECORD A WINDOW "
+                           + "YOU MADE FOR THIS, not one that was already open. For "
+                           + "the web that means a browser's app mode, which has no tab "
+                           + "strip at all (Chrome: --app=URL with its own "
+                           + "--user-data-dir, so it carries no history, no bookmarks "
+                           + "and nobody's session). Cropping afterwards is a fallback: "
+                           + "it removes the same rectangle from every frame, so it "
+                           + "cannot take back something that appeared partway through.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
