@@ -39,19 +39,44 @@ enum TextOverlayFrame {
         let available = CGSize(width: picture.width - inset * 2, height: picture.height)
         let measured = text.boundingRect(
             with: available, options: [.usesLineFragmentOrigin, .usesFontLeading])
-        // Padded, so the shadow is not clipped at the edges of the bitmap.
-        let pad = OverlayLayout.captionShadowBlur(fontSize: size) * 2
+        // Padded, so neither the shadow nor the plate is clipped at the edges
+        // of the bitmap. The plate is the larger of the two now, so the pad
+        // has to clear IT rather than the shadow it mostly replaces.
+        let padding = OverlayLayout.captionPlatePadding(fontSize: size)
+        let pad = max(OverlayLayout.captionShadowBlur(fontSize: size) * 2, padding.height)
+        let textHeight = ceil(measured.height)
+        // The plate hugs the TEXT, so its width comes from what the text
+        // actually used, not from the width it was allowed to use. Measuring
+        // the latter is how a caption of two words ends up on a bar the width
+        // of the frame.
+        let textWidth = min(available.width, ceil(measured.width))
+        let plate = CGRect(
+            x: OverlayLayout.captionPlateOrigin(
+                alignment: OverlayLayout.captionAlignment(cue.placement),
+                plateWidth: textWidth + padding.width * 2,
+                availableWidth: available.width),
+            y: pad - padding.height,
+            width: textWidth + padding.width * 2,
+            height: textHeight + padding.height * 2)
         // Lifted by its ROW, so a caption sharing the frame sits above the one
         // it is sharing with rather than on top of it.
         let box = CGRect(x: picture.minX + inset,
-                         y: picture.maxY - ceil(measured.height) - pad * 2
+                         y: picture.maxY - textHeight - pad * 2
                             - OverlayLayout.captionBottomInset(pictureHeight: picture.height,
                                                                row: cue.row),
                          width: available.width,
-                         height: ceil(measured.height) + pad * 2)
-        guard let image = render(size: box.size, { _ in
+                         height: textHeight + pad * 2)
+        guard let image = render(size: box.size, { context in
+            let radius = OverlayLayout.captionPlateCornerRadius(fontSize: size)
+            context.setFillColor(
+                SnittPalette.ink0
+                    .withAlphaComponent(OverlayLayout.captionPlateOpacity).cgColor)
+            NSBezierPath(roundedRect: plate, xRadius: radius, yRadius: radius).fill()
+            // Drawn across the full available width so wrapping and alignment
+            // are unchanged: the plate is sized to where the text lands, not
+            // the other way round.
             text.draw(with: CGRect(x: 0, y: pad, width: available.width,
-                                   height: ceil(measured.height)),
+                                   height: textHeight),
                       options: [.usesLineFragmentOrigin, .usesFontLeading])
         }) else { return nil }
         return (image, box)
