@@ -16,7 +16,13 @@ cask "snitt" do
   # that also appears in prose mutates the prose and leaves the stanza intact,
   # which reads as a surviving mutant when the test was fine all along.
   auto_updates true
-  depends_on macos: ">= :tahoe"
+  # The bare symbol IS the minimum, not an exact match: "Top-level
+  # `depends_on macos:` marks a cask as macOS-only and declares the minimum
+  # compatible macOS release" (Cask Cookbook). So this is the same requirement
+  # `">= :tahoe"` expressed the way Homebrew now wants it — checked before
+  # changing it, because the two readings differ by whether the cask installs
+  # on every macOS after this one or only on this one.
+  depends_on macos: :tahoe
 
   app "Snitt.app"
 
