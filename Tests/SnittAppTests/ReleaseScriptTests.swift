@@ -397,6 +397,59 @@ struct ReleaseScriptTests {
                 "main would be left on the version just released")
     }
 
+    @Test("The release ends by pushing the cask to the tap")
+    func theTapIsPublishedTo() throws {
+        // The step this script was extended for, and the reason it belongs in
+        // the script rather than in the runbook: **a tap left on the last
+        // release looks exactly like a working tap.** It installs, it runs,
+        // and the person who notices is somebody wondering why `brew install`
+        // gave them a version older than the release notes they just read.
+        //
+        // That is the same failure the header describes about the upload —
+        // "a release missing its DMG looks exactly like a release" — which is
+        // why everything below the upload is in here at all.
+        let stubs = try makeStubs()
+        defer { try? FileManager.default.removeItem(at: stubs) }
+        let result = runScript([declaredVersion(), "--dry-run"],
+                               env: ["SNITT_SIGN_IDENTITY": "Developer ID Application: test",
+                                     "NOTARY_PROFILE": "snitt"],
+                               extraPath: stubs.path)
+        #expect(result.status == 0, "\(result.output)")
+        #expect(result.output.contains("11. Publish the cask to the Homebrew tap"),
+                "the release never plans to update the tap:\n\(result.output)")
+        #expect(result.output.contains("homebrew-snitt"),
+                "the tap step does not name the tap it would push to")
+    }
+
+    @Test("The tap is written AFTER the cask is, or it publishes the old one")
+    func theTapStepFollowsTheCaskRewrite() throws {
+        // Ordering is the whole correctness of this step. `bump_to_next_dev`
+        // is what writes this release's version and hash into the cask, so
+        // copying before it would push the PREVIOUS release's cask — the exact
+        // bug the step exists to prevent, performed automatically and on every
+        // release.
+        let script = try String(contentsOfFile: scriptPath, encoding: .utf8)
+        let caskWrite = try #require(script.range(of: "step 10 "))
+        let tapPush = try #require(script.range(of: "step 11 "))
+        #expect(caskWrite.lowerBound < tapPush.lowerBound,
+                "the tap is published before the cask carries this release")
+    }
+
+    @Test("Verify mode reports the tap, so a stale one is findable")
+    func verifyModeReportsTheTap() throws {
+        // `--verify` answers "did this release ship what it should" with no
+        // credentials, about any release, at any time. A tap that installs the
+        // wrong version is that same question, so it is answered in the same
+        // place rather than left to somebody thinking to check.
+        let script = try String(contentsOfFile: scriptPath, encoding: .utf8)
+        #expect(script.contains("verify_tap"),
+                "verify mode says nothing about the tap")
+        let definition = try #require(script.range(of: "verify_tap() {"))
+        let call = try #require(script.range(of: "  verify_tap\n"))
+        #expect(call.lowerBound < definition.lowerBound || script.contains("verify_tap"),
+                "verify_tap is defined but never called")
+    }
+
     @Test("A development version is refused — it is not releasable")
     func developmentVersionIsRefused() {
         // The shape check alone does NOT catch this: `0.5.0-dev` matches the

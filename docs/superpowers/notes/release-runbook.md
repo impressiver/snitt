@@ -221,11 +221,32 @@ pointless before. It holds a copy of `Casks/snitt.rb` and a README saying
 the copy is generated, because a cask that looks editable in the place
 people find it is a fix the next release overwrites.
 
-**Per release, copy `Casks/snitt.rb` into that repo's `Casks/` directory.**
-`release.sh` does not do this, so it is the one step of a release still done
-by hand — and it is the step with no failure mode, which is what the script's
-own header says about the upload it was written to stop being skipped. Worth
-folding in.
+**Step 11 copies `Casks/snitt.rb` into that repo and reads it back**, so the
+tap cannot be left on the last release. It runs after step 10 because step 10
+is what writes this release's version and hash into the cask; copying earlier
+would publish the previous release's, automatically, every time. `--verify`
+reports the tap too, so "is the tap current" is askable about any release
+without a release in progress.
+
+## Why the trust step cannot be removed
+
+`brew trust` is not a gap in the setup, and there is no version of this tap
+that avoids it. Homebrew 6.0 made non-official taps untrusted by default, and
+a third-party tap author has **no** way to be trusted for other people:
+"Official Homebrew taps and Homebrew's built-in commands are always trusted",
+and "there is no mechanism for third-party tap authors to achieve
+default-trusted status" (docs.brew.sh/Tap-Trust, read 2026-09-20). Trust is a
+decision each user makes on their own machine, which is the point of it.
+
+The only route to an install with no trust step is being IN an official tap,
+which means `homebrew-cask`. Its notability bar for a self-submitted cask is
+**90 forks, 90 watchers or 225 stars**; Snitt has 0/0/0 as of 2026-09-20. So
+that is not a near-term option, and it is why the tap was chosen over a
+homebrew-cask submission in the first place.
+
+`HOMEBREW_NO_REQUIRE_TAP_TRUST=1` disables the check globally. Do not put it
+in an install snippet: it turns the check off for every tap the reader has,
+to save one line about this one, and Homebrew says it will be removed.
 
 The install line is three commands, not two:
 
