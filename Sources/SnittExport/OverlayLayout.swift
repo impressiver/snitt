@@ -46,6 +46,61 @@ public enum OverlayLayout {
 
     public static func captionLineSpacing(fontSize: Double) -> Double { fontSize * 0.15 }
 
+    // MARK: - The caption plate
+
+    /// The translucent slab a caption sits on, the way tvOS draws one.
+    ///
+    /// A shadow alone is not enough and cannot be made enough. It darkens the
+    /// pixels immediately around each glyph, which works over a busy but
+    /// MIDDLING background and fails over a bright one: white text with a soft
+    /// dark edge on a white page is still white on white. Snitt records
+    /// screens, and screens are mostly bright documents, so that is the common
+    /// case rather than the awkward one.
+    ///
+    /// A plate fixes the contrast instead of improving it: whatever is behind,
+    /// the text is on a known dark ground.
+    ///
+    /// **It hugs the text, it does not span the frame.** A full-width bar is
+    /// what a broadcast burn-in looks like; tvOS sizes the slab to the words
+    /// and centres it, which is why a short caption reads as a label rather
+    /// than as a letterbox.
+    public static func captionPlatePadding(fontSize: Double) -> CGSize {
+        // Wider than it is tall, because the corner radius eats into the
+        // horizontal ends and text that starts inside the curve looks cramped.
+        CGSize(width: fontSize * 0.55, height: fontSize * 0.28)
+    }
+
+    /// Rounded enough to read as a slab rather than a box, not so round it
+    /// becomes a pill: at half the line height a two-line caption's corners
+    /// would meet in the middle.
+    public static func captionPlateCornerRadius(fontSize: Double) -> Double {
+        fontSize * 0.32
+    }
+
+    /// Dark, and translucent enough that the picture still shows through.
+    ///
+    /// Opaque black would read as a hole punched in the video. tvOS leaves the
+    /// frame visible behind its captions, which is what keeps a burn-in
+    /// feeling like part of the picture rather than pasted over it.
+    public static let captionPlateOpacity = 0.62
+
+    /// Where the plate sits inside the caption's full-width box.
+    ///
+    /// Follows the text's own alignment, so the two-speaker offset
+    /// `captionAlignment` sets up survives: a centred caption gets a centred
+    /// slab, and a ragged pair gets two slabs offset from each other rather
+    /// than two identical bars.
+    public static func captionPlateOrigin(alignment: NSTextAlignment,
+                                          plateWidth: Double,
+                                          availableWidth: Double) -> Double {
+        let slack = max(0, availableWidth - plateWidth)
+        switch alignment {
+        case .right: return slack
+        case .left, .natural: return 0
+        default: return slack / 2
+        }
+    }
+
     /// How far a caption is lifted for each line ABOVE the bottom one.
     ///
     /// A fixed two-line allowance rather than "however tall the caption below
