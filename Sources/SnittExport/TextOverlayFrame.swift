@@ -20,7 +20,7 @@ import SnittBrand
 ///
 /// Timing comes from `SubtitleCues` / `MarkerBanners`, layout from
 /// `OverlayLayout`. This file owns only Core Graphics.
-enum TextOverlayFrame {
+public enum TextOverlayFrame {
 
     /// The caption as an image, and where it belongs in TOP-LEFT coordinates.
     ///
@@ -32,7 +32,8 @@ enum TextOverlayFrame {
     /// Core Graphics and the mp4 layer carries the result as `contents`. Two
     /// renderers became one, and the export cannot look different from the GIF
     /// because it is the same drawing.
-    static func captionImage(_ cue: SubtitleCue, picture: CGRect) -> (CGImage, CGRect)? {
+    public static func captionImage(_ cue: SubtitleCue,
+                                    picture: CGRect) -> (CGImage, CGRect)? {
         let size = OverlayLayout.captionFontSize(pictureHeight: picture.height)
         let inset = OverlayLayout.captionHorizontalInset(pictureWidth: picture.width)
         let text = captionText(cue, fontSize: size)
