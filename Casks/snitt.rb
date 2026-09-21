@@ -1,3 +1,14 @@
+# This Source Code Form is subject to the terms of the Mozilla Public
+# License, v. 2.0. If a copy of the MPL was not distributed with this
+# file, You can obtain one at https://mozilla.org/MPL/2.0/.
+#
+# Copyright © 2026 Ian White.
+#
+# The header earns its keep here more than in most files: this one is COPIED
+# into impressiver/homebrew-snitt on every release, and a copy in another
+# repository is exactly the case MPL Exhibit A exists for. Without it the file
+# arrives there carrying no terms at all and takes whatever that repo says.
+
 cask "snitt" do
   version "0.8.0"
   sha256 "4282d12fc69de4a1c0ec06af67792b862c6835561c7eb12bc4670c79ec217053"
