@@ -63,6 +63,10 @@ REPO="impressiver/snitt"
 # precedent is SNITT_FAKE_TEAM_IDENTIFIER_LINE; a real release never sets this.
 VERSION_SOURCE="${SNITT_VERSION_SOURCE:-Sources/SnittDocument/AppVersion.swift}"
 CASK_SOURCE="Casks/snitt.rb"
+# The tap. Homebrew resolves `brew tap <user>/<name>` to a repository literally
+# named `homebrew-<name>`, so the cask cannot be tapped where it is authored
+# and a copy has to reach here. Overridable for tests only, like REPO above.
+TAP_REPO="${SNITT_TAP_REPO:-impressiver/homebrew-snitt}"
 DEFAULT_BRANCH="main"
 
 VERSION=""
@@ -222,6 +226,79 @@ this cannot make a development build refuse a real release." || return 1
   git push --quiet origin "$DEFAULT_BRANCH" || return 1
 }
 
+# ---------------------------------------------------------------------------
+# The cask has to reach the tap, or the tap keeps installing the last release.
+#
+# This was a line in the runbook asking a person to remember, which is the
+# same shape as the upload this whole script was written to stop being
+# skipped: **a tap left on 0.8.0 while 0.9.0 ships looks exactly like a
+# working tap.** It installs, it runs, and the person who notices is somebody
+# wondering why `brew install` gave them a version older than the release
+# notes they just read.
+#
+# Runs AFTER step 10, because step 10 is what writes this release's version
+# and hash into `$CASK_SOURCE` and commits them. Copying before it would push
+# the PREVIOUS release's cask, which is the bug this step exists to prevent,
+# performed automatically.
+#
+# Every failure is a warning. The release is published and verified by the
+# time this runs, and reporting it as failed because a copy did not land would
+# send somebody looking for a broken release that is fine.
+publish_cask_to_tap() {
+  local work status
+  if ! gh repo view "$TAP_REPO" >/dev/null 2>&1; then
+    echo "warning: the tap $TAP_REPO does not exist, so the cask was not" >&2
+    echo "         published. Create it with:" >&2
+    echo "           gh repo create $TAP_REPO --public \\" >&2
+    echo "             --description \"Homebrew tap for Snitt\"" >&2
+    return 1
+  fi
+
+  work="$(mktemp -d)" || return 1
+  # A clone rather than the contents API: git decides whether anything
+  # changed, which is what makes a re-run through --resume-from a no-op
+  # instead of an empty commit.
+  if ! git clone --quiet --depth 1 "https://github.com/$TAP_REPO.git" "$work" 2>/dev/null; then
+    echo "warning: could not clone $TAP_REPO." >&2
+    rm -rf "$work"
+    return 1
+  fi
+
+  mkdir -p "$work/Casks"
+  cp "$CASK_SOURCE" "$work/Casks/snitt.rb"
+  status=0
+  (
+    cd "$work" || exit 1
+    git add Casks/snitt.rb || exit 1
+    # Nothing to say is a success, not a failure: the cask already carries
+    # this release.
+    if git diff --cached --quiet; then
+      echo "   $TAP_REPO already carries $VERSION"
+      exit 0
+    fi
+    git -c user.name="$(git -C "$OLDPWD" config user.name)" \
+        -c user.email="$(git -C "$OLDPWD" config user.email)" \
+        commit --quiet -s -m "Snitt $VERSION" || exit 1
+    git push --quiet origin HEAD || exit 1
+    echo "   pushed $VERSION to $TAP_REPO"
+  ) || status=$?
+  rm -rf "$work"
+  [ "$status" -eq 0 ] || return 1
+
+  # Read BACK, the same discipline step 9 applies to the release's own assets:
+  # a push that reported success and a tap that serves the old cask are
+  # indistinguishable from here without asking.
+  local published
+  published="$(gh api "repos/$TAP_REPO/contents/Casks/snitt.rb" \
+    --jq '.content' 2>/dev/null | base64 --decode 2>/dev/null \
+    | sed -nE 's/^  version "([^"]+)".*/\1/p' || true)"
+  if [ "$published" != "$VERSION" ]; then
+    echo "warning: $TAP_REPO serves version '$published', not $VERSION." >&2
+    return 1
+  fi
+  echo "   $TAP_REPO serves $VERSION"
+}
+
 step() {
   local number="$1" title="$2"
   if [ "$number" -lt "$RESUME_FROM" ]; then
@@ -274,6 +351,30 @@ verify_release() {
   echo "==> $TAG has every required asset."
 
   verify_published_app || return 1
+  verify_tap
+}
+
+# Whether the tap serves this release.
+#
+# In `--verify` too, not only after a push, because "is the tap current" is
+# the same question as "did the release ship its installer" and deserves the
+# same answer: askable about any release, at any time, with no credentials.
+#
+# A tap behind the release is reported, never fatal. The release itself is
+# fine, and `--verify` is used on old releases where a stale tap is expected:
+# a tap only ever carries the newest one.
+verify_tap() {
+  local published
+  published="$(gh api "repos/$TAP_REPO/contents/Casks/snitt.rb" \
+    --jq '.content' 2>/dev/null | base64 --decode 2>/dev/null \
+    | sed -nE 's/^  version "([^"]+)".*/\1/p' || true)"
+  if [ -z "$published" ]; then
+    echo "note: could not read the cask from $TAP_REPO."
+  elif [ "$published" = "$VERSION" ]; then
+    echo "==> $TAP_REPO serves $VERSION."
+  else
+    echo "note: $TAP_REPO serves $published, not $VERSION."
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -710,6 +811,21 @@ if step 10 "Leave main on the next development version"; then
       echo "             $VERSION_SOURCE" >&2
       echo "           git commit -am 'release: main moves to $NEXT_DEV' && git push" >&2
     fi
+  fi
+fi
+
+if step 11 "Publish the cask to the Homebrew tap"; then
+  if [ "$DRY_RUN" -eq 1 ]; then
+    echo "   [dry-run] copy $CASK_SOURCE into $TAP_REPO and push"
+  elif publish_cask_to_tap; then
+    printf '==> %s carries Snitt %s\n' "$TAP_REPO" "$VERSION"
+  else
+    echo "warning: the release is published and verified, but the tap does" >&2
+    echo "         not carry it. Anyone running \`brew install --cask snitt\`" >&2
+    echo "         gets the PREVIOUS release. Fix it with:" >&2
+    echo "           git clone https://github.com/$TAP_REPO.git /tmp/tap" >&2
+    echo "           cp $CASK_SOURCE /tmp/tap/Casks/snitt.rb" >&2
+    echo "           cd /tmp/tap && git commit -asm 'Snitt $VERSION' && git push" >&2
   fi
 fi
 
