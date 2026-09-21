@@ -70,6 +70,34 @@ struct HomebrewCaskTests {
                 "the deployment target moved — update depends_on in the cask")
         #expect(cask.contains("depends_on macos:"), "the cask states no macOS requirement")
         #expect(cask.contains("tahoe"), "the cask's macOS requirement is not macOS 26 (Tahoe)")
+
+        // The string-comparison form is deprecated, and Homebrew says so on
+        // every `brew info` and twice on every `brew install`:
+        //
+        //   Warning: Calling string comparison format for `depends_on macos:`
+        //   is deprecated! Use `depends_on macos: :tahoe` instead.
+        //
+        // Only an install shows that. No test read it, `brew` was never run
+        // against the cask in CI, and the warning named this tap as the thing
+        // to report it to — so the first person to run the documented install
+        // line was told the cask is out of date by Homebrew itself.
+        //
+        // The bare symbol means the same thing: "Top-level `depends_on macos:`
+        // marks a cask as macOS-only and declares the minimum compatible macOS
+        // release" (Cask Cookbook). Worth checking rather than assuming,
+        // because the wrong reading installs only on macOS 26 and refuses
+        // every release after it.
+        // Read the STANZAS, not the file. This is the third text guard today
+        // to fail on the comment that explains it, and `Casks/snitt.rb` warned
+        // about the shape from the other side before any of them: "a mutation
+        // anchor that also appears in prose mutates the prose and leaves the
+        // stanza intact". A guard that cannot tell an explanation from the
+        // thing it explains gets deleted the first time it cries wolf.
+        let stanzas = cask.split(separator: "\n")
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("#") }
+            .joined(separator: "\n")
+        #expect(!stanzas.contains("\">= :"),
+                "the deprecated string-comparison form of depends_on is back")
     }
 
     @Test("The cask does not claim to install a CLI it cannot find")
