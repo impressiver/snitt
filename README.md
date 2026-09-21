@@ -52,7 +52,16 @@ Any one of those exists elsewhere. Together they do not.
 
 ## Install
 
-Download the latest signed build from
+```bash
+brew tap impressiver/snitt
+brew trust impressiver/snitt
+brew install --cask snitt
+```
+
+The trust line is not optional: Homebrew refuses to load a cask from a
+third-party tap until you say you meant to.
+
+Or download the latest signed build from
 [Releases](https://github.com/impressiver/snitt/releases), or build from source:
 
 ```bash
