@@ -107,40 +107,29 @@ final class OverlayTextView: NSView {
         }
     }
 
+    /// The SAME drawing the export burns in.
+    ///
+    /// This used to be its own renderer, with its own reasoning recorded
+    /// against a plate: "captions sit over the middle of the picture far more
+    /// often than a banner does, and a filled box there hides more of the
+    /// recording than the text needs". Two things retired that.
+    ///
+    /// The plate hugs the text rather than spanning the frame, so it hides
+    /// very little — the objection was to a bar, and this is not one. And the
+    /// editor is the PREVIEW of the export: a preview that draws captions
+    /// differently from the file it is previewing is telling the person
+    /// something untrue about what they are about to ship, which is worse
+    /// than covering a few hundred pixels.
+    ///
+    /// `TextOverlayFrame` already collapsed the mp4 and GIF renderers into
+    /// one, for the same reason and in the same words: "the export cannot look
+    /// different from the GIF because it is the same drawing". Three now.
+    ///
+    /// `NSImage.draw(in:)` rather than `CGContext.draw`: this view is flipped,
+    /// and Core Graphics would render the bitmap upside down in it.
     private func drawCaption(_ cue: SubtitleCue, in picture: CGRect) {
-        let size = OverlayLayout.captionFontSize(pictureHeight: picture.height)
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = OverlayLayout.captionAlignment(cue.placement)
-        paragraph.lineSpacing = OverlayLayout.captionLineSpacing(fontSize: size)
-
-        // A shadow rather than a plate: captions sit over the middle of the
-        // picture far more often than a banner does, and a filled box there
-        // hides more of the recording than the text needs.
-        let shadow = NSShadow()
-        shadow.shadowColor = SnittPalette.ink0.withAlphaComponent(0.9)
-        shadow.shadowBlurRadius = OverlayLayout.captionShadowBlur(fontSize: size)
-        shadow.shadowOffset = NSSize(width: 0, height: -1)
-
-        let text = NSAttributedString(string: cue.text, attributes: [
-            .font: NSFont.systemFont(ofSize: size, weight: .medium),
-            .foregroundColor: SnittPalette.caption(for: cue.track),
-            .paragraphStyle: paragraph,
-            .shadow: shadow,
-        ])
-
-        let inset = OverlayLayout.captionHorizontalInset(pictureWidth: picture.width)
-        let available = CGSize(width: picture.width - inset * 2, height: picture.height)
-        let measured = text.boundingRect(with: available,
-                                         options: [.usesLineFragmentOrigin, .usesFontLeading])
-        let box = CGRect(x: picture.minX + inset,
-                         // Lifted off the bottom edge: a caption flush to the
-                         // frame is the first thing a video player's own
-                         // controls cover.
-                         y: picture.maxY - measured.height
-                            - OverlayLayout.captionBottomInset(pictureHeight: picture.height,
-                                                               row: cue.row),
-                         width: available.width,
-                         height: measured.height)
-        text.draw(with: box, options: [.usesLineFragmentOrigin, .usesFontLeading])
+        guard let (image, box) = TextOverlayFrame.captionImage(cue, picture: picture)
+        else { return }
+        NSImage(cgImage: image, size: box.size).draw(in: box)
     }
 }
