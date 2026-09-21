@@ -435,6 +435,38 @@ struct ReleaseScriptTests {
                 "the tap is published before the cask carries this release")
     }
 
+    @Test("The no-change message claims only what it checked")
+    func theTapMessageDoesNotInventAVersion() throws {
+        // Found by running step 11 on its own, between releases: it printed
+        //
+        //   impressiver/homebrew-snitt already carries 0.8.1
+        //   warning: impressiver/homebrew-snitt serves version '0.8.0', not 0.8.1.
+        //
+        // The first line is drawn from `git diff --cached --quiet`, which
+        // compares the cask on disk against the tap's copy and says nothing
+        // about what either one contains. In a real release it happens to be
+        // true, because step 10 has just written this version into the cask.
+        // Alone, it is a confident sentence about a tap the check never read.
+        //
+        // The read-back contradicted it on the very next line, which is what
+        // the read-back is for. A message that needs contradicting is one to
+        // fix, not to leave for the next reader to reconcile.
+        // Scoped to what the script EMITS, not to the file. The first version
+        // read the whole thing and failed on the comment above, which quotes
+        // the old wording in order to explain it — `Casks/snitt.rb` warns
+        // about this exact trap from the other side: "a mutation anchor that
+        // also appears in prose mutates the prose and leaves the stanza
+        // intact". A guard that cannot tell an explanation from the thing it
+        // explains is one that gets deleted the first time it cries wolf.
+        let script = try String(contentsOfFile: scriptPath, encoding: .utf8)
+        let emitted = script.components(separatedBy: "\n")
+            .filter { $0.trimmingCharacters(in: .whitespaces).hasPrefix("echo ") }
+        #expect(!emitted.contains { $0.contains("already carries $VERSION") },
+                "the unchanged-cask message claims a version it did not read")
+        #expect(emitted.contains { $0.contains("the cask is unchanged") },
+                "the unchanged-cask message no longer says what it checked")
+    }
+
     @Test("Verify mode reports the tap, so a stale one is findable")
     func verifyModeReportsTheTap() throws {
         // `--verify` answers "did this release ship what it should" with no

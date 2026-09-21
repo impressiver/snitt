@@ -270,10 +270,19 @@ publish_cask_to_tap() {
   (
     cd "$work" || exit 1
     git add Casks/snitt.rb || exit 1
-    # Nothing to say is a success, not a failure: the cask already carries
-    # this release.
+    # Nothing to say is a success, not a failure: the tap already has this
+    # exact cask.
+    #
+    # It says the FILE is unchanged and nothing about which version that is.
+    # It used to say "already carries $VERSION", which is a claim about the
+    # tap drawn from evidence that cannot support it — the check compares the
+    # cask on disk against the tap's copy, and says nothing about what either
+    # one contains. Running step 11 alone, between releases, printed "already
+    # carries 0.8.1" about a tap serving 0.8.0. The read-back below contradicted
+    # it on the next line, which is why the read-back exists; the message
+    # should not have needed contradicting.
     if git diff --cached --quiet; then
-      echo "   $TAP_REPO already carries $VERSION"
+      echo "   the cask is unchanged from the one $TAP_REPO already has"
       exit 0
     fi
     git -c user.name="$(git -C "$OLDPWD" config user.name)" \
