@@ -22,6 +22,39 @@ struct HomebrewCaskTests {
         return (try? String(contentsOfFile: path, encoding: .utf8)) ?? ""
     }
 
+    @Test("The cask carries its own licence notice, because it leaves this repo")
+    func caskCarriesExhibitA() {
+        // Every Swift file is checked for this by `LicenseHeaderTests`; the
+        // cask was not, because it is not Swift. It is the one file in this
+        // repository that gets COPIED into another one — step 11 pushes it to
+        // impressiver/homebrew-snitt on every release — which is precisely the
+        // case MPL Exhibit A exists for. Without the notice it arrives in the
+        // tap carrying no terms and takes whatever that repository says.
+        // "Mozilla Public", not the full name: the standard notice wraps
+        // after it, so the phrase never appears on one line. This is the same
+        // anchor `LicenseHeaderTests` uses on every Swift file, and the first
+        // version of this test asserted the unwrapped phrase and failed
+        // against a header that was perfectly correct.
+        #expect(cask.contains("Mozilla Public"),
+                "the cask states no licence, and it is copied into another repo")
+        #expect(cask.contains("mozilla.org/MPL/2.0"),
+                "the notice does not say where to obtain the licence")
+    }
+
+    @Test("The notice does not move the lines the release script rewrites")
+    func theHeaderDoesNotBreakTheRewrite() {
+        // `release.sh` rewrites the version and the hash with `sed` anchored on
+        // `^  version "` and `^  sha256 "`. A header above them is harmless —
+        // but a header that ever reflowed those lines would break the rewrite
+        // silently, and the symptom would be a tap stuck on an old release
+        // rather than an error.
+        let lines = cask.split(separator: "\n", omittingEmptySubsequences: false)
+        #expect(lines.contains { $0.hasPrefix("  version \"") },
+                "no line matches release.sh's version anchor")
+        #expect(lines.contains { $0.hasPrefix("  sha256 \"") },
+                "no line matches release.sh's sha256 anchor")
+    }
+
     @Test("The cask exists and names the app Homebrew will install")
     func caskIsPresent() {
         #expect(!cask.isEmpty, "Casks/snitt.rb is missing")
