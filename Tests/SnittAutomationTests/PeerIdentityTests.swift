@@ -58,15 +58,35 @@ struct PeerIdentityTests {
                 "executable path does not exist on disk: \(path)")
     }
 
-    @Test("A dead socket yields no identity rather than a fabricated one")
-    func closedSocketIsNil() throws {
-        let (a, b) = try connectedPair()
-        close(a)
-        close(b)
-        // The failure that matters is not a crash — it is returning a
+    @Test("A socket with no peer yields no identity rather than a fabricated one")
+    func noPeerIsNil() throws {
+        // The failure that matters is not a crash. It is returning a
         // plausible-looking identity for a peer that is not there, which would
         // put a fictional caller into the audit log.
-        #expect(PeerIdentityReader.identity(ofPeerOn: a) == nil)
+        //
+        // **Asked of descriptors this test OWNS, because the version that
+        // closed one was flaky and the flake was the interesting part.** It
+        // did `close(a)` and then asked about `a` — and a closed descriptor is
+        // just a free NUMBER. `swift test` runs suites in parallel, so another
+        // test opening anything at that instant can be handed it, and
+        // `LOCAL_PEERPID` on a live socket succeeds and returns a real pid.
+        // The test then failed having found exactly what the product is
+        // supposed to do.
+        //
+        // It failed roughly one run in four, which is frequent enough to erode
+        // trust in the gate and rare enough to be blamed on the last change
+        // every time.
+        //
+        // A socket that was never connected has no peer, is owned here, and
+        // cannot be reused underneath the assertion.
+        let lonely = socket(AF_UNIX, SOCK_STREAM, 0)
+        try #require(lonely >= 0, "could not open a socket to leave unconnected")
+        defer { close(lonely) }
+        #expect(PeerIdentityReader.identity(ofPeerOn: lonely) == nil,
+                "an unconnected socket was given an identity")
+
+        // And a descriptor that can never be valid, which no amount of
+        // parallelism can hand to anybody.
         #expect(PeerIdentityReader.identity(ofPeerOn: -1) == nil)
     }
 
