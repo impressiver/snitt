@@ -84,14 +84,29 @@ struct ControlHitAreaTests {
                 .filter { $0.hasSuffix(".swift") }) ?? []
             for file in files {
                 let text = try String(contentsOf: root.appending(path: file), encoding: .utf8)
+                // Multi-line literals are tracked rather than skipped. The
+                // first version required a quote ON THE LINE, which is true of
+                // a one-line literal and false of every line inside a `\"\"\"`
+                // block — so it could not see `MCPBridge.serverInstructions`,
+                // which is the single largest piece of prose this product
+                // ships and the one an agent reads first. It passed clean
+                // while four em dashes sat in it.
+                var inMultiline = false
                 for (index, line) in text.components(separatedBy: "\n").enumerated() {
                     let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    let fences = line.components(separatedBy: "\"\"\"").count - 1
+                    let openedHere = !inMultiline && fences > 0
+                    if fences % 2 == 1 { inMultiline.toggle() }
                     guard !trimmed.hasPrefix("//") else { continue }
                     // The one legitimate use: a lone em dash standing in for a
                     // value there is none of, which is what every Mac app puts
                     // in an empty stat field.
                     guard line.contains("—"), !line.contains("\"—\"") else { continue }
-                    guard line.contains("\"") else { continue }
+                    // A `///` line inside a literal is content; outside one it
+                    // is documentation, which this rule does not govern.
+                    let insideLiteral = inMultiline || openedHere
+                    guard insideLiteral || line.contains("\"") else { continue }
+                    guard insideLiteral || !trimmed.hasPrefix("///") else { continue }
                     offenders.append("\(module)/\(file):\(index + 1)")
                 }
             }

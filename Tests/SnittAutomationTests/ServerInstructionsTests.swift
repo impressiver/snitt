@@ -103,4 +103,45 @@ struct ServerInstructionsTests {
         #expect(instructions.lowercased().contains("tab"),
                 "drops the window-chrome warning entirely")
     }
+
+    @Test("The advice is to record a clean window, not to crop a dirty one")
+    func cleanWindowComesFirst() throws {
+        // The warning survived for a long time in a weaker form: it said the
+        // tab strip leaks and to crop it out before sharing. That is
+        // remediation, and remediation is the wrong shape for this.
+        //
+        // A crop removes the SAME rectangle from every frame. It can take away
+        // chrome that sat still for the whole recording; it cannot take back a
+        // notification that arrived at 0:12, a title that changed, or a
+        // bookmark bar that appeared when a page loaded. A window with nothing
+        // in it to leak needs no crop and cannot be got wrong.
+        //
+        // `contains("tab")` above does not catch the difference: the old
+        // crop-it-afterwards wording satisfied it perfectly.
+        let text = instructions.lowercased()
+        #expect(text.contains("app mode") || text.contains("--app="),
+                "does not name the window that has no tab strip to leak")
+        #expect(text.contains("--user-data-dir"),
+                "app mode without a throwaway profile still carries the person's session")
+
+        // Ordering is the claim. Making the window has to come before the tool
+        // that starts filming, or it reads as something to consider later.
+        let makeIt = try #require(text.range(of: "make the window"),
+                                  "the loop never says to make a window")
+        let startIt = try #require(text.range(of: "snitt_start_recording"))
+        #expect(makeIt.lowerBound < startIt.lowerBound,
+                "the loop starts recording before it says what to record")
+    }
+
+    @Test("The tool that starts a recording carries the warning too")
+    func theToolItselfSaysIt() throws {
+        // The instructions are read once, at connect. A tool description is
+        // read at the moment of use, which for this is the moment it stops
+        // being fixable — the frame is captured or it is not.
+        let start = try #require(
+            MCPBridge.toolDefinitions().first { $0.name == "snitt_start_recording" })
+        let text = start.description.lowercased()
+        #expect(text.contains("tab strip"), "the leak is not named where it happens")
+        #expect(text.contains("app mode"), "names the leak and not the way out of it")
+    }
 }

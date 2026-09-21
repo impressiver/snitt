@@ -167,7 +167,7 @@ func age(_ seconds: Double) -> String {
 }
 
 let helpText = """
-snitt — record a window and hand back a .snitt bundle
+snitt: record a window and hand back a .snitt bundle
 
   snitt targets list                     what can be recorded, as JSON
   snitt record start --app <bundle-id>   start; prints a session id
@@ -275,7 +275,7 @@ if case .setup(let apply) = command {
         Could not find snitt-mcp beside this binary (looked at \(mcpPath)).
 
         Both ship inside Snitt.app/Contents/Helpers. If you are running a copy
-        from .build, run the one in the app bundle instead — registering a
+        from .build, run the one in the app bundle instead, because registering a
         stale server is the version mismatch the protocol handshake refuses.
         """)
         exit(1)
