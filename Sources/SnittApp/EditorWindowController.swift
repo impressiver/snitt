@@ -407,6 +407,26 @@ final class EditorTimelineState: ObservableObject {
         let filmstrip: FilmstripFrames?
     }
 
+    /// The selection in OUTPUT seconds, which is what an agent passed in and
+    /// what `playheadSeconds` beside it already reports.
+    ///
+    /// It used to report `selection.range` raw, which is SOURCE time — so one
+    /// `EditorState` carried a playhead in one clock and a selection in
+    /// another. Paired with `agentSelect` taking source, the two mistakes
+    /// CANCELLED on a round trip: an agent that selected 19 read back 19 and
+    /// saw nothing wrong, while the selection sat somewhere else entirely.
+    /// That is why the test for this asserts where a CUT lands rather than
+    /// what the state reports.
+    var agentSelectionOutput: (start: Double, end: Double)? {
+        guard let range = selection?.range,
+              let start = TimeRangeMapping.trimmedTime(of: range.start,
+                                                       keptRanges: controller.keptRanges),
+              let end = TimeRangeMapping.trimmedTime(of: range.end,
+                                                     keptRanges: controller.keptRanges)
+        else { return nil }
+        return (start, end)
+    }
+
     func displayState(playhead outputPlayhead: Double) -> DisplayState {
         DisplayState(duration: controller.sourceDurationSeconds,
                     cuts: edl.cuts,
@@ -3101,8 +3121,8 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
                            isOpen: true,
                            isPlaying: state.isPlaying,
                            playheadSeconds: state.currentOutputSeconds,
-                           selectionStartSeconds: state.selection?.range.start,
-                           selectionEndSeconds: state.selection?.range.end,
+                           selectionStartSeconds: state.agentSelectionOutput?.start,
+                           selectionEndSeconds: state.agentSelectionOutput?.end,
                            widthPoints: Double(content.width),
                            heightPoints: Double(content.height))
     }
@@ -3140,9 +3160,33 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// agent's selection clears `selectedFoldID` exactly as a person's drag
     /// does. Assigning the property would leave Delete meaning "remove that
     /// cut" while the highlight showed something else.
+    /// OUTPUT time, converted to source — the units `agentSeek` already uses
+    /// and the units every other number an agent sees is in.
+    ///
+    /// **It used to pass the range straight through, and that was a silent
+    /// wrong answer.** The timeline's selection is in SOURCE time, so an agent
+    /// that sought to 19 and then selected 19 to 20.5 was addressing two
+    /// different parts of the recording. On a recording whose head had been
+    /// trimmed, the selection landed inside the removed part: the cut was
+    /// recorded, the response said success, and nothing was removed. That is
+    /// §8's confidently-wrong outcome exactly, and it cost a demo re-record to
+    /// notice, because the only symptom is a video that still contains the
+    /// thing you cut.
+    ///
+    /// A range that does not map is REFUSED rather than clamped. Clamping
+    /// would silently select something adjacent, which is the same failure in
+    /// a smaller costume.
     func agentSelect(_ range: TimeRange?) {
         state.noteAgentActivity()
-        state.onSelect(range.map { Selection(range: $0) })
+        guard let range else { return state.onSelect(nil) }
+        let kept = state.controller.keptRanges
+        guard let start = TimeRangeMapping.sourceTime(ofTrimmedTime: range.start,
+                                                      keptRanges: kept),
+              let end = TimeRangeMapping.sourceTime(ofTrimmedTime: range.end,
+                                                    keptRanges: kept),
+              end > start
+        else { return state.onSelect(nil) }
+        state.onSelect(Selection(range: TimeRange(start: start, end: end)))
     }
 
     /// Forwards an agent's edit to this window's document state (W7).
@@ -3372,6 +3416,10 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     /// none of them would ever set through the one initializer is how a
     /// default ends up meaning two things.
     public func markUnsaved() { isUnsaved = true }
+
+    /// Test-only: the document as it stands, for assertions about where an
+    /// edit LANDED rather than about what a call reported.
+    var agentEDLForTesting: EditDecisionList { state.edl }
 
     /// Test-only: where the PREVIEW believes the document lives.
     ///

@@ -314,3 +314,95 @@ struct EditorWindowControllerTests {
         }
     }
 }
+
+/// `snitt editor select` speaks the same units as `snitt editor seek`.
+///
+/// **Two mistakes that cancelled.** `agentSeek` takes OUTPUT time. `agentSelect`
+/// passed its range straight to the timeline, whose selection is SOURCE time —
+/// and `agentVisibleState` reported that raw, so the same `EditorState` carried
+/// a playhead in one clock and a selection in the other.
+///
+/// Because both halves were wrong the same way, a round trip looked perfect:
+/// select 19, read back 19. The selection was somewhere else entirely, and on a
+/// recording whose head had been trimmed it sat inside the removed part. The
+/// cut was recorded, the response said success, and nothing was removed.
+///
+/// So this asserts where a CUT LANDS, not what the state reports. A test of the
+/// round trip would have passed against the shipped code, which is exactly how
+/// the defect survived to be found by hand during a demo shoot.
+///
+/// The MCP schema said `"Output seconds"` throughout, so this was the code
+/// disagreeing with its own published contract.
+@Suite(.serialized)
+@MainActor
+struct AgentSelectUnitsTests {
+
+    /// Two seconds off the head, so output and source differ by a known
+    /// amount and a passthrough cannot be right by accident.
+    private func trimmedEditor() async throws -> EditorWindowController {
+        var edl = EditDecisionList.fullRange()
+        edl.cuts = [Cut(range: TimeRange(start: 0, end: 2))]
+        // The COMPOSITION has to be built from the same edit, or the
+        // controller's kept ranges are the whole recording, output equals
+        // source, and a passthrough passes. The first version of this fixture
+        // made exactly that mistake and the test failed against the fix.
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(SnittBundle.fileExtension)
+        let bundle = try SnittBundle(creatingAt: url)
+        try await writeSyntheticMovie(to: bundle.captureURL, seconds: 6)
+        let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+        return EditorWindowController(
+            controller: PreviewController(built: built, jumpPoints: [],
+                                          bundle: bundle, scale: 1.0),
+            title: "units", bundleURL: url, edl: edl, events: [])
+    }
+
+    @Test("A cut asked for in output seconds removes the output seconds asked for")
+    func theCutLandsWhereItWasAsked() async throws {
+        try await EditorWindowTestGate.run {
+            let editor = try await trimmedEditor()
+            defer { editor.close() }
+
+            editor.agentSelect(TimeRange(start: 1, end: 2))
+            #expect(try await editor.agentCutSelection(), "the cut was refused")
+
+            // Output 1 is source 3 when the first two seconds are gone.
+            let added = try #require(
+                editor.agentEDLForTesting.cuts.first { $0.range.start > 2.5 },
+                "no cut was added beyond the trimmed head, so the selection landed inside it and removed nothing")
+            #expect(abs(added.range.start - 3) < 0.05,
+                    "cut starts at source \(added.range.start), expected 3")
+            #expect(abs(added.range.end - 4) < 0.05,
+                    "cut ends at source \(added.range.end), expected 4")
+        }
+    }
+
+    @Test("The selection is reported in the units it was given in")
+    func theStateReportsOutput() async throws {
+        try await EditorWindowTestGate.run {
+            let editor = try await trimmedEditor()
+            defer { editor.close() }
+
+            editor.agentSelect(TimeRange(start: 1, end: 2))
+            let state = editor.agentVisibleState
+            #expect(state.selectionStartSeconds.map { abs($0 - 1) < 0.05 } == true,
+                    "selection reported at \(String(describing: state.selectionStartSeconds))")
+            #expect(state.selectionEndSeconds.map { abs($0 - 2) < 0.05 } == true)
+        }
+    }
+
+    @Test("A range that maps nowhere is refused rather than clamped")
+    func anUnmappableRangeClearsIt() async throws {
+        try await EditorWindowTestGate.run {
+            let editor = try await trimmedEditor()
+            defer { editor.close() }
+
+            // Past the end. Clamping would select the last moment instead,
+            // which is the same silent wrong answer in a smaller costume.
+            editor.agentSelect(TimeRange(start: 90, end: 95))
+            #expect(editor.agentVisibleState.selectionStartSeconds == nil,
+                    "a range past the end was clamped into a real selection")
+        }
+    }
+}
