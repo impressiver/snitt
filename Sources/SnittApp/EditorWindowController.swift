@@ -1693,6 +1693,19 @@ final class EditorTimelineState: ObservableObject {
     /// This is told, twenty times a second.
     @Published private(set) var isPlaying = false
 
+    /// How long the edit RUNS, in output seconds.
+    ///
+    /// Distinct from `controller.sourceDurationSeconds`, which is how long the
+    /// recording was before anything was cut. The transport's clock counts the
+    /// playhead in output time, so its total has to be in output time or the
+    /// pair describes two different recordings — a 25-second edit reading
+    /// "0:16 / 0:58" is not a rounding difference, it is the wrong number.
+    ///
+    /// The timeline below keeps using the source length, because its x-axis IS
+    /// source time and a fold has to be drawn at the position it occupies in
+    /// the original.
+    var outputDurationSeconds: Double { controller.durationSeconds }
+
     /// Where playback is, in OUTPUT seconds — for the commands that act at the
     /// playhead without a view to ask.
     var outputPlayhead: Double {
@@ -2765,7 +2778,11 @@ struct EditorContentView: View {
                 isPlaying: isPlaying,
                 hasMarks: !state.controller.jumpPoints.isEmpty,
                 currentTime: RecordingState.clock(playhead),
-                totalTime: RecordingState.clock(state.displayState(playhead: playhead).duration),
+                // The OUTPUT duration, which is what the clock beside it counts
+                // in. `displayState.duration` is the SOURCE length, correct for
+                // the timeline below (whose x-axis is source time) and wrong
+                // here: it made a 25-second edit read "0:16 / 0:58".
+                totalTime: RecordingState.clock(state.outputDurationSeconds),
                 currentMark: state.currentMarkLabel,
                 // Reads the PUBLISHED mirror, writes through to the view. The
                 // getter used to read the view directly, which is why a scroll

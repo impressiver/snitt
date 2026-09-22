@@ -129,3 +129,80 @@ struct EditorTransportTests {
         #expect(state.isPlaying == false)
     }
 }
+
+/// The clock's two halves count in the same units.
+///
+/// **They did not.** The current time is the playhead, which is OUTPUT time;
+/// the total was `displayState.duration`, which is the SOURCE length. So a
+/// recording trimmed from 58 seconds to 25 read `0:16 / 0:58` — the left half
+/// describing the edit and the right half describing the footage it came from.
+///
+/// It is the same shape as the `editor select` units bug: two numbers printed
+/// side by side, in different clocks, with nothing to make the mismatch
+/// visible. This one had been on screen the whole time, and shipped in the
+/// README's hero GIF, where it says a 25-second demo is 58 seconds long.
+///
+/// The timeline keeps the source length deliberately. Its x-axis IS source
+/// time, so a fold has to be drawn where it sits in the original.
+@Suite(.serialized)
+@MainActor
+struct TransportClockUnitsTests {
+    init() { _ = NSApplication.shared }
+
+    /// Six seconds of footage with two cut away, built so the composition and
+    /// the edit agree — otherwise output equals source and nothing is proved.
+    private func trimmedState() async throws -> EditorTimelineState {
+        var edl = EditDecisionList.fullRange()
+        edl.cuts = [Cut(range: TimeRange(start: 0, end: 2))]
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(SnittBundle.fileExtension)
+        let bundle = try SnittBundle(creatingAt: url)
+        try await writeSyntheticMovie(to: bundle.captureURL, seconds: 6)
+        let built = try await CompositionBuilder.build(bundle: bundle, edl: edl, scale: 1.0)
+        return EditorTimelineState(
+            controller: PreviewController(built: built, jumpPoints: [],
+                                          bundle: bundle, scale: 1.0),
+            edl: edl, events: [])
+    }
+
+    @Test("The total is what the edit runs for, not what was recorded")
+    func theTotalIsOutputTime() async throws {
+        let state = try await trimmedState()
+
+        // Four seconds survive of six. The old code reported six.
+        #expect(abs(state.outputDurationSeconds - 4) < 0.35,
+                "the clock's total is \(state.outputDurationSeconds), expected about 4")
+
+        // And the source length is still available, because the timeline needs
+        // it. Losing that would be the opposite mistake.
+        let source = state.displayState(playhead: 0).duration
+        #expect(abs(source - 6) < 0.35,
+                "the timeline lost the source length it draws folds against: \(source)")
+        #expect(source > state.outputDurationSeconds,
+                "output and source are the same, so this fixture proves nothing")
+    }
+
+    @Test("An untrimmed recording reads the same either way")
+    func nothingChangesWhenNothingIsCut() async throws {
+        // The control. A change that simply reported a different number would
+        // pass the test above; this pins that the two agree when there is no
+        // edit between them, which is the common case and the one a reader
+        // would notice being wrong.
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(SnittBundle.fileExtension)
+        let bundle = try SnittBundle(creatingAt: url)
+        try await writeSyntheticMovie(to: bundle.captureURL, seconds: 5)
+        let built = try await CompositionBuilder.build(
+            bundle: bundle, edl: EditDecisionList(), scale: 1.0)
+        let state = EditorTimelineState(
+            controller: PreviewController(built: built, jumpPoints: [],
+                                          bundle: bundle, scale: 1.0),
+            edl: EditDecisionList(), events: [])
+
+        #expect(abs(state.outputDurationSeconds
+                    - state.displayState(playhead: 0).duration) < 0.05,
+                "uncut, the two clocks disagree")
+    }
+}
