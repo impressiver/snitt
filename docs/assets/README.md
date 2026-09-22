@@ -17,9 +17,9 @@ no history or session is either. The page sizes its own window with
 `resizeTo`, because Chrome ignores `--window-size` when an instance is already
 running and an Apple Event needs a permission an agent cannot grant itself.
 
-That take is recorded, then narrated with `snitt narrate` — including one
-deliberately fluffed line, which is what the demo goes on to remove — and then
-its overlays are turned on:
+That take is recorded, then narrated with `snitt narrate`, including one
+deliberately fluffed line which is what the demo goes on to remove. Then its
+overlays are turned on:
 
 ```sh
 snitt overlays <inner>.snitt --captions on --markers on
@@ -56,6 +56,19 @@ before shooting the real take:
 snitt crop <probe>.snitt --reset     # prints the natural pixel size
 ```
 
+**Leave at least 0.6 seconds between the END of one narration line and the
+START of the next.** `SubtitleCues` ends a cue at a pause of
+`TranscriptParagraphs.breakSeconds`, which is 0.6, so anything tighter is ONE
+cue: two sentences run together with no punctuation between them, and the
+second half truncated by the two-line wrap. `snitt narrate` prints
+`endSeconds` for exactly this, so the gap is arithmetic rather than a guess.
+Two takes were shot with lines 0.576s apart before that was noticed.
+
+**Drop the markers inside the pass you are going to keep.** The page loops
+every ~25 seconds and `snitt record mark` marks the moment it is called, so
+marks placed in the previous pass are trimmed away with it. Check with
+`snitt inspect` before trimming.
+
 Then, while recording Snitt's own editor window:
 
 ```sh
@@ -64,9 +77,22 @@ snitt editor select <inner>.snitt --from 24 --to 26.5
 snitt editor cut    <inner>.snitt
 ```
 
+**Both `seek` and `select` take OUTPUT seconds**, which is what `snitt
+transcript` reports and what `snitt narrate` was given. They did not always:
+`select` took source seconds until #222, so on a trimmed recording it
+addressed the untrimmed original, the cut landed inside the removed head, and
+the verb reported success having removed nothing. If a cut ever seems to do
+nothing, read `edit.json` and compare the range against the trim.
+
 Each lands in the window on screen, as one undo entry, with the **"Agent
-editing"** badge beside the filename — which is visible in the GIF, and is the
-editor telling a person what is happening to their document.
+editing"** badge beside the filename, which is the editor telling a person
+what is happening to their document.
+
+Verify the cut before filming any more of it:
+
+```sh
+python3 -c "import json;print(json.load(open('<inner>.snitt/edit.json'))['cuts'])"
+```
 
 Finally `snitt trim`, `snitt narrate` for the captions, and:
 
