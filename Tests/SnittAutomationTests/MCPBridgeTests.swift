@@ -1031,3 +1031,75 @@ func listRecordingsLimitIsValidated() {
     }
     #expect(limit == 5)
 }
+
+// MARK: - A refusal has to name the TYPE it refused
+
+/// Reported from a real session: "6.0 IS a number", after
+/// `snitt_narrate atSeconds: 6.0` came back as `atSeconds must be a number,
+/// got 6.0`. The caller had sent the STRING `"6.0"`, and the message printed
+/// it unquoted — so it named a number and then said it was not one. Three
+/// retries mid-recording went into that, and the tell was invisible in every
+/// message.
+///
+/// Coercion is deliberately NOT the fix. Accepting `"6.0"` as 6.0 is the
+/// silent-wrong-answer class §8 forbids, and the boolean twin of this helper
+/// exists precisely because that shortcut shipped three times (`autoTrim`,
+/// `chapters`, `subtitles`) and each time a caller's typo ran successfully
+/// while doing nothing.
+
+@Test("A whole number really is accepted, so the report's premise is checked not assumed")
+func wholeNumbersAreAccepted() {
+    // The claim was that Snitt rejects 6.0. It does not, and pinning that here
+    // means a future change cannot make the complaint true.
+    for literal in ["6.0", "6", "6.2", "0.0"] {
+        let result = MCPBridge.request(
+            forTool: "snitt_narrate",
+            arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "text": "hi", "atSeconds": \#(literal)}"#))
+        guard case .success = result else {
+            Issue.record("atSeconds \(literal) was refused"); return
+        }
+    }
+}
+
+@Test("A quoted number is refused, and the refusal says it was a string")
+func aQuotedNumberIsNamedAsAString() {
+    // Verified to fail by restoring `got \(value)`: the message reads
+    // "got 6.0", which is indistinguishable from the number being rejected.
+    guard case .failure(let error) = MCPBridge.request(
+        forTool: "snitt_narrate",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "text": "hi", "atSeconds": "6.0"}"#))
+    else { Issue.record("a quoted number must be refused"); return }
+
+    #expect(error.message.contains("the string"),
+            "the refusal does not say a string was sent: \(error.message)")
+    #expect(error.message.contains("\"6.0\""),
+            "the value must appear quoted, or it still reads as a number: \(error.message)")
+}
+
+@Test("A boolean sent where a number belongs is named as a boolean")
+func aBooleanIsNamedAsABoolean() {
+    // `got 1` would be the same ambiguity in the other direction — a caller
+    // cannot tell whether Snitt saw `true` or the number 1, and those need
+    // different fixes.
+    guard case .failure(let error) = MCPBridge.request(
+        forTool: "snitt_narrate",
+        arguments: jsonArguments(#"{"bundlePath": "/tmp/x.snitt", "text": "hi", "atSeconds": true}"#))
+    else { Issue.record("a boolean must be refused where a number belongs"); return }
+
+    #expect(error.message.contains("the boolean true"),
+            "a boolean was not named as one: \(error.message)")
+}
+
+@Test("A quoted boolean is still refused, and now says so")
+func aQuotedBooleanIsNamedAsAString() {
+    // The coercion bug's own shape, kept refused. `{"chapters": "true"}` used
+    // to export successfully with no chapters and no error.
+    guard case .failure(let error) = MCPBridge.request(
+        forTool: "snitt_export",
+        arguments: jsonArguments(
+            #"{"bundlePath": "/tmp/x.snitt", "outputPath": "/tmp/o.mp4", "format": "mp4", "chapters": "true"}"#))
+    else { Issue.record("a quoted boolean must be refused"); return }
+
+    #expect(error.message.contains("the string"), "\(error.message)")
+    #expect(error.message.contains("\"true\""), "\(error.message)")
+}
