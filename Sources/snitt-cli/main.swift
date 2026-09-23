@@ -499,7 +499,16 @@ do {
         note("Marker placed at \(timeSeconds)s")
     case .inspected(let report):
         emit(report)
-        note("\(Int(report.durationSeconds ?? 0))s · \(report.markerCount) markers "
+        // The JSON above carries the edit in full; this line says it exists,
+        // so a person skimming stderr sees that the bundle is not untouched.
+        var edited = ""
+        let applied = report.cuts ?? []
+        if !applied.isEmpty {
+            edited += " · \(applied.count) cut\(applied.count == 1 ? "" : "s") "
+                    + "leaving \(Int(report.outputDurationSeconds ?? 0))s"
+        }
+        if report.crop != nil { edited += " · cropped" }
+        note("\(Int(report.durationSeconds ?? 0))s\(edited) · \(report.markerCount) markers "
            + "· \(report.inputEventCount) input events")
     case .recordings(let list):
         emit(list)

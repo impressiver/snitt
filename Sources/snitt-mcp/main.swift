@@ -350,7 +350,18 @@ func describe(_ response: AutomationResponse) -> String {
         let chapters = report.markers
             .map { String(format: "%.0fs %@", $0.timeSeconds, $0.label ?? "(unlabelled)") }
             .joined(separator: ", ")
-        return "\(Int(report.durationSeconds ?? 0))s recording, "
+        // The EDIT is stated whenever there is one. This line used to give
+        // only the footage length, so a bundle already cut and cropped read
+        // exactly like an untouched one — and an agent that believed it went
+        // and made the same cut twice.
+        var edited = ""
+        let applied = report.cuts ?? []
+        if !applied.isEmpty {
+            edited += ", \(applied.count) cut\(applied.count == 1 ? "" : "s") already applied "
+                    + "leaving \(Int(report.outputDurationSeconds ?? 0))s"
+        }
+        if report.crop != nil { edited += ", already cropped" }
+        return "\(Int(report.durationSeconds ?? 0))s recording\(edited), "
              + "\(report.markerCount) markers, \(report.inputEventCount) input events"
              + (chapters.isEmpty ? "" : ": \(chapters)")
     case .screenshotTaken(let path, let timeSeconds, _, let marked):

@@ -637,3 +637,44 @@ extension EditDecisionList {
 private struct LegacyVoiceover: Decodable {
     let filename: String
 }
+
+extension EditDecisionList {
+    /// How long the edit RUNS, given the length of the footage it was cut from.
+    ///
+    /// The distinction `snitt inspect` was missing. `meta.durationSeconds` is
+    /// what the CAMERA recorded and never changes; this is what a viewer sits
+    /// through, and it is the number an agent means when it says how long a
+    /// demo is. The same pair the editor's transport had to learn to tell
+    /// apart, where a 25-second edit of a 58-second recording read "0:58".
+    ///
+    /// Cuts are merged before they are summed. Nothing forbids two cuts from
+    /// overlapping — an auto-trim pass over a hand-trimmed recording produces
+    /// exactly that — and summing them raw double-counts the overlap, which can
+    /// report a duration shorter than the edit or even below zero.
+    ///
+    /// Clamped to the footage at both ends: a cut extending past the end of the
+    /// recording removes only the part that exists.
+    public func outputDuration(sourceDuration: Double) -> Double {
+        guard sourceDuration > 0 else { return 0 }
+        let clamped = cuts
+            .map { (start: max(0, $0.range.start), end: min(sourceDuration, $0.range.end)) }
+            .filter { $0.end > $0.start }
+            .sorted { $0.start < $1.start }
+
+        var removed = 0.0
+        var openStart: Double?
+        var openEnd = 0.0
+        for span in clamped {
+            if openStart != nil, span.start <= openEnd {
+                openEnd = max(openEnd, span.end)
+            } else {
+                if let start = openStart { removed += openEnd - start }
+                openStart = span.start
+                openEnd = span.end
+            }
+        }
+        if let start = openStart { removed += openEnd - start }
+
+        return max(0, sourceDuration - removed)
+    }
+}
