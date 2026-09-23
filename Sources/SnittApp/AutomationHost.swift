@@ -180,6 +180,12 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         /// review needs to see that a human intervened, not that the agent
         /// finished normally.
         static let stoppedByHuman = "stoppedByHuman"
+        /// Snitt quit while this recording was in flight, and finished it on
+        /// the way out. Distinct from `completed`, which means the agent asked
+        /// for the stop and got an answer, and from `stoppedByHuman`, which is
+        /// §5.3's kill switch. An incident review reading "the app went away
+        /// mid-take" needs to see that, not a clean finish.
+        static let stoppedByQuit = "stoppedByQuit"
     }
 
     /// The clock the registry's expiry checks are measured against.
@@ -298,7 +304,7 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// coordinator already invalidates the agent's session id on any stop; this
     /// is the registry's half, so `snitt status` stops claiming a recording that
     /// a person ended from the menu bar.
-    func clearAgentSession() async {
+    func clearAgentSession(outcome: String = AuditOutcome.stoppedByHuman) async {
         cancelWatchdog()
         // Record the end BEFORE forgetting the id: an agent session stopped
         // from the menu bar is the human kill switch (§5.3) acting on work
@@ -307,8 +313,21 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         // that was never audited, so a human's own recording still writes
         // nothing.
         if let closed = await registry.closeAny() {
-            await recordSessionEnd(sessionID: closed, outcome: AuditOutcome.stoppedByHuman)
+            await recordSessionEnd(sessionID: closed, outcome: outcome)
         }
+    }
+
+    /// Closes the books on a recording that quitting had to finish.
+    ///
+    /// The bundle is already whole by the time this runs — `stopIfRecording`
+    /// finalized it — but nothing had SAID so. `meta.json` carried no outcome
+    /// at all and the audit held a start with no end, which is the exact defect
+    /// `clearAgentSession`'s own comment names: a session with no end reads as
+    /// still running. Recording the reason is the point; `stoppedByQuit` is not
+    /// `completed`, because the agent never asked for this stop.
+    func noteRecordingFinishedByQuit(bundleURL: URL?) async {
+        if let bundleURL { Self.stamp(outcome: AuditOutcome.stoppedByQuit, on: bundleURL) }
+        await clearAgentSession(outcome: AuditOutcome.stoppedByQuit)
     }
 
     private func cancelWatchdog() {

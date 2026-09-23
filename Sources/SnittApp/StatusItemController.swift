@@ -22,6 +22,14 @@ public enum RecordingState: Equatable, Sendable {
 }
 
 public extension RecordingState {
+    /// Whether quitting has to wait for this state to finish.
+    ///
+    /// Everything but `.idle`. A paused recording still holds an open
+    /// `AVAssetWriter`, and `.stopping` is a finalize already under way —
+    /// terminating during either loses the take just as surely as terminating
+    /// mid-capture does.
+    var mustFinishBeforeQuit: Bool { self != .idle }
+
     /// Seconds of FOOTAGE captured so far — wall clock minus any time spent
     /// paused.
     ///
