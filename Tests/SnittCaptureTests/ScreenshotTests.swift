@@ -48,7 +48,7 @@ struct ScreenshotTests {
         _ = try await recorder.stop()
     }
 
-    @Test("The marker lands at the frame's offset, not at call time")
+    @Test("A LABELLED screenshot's marker lands at the frame's offset, not at call time")
     func markerSharesTheFrameOffset() async throws {
         // D53's actual requirement. A screenshot that marked "now" would place
         // its marker later than the frame it captured, by however long the call
@@ -58,12 +58,54 @@ struct ScreenshotTests {
         try await recorder.startForTesting()
         recorder.feedForTesting(makeVideoBuffer(at: 0, size: CGSize(width: 320, height: 240)), .screen)
 
-        let shot = try await recorder.screenshot()
+        let shot = try await recorder.screenshot(label: "the toolbar, after the crop")
         let bundle = try await recorder.stop()
         let markers = try EventLog.read(from: bundle).events.filter { $0.kind == .marker }
-        let marker = try #require(markers.first)
+        let marker = try #require(markers.first, "a labelled screenshot must still mark")
+        #expect(marker.label == "the toolbar, after the crop")
         #expect(abs(marker.timeSeconds - shot.offsetSeconds) < 0.001,
                 "marker at \(marker.timeSeconds)s, frame at \(shot.offsetSeconds)s")
+    }
+
+    @Test("An unlabelled screenshot leaves no marker behind")
+    func anUnlabelledScreenshotDoesNotMark() async throws {
+        // The reported defect. An agent looks at the screen to check its own
+        // work, and it looks often; every look used to become a chapter on
+        // export and a row in the editor's marker list, so a demo's waypoints
+        // were mostly the agent clearing its throat.
+        //
+        // Three shots, because a change that merely renamed the label would
+        // still leave three rows. Verified to fail by restoring the
+        // `label ?? "Screenshot"` default.
+        let (recorder, url) = try makeRecorder()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await recorder.startForTesting()
+        recorder.feedForTesting(makeVideoBuffer(at: 0, size: CGSize(width: 320, height: 240)), .screen)
+
+        for _ in 0..<3 { _ = try await recorder.screenshot() }
+        let bundle = try await recorder.stop()
+        let markers = try EventLog.read(from: bundle).events.filter { $0.kind == .marker }
+        #expect(markers.isEmpty, "unasked-for markers: \(markers.map(\.label))")
+    }
+
+    @Test("Looking costs nothing; the PNG and its offset still come back")
+    func anUnlabelledScreenshotStillCorrelates() async throws {
+        // THE CONTROL, and the reason this change is safe: D53's guarantee was
+        // never carried by the marker. Dropping the marker must not drop the
+        // correlation — the offset comes back from the call and the filename IS
+        // that offset, both from the same frame.
+        let (recorder, url) = try makeRecorder()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await recorder.startForTesting()
+        recorder.feedForTesting(makeVideoBuffer(at: 0, size: CGSize(width: 320, height: 240)), .screen)
+
+        let shot = try await recorder.screenshot()
+        #expect(FileManager.default.fileExists(atPath: shot.url.path))
+        let name = shot.url.deletingPathExtension().lastPathComponent
+        let parsed = try #require(Double(name))
+        #expect(abs(parsed - shot.offsetSeconds) < 0.01,
+                "an unlabelled shot lost its offset: filename \(name), offset \(shot.offsetSeconds)")
+        _ = try await recorder.stop()
     }
 
     @Test("The filename is the offset, so it needs no accompanying note")

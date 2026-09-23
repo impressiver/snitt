@@ -184,7 +184,8 @@ snitt: record a window and hand back a .snitt bundle
                                           are pixels of the named frame, or
                                           fractions of the window without one
   snitt record screenshot <session> [--label "..."]
-                                          save the current frame, marked
+                                          save the current frame; --label also
+                                          drops a marker a reviewer can jump to
   snitt record pause <session>            stop filming without ending
   snitt record resume <session>           start filming again
   snitt setup [--apply]                   register the MCP server with agents
@@ -540,7 +541,7 @@ do {
     case .trimmed(let summary):
         emit(summary)
         note("Kept \(Int(summary.keptSeconds))s, cut \(Int(summary.cutSeconds))s")
-    case .screenshotTaken(let path, let timeSeconds, _):
+    case .screenshotTaken(let path, let timeSeconds, _, _):
         emitObject(["path": path, "timeSeconds": timeSeconds])
         note("Screenshot at \(String(format: "%.2f", timeSeconds))s → \(path)")
     case .cropped(let summary):

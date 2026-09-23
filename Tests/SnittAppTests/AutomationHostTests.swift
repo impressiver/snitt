@@ -1237,7 +1237,7 @@ struct ScreenshotAutomationTests {
         _ = await host.handle(.startRecording(StartOptions(bundleIdentifier: "com.apple.Safari")), caller: nil)
         let session = try #require(await coordinator.startCalls.first)
 
-        guard case .screenshotTaken(let path, let time, _) =
+        guard case .screenshotTaken(let path, let time, _, _) =
                 await host.handle(.screenshot(sessionID: session, label: "after save"), caller: nil) else {
             Issue.record("screenshot did not return a screenshot"); return
         }
