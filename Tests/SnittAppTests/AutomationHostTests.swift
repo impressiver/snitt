@@ -1688,3 +1688,57 @@ struct RecordingOutcomeStampTests {
         #expect(try RecordingMetadata.read(from: bundle).outcome == "completed")
     }
 }
+
+/// Closing the books when a QUIT is what ended a recording.
+///
+/// The bundle is already whole by the time this runs — `stopIfRecording`
+/// finalized it on the way out — but nothing had SAID so. `meta.json` carried
+/// no outcome at all, and the audit held a start with no end, which is the
+/// exact defect `clearAgentSession`'s own comment names: a session showing a
+/// start and no end reads as still running.
+@MainActor
+@Test("A quit closes the agent's audit entry, as a quit and not as a clean finish")
+func aQuitClosesTheAuditEntry() async throws {
+    let auditLog = FileManager.default.temporaryDirectory
+        .appendingPathComponent("snitt-quit-audit-\(UUID().uuidString).jsonl")
+    defer { try? FileManager.default.removeItem(at: auditLog) }
+
+    let host = makeHost(coordinator: FakeCoordinator(), recorder: StateRecorder(),
+                        auditLogURL: auditLog)
+    let started = await host.handle(startBody(), caller: nil)
+    guard case .started = started else {
+        Issue.record("the fixture did not start: \(started)"); return
+    }
+
+    await host.noteRecordingFinishedByQuit(bundleURL: nil)
+
+    let lines = (try String(contentsOf: auditLog, encoding: .utf8))
+        .split(separator: "\n").map(String.init)
+    let ends = lines.compactMap {
+        try? JSONSerialization.jsonObject(with: Data($0.utf8)) as? [String: Any]
+    }.filter { $0["endedAt"] != nil }
+
+    // Verified to fail by dropping the `clearAgentSession` call: one start
+    // line, no end line, and an audit that says the recording is still running.
+    #expect(ends.count == 1, "a quit left the session open in the audit")
+    #expect(ends.first?["outcome"] as? String == "stoppedByQuit",
+            "a quit must not be recorded as a clean finish: \(ends)")
+}
+
+@MainActor
+@Test("A quit with no agent session running writes nothing")
+func aQuitWithNoSessionIsSilent() async throws {
+    // THE CONTROL. A person's own recording never passes through `start(_:)`
+    // and must never produce an audit line — and neither must quitting an idle
+    // Snitt, which is the overwhelmingly common quit.
+    let auditLog = FileManager.default.temporaryDirectory
+        .appendingPathComponent("snitt-quit-audit-\(UUID().uuidString).jsonl")
+    defer { try? FileManager.default.removeItem(at: auditLog) }
+
+    let host = makeHost(coordinator: FakeCoordinator(), recorder: StateRecorder(),
+                        auditLogURL: auditLog)
+    await host.noteRecordingFinishedByQuit(bundleURL: nil)
+
+    let contents = (try? String(contentsOf: auditLog, encoding: .utf8)) ?? ""
+    #expect(contents.isEmpty, "quitting an idle Snitt wrote an audit record: \(contents)")
+}

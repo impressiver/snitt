@@ -111,7 +111,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let host = AutomationHost(
             coordinator: coordinator,
             settings: { AgentSettings.load() },
-            onRecordingState: { [weak self] state in self?.statusItem.update(state) })
+            onRecordingState: { [weak self] state in
+                // Through `noteCapture` as well as the status item: an agent's
+                // recording must be finished on quit like anyone else's.
+                self?.noteCapture(state)
+                self?.statusItem.update(state)
+            })
         host.start()
         automationHost = host
 
@@ -142,16 +147,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // would leave a bundle whose capture.mov is playable (fragments are
         // flushed as they are written) but whose sidecar files were never
         // produced — a half-written document rather than a short one.
-        statusItem.onQuit = { [weak self] in
-            guard let self, let coordinator = self.coordinator else {
-                NSApp.terminate(nil)
-                return
-            }
-            Task { @MainActor in
-                _ = await coordinator.stopIfRecording()
-                NSApp.terminate(nil)
-            }
-        }
+        // Just terminate. Stopping the recording moved to
+        // `applicationShouldTerminate`, which EVERY quit goes through — this
+        // one, ⌘Q, the Dock, an Apple Event, and logging out. Doing it here was
+        // a second copy of the logic that only the menu-bar item ever ran, and
+        // the comment that used to sit on it described a protection the other
+        // four routes never had.
+        statusItem.onQuit = { NSApp.terminate(nil) }
 
         // A submenu built once at install time (AppShell.buildMainMenu) is
         // permanently stale — it never reflects a document opened after
@@ -347,8 +349,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// bar says Paused while the HUD says Recording, and neither is obviously
     /// the stale one.
     func setRecordingState(_ state: RecordingState) {
+        noteCapture(state)
         statusItem.update(state)
         recordingHUD.update(state: state)
+    }
+
+    /// Whether a capture is in flight, as a SYNCHRONOUS main-actor fact.
+    ///
+    /// `applicationShouldTerminate` has to answer without awaiting, and
+    /// `RecordingCoordinator` is an `actor`, so it cannot be asked. This mirror
+    /// is the only way the quit path can know there is anything to finish.
+    private(set) var isCapturing = false
+
+    /// The one place that mirror is written.
+    ///
+    /// Both paths reach it, and that is the point: `recordingStartedAt` next to
+    /// it is set only on the HOTKEY path, so a mirror built the same way would
+    /// read "idle" for every agent-initiated recording — precisely the ones
+    /// with nobody at the machine to notice them being thrown away.
+    func noteCapture(_ state: RecordingState) {
+        isCapturing = state.mustFinishBeforeQuit
     }
 
     private func makeRecordingHUD() -> RecordingHUDPanel {
@@ -750,12 +770,52 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `.terminateNow` when there is nothing outstanding, so the common quit
     /// is unchanged and never waits.
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard EditorWindowController.hasPendingSaves else { return .terminateNow }
+        guard isCapturing || EditorWindowController.hasPendingSaves else { return .terminateNow }
         terminationFlush = Task { @MainActor [weak self] in
+            await self?.finishTheRecordingIfAny()
             await EditorWindowController.flushPendingSaves()
             self?.replyToTerminate(true)
         }
         return .terminateLater
+    }
+
+    /// Finalizes a capture in flight before the process goes away.
+    ///
+    /// **This is why quitting used to destroy a take.** `stopIfRecording` had
+    /// exactly one caller — the status item's own Quit — so ⌘Q, the Dock, an
+    /// Apple Event and logging out all terminated straight through it. Measured,
+    /// what that left was a `capture.mov` with no moov atom (unopenable in
+    /// anything), no `meta.json`, no `events.json`, no `edit.json`, and an audit
+    /// entry with a start and no end. Not a shortened recording: no recording.
+    ///
+    /// The `movieFragmentInterval` in `AssetWriterSink` reads like a safety net
+    /// for this and is not one — `AssetWriterSinkTests` measured the file at 811
+    /// bytes with the setting and 811 without.
+    ///
+    /// `applicationShouldTerminate` is the funnel every quit passes through,
+    /// which is what makes one call here cover all of them.
+    private func finishTheRecordingIfAny() async {
+        guard let coordinator else { return }
+        let outcome = await coordinator.stopIfRecording()
+        // Say what happened, as well as doing it. The bundle is whole by now,
+        // and nothing had recorded WHY it ended: `meta.json` carried no outcome
+        // and the audit held a start with no end, which reads as a recording
+        // still running. `stoppedByQuit` rather than `completed`, because
+        // nobody asked for this stop.
+        if case .stopped(let url, _) = outcome {
+            await automationHost?.noteRecordingFinishedByQuit(bundleURL: url)
+        } else {
+            await automationHost?.noteRecordingFinishedByQuit(bundleURL: nil)
+        }
+        // A stop ALREADY under way makes the call above a no-op — it refuses to
+        // race a transition — so wait for the coordinator to settle rather than
+        // terminating through somebody else's finalize. Bounded, because a quit
+        // that never returns is its own bug: finalizing a long recording takes
+        // seconds, not a minute.
+        let deadline = Date().addingTimeInterval(30)
+        while await coordinator.isRecording, Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(50))
+        }
     }
 
     /// A video dropped on an editor window.
