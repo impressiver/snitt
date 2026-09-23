@@ -119,6 +119,22 @@ struct ResponseWireCompatibilityTests {
     private static let oldStatusPayload =
         #"{"status":{"_0":{"recording":false,"paused":false}}}"#
 
+    @Test("A status payload written before `initiator` existed still decodes")
+    func statusWithoutInitiatorDecodes() throws {
+        // The trap that fired twice in one day: a non-Optional property makes
+        // synthesized Codable REQUIRE its key, so every older app's status
+        // response would decode as `keyNotFound`. `nil` means "this app does
+        // not say", never "nobody started it".
+        let old = #"{"status":{"_0":{"recording":true,"sessionID":"abc","paused":false}}}"#
+        let decoded = try JSONDecoder().decode(
+            AutomationResponse.self, from: Data(old.utf8))
+        guard case .status(let info) = decoded else {
+            Issue.record("did not decode as status: \(decoded)"); return
+        }
+        #expect(info.recording)
+        #expect(info.initiator == nil, "absent must read as 'cannot say'")
+    }
+
     @Test("A status payload written before the consent block existed still decodes")
     func oldStatusPayloadDecodes() throws {
         // Same discrimination as above, against `consent: ConsentInfo` with a

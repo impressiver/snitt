@@ -408,15 +408,28 @@ public struct StatusInfo: Codable, Sendable, Equatable {
     /// which is to call and read `consent_required` if it comes.
     public var consent: ConsentInfo?
 
+    /// WHO started the recording that is running: `"agent"` or `"human"`.
+    ///
+    /// `recording: true` with no `sessionID` used to be unreachable, so a
+    /// caller could treat "there is a session id" as "there is a recording".
+    /// It is reachable now — that is the point — and the pair has to be read
+    /// together: a `nil` id alongside `recording: true` means something is
+    /// filming that this surface did not start and cannot stop.
+    ///
+    /// Optional for the wire, like `consent` beside it: an older app sends no
+    /// key. `nil` means "this app does not say", never "nobody".
+    public var initiator: String?
+
     public init(recording: Bool, sessionID: String?, elapsedSeconds: Double?,
                 paused: Bool = false, pausedSeconds: Double? = nil,
-                consent: ConsentInfo? = nil) {
+                consent: ConsentInfo? = nil, initiator: String? = nil) {
         self.recording = recording
         self.sessionID = sessionID
         self.elapsedSeconds = elapsedSeconds
         self.paused = paused
         self.pausedSeconds = pausedSeconds
         self.consent = consent
+        self.initiator = initiator
     }
 }
 
