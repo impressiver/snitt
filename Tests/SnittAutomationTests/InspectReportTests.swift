@@ -115,3 +115,157 @@ func futureSchemaVersionEventsThrowsRatherThanEmptyReport() throws {
         _ = try InspectReport.report(for: bundle)
     }
 }
+
+/// What `snitt inspect` says about a recording that has ALREADY been edited.
+///
+/// The report described the bundle as it came off the camera: cuts and crops
+/// were invisible, and `durationSeconds` was the untrimmed footage. An agent
+/// returning to a bundle it had already cut was told the pre-edit state as
+/// though it were current, so it could not tell the line it meant to remove had
+/// already gone. In a real session that cost a whole re-take.
+@Suite("Inspect reports the edit")
+struct InspectReportsTheEditTests {
+
+    private func editedBundle(cuts: [Cut], crop: CropRect?,
+                              footage: Double = 60) throws -> SnittBundle {
+        let bundle = try makeBundle()
+        try RecordingMetadata(createdAt: Date(timeIntervalSince1970: 1000),
+                              initiator: .agent,
+                              durationSeconds: footage).write(to: bundle)
+        var edl = EditDecisionList.fullRange()
+        edl.cuts = cuts
+        edl.crop = crop
+        try edl.write(to: bundle)
+        return bundle
+    }
+
+    @Test("Cuts already applied are listed, with what the edit now runs for")
+    func cutsAreVisible() throws {
+        let bundle = try editedBundle(
+            cuts: [Cut(range: TimeRange(start: 5, end: 15), label: "waiting for build")],
+            crop: nil)
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+        let report = try InspectReport.report(for: bundle)
+        #expect(report.cuts?.count == 1, "the cut in edit.json was not reported")
+        #expect(report.cuts?.first?.startSeconds == 5)
+        #expect(report.cuts?.first?.endSeconds == 15)
+        #expect(report.cuts?.first?.label == "waiting for build")
+
+        // The two durations are DIFFERENT numbers and both are needed: the
+        // footage is what was captured, the output is what a viewer sits
+        // through. Reporting only the first is what made an edited bundle look
+        // untouched.
+        #expect(report.durationSeconds == 60, "the footage length must not change")
+        #expect(abs((report.outputDurationSeconds ?? 0) - 50) < 1e-9,
+                "output reported as \(report.outputDurationSeconds as Any), expected 50")
+    }
+
+    @Test("A crop already applied is reported")
+    func cropIsVisible() throws {
+        let box = CropRect(x: 0.1, y: 0.1, width: 0.5, height: 0.5)
+        let bundle = try editedBundle(cuts: [], crop: box)
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+        #expect(try InspectReport.report(for: bundle).crop == box)
+    }
+
+    @Test("An untouched recording says so, rather than saying nothing")
+    func untouchedIsEmptyNotAbsent() throws {
+        // THE CONTROL. "No cuts" and "this report cannot say" are different
+        // claims, which is why `cuts` is an array and not an Optional. And with
+        // nothing cut the two durations must AGREE — a change that reported
+        // some other number for output would pass the test above.
+        let bundle = try editedBundle(cuts: [], crop: nil)
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+
+        let report = try InspectReport.report(for: bundle)
+        #expect(report.cuts == [])
+        #expect(report.crop == nil)
+        #expect(report.outputDurationSeconds == report.durationSeconds,
+                "uncut, the footage and the edit are the same length")
+    }
+
+    @Test("A bundle with no edit.json reports no cuts rather than failing")
+    func aPartialBundleStillAnswers() throws {
+        // A recording interrupted before its sidecars were written has no
+        // edit.json at all. "Nothing has been cut" is truthful for it, and the
+        // report is exactly what an agent needs to decide what to do with the
+        // debris — refusing would leave it with nothing.
+        let bundle = try makeBundle()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        try RecordingMetadata(createdAt: Date(timeIntervalSince1970: 1000),
+                              initiator: .agent, durationSeconds: 12).write(to: bundle)
+
+        let report = try InspectReport.report(for: bundle)
+        #expect(report.cuts == [])
+        #expect(report.outputDurationSeconds == 12)
+    }
+
+    @Test("An edit.json that exists and will not decode is refused, not read as untouched")
+    func anUnreadableEDLIsRefused() throws {
+        // §8. Reporting a corrupt or newer-schema edit.json as "no cuts" tells
+        // an agent its bundle is untouched when a newer Snitt has already
+        // edited it — and an agent told "no cuts" goes and cuts again, which is
+        // worse here than the same mistake on markers.
+        let bundle = try makeBundle()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        try RecordingMetadata(createdAt: Date(timeIntervalSince1970: 1000),
+                              initiator: .agent, durationSeconds: 12).write(to: bundle)
+        try Data(#"{"schemaVersion":99999,"cuts":"not an array"}"#.utf8)
+            .write(to: bundle.editURL)
+
+        #expect(throws: (any Error).self) { _ = try InspectReport.report(for: bundle) }
+    }
+}
+
+/// An older app's inspect payload, decoded by a newer client.
+///
+/// **This trap fired twice in one change.** A non-Optional property makes
+/// synthesized `Codable` REQUIRE its key, so `cuts: [Cut]` — chosen because
+/// "no cuts" and "cannot say" are genuinely different claims — decoded every
+/// older Snitt's response as `keyNotFound` and broke `inspect` outright. The
+/// same mistake in the same session had already broken `screenshotTaken` via a
+/// defaulted `Bool`. Two instances is a class, so the rule is now stated where
+/// the fields are: anything added to a shipped response is Optional, whatever
+/// its natural type.
+@Suite("Inspect wire compatibility")
+struct InspectReportWireCompatibilityTests {
+
+    @Test("A report written before the edit fields existed still decodes")
+    func olderPayloadDecodes() throws {
+        let old = #"""
+        {"bundlePath":"/tmp/x.snitt","createdAt":0,"initiator":"agent",
+         "durationSeconds":42,"markers":[],"markerCount":0,
+         "inputEventCount":0,"reportedEventCount":0}
+        """#
+        let report = try JSONDecoder().decode(InspectReport.self, from: Data(old.utf8))
+        #expect(report.durationSeconds == 42)
+        // nil, NOT []: an app that does not carry the key has no opinion about
+        // cuts, and a reader must be able to tell that from "nothing is cut".
+        #expect(report.cuts == nil, "an older app must read as 'cannot say', not 'untouched'")
+        #expect(report.outputDurationSeconds == nil)
+        #expect(report.crop == nil)
+    }
+
+    @Test("A round trip keeps the edit, including the empty case")
+    func roundTripsBothEmpties() throws {
+        var report = try InspectReport.report(for: {
+            let bundle = try InspectReportWireCompatibilityTests.emptyBundle()
+            try RecordingMetadata(createdAt: Date(timeIntervalSince1970: 0),
+                                  initiator: .agent, durationSeconds: 9).write(to: bundle)
+            try EditDecisionList.fullRange().write(to: bundle)
+            return bundle
+        }())
+        report.cuts = []
+        let back = try JSONDecoder().decode(
+            InspectReport.self, from: JSONEncoder().encode(report))
+        #expect(back.cuts == [], "an explicit 'nothing is cut' must survive the wire as []")
+    }
+
+    private static func emptyBundle() throws -> SnittBundle {
+        try SnittBundle(creatingAt: FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension(SnittBundle.fileExtension))
+    }
+}
