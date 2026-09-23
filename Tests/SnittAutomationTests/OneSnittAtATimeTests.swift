@@ -106,14 +106,33 @@ struct OneSnittAtATimeTests {
                                         incumbentIsRecording: true) == .deferToIncumbent)
     }
 
-    @Test("An incumbent that will not answer is replaced, not deferred to")
-    func anUnreachableIncumbentIsReplaced() {
-        // Decided deliberately, and it is the uncomfortable one. Deferring to
-        // an instance that cannot answer its own socket means every later
-        // launch stands down too, leaving a menubar icon no frontend can reach
-        // and no launch can displace — exactly the stuck state this guard is
-        // for. Taking over is the only branch that terminates.
+    @Test("An incumbent that will not answer is left alone")
+    func silenceIsNotConsent() {
+        // THE ONE THIS CHANGED, after a real session. The first version read
+        // an unreachable incumbent as fair game, on the reasoning that an app
+        // which will not answer its own socket cannot be stopped or inspected
+        // anyway. That weighed the wrong risk.
+        //
+        // The probe reaches the recorder actor through the main actor, and
+        // during capture — editor open, frames arriving — both are busy. "No
+        // answer" describes a working app under load at least as often as a
+        // wedged one, and the costs are not symmetric: guess "idle" about a
+        // recording app and the take is gone (no sidecars, no moov atom,
+        // measured); guess "busy" about a wedged one and somebody clicks Quit.
         #expect(InstanceDecision.decide(otherInstancesRunning: true,
-                                        incumbentIsRecording: nil) == .replaceIncumbent)
+                                        incumbentIsRecording: nil) == .deferToIncumbent)
+    }
+
+    @Test("Only an incumbent that SAYS it is idle is replaced")
+    func onlyAConfirmedIdleIncumbentIsReplaced() {
+        // The invariant behind both branches above, stated once so a later
+        // change cannot satisfy them separately and still authorise a kill on
+        // a maybe. Exactly one input may terminate anything.
+        let terminating = [true, false, nil].filter {
+            InstanceDecision.decide(otherInstancesRunning: true,
+                                    incumbentIsRecording: $0) == .replaceIncumbent
+        }
+        #expect(terminating == [false],
+                "something other than a confirmed idle incumbent authorised a takeover")
     }
 }

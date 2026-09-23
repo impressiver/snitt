@@ -23,12 +23,22 @@ import SnittCapture
 enum SingleInstanceGuard {
     private static let log = SnittLog.logger(.automation, target: "SnittApp")
 
-    /// How long to let an incumbent quit of its own accord before insisting.
+    /// How long to let an incumbent quit of its own accord.
     ///
-    /// Generous, because an orderly quit is worth waiting for: it is the path
-    /// that runs `applicationShouldTerminate` and flushes an editor's pending
-    /// saves. Only after this does force enter the picture.
+    /// Nothing happens after it but standing down. An orderly quit is the path
+    /// that runs `applicationShouldTerminate`, and an idle app takes it
+    /// promptly; one that does not is telling us something we asked about and
+    /// got no answer to.
     private static let gracePeriod: TimeInterval = 6
+
+    /// How long to wait for the incumbent to say whether it is recording.
+    ///
+    /// The probe reaches the recorder actor through the main actor, and during
+    /// real capture both are busy. Three seconds read a working app under load
+    /// as unreachable, and the old rule then treated unreachable as fair game.
+    /// The rule is fixed; the timeout is widened anyway, because the useful
+    /// answer is the one that arrives.
+    private static let probeTimeout: TimeInterval = 10
 
     /// Whether this process should go on to run.
     ///
@@ -54,7 +64,13 @@ enum SingleInstanceGuard {
 
         case .replaceIncumbent:
             log.notice("Taking over from \(others.count, privacy: .public) idle instance(s).")
-            for instance in others { retire(instance) }
+            let stubborn = others.filter { !retire($0) }
+            guard stubborn.isEmpty else {
+                // It said it was idle and then would not quit. Whatever it is
+                // doing, it is not something to end from here.
+                log.notice("An instance would not quit. Standing down rather than forcing it.")
+                return false
+            }
             return true
         }
     }
@@ -76,7 +92,7 @@ enum SingleInstanceGuard {
     /// `launchIfNeeded: false` is load-bearing — the default would have this
     /// launch a fourth Snitt while deciding what to do about the second.
     private static func incumbentIsRecording() -> Bool? {
-        let client = AutomationClient(timeout: 3, launchIfNeeded: false)
+        let client = AutomationClient(timeout: probeTimeout, launchIfNeeded: false)
         let answer = Locked<Bool?>(nil)
         let done = DispatchSemaphore(value: 0)
         Task.detached {
@@ -87,33 +103,32 @@ enum SingleInstanceGuard {
         // Blocking the main thread, on purpose: nothing is on screen yet, and
         // every branch below this depends on the answer. Bounded well above the
         // client's own 3-second timeout so this cannot outlive it.
-        _ = done.wait(timeout: .now() + 5)
+        _ = done.wait(timeout: .now() + probeTimeout + 2)
         return answer.get()
     }
 
-    /// Quit politely, then insist.
+    /// Ask an idle incumbent to quit. `false` if it did not.
     ///
     /// `terminate()` posts a Quit event, which is what lets the incumbent flush
-    /// pending saves on the way out. It can also be refused or simply ignored
-    /// by an app that is wedged — and a wedged incumbent holding the socket is
-    /// precisely the state that must not be allowed to persist — so a refusal
-    /// escalates. Safe by then: this branch is only reached when the incumbent
-    /// is known not to be recording, or could not be asked at all.
-    private static func retire(_ instance: NSRunningApplication) {
+    /// pending saves on the way out. It is the only thing tried.
+    ///
+    /// **No force.** An earlier version escalated to `forceTerminate()` after
+    /// the grace period, on the reasoning that this branch is only reached for
+    /// an incumbent known to be idle. That knowledge has a shelf life: the
+    /// probe answered some seconds ago, and a recording can begin in between —
+    /// a hotkey, a person, the other agent on the machine. SIGKILL on a
+    /// recording app loses the take outright, and it would do so precisely when
+    /// the app was too busy to take the polite exit, which is what being mid
+    /// capture looks like. Nothing here is worth that: if the incumbent will
+    /// not go, the NEWCOMER goes instead.
+    private static func retire(_ instance: NSRunningApplication) -> Bool {
         instance.terminate()
         let deadline = Date().addingTimeInterval(gracePeriod)
         while Date() < deadline {
-            if instance.isTerminated { return }
+            if instance.isTerminated { return true }
             Thread.sleep(forTimeInterval: 0.1)
         }
-        log.notice("An instance ignored Quit; forcing it.")
-        instance.forceTerminate()
-        // Give the kernel a moment to reap it, so the socket this process is
-        // about to bind is not still held.
-        let forced = Date().addingTimeInterval(2)
-        while Date() < forced && !instance.isTerminated {
-            Thread.sleep(forTimeInterval: 0.1)
-        }
+        return false
     }
 }
 

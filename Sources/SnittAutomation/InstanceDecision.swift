@@ -35,24 +35,29 @@ extension InstanceDecision {
     ///   - incumbentIsRecording: what the incumbent said when asked, or `nil`
     ///     when it could not be reached.
     ///
-    /// The newcomer wins by default, because the reason a second copy is being
-    /// launched is nearly always that it is the one somebody wants: a fresh
-    /// build, a newly installed version. The single exception is a recording in
-    /// flight. Quitting then would lose a take with no way back —
-    /// `applicationShouldTerminate` flushes pending SAVES, and has nothing to
-    /// say about an `AVAssetWriter` mid-file — so a recording outranks whatever
-    /// the newcomer was for.
+    /// The newcomer wins, but only against an incumbent that has SAID it is
+    /// idle. A fresh build is nearly always the copy somebody wants, so
+    /// standing down by default would break the rebuild-and-look loop this
+    /// guard has to keep working.
     ///
-    /// **An unreachable incumbent is replaced, not deferred to.** That is the
-    /// uncomfortable case and it was decided deliberately: an instance that
-    /// will not answer its own socket cannot be stopped, inspected or recovered
-    /// by any frontend, and deferring to it means every later launch stands
-    /// down too. The machine is then stuck with an icon nobody can use, which
-    /// is the state this whole guard exists to end. Taking over is the only
-    /// choice that terminates.
+    /// **Silence is not consent.** An earlier version read an unreachable
+    /// incumbent as fair game, reasoning that an instance which will not answer
+    /// its own socket cannot be stopped or inspected anyway, so taking over was
+    /// the only branch that terminated. That reasoning weighed the wrong risk.
+    /// The probe asks the recorder actor through the main actor, and during
+    /// real capture — with an editor window open and frames arriving — both are
+    /// busy; "no answer in three seconds" describes a working app under load
+    /// far more often than a wedged one. And the cost of guessing wrong is not
+    /// symmetric. Guess "idle" about a recording app and the take is gone:
+    /// terminating mid-capture leaves no sidecars and a `capture.mov` with no
+    /// moov atom, measured, unopenable. Guess "busy" about a wedged one and a
+    /// person quits it from the menu bar, which takes a click.
+    ///
+    /// So the rule is the conservative one: **never terminate an instance that
+    /// has not confirmed it is idle.**
     public static func decide(otherInstancesRunning: Bool,
                               incumbentIsRecording: Bool?) -> InstanceDecision {
         guard otherInstancesRunning else { return .proceed }
-        return incumbentIsRecording == true ? .deferToIncumbent : .replaceIncumbent
+        return incumbentIsRecording == false ? .replaceIncumbent : .deferToIncumbent
     }
 }
