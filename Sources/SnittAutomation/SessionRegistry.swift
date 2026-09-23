@@ -30,7 +30,8 @@ public actor SessionRegistry {
             throw AutomationError(
                 code: .alreadyRecording,
                 message: "A recording is already in progress.",
-                hint: "Stop it first with `snitt record stop`, or check `snitt status`.")
+                hint: "Check `snitt status` for whose it is, and stop it only "
+                    + "if the session id it reports is one of yours.")
         }
         let id = UUID().uuidString
         session = Session(id: id, startedAt: now, maxDuration: maxDuration)
