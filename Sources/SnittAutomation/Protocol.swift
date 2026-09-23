@@ -775,7 +775,24 @@ public enum AutomationResponse: Codable, Sendable, Equatable {
     /// that predates this field still decodes. That proof is required rather
     /// than assumed, because `.stopped`'s "v2 has never shipped" reasoning
     /// expired once v2 shipped.
-    case screenshotTaken(path: String, timeSeconds: Double, imagePNG: Data? = nil)
+    /// `marked` says whether the frame also became a waypoint a reviewer can
+    /// jump to, which now depends on whether the caller named it. The frontends
+    /// used to assert a marker unconditionally, which was true while every
+    /// screenshot made one and became a lie the moment that stopped.
+    ///
+    /// **`Optional`, not a defaulted `Bool`.** A default value in the case's
+    /// declaration does NOT make the synthesized `Codable` tolerate a missing
+    /// key — only `Optional` does — so `marked: Bool = true` decoded every
+    /// older app's screenshot response as `keyNotFound` and broke the verb
+    /// outright. `ResponseWireCompatibilityTests` caught it, which is the
+    /// entire reason that suite exists.
+    ///
+    /// `nil` therefore means "this app does not say", and every reader must
+    /// resolve it to TRUE: an app old enough to omit the key is one that marked
+    /// every screenshot. Reading absent as `false` would report "no marker was
+    /// placed" about an app that placed one.
+    case screenshotTaken(path: String, timeSeconds: Double, imagePNG: Data? = nil,
+                         marked: Bool? = nil)
     case exported(ExportManifest)
     case diagnosticsWritten(DiagnosticsReport)
     /// D107. `transcriptRead`, not `transcript`, because the request case is

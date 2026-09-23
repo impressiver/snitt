@@ -294,10 +294,26 @@ public actor Recorder {
         // from disk: "what I saw" and "what was archived" must be one image,
         // and the frontend cannot open the bundle anyway (§4.9).
         let inlinePNG = inline ? try ScreenshotWriter.inlinePNGData(frame.image) : nil
-        // The marker carries the offset the FRAME sits at, not "now" — that is
-        // the whole correlation guarantee.
-        await eventLog.add(at: offset, kind: .marker,
-                           label: label ?? "Screenshot")
+        // A marker ONLY when the caller named one.
+        //
+        // A marker is reviewer-facing: it is a chapter on export, a jump point
+        // in the editor, and a row in its marker list. An agent looks at the
+        // screen to check its own work, and it looks often — so stamping every
+        // look put a column of identical "Screenshot" waypoints through demos
+        // whose markers are meant to be the steps a reviewer jumps between. The
+        // `?? "Screenshot"` default was the tell: a waypoint nobody named is a
+        // waypoint nobody asked for.
+        //
+        // D53's correlation guarantee is untouched, because it never rested on
+        // the marker. The offset comes back from this call and the PNG's
+        // filename IS that offset, both taken from the same frame — so "what I
+        // saw" and "when I saw it" still cannot drift. What the label now buys
+        // is the reviewer-facing waypoint, which is a thing worth asking for.
+        if let label {
+            // Still the FRAME's offset, not "now" — the drift D53 exists to
+            // prevent is in `mark`'s IPC timing, and this path never had it.
+            await eventLog.add(at: offset, kind: .marker, label: label)
+        }
         return (url, offset, inlinePNG)
     }
 

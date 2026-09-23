@@ -1616,7 +1616,11 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         switch await coordinator.screenshotForAgent(sessionID: sessionID, label: label,
                                                     inline: inline) {
         case .taken(let path, let timeSeconds, let inlinePNG):
-            return .screenshotTaken(path: path, timeSeconds: timeSeconds, imagePNG: inlinePNG)
+            // A marker only where there is a label, matching what the recorder
+            // actually wrote. Derived from the same input the recorder branches
+            // on, so the two cannot disagree.
+            return .screenshotTaken(path: path, timeSeconds: timeSeconds,
+                                    imagePNG: inlinePNG, marked: label != nil)
         case .noFrameYet:
             return .failure(AutomationError(
                 code: .busy,
