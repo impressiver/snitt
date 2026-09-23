@@ -372,9 +372,14 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                                             appVersion: AppVersion.current))
 
         case .status:
+            // `pause` is nil exactly when NOTHING is recording — agent session
+            // or not. That is the only way this surface can see a recording it
+            // did not start, and without it `status` answered "not recording"
+            // while a person's capture was running.
             let pause = await coordinator.pauseStateForAgent()
             return await statusResponse(paused: pause?.paused ?? false,
-                                        pausedSeconds: pause?.pausedSeconds)
+                                        pausedSeconds: pause?.pausedSeconds,
+                                        somethingIsRecording: pause != nil)
 
         case .listTargets:
             return await listTargets()
@@ -1450,9 +1455,27 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
     /// pre-flight report that answered from a snapshot taken at launch would be
     /// confidently wrong at exactly the moment it mattered.
     private func statusResponse(paused: Bool,
-                                pausedSeconds: Double?) async -> AutomationResponse {
+                                pausedSeconds: Double?,
+                                somethingIsRecording: Bool = false) async -> AutomationResponse {
         var info = await registry.current(now: now(), paused: paused,
                                           pausedSeconds: pausedSeconds)
+
+        // The registry only knows AGENT sessions, so `current()` answered
+        // "not recording" for a capture a person started from the menu bar or
+        // the hotkey. An agent then got `already_recording` from a start it
+        // had just been told was safe, checked status as the hint told it to,
+        // and was told again that nothing was running. Contradictory, and
+        // nothing it could act on.
+        //
+        // Reported with NO session id, which is the honest shape: there is a
+        // recording, and it is not this caller's to stop.
+        if somethingIsRecording, info.sessionID == nil {
+            info.recording = true
+            info.initiator = Initiator.human.rawValue
+        } else if info.sessionID != nil {
+            info.initiator = Initiator.agent.rawValue
+        }
+
         let current = settings()
         info.consent = ConsentInfo(grant: current.unattendedGrant,
                                    fullDisplay: current.fullDisplayAllowed,
@@ -1726,8 +1749,16 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
             return AutomationError(
                 code: .alreadyRecording,
                 message: "A recording is already in progress.",
-                hint: "Stop it first with `snitt record stop`, or check `snitt status`. "
-                    + "It may have been started by a person from the menu bar.")
+                // NOT "stop it first". That advice is what made two agents on
+                // one machine destructive: `snitt status` hands out the running
+                // session's id, `stop` takes any id it is given, and an agent
+                // following this hint ended another agent's recording in three
+                // commands. `status` now says who owns it, so the honest
+                // instruction is to look before acting.
+                hint: "Check `snitt status`: it says whether an agent or a "
+                    + "person started this. Stop it only if the session id it "
+                    + "reports is one of yours. Otherwise wait, or record a "
+                    + "different target.")
         case .failed(let message, .ambiguousTarget):
             // Its own arm for the same reason `targetTooSmall` has one: the
             // generic "the application may not be running" hint is the opposite

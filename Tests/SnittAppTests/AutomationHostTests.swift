@@ -55,6 +55,12 @@ actor FakeCoordinator: AgentRecordingControlling {
     /// agent session on ANY stop, whoever initiated it.
     func humanStops() { activeSession = nil }
 
+    /// A capture running that the AGENT SURFACE never started — a person's
+    /// hotkey press. The registry stays empty, which is the whole point: it
+    /// only ever knew agent sessions, so `status` used to answer "not
+    /// recording" while this was on screen.
+    func simulateHumanRecordingForTesting() { activeSession = "a person's recording" }
+
     func startForAgent(sessionID: String,
                        reference: TargetReference,
                        git: GitContext?,
@@ -68,7 +74,27 @@ actor FakeCoordinator: AgentRecordingControlling {
 
     func stopForAgent(sessionID: String) async -> AgentStopResult {
         stopCalls.append(sessionID)
-        if let stopOverride { return stopOverride }
+        if let stopOverride {
+            // The override used to return HERE, leaving `activeSession` set —
+            // which contradicts the real coordinator, whose `stopRecording()`
+            // clears `active` BEFORE `recorder.stop()` can throw. The
+            // watchdog-failure test says so in its own comment: an unfinalized
+            // recording is still a stopped recording.
+            //
+            // Nothing read that state through this double until `status` began
+            // consulting `pauseStateForAgent()`, so the divergence sat here
+            // invisibly and the fake would have vouched for the opposite of
+            // what production does.
+            //
+            // `.busy` is the exception and keeps the session: that outcome means
+            // the stop never happened at all, which is exactly what
+            // `expiryWhileBusyPreservesTheSession` pins.
+            switch stopOverride {
+            case .stopped, .failed: activeSession = nil
+            case .busy, .notCurrentSession: break
+            }
+            return stopOverride
+        }
         guard activeSession == sessionID else { return .notCurrentSession }
         activeSession = nil
         return .stopped(URL(fileURLWithPath: "/tmp/agent-\(sessionID).snitt"), copied: true, health: nil)
@@ -1741,4 +1767,94 @@ func aQuitWithNoSessionIsSilent() async throws {
 
     let contents = (try? String(contentsOf: auditLog, encoding: .utf8)) ?? ""
     #expect(contents.isEmpty, "quitting an idle Snitt wrote an audit record: \(contents)")
+}
+
+// MARK: - Two agents, or an agent and a person, on one Snitt
+//
+// The axis this project's own refinement notes flagged as never examined. The
+// recording itself was already safe: `SessionRegistry` refuses a second `open`
+// and the coordinator refuses a second `Recorder`. What was not safe was what
+// Snitt TOLD the second caller.
+//
+// Measured on a real build: agent A records; agent B calls `snitt status` and
+// is handed A's session id; B tries to start and is told "Stop it first with
+// `snitt record stop`"; B does exactly that and ends A's recording. Three
+// commands, every one of them the documented thing to do.
+
+@MainActor
+@Test("A recording nobody on this surface started is still reported as recording")
+func aHumansRecordingIsVisibleToAnAgent() async throws {
+    // `SessionRegistry` only knows AGENT sessions, so `current()` answered "not
+    // recording" while a person's capture was running. An agent then got
+    // `already_recording` from a start, checked status as the hint told it to,
+    // and was told nothing was running — two answers that cannot both be true.
+    let coordinator = FakeCoordinator()
+    await coordinator.simulateHumanRecordingForTesting()
+    let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
+
+    guard case .status(let info) = await host.handle(.status, caller: nil) else {
+        Issue.record("status did not answer"); return
+    }
+    #expect(info.recording, "a recording this surface did not start read as idle")
+    #expect(info.sessionID == nil,
+            "an id here would hand out a handle to a session that is not the caller's")
+    #expect(info.initiator == "human", "got \(String(describing: info.initiator))")
+}
+
+@MainActor
+@Test("An agent's own session keeps its id, and says it is an agent's")
+func anAgentsOwnSessionStillReportsItsID() async throws {
+    // THE CONTROL. A change that reported everything as a person's would pass
+    // the test above and break every ordinary agent loop, which reads its own
+    // id back from status after a restart.
+    let coordinator = FakeCoordinator()
+    let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
+    let started = await host.handle(startBody(), caller: nil)
+    guard case .started(let sessionID, _, _) = started else {
+        Issue.record("did not start: \(started)"); return
+    }
+
+    guard case .status(let info) = await host.handle(.status, caller: nil) else {
+        Issue.record("status did not answer"); return
+    }
+    #expect(info.recording)
+    #expect(info.sessionID == sessionID)
+    #expect(info.initiator == "agent", "got \(String(describing: info.initiator))")
+}
+
+@MainActor
+@Test("An idle Snitt still reports idle, and claims no initiator")
+func idleStatusIsUnchanged() async throws {
+    // The second control, and it catches the obvious wrong fix: reporting
+    // `recording: true` whenever the registry happens to be empty.
+    let host = makeHost(coordinator: FakeCoordinator(), recorder: StateRecorder())
+    guard case .status(let info) = await host.handle(.status, caller: nil) else {
+        Issue.record("status did not answer"); return
+    }
+    #expect(!info.recording)
+    #expect(info.sessionID == nil)
+    #expect(info.initiator == nil, "idle must claim no initiator at all")
+}
+
+@MainActor
+@Test("The refusal no longer tells an agent to stop somebody else's recording")
+func theRefusalDoesNotAdviseHijacking() async throws {
+    // The hint IS the defect. `stop` taking any id it is given is deliberate —
+    // the CLI is a fresh process per command, so the session id is the
+    // capability and process ownership is impossible — which makes what Snitt
+    // SAYS the only control there is.
+    let coordinator = FakeCoordinator()
+    let host = makeHost(coordinator: coordinator, recorder: StateRecorder())
+    _ = await host.handle(startBody(), caller: nil)
+
+    let second = await host.handle(startBody(), caller: nil)
+    guard case .failure(let error) = second else {
+        Issue.record("a second start was allowed: \(second)"); return
+    }
+    #expect(error.code == .alreadyRecording)
+    let hint = error.hint ?? ""
+    #expect(!hint.contains("Stop it first"),
+            "still advising an agent to end a recording that may not be its own: \(hint)")
+    #expect(hint.contains("status"),
+            "the remedy must point somewhere that says whose it is: \(hint)")
 }
