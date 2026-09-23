@@ -441,19 +441,25 @@ public enum MCPBridge {
                 ]),
             ToolDefinition(
                 name: "snitt_screenshot",
-                description: "Save the frame the recording is currently on, and "
-                           + "mark that instant. Use it to SEE the window you are "
-                           + "recording. You cannot watch the video, and this is "
-                           + "the only way to check the demo looks right while it "
-                           + "is still fixable. The image and its marker come from "
-                           + "the same frame, so 'what I saw' and 'what I said "
-                           + "about it' share one timestamp. Works while paused.",
+                description: "Save the frame the recording is currently on. Use "
+                           + "it to SEE the window you are recording. You cannot "
+                           + "watch the video, and this is the only way to check "
+                           + "the demo looks right while it is still fixable. "
+                           + "Looking leaves no trace in the recording: pass a "
+                           + "label only when the moment is one a reviewer should "
+                           + "be able to jump to. The offset comes back either "
+                           + "way, and it is the frame's own, so 'what I saw' and "
+                           + "'when I saw it' cannot drift. Works while paused.",
                 inputSchema: [
                     "type": "object",
                     "properties": [
                         "sessionId": ["type": "string"],
                         "label": ["type": "string",
-                                  "description": "What this moment shows. Defaults to \"Screenshot\"."],
+                                  "description": "Name this moment AND mark it, so a "
+                                      + "reviewer can jump to it. Omit it to just "
+                                      + "look: checking your own work is not a step "
+                                      + "in the demo, and an unnamed marker per "
+                                      + "glance buries the steps that are."],
                         "inline": [
                             "type": "boolean",
                             "description": "Return the frame ITSELF, not just a path to it. "

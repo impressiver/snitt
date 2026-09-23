@@ -346,9 +346,15 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         previous?.cancel()
     }
 
-    func start() {
+    /// Throws rather than swallowing, because one of the failures means
+    /// something specific: `ServerError.alreadyServing` says another Snitt owns
+    /// the channel, and the right answer to that is for this one to stand down
+    /// — which it cannot do if the error is discarded. The `try?` that used to
+    /// be here is why a duplicate instance ran on happily with no agent surface
+    /// and nothing said so.
+    func start() throws {
         let server = AutomationServer(socketURL: SocketPath.url(), handler: self)
-        try? server.start()
+        try server.start()
         self.server = server
     }
 
@@ -1629,7 +1635,11 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
         switch await coordinator.screenshotForAgent(sessionID: sessionID, label: label,
                                                     inline: inline) {
         case .taken(let path, let timeSeconds, let inlinePNG):
-            return .screenshotTaken(path: path, timeSeconds: timeSeconds, imagePNG: inlinePNG)
+            // A marker only where there is a label, matching what the recorder
+            // actually wrote. Derived from the same input the recorder branches
+            // on, so the two cannot disagree.
+            return .screenshotTaken(path: path, timeSeconds: timeSeconds,
+                                    imagePNG: inlinePNG, marked: label != nil)
         case .noFrameYet:
             return .failure(AutomationError(
                 code: .busy,

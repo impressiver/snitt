@@ -34,11 +34,17 @@ struct ResponseWireCompatibilityTests {
         let decoded = try JSONDecoder().decode(
             AutomationResponse.self,
             from: Data(Self.oldScreenshotPayload.utf8))
-        guard case .screenshotTaken(let path, let time, _) = decoded else {
+        guard case .screenshotTaken(let path, let time, _, let marked) = decoded else {
             Issue.record("did not decode as screenshotTaken: \(decoded)"); return
         }
         #expect(path == "/tmp/x.snitt/shot-1.png")
         #expect(time == 1.5)
+        // An app that predates `marked` made a marker for every screenshot, so
+        // the absent key has to read as `true`. Defaulting it to `false` would
+        // have a new client tell its user "no marker was placed" about an app
+        // that placed one — a confident wrong answer, which is the failure
+        // mode this whole suite exists to catch.
+        #expect(marked == nil, "the key must be absent, not defaulted, or older apps fail to decode")
     }
 
     @Test("A payload carrying an unknown extra field still decodes")
@@ -50,7 +56,7 @@ struct ResponseWireCompatibilityTests {
         let future = #"{"screenshotTaken":{"path":"/tmp/x.png","timeSeconds":2,"somethingNew":"x"}}"#
         let decoded = try JSONDecoder().decode(
             AutomationResponse.self, from: Data(future.utf8))
-        guard case .screenshotTaken(_, let time, _) = decoded else {
+        guard case .screenshotTaken(_, let time, _, _) = decoded else {
             Issue.record("did not decode as screenshotTaken: \(decoded)"); return
         }
         #expect(time == 2)

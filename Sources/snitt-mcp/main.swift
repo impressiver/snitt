@@ -192,7 +192,7 @@ func structuredContent(_ response: AutomationResponse) -> [String: Any]? {
         guard let data = try? JSONEncoder().encode(estimates),
               let array = try? JSONSerialization.jsonObject(with: data) else { return nil }
         return ["estimates": array]
-    case .screenshotTaken(let path, let timeSeconds, _):
+    case .screenshotTaken(let path, let timeSeconds, _, _):
         // The image goes in a content BLOCK, not in here: `structuredContent`
         // is for values an agent computes with, and base64 pixels are neither
         // that nor something worth duplicating in two places in one response.
@@ -350,15 +350,35 @@ func describe(_ response: AutomationResponse) -> String {
         let chapters = report.markers
             .map { String(format: "%.0fs %@", $0.timeSeconds, $0.label ?? "(unlabelled)") }
             .joined(separator: ", ")
-        return "\(Int(report.durationSeconds ?? 0))s recording, "
+        // The EDIT is stated whenever there is one. This line used to give
+        // only the footage length, so a bundle already cut and cropped read
+        // exactly like an untouched one — and an agent that believed it went
+        // and made the same cut twice.
+        var edited = ""
+        let applied = report.cuts ?? []
+        if !applied.isEmpty {
+            edited += ", \(applied.count) cut\(applied.count == 1 ? "" : "s") already applied "
+                    + "leaving \(Int(report.outputDurationSeconds ?? 0))s"
+        }
+        if report.crop != nil { edited += ", already cropped" }
+        return "\(Int(report.durationSeconds ?? 0))s recording\(edited), "
              + "\(report.markerCount) markers, \(report.inputEventCount) input events"
              + (chapters.isEmpty ? "" : ": \(chapters)")
-    case .screenshotTaken(let path, let timeSeconds, _):
+    case .screenshotTaken(let path, let timeSeconds, _, let marked):
         // The offset is in the text, not only the filename: an agent quoting
         // the demo needs to say WHEN, and reading it back out of a path is
         // work it should not have to do.
-        return String(format: "Screenshot of the recording at %.2fs, saved to %@. "
-                    + "A marker was placed at the same instant.", timeSeconds, path as NSString)
+        //
+        // What happened to the marker is reported rather than asserted. This
+        // sentence used to promise one unconditionally, which was true while
+        // every screenshot made one and became false the moment that stopped.
+        // `?? true`: an app that does not carry the key is one old enough to
+        // have marked every screenshot. See `screenshotTaken`'s doc comment.
+        let note = (marked ?? true)
+            ? "A marker was placed at the same instant."
+            : "No marker was placed: pass a label when the moment is one to jump to."
+        return String(format: "Screenshot of the recording at %.2fs, saved to %@. %@",
+                      timeSeconds, path as NSString, note as NSString)
     case .estimated(let estimates):
         guard let first = estimates.first else { return "No resolutions available." }
         // Every option in one answer, and the caveat stated once at the top
@@ -505,7 +525,7 @@ while let line = readLine(strippingNewline: true) {
                     result(id: id, toolResult(
                         diagnosticsSummary(report, outputPath: diagnosticsOutputPath),
                         structured: structuredContent(response)))
-                } else if case .screenshotTaken(_, _, let png) = response, let png {
+                } else if case .screenshotTaken(_, _, let png, _) = response, let png {
                     result(id: id, toolResultWithImage(
                         describe(response),
                         structured: structuredContent(response),

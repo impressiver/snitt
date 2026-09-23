@@ -184,7 +184,8 @@ snitt: record a window and hand back a .snitt bundle
                                           are pixels of the named frame, or
                                           fractions of the window without one
   snitt record screenshot <session> [--label "..."]
-                                          save the current frame, marked
+                                          save the current frame; --label also
+                                          drops a marker a reviewer can jump to
   snitt record pause <session>            stop filming without ending
   snitt record resume <session>           start filming again
   snitt setup [--apply]                   register the MCP server with agents
@@ -498,7 +499,16 @@ do {
         note("Marker placed at \(timeSeconds)s")
     case .inspected(let report):
         emit(report)
-        note("\(Int(report.durationSeconds ?? 0))s · \(report.markerCount) markers "
+        // The JSON above carries the edit in full; this line says it exists,
+        // so a person skimming stderr sees that the bundle is not untouched.
+        var edited = ""
+        let applied = report.cuts ?? []
+        if !applied.isEmpty {
+            edited += " · \(applied.count) cut\(applied.count == 1 ? "" : "s") "
+                    + "leaving \(Int(report.outputDurationSeconds ?? 0))s"
+        }
+        if report.crop != nil { edited += " · cropped" }
+        note("\(Int(report.durationSeconds ?? 0))s\(edited) · \(report.markerCount) markers "
            + "· \(report.inputEventCount) input events")
     case .recordings(let list):
         emit(list)
@@ -540,7 +550,7 @@ do {
     case .trimmed(let summary):
         emit(summary)
         note("Kept \(Int(summary.keptSeconds))s, cut \(Int(summary.cutSeconds))s")
-    case .screenshotTaken(let path, let timeSeconds, _):
+    case .screenshotTaken(let path, let timeSeconds, _, _):
         emitObject(["path": path, "timeSeconds": timeSeconds])
         note("Screenshot at \(String(format: "%.2f", timeSeconds))s → \(path)")
     case .cropped(let summary):

@@ -204,6 +204,21 @@ final class EditorTimelineState: ObservableObject {
     /// timeline (whole-branch review F1).
     var onEditRejected: ((Error) -> Void)?
 
+    /// Notices that the bundle changed underneath this window.
+    ///
+    /// W7 made the window the one writer and routed agent edits into it, which
+    /// is still right and is not everything: a person can edit `events.json` in
+    /// a text editor, a script can rewrite `edit.json`, another machine can
+    /// sync one in. The window used to never find out, and had to be closed and
+    /// reopened before it would re-read.
+    private var bundleWatcher: BundleWatcher?
+    private var isAskingAboutConflict = false
+
+    /// Asks the person which version wins, when both disk and this window have
+    /// changes and they disagree. Injected so the reconciliation can be
+    /// exercised without a panel in front of it.
+    var onDiskConflict: ((@escaping (Bool) -> Void) -> Void)?
+
     init(controller: PreviewController, edl: EditDecisionList, events: [LoggedEvent]) {
         self.controller = controller
         // Every document the editor opens comes through here, whatever the
@@ -2202,6 +2217,158 @@ final class EditorTimelineState: ObservableObject {
         applyAndSave(.saveOnly)
     }
 
+    // MARK: - The bundle changing underneath this window
+    /// Puts this window into the state it is in between applying an edit and
+    /// that edit reaching disk, so reconciliation can be tested against it.
+    ///
+    /// That window is narrow in practice — the editor persists every mutation —
+    /// but it is exactly when a concurrent writer does the damage, and it is
+    /// not reachable from the public gestures because every one of them saves.
+    func setUnsavedEventsForTesting(_ value: [LoggedEvent]) {
+        events = value
+    }
+
+
+    /// Begins noticing external writes. Called by the WINDOW when it opens,
+    /// never from `init`.
+    ///
+    /// The distinction is not cosmetic. Starting it in `init` gave a watcher to
+    /// every `EditorTimelineState` ever constructed, including the hundreds a
+    /// test suite makes and drops — each one an FSEvent stream and a dispatch
+    /// queue that nothing ever stopped, firing reconciliations into states the
+    /// test had finished with. It hung the suite outright. A watcher belongs to
+    /// something with a lifetime somebody manages, and that is the window.
+    func startWatchingTheBundle() {
+        guard bundleWatcher == nil else { return }
+        bundleWatcher = BundleWatcher(directory: controller.snittBundle.url) { [weak self] in
+            self?.reconcileWithDisk()
+        }
+    }
+
+    func stopWatchingTheBundle() {
+        bundleWatcher?.stop()
+        bundleWatcher = nil
+    }
+
+    /// Re-read the sidecars and take what this window has no claim to.
+    ///
+    /// Per FILE, deliberately. A hand-edited `events.json` is adopted even
+    /// while the EDL carries an unsaved cut, because the two are independent
+    /// documents and blocking one on the other would make the whole thing
+    /// refuse to update over an unrelated edit.
+    ///
+    /// Internal rather than private so a test can drive it without a real
+    /// filesystem event, which is timing-dependent and would flake.
+    func reconcileWithDisk() {
+        // A save in flight makes every comparison here a lie in the making:
+        // `live` has moved, `lastSaved` has not yet, and disk is somewhere
+        // between the two. Judging now reports a conflict with ourselves — in
+        // the test suite, where fixtures write sidecars while saves are still
+        // settling, that is the COMMON case and it put a modal dialog on screen
+        // asking a person who was not there to choose. Waiting costs nothing:
+        // the answer is only meaningful once the writes have landed.
+        guard outstandingSaves == 0 else {
+            Task { @MainActor [weak self] in
+                await self?.waitForPendingSave()
+                self?.reconcileWithDisk()
+            }
+            return
+        }
+        reconcileEDLWithDisk()
+        reconcileEventsWithDisk()
+    }
+
+    private func reconcileEDLWithDisk() {
+        // A sidecar that will not decode is left alone. It is either mid-write
+        // or corrupt, and neither is something to act on by discarding what the
+        // window is holding — the next event re-derives the answer.
+        guard let onDisk = try? EditDecisionList.read(from: controller.snittBundle) else { return }
+        switch DiskReconciliation.decide(onDisk: onDisk, live: edl, lastSaved: lastSavedEDL) {
+        case .inSync:
+            return
+        case .adopt:
+            adoptEDL(onDisk)
+        case .conflict:
+            askAboutConflict { [weak self] reload in
+                guard reload else { return }
+                self?.adoptEDL(onDisk)
+            }
+        }
+    }
+
+    private func reconcileEventsWithDisk() {
+        guard let onDisk = try? EventLog.read(from: controller.snittBundle).events else { return }
+        switch DiskReconciliation.decide(onDisk: onDisk, live: events, lastSaved: lastSavedEvents) {
+        case .inSync:
+            return
+        case .adopt:
+            adoptEvents(onDisk)
+        case .conflict:
+            askAboutConflict { [weak self] reload in
+                guard reload else { return }
+                self?.adoptEvents(onDisk)
+            }
+        }
+    }
+
+    /// Takes the disk version WITHOUT writing it back.
+    ///
+    /// The distinction that matters: `applyAndSave` rebuilds and then persists,
+    /// which here would write the file we just read and mark this window as the
+    /// author of somebody else's edit. `controller.apply` rebuilds only.
+    /// `lastSaved` moves with `edl`, because disk is now what was last saved —
+    /// leaving it behind would make the very next reconciliation call this an
+    /// unsaved change and offer to undo it.
+    private func adoptEDL(_ onDisk: EditDecisionList) {
+        let events = self.events
+        // Chained onto `pendingSaveTask`, not fired off on its own. An adopt
+        // that raced an in-flight save would rebuild the composition from the
+        // disk version while the save was still applying the window's version,
+        // and whichever finished last would win — the two-writers outcome in
+        // miniature, inside one window.
+        let previousSave = pendingSaveTask
+        outstandingSaves += 1
+        pendingSaveTask = Task { @MainActor [weak self] in
+            await previousSave?.value
+            guard let self else { return }
+            defer { self.outstandingSaves -= 1 }
+            do {
+                try await self.controller.apply(edl: onDisk, events: events)
+                self.edl = onDisk
+                self.lastSavedEDL = onDisk
+            } catch {
+                // The composition refused it. Say so rather than half-adopting:
+                // the window is still showing the edit it had, which is a
+                // truthful state, and `onEditRejected` is the path a person
+                // already reads refusals from.
+                self.onEditRejected?(error)
+            }
+        }
+    }
+
+    private func adoptEvents(_ onDisk: [LoggedEvent]) {
+        events = onDisk
+        lastSavedEvents = onDisk
+        controller.refreshJumpPoints(events: onDisk)
+    }
+
+    /// One prompt at a time. A burst of writes must not stack panels.
+    private func askAboutConflict(_ answer: @escaping (Bool) -> Void) {
+        guard !isAskingAboutConflict else { return }
+        isAskingAboutConflict = true
+        guard let onDiskConflict else {
+            // No one to ask, so keep what the window has. Never the other way
+            // round: silently discarding unsaved work is the outcome this whole
+            // path exists to avoid.
+            isAskingAboutConflict = false
+            return
+        }
+        onDiskConflict { [weak self] reload in
+            self?.isAskingAboutConflict = false
+            answer(reload)
+        }
+    }
+
     private func applyAndSave(_ application: EDLApplication = .rebuild) {
         // Marked here, synchronously, NOT inside the save task below. The EDL
         // has already changed by the time this is called, and a user who cuts
@@ -3510,6 +3677,10 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         // window controller owns the presentation, exactly as it does for
         // an export failure.
         state.onEditRejected = { [weak self] in self?.presentEditRejection($0) }
+        state.onDiskConflict = { [weak self] answer in self?.askAboutDiskConflict(answer) }
+        // Watches for as long as this window is open, and no longer — see
+        // `startWatchingTheBundle`.
+        state.startWatchingTheBundle()
     }
 
     /// Test seam: an alert here runs modal and would hang a test target
@@ -3543,6 +3714,48 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         alert.runModal()
     }
 
+    /// The bundle changed on disk AND this window has unsaved edits.
+    ///
+    /// A question rather than a policy, because neither answer is safe to
+    /// assume: reloading destroys work the person did here, and keeping theirs
+    /// means the next save overwrites whatever the other writer did. Defaults
+    /// to keeping what is in the window, so a dismissed panel loses nothing.
+    private func askAboutDiskConflict(_ answer: @escaping (Bool) -> Void) {
+        Self.log.notice("The bundle changed on disk while this window had unsaved edits.")
+        if let observe = onDiskConflictForTesting {
+            observe(answer)
+            return
+        }
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "This recording changed on disk."
+        alert.informativeText = "Something else edited it while you had unsaved changes here. "
+            + "Reloading replaces your changes with what is in the file."
+        // First button is the default, and the safe answer is the default.
+        alert.addButton(withTitle: "Keep My Changes")
+        alert.addButton(withTitle: "Reload from Disk")
+        // A SHEET on the document, not `runModal()`.
+        //
+        // This prompt is raised by a filesystem event, not by a gesture —
+        // nobody asked for it and it can arrive at any moment. `runModal()`
+        // blocks the main run loop until somebody clicks, which in a headless
+        // process is forever: it hung the test suite with a dialog on a fixture
+        // window. The same shape in the real app would freeze a recording in
+        // progress. A sheet belongs to the window the conflict is about,
+        // answers asynchronously, and blocks nothing else.
+        alert.beginSheetModal(for: window) { response in
+            answer(response == .alertSecondButtonReturn)
+        }
+    }
+
+    /// Set by a test so the conflict can be answered without a panel.
+    var onDiskConflictForTesting: ((@escaping (Bool) -> Void) -> Void)?
+
+    /// Re-reads the bundle's sidecars, adopting anything this window has no
+    /// unsaved claim to. Exposed so `DocumentOpener` can refresh a window it is
+    /// about to re-show.
+    func reconcileWithDisk() { state.reconcileWithDisk() }
+
     /// Brings the window to the front.
     public func show() {
         if !isShown {
@@ -3572,6 +3785,9 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
     private func teardown() {
         guard isShown else { return }
         isShown = false
+        // Nothing to reconcile into once the window is gone, and a live
+        // FSEvent stream per closed document is a leak.
+        state.stopWatchingTheBundle()
         // A closed window whose player keeps playing leaves audio coming
         // from a window the user can no longer see.
         controller.pause()
