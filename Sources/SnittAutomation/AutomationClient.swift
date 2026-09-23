@@ -66,26 +66,11 @@ public struct AutomationClient: Sendable {
     /// Whether anything is listening on `path` right now.
     ///
     /// Connect-and-close, deliberately: it is the only check that distinguishes
-    /// a live server from the socket file a quit left behind.
+    /// a live server from the socket file a quit left behind. Delegated to
+    /// `SocketLiveness` so the server asks the identical question — it used to
+    /// ask a different one and got a different, wrong answer.
     static func canConnect(to path: String) -> Bool {
-        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { return false }
-        defer { close(fd) }
-
-        var addr = sockaddr_un()
-        addr.sun_family = sa_family_t(AF_UNIX)
-        let maxLength = MemoryLayout.size(ofValue: addr.sun_path)
-        guard path.utf8.count < maxLength else { return false }
-        _ = withUnsafeMutablePointer(to: &addr.sun_path) { ptr in
-            ptr.withMemoryRebound(to: CChar.self, capacity: maxLength) { cptr in
-                path.withCString { strcpy(cptr, $0) }
-            }
-        }
-        let size = socklen_t(MemoryLayout<sockaddr_un>.size)
-        let result = withUnsafePointer(to: &addr) {
-            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, size) }
-        }
-        return result == 0
+        SocketLiveness.isListening(at: path)
     }
 
     public func send(_ body: AutomationRequest.Body) async throws -> AutomationResponse {

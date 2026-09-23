@@ -25,6 +25,12 @@ public enum ServerError: Error, Equatable {
     case pathTooLong
     case bindFailed(String)
     case listenFailed(String)
+    /// Another Snitt is already listening on this path.
+    ///
+    /// Distinct from `bindFailed` because it is not an error in the usual
+    /// sense: everything works, there is simply already an owner, and the
+    /// caller's right move is to stand down rather than to report a failure.
+    case alreadyServing
 }
 
 /// Listens on a Unix domain socket and dispatches one request per line.
@@ -52,7 +58,18 @@ public final class AutomationServer: @unchecked Sendable {
     }
 
     public func start() throws {
-        // A stale socket file from a crash would make bind fail.
+        // ASK BEFORE UNLINKING. A stale socket file from a crash really does
+        // make bind fail, and removing it is the fix — but "there is a file
+        // here" and "that file is debris" are different claims, and this used
+        // to treat them as one. A second Snitt therefore unlinked a LIVE
+        // listener's path and bound its own: the first instance kept its fd on
+        // an inode no longer reachable by name, so it stayed in the menubar,
+        // kept its hotkeys, and never received another request or any hint that
+        // it had been cut out. The client half had already learned this lesson
+        // in the other direction; both now ask `SocketLiveness`.
+        guard !SocketLiveness.isListening(at: socketURL.path) else {
+            throw ServerError.alreadyServing
+        }
         try? FileManager.default.removeItem(at: socketURL)
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
