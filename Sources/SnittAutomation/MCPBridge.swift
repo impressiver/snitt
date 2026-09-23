@@ -1761,12 +1761,40 @@ public enum MCPBridge {
     /// nothing stops a future caller from constructing arguments directly,
     /// and a "valid" non-finite scale or bound would be exactly this bug's
     /// failure mode again.
+    /// Renders a rejected argument so its TYPE is visible.
+    ///
+    /// `"\(value)"` prints a JSON string without its quotes, so the refusal
+    /// for `{"atSeconds": "6.0"}` read `atSeconds must be a number, got 6.0`
+    /// — which names a number and then says it is not one. An agent that sent
+    /// a quoted value had no way to see that from the message, and the obvious
+    /// reading is that Snitt rejects whole numbers. It cost a caller three
+    /// retries mid-recording before the cause was found, and the tell was
+    /// invisible in every message.
+    ///
+    /// Quoting a string is the whole fix: `got the string "6.0"` says what to
+    /// change. The type is named for the other cases too, because "got 1" is
+    /// the same ambiguity between a number and a boolean.
+    ///
+    /// COERCION IS DELIBERATELY NOT THE ANSWER. Accepting `"6.0"` as 6.0 would
+    /// be the silent-wrong-answer class §8 forbids, and the same helper's
+    /// boolean twin exists because exactly that shortcut shipped three times
+    /// (`autoTrim`, `chapters`, `subtitles`) and each time a caller's typo ran
+    /// successfully while doing nothing. Refuse, and say why clearly.
+    private static func described(_ value: Any) -> String {
+        if isJSONBoolean(value) {
+            return "the boolean \((value as? NSNumber)?.boolValue == true ? "true" : "false")"
+        }
+        if let string = value as? String { return "the string \"\(string)\"" }
+        if let number = value as? NSNumber { return "the number \(number)" }
+        return "\(type(of: value)) \(value)"
+    }
+
     private static func numericValue(_ value: Any?,
                                      parameter: String) -> Result<Double?, MCPBridgeError> {
         guard let value else { return .success(nil) }
         guard !isJSONBoolean(value), let number = value as? NSNumber else {
             return .failure(MCPBridgeError(
-                "\(parameter) must be a number, got \(value)"))
+                "\(parameter) must be a number, got \(described(value))"))
         }
         let double = number.doubleValue
         guard double.isFinite else {
@@ -1809,10 +1837,10 @@ public enum MCPBridge {
             case 1: return .success(true)
             default:
                 return .failure(MCPBridgeError(
-                    "\(parameter) must be a boolean, got \(number)"))
+                    "\(parameter) must be a boolean, got the number \(number)"))
             }
         }
         return .failure(MCPBridgeError(
-            "\(parameter) must be a boolean, got \(value)"))
+            "\(parameter) must be a boolean, got \(described(value))"))
     }
 }
