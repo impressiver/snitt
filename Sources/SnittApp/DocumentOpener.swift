@@ -84,6 +84,13 @@ enum DocumentOpener {
         // Two windows on one document means two EDLs over one bundle and
         // whichever saves last wins — data loss, not a cosmetic duplicate.
         if let existing = EditorWindowController.existing(for: bundle.url) {
+            // Re-read before showing it. The watcher normally gets there first,
+            // but opening a document is the moment a person most expects to see
+            // what is actually in the file — and this is the gesture they were
+            // reaching for when the window went stale, since pointing the
+            // editor at another bundle and back was the only way to force a
+            // re-read at all.
+            existing.reconcileWithDisk()
             existing.window.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return existing
