@@ -112,8 +112,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             coordinator: coordinator,
             settings: { AgentSettings.load() },
             onRecordingState: { [weak self] state in self?.statusItem.update(state) })
-        host.start()
-        automationHost = host
+        do {
+            try host.start()
+            automationHost = host
+        } catch ServerError.alreadyServing {
+            // Belt to `SingleInstanceGuard`'s braces. The guard runs before the
+            // run loop and should have settled this, but it and the bind are
+            // separated by the whole of launch — long enough for another Snitt
+            // to come up in between. Whoever holds the socket keeps it; running
+            // on as a silent second menubar icon is the state being fixed.
+            Self.log.notice("Another Snitt took the socket during launch. Standing down.")
+            NSApp.terminate(nil)
+            return
+        } catch {
+            // Any other bind failure leaves the app usable by a person at the
+            // machine, so it is reported rather than fatal — but it is reported,
+            // which the discarded `try?` here never did.
+            Self.log.error("The agent surface could not start: \(error.localizedDescription, privacy: .public)")
+        }
 
         // D55: combinations are now customizable via the Settings window, so
         // launch registers whatever `HotkeySettings` has stored — today's
@@ -930,6 +946,11 @@ extension AppDelegate: NSMenuDelegate {
         }
     }
 }
+
+// Before ANYTHING AppKit-visible. An instance that stands down here has put
+// no status item in the menu bar and registered no hotkey, so the user never
+// sees a second Snitt appear and vanish. See `SingleInstanceGuard`.
+guard SingleInstanceGuard.reconcile() else { exit(0) }
 
 let app = NSApplication.shared
 AppShell.install(into: app)
