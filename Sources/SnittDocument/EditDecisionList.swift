@@ -87,7 +87,7 @@ extension Cut: Codable {
     }
 }
 
-public struct TrackState: Codable, Sendable {
+public struct TrackState: Codable, Equatable, Sendable {
     public var track: String
     public var muted: Bool
     public var gain: Double
@@ -182,7 +182,7 @@ public struct CropRect: Codable, Equatable, Sendable {
 
 /// The only mutable part of a recording (spec section 7). Editing never
 /// touches capture.mov.
-public struct EditDecisionList: Codable, Sendable {
+public struct EditDecisionList: Codable, Equatable, Sendable {
     /// Bumped 1 -> 2 by M5f Task 2: cuts gained `id`. Still readable from a
     /// bare `{start, end}` — schemaVersion 1's shape — via `Cut.init(from:)`
     /// minting an id; a version ABOVE this one is refused outright rather

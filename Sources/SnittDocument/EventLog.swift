@@ -50,7 +50,7 @@ public enum EventSource: String, Codable, Sendable {
 /// read the file or — worse — reusing one sentinel id for every event in it,
 /// which would make every legacy marker in one bundle indistinguishable from
 /// every other.
-public struct LoggedEvent: Sendable {
+public struct LoggedEvent: Equatable, Sendable {
     public var id: UUID
     public var timeSeconds: Double
     public var kind: EventKind
