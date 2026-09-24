@@ -95,6 +95,20 @@ public struct RecordingMetadata: Codable, Sendable {
     /// to be wanted.
     public var vocabulary: [String]?
     public var git: GitContext?
+
+    /// The captured picture's size in PIXELS.
+    ///
+    /// Known at `init` from the target's descriptor, so it is written the
+    /// moment recording starts rather than at the end. Nothing earlier in the
+    /// agent loop reported it: it appeared only in `CropSummary`, AFTER a crop
+    /// had already been applied, so a caller measuring a region in pixels had
+    /// nothing to convert against and no way to check a crop landed where it
+    /// asked.
+    ///
+    /// Optional, like every field added to a shipped format here: a bundle
+    /// recorded before this says nothing rather than claiming a size.
+    public var pixelWidth: Int?
+    public var pixelHeight: Int?
     public var health: CaptureHealth?
     /// How an AGENT's session ended, stamped after the bundle was finalised
     /// (D108). One of `AuditOutcome`'s strings, today `"completed"` or
@@ -123,7 +137,9 @@ public struct RecordingMetadata: Codable, Sendable {
                 git: GitContext? = nil,
                 health: CaptureHealth? = nil,
                 vocabulary: [String]? = nil,
-                outcome: String? = nil) {
+                outcome: String? = nil,
+                pixelWidth: Int? = nil,
+                pixelHeight: Int? = nil) {
         self.schemaVersion = schemaVersion
         self.createdAt = createdAt
         self.initiator = initiator
@@ -132,6 +148,8 @@ public struct RecordingMetadata: Codable, Sendable {
         self.health = health
         self.vocabulary = vocabulary
         self.outcome = outcome
+        self.pixelWidth = pixelWidth
+        self.pixelHeight = pixelHeight
     }
 
     public func write(to bundle: SnittBundle) throws {

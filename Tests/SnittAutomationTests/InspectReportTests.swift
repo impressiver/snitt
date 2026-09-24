@@ -269,3 +269,41 @@ struct InspectReportWireCompatibilityTests {
             .appendingPathExtension(SnittBundle.fileExtension))
     }
 }
+
+/// The captured picture's pixel size, which nothing reported until after a crop.
+@Suite("Inspect reports the frame size")
+struct InspectReportsTheFrameSizeTests {
+
+    @Test("A recording's pixel dimensions come back from inspect")
+    func dimensionsAreReported() throws {
+        // The number a caller needs to convert a region measured in pixels into
+        // the fraction `crop` stores, and to check afterwards that the crop
+        // landed where it asked. It appeared only in `CropSummary` — AFTER a
+        // crop had been applied — so a caller building demo scripts hardcoded a
+        // fraction derived by hand from one screenshot, which silently crops the
+        // wrong thing on a machine whose window furniture differs.
+        let bundle = try makeBundle()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        try RecordingMetadata(createdAt: Date(timeIntervalSince1970: 0),
+                              initiator: .agent, durationSeconds: 12,
+                              pixelWidth: 3678, pixelHeight: 2580).write(to: bundle)
+
+        let report = try InspectReport.report(for: bundle)
+        #expect(report.pixelWidth == 3678)
+        #expect(report.pixelHeight == 2580)
+    }
+
+    @Test("A bundle recorded before this says nothing rather than guessing")
+    func olderBundlesReportNil() throws {
+        // THE CONTROL. Defaulting to some plausible size would be worse than
+        // silence: a caller would divide by it and crop confidently wrong.
+        let bundle = try makeBundle()
+        defer { try? FileManager.default.removeItem(at: bundle.url) }
+        try RecordingMetadata(createdAt: Date(timeIntervalSince1970: 0),
+                              initiator: .agent, durationSeconds: 12).write(to: bundle)
+
+        let report = try InspectReport.report(for: bundle)
+        #expect(report.pixelWidth == nil)
+        #expect(report.pixelHeight == nil)
+    }
+}

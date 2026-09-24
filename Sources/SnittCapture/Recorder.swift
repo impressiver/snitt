@@ -27,6 +27,10 @@ public actor Recorder {
     private let sink: AssetWriterSink
     private let initiator: Initiator
     private let git: GitContext?
+    /// The captured picture in pixels, known from the target's descriptor at
+    /// `init` — which is what lets `start()` write it before a single frame
+    /// arrives.
+    private var pixelSize: (width: Int, height: Int)?
 
     private var startedAt: Date?
     private var isFinished = false
@@ -86,6 +90,7 @@ public actor Recorder {
         self.sink = sink
         self.initiator = initiator
         self.git = git
+        self.pixelSize = (descriptor.width, descriptor.height)
         self.logInputEvents = options.logInputEvents
         self.vocabulary = options.vocabulary
         self.isInputMonitoringGranted = InputMonitoringAccess.isGranted
@@ -111,6 +116,24 @@ public actor Recorder {
 
     public func start() async throws {
         startedAt = Date()
+        // WRITTEN NOW, not only at stop.
+        //
+        // Everything in `meta.json` used to be written by `writeSidecars` when
+        // the recording ended, so a recording that never ended produced a
+        // directory holding nothing but a half-written `capture.mov`. That
+        // bundle cannot say when it started, who started it, or which build
+        // made it — and the build is precisely what you want to know about a
+        // recording that died. `snitt recordings list` skipped it for the same
+        // reason, so it could not even be found.
+        //
+        // Rewritten in full at stop. This is the provisional half: no duration,
+        // no health, no outcome, because none of them is known yet. A bundle
+        // whose `meta.json` has no `durationSeconds` never finished.
+        try? RecordingMetadata(createdAt: startedAt ?? Date(),
+                               initiator: initiator,
+                               git: git,
+                               pixelWidth: pixelSize?.width,
+                               pixelHeight: pixelSize?.height).write(to: bundle)
         try await session.start()
         installInputMonitorIfEnabled()
     }
@@ -479,7 +502,9 @@ public actor Recorder {
             durationSeconds: duration,
             git: git,
             health: session.health(),
-            vocabulary: vocabulary.isEmpty ? nil : vocabulary
+            vocabulary: vocabulary.isEmpty ? nil : vocabulary,
+            pixelWidth: pixelSize?.width,
+            pixelHeight: pixelSize?.height
         )
         try metadata.write(to: bundle)
         // Sorted by time, not left in arrival order. Input events are appended

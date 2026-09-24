@@ -74,12 +74,36 @@ public struct RecordingList: Codable, Sendable, Equatable {
     /// Bytes across ALL of them, not only the ones listed.
     public var totalByteSize: Int
 
+    /// Bundles in the directory whose `meta.json` could not be read, by path.
+    ///
+    /// **The comment on `list` used to promise this and it did not exist.** It
+    /// said "the count says how many were skipped"; `total` is
+    /// `summaries.count`, the number read SUCCESSFULLY, so a skipped bundle
+    /// appeared in no field at all — not here, not in `total`, not in
+    /// `totalByteSize`. The one tool whose job is finding leftover recordings
+    /// was blind to exactly the ones an interrupted recording leaves, while its
+    /// own documentation said otherwise. Confirmed from both sides: an
+    /// abandoned bundle was the newest thing on disk and absent from the
+    /// listing, and a caller reading that listing concluded their bundle simply
+    /// was not there yet.
+    ///
+    /// Paths rather than a count, because a caller who learns there are two
+    /// unreadable bundles still cannot act without knowing which.
+    ///
+    /// Should be rare now that `Recorder.start()` writes `meta.json` before the
+    /// first frame: a recording interrupted at any point after that lands in
+    /// `recordings` instead, carrying its start time, initiator and build. What
+    /// remains here is a bundle from before that change, or one interrupted in
+    /// the instant between creation and the first write.
+    public var unreadable: [String]
+
     public init(directory: String, total: Int, recordings: [RecordingSummary],
-                totalByteSize: Int) {
+                totalByteSize: Int, unreadable: [String] = []) {
         self.directory = directory
         self.total = total
         self.recordings = recordings
         self.totalByteSize = totalByteSize
+        self.unreadable = unreadable
     }
 }
 
@@ -101,22 +125,29 @@ public enum RecordingInventory {
     /// a person's whole `~/Documents` because they pointed the setting at it
     /// would be both slow and a surprise.
     ///
-    /// A bundle whose `meta.json` cannot be read is SKIPPED rather than
-    /// failing the listing. That is the opposite of the absent-versus-
-    /// unreadable discipline `readEDL` applies, and deliberately so: those
-    /// callers are answering a question about ONE recording the caller named,
-    /// where a silent empty answer hides a real problem. This answers a
-    /// question about a directory, and one damaged bundle in it must not make
-    /// the other thirty unfindable. The count says how many were skipped.
+    /// A bundle whose `meta.json` cannot be read is not listed as a recording,
+    /// and does not fail the listing either. That is the opposite of the
+    /// absent-versus-unreadable discipline `readEDL` applies, and deliberately
+    /// so: those callers are answering a question about ONE recording the
+    /// caller named, where a silent empty answer hides a real problem. This
+    /// answers a question about a directory, and one damaged bundle in it must
+    /// not make the other thirty unfindable.
+    ///
+    /// It IS reported, in `unreadable`. This comment used to claim a count that
+    /// did not exist, so the skip was total — see that property.
     public static func list(in directory: URL, now: Date = Date(),
                             limit: Int? = nil) -> RecordingList {
         let entries = (try? FileManager.default.contentsOfDirectory(
             at: directory, includingPropertiesForKeys: nil)) ?? []
 
         var summaries: [RecordingSummary] = []
+        var unreadable: [String] = []
         for url in entries where url.pathExtension == "snitt" {
             guard let bundle = try? SnittBundle(opening: url),
-                  let meta = try? RecordingMetadata.read(from: bundle) else { continue }
+                  let meta = try? RecordingMetadata.read(from: bundle) else {
+                unreadable.append(url.path)
+                continue
+            }
             summaries.append(RecordingSummary(
                 path: url.path,
                 byteSize: size(of: url),
@@ -138,7 +169,8 @@ public enum RecordingInventory {
             summaries = Array(summaries.prefix(limit))
         }
         return RecordingList(directory: directory.path, total: total,
-                             recordings: summaries, totalByteSize: totalBytes)
+                             recordings: summaries, totalByteSize: totalBytes,
+                             unreadable: unreadable.sorted())
     }
 
     /// Bytes under `url`, summed over everything in the bundle.

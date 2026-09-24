@@ -175,3 +175,103 @@ struct RecordingInventoryTests {
         #expect(back == list)
     }
 }
+
+/// Bundles the listing cannot read.
+///
+/// `snitt recordings list` is the one tool whose job is finding leftover
+/// recordings, and it was blind to exactly the ones an interrupted recording
+/// leaves: a bundle whose `meta.json` would not read appeared in no field —
+/// not `recordings`, not `total`, not `totalByteSize`. Its own doc comment
+/// said "the count says how many were skipped", and `total` is
+/// `summaries.count`, the number read SUCCESSFULLY.
+///
+/// Seen from both ends on the same day: an abandoned bundle was the newest
+/// thing on disk and absent from the listing, and a caller reading that listing
+/// concluded their bundle simply was not there yet.
+@Suite("Unreadable bundles are reported")
+struct UnreadableBundlesTests {
+
+    private func directory() throws -> URL {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("inv-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        return url
+    }
+
+    private func bundle(in directory: URL, named name: String,
+                        metadata: RecordingMetadata?) throws {
+        let url = directory.appendingPathComponent("\(name).snitt")
+        let bundle = try SnittBundle(creatingAt: url)
+        if let metadata { try metadata.write(to: bundle) }
+    }
+
+    @Test("A bundle with no readable metadata is named, not silently dropped")
+    func debrisIsNamed() throws {
+        // Verified to fail by restoring the bare `continue`: `unreadable` comes
+        // back empty and the bundle is findable through no field at all.
+        let directory = try directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try bundle(in: directory, named: "finished",
+                   metadata: RecordingMetadata(createdAt: Date(), initiator: .agent,
+                                               durationSeconds: 10))
+        try bundle(in: directory, named: "debris", metadata: nil)
+
+        let list = RecordingInventory.list(in: directory)
+        #expect(list.recordings.count == 1, "the readable bundle must still be listed")
+        #expect(list.unreadable.count == 1, "the unreadable bundle vanished again")
+        #expect(list.unreadable.first?.hasSuffix("debris.snitt") == true,
+                "got \(list.unreadable)")
+    }
+
+    @Test("One damaged bundle does not hide the others")
+    func damageDoesNotFailTheListing() throws {
+        // THE CONTROL, and the reason the skip existed. Reporting debris must
+        // not become refusing the whole directory over it.
+        let directory = try directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for i in 0..<3 {
+            try bundle(in: directory, named: "ok\(i)",
+                       metadata: RecordingMetadata(createdAt: Date(), initiator: .human,
+                                                   durationSeconds: 5))
+        }
+        try bundle(in: directory, named: "debris", metadata: nil)
+
+        let list = RecordingInventory.list(in: directory)
+        #expect(list.recordings.count == 3)
+        #expect(list.total == 3, "total counts what was listed, not what was found")
+    }
+
+    @Test("A clean directory reports nothing unreadable")
+    func nothingUnreadableWhenAllIsWell() throws {
+        let directory = try directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try bundle(in: directory, named: "ok",
+                   metadata: RecordingMetadata(createdAt: Date(), initiator: .agent,
+                                               durationSeconds: 1))
+        #expect(RecordingInventory.list(in: directory).unreadable.isEmpty)
+    }
+
+    @Test("A recording that started but never finished is LISTED, carrying its build")
+    func anUnfinishedRecordingIsListed() throws {
+        // What `Recorder.start()` writing meta.json buys. Before it, an
+        // interrupted recording left a directory holding a half-written
+        // capture.mov and nothing else — so the one recording whose build you
+        // most want to identify was the one that could not tell you.
+        //
+        // No durationSeconds is what marks it unfinished; the git context is
+        // what makes it diagnosable.
+        let directory = try directory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try bundle(in: directory, named: "interrupted",
+                   metadata: RecordingMetadata(
+                       createdAt: Date(), initiator: .agent,
+                       git: GitContext(branch: "main", commit: "abc1234"),
+                       pixelWidth: 1920, pixelHeight: 1080))
+
+        let list = RecordingInventory.list(in: directory)
+        #expect(list.unreadable.isEmpty, "it has metadata now, so it is not debris")
+        let summary = try #require(list.recordings.first)
+        #expect(summary.durationSeconds == nil, "an unfinished recording has no duration")
+        #expect(summary.outcome == nil)
+    }
+}
