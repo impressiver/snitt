@@ -82,6 +82,21 @@ public struct InspectReport: Codable, Sendable, Equatable {
     /// The crop already applied, if any.
     public var crop: CropRect?
 
+    /// The captured picture in PIXELS.
+    ///
+    /// The number a caller needs to convert a region it measured in pixels into
+    /// the fraction `crop` stores, and to check afterwards that the crop landed
+    /// where it asked. Nothing earlier in the loop reported it: it appeared
+    /// only in `CropSummary`, AFTER a crop had been applied. A caller building
+    /// demo scripts worked around that by hardcoding a fraction derived by hand
+    /// from one screenshot, which silently crops the wrong thing on a machine
+    /// whose window furniture differs — the failure the crop refusal's own
+    /// wording exists to prevent.
+    ///
+    /// `nil` for a bundle recorded before `Recorder.start()` began writing it.
+    public var pixelWidth: Int?
+    public var pixelHeight: Int?
+
     public static func report(for bundle: SnittBundle) throws -> InspectReport {
         let meta = try RecordingMetadata.read(from: bundle)
         let events = try Self.readEvents(for: bundle)
@@ -105,7 +120,9 @@ public struct InspectReport: Codable, Sendable, Equatable {
             cuts: edl.cuts.map {
                 Cut(startSeconds: $0.range.start, endSeconds: $0.range.end, label: $0.label)
             },
-            crop: edl.crop
+            crop: edl.crop,
+            pixelWidth: meta.pixelWidth,
+            pixelHeight: meta.pixelHeight
         )
     }
 
