@@ -44,6 +44,19 @@ public enum TargetResolutionError: Error, Equatable {
     /// running, so it retries or gives up instead of resizing the window or
     /// recording a display.
     case targetTooSmall(String)
+    /// A WINDOW ID was named and nothing on screen carries it.
+    ///
+    /// Its own case because the previous two could not express it, and the one
+    /// it fell into said something false. `failure(for:among:)` asked only
+    /// "does this app have any window on screen?" — so naming a stale or
+    /// mistyped id for an app that is running and perfectly recordable produced
+    /// `targetTooSmall`: "Chrome has no window larger than 100×100 to record",
+    /// about an application with thirteen windows, followed by advice to resize
+    /// one. Measured by a caller who then had nothing true to act on.
+    ///
+    /// Carries the id, because "which one" is the whole question, and the
+    /// remedy is to list targets again rather than to resize anything.
+    case windowNotFound(id: UInt32, app: String)
     /// The picker is unavailable on this system.
     case unavailable
 }

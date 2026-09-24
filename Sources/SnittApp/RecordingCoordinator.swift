@@ -35,6 +35,14 @@ public enum FailureReason: Equatable, Sendable {
     /// worth recording. Separate from `targetUnavailable` because the remedy is
     /// different: resize the window, or record a display.
     case targetTooSmall
+    /// A named window id matched nothing on screen.
+    ///
+    /// Its own reason for the same purpose `targetTooSmall` and
+    /// `ambiguousTarget` have theirs: `targetUnavailable`'s arm DISCARDS the
+    /// message it is given and answers "the application may not be running",
+    /// which is false when the app is running fine and only the id is stale.
+    /// Without this, the accurate message is computed and then thrown away.
+    case windowNotFound
     /// The application has several recordable windows and the request named
     /// none of them. Separate from `targetUnavailable` because the remedy is
     /// the opposite: not "open it", but "say which one".
@@ -581,6 +589,17 @@ public actor RecordingCoordinator: AgentRecordingControlling {
                     + "Pass windowID to choose one: \(listed)"
                     + (candidates.count > 8 ? ", …" : ""),
                 reason: .ambiguousTarget)
+        } catch TargetResolutionError.windowNotFound(let id, let app) {
+            // Does NOT clear the store, for the same reason `targetTooSmall`
+            // does not: a window id is transient by contract and never stored,
+            // so a bad one says nothing about the human's cached reference.
+            //
+            // The remedy is to look the id up again, not to resize anything.
+            // Window ids change as windows open and close, so one resolved a
+            // moment ago can be gone by the time it is used.
+            return .failed(
+                "\(app) has no window with id \(id).",
+                reason: .windowNotFound)
         } catch TargetResolutionError.targetTooSmall(let app) {
             // Deliberately does NOT clear the store: the target is not gone, it
             // is just unusably small, so the human's cached reference is still
