@@ -192,3 +192,54 @@ func resolvedWindowDescriptorCarriesProcessID() {
     #expect(descriptor.title == "Main")
     #expect(descriptor.applicationName == "App")
 }
+
+@Test("A window id that matches nothing says so, rather than blaming the app")
+func anUnknownWindowIDIsItsOwnFailure() {
+    // MEASURED IN A REAL SESSION. A caller asked for a window id that did not
+    // exist, against a Chrome with thirteen windows open and recording happily:
+    //
+    //   com.google.Chrome has no window larger than 100×100 to record.
+    //   ... Resize the window, or record a display ...
+    //
+    // Both halves false, and the remedy fixes nothing. `failure` asked only
+    // "does this app have any window on screen?", so a named id that matched
+    // nothing fell into `targetTooSmall` whenever the app was running.
+    //
+    // Verified to fail by removing the windowID branch: reports
+    // `.targetTooSmall`, exactly as reported.
+    let ref = TargetReference.window(bundleIdentifier: "com.example.Editor",
+                                     titleHint: nil, windowID: 999_999)
+    let result = CachedTargetResolver.failure(for: ref, among: [
+        sized(7, "com.example.Editor", "One", 1280, 800),
+        sized(8, "com.example.Editor", "Two", 1280, 800),
+    ])
+    #expect(result == .windowNotFound(id: 999_999, app: "com.example.Editor"),
+            "got \(result)")
+}
+
+@Test("The id is checked before anything is said about the application")
+func theIDOutranksTheApplication() {
+    // Order is the fix, not just the new case. A caller who named an id is
+    // asking about THAT window; anything said about the application as a whole
+    // answers a question they did not ask. With only tiny windows present, the
+    // app-level answer would be `targetTooSmall` and would still be beside the
+    // point — the id they gave is not among them either.
+    let ref = TargetReference.window(bundleIdentifier: "com.example.Editor",
+                                     titleHint: nil, windowID: 4242)
+    #expect(CachedTargetResolver.failure(for: ref, among: [
+        sized(1, "com.example.Editor", "Toolbar", 60, 800),
+    ]) == .windowNotFound(id: 4242, app: "com.example.Editor"))
+}
+
+@Test("A window id that DOES match leaves the other diagnoses alone")
+func aMatchingIDDoesNotShadowTheOtherReasons() {
+    // THE CONTROL. Checking the id first must not swallow the cases that were
+    // already right: an id present among candidates that are all too small is
+    // still a too-small problem, and that is the diagnosis with the useful
+    // remedy.
+    let ref = TargetReference.window(bundleIdentifier: "com.example.Editor",
+                                     titleHint: nil, windowID: 1)
+    #expect(CachedTargetResolver.failure(for: ref, among: [
+        sized(1, "com.example.Editor", "Toolbar", 60, 800),
+    ]) == .targetTooSmall("com.example.Editor"))
+}

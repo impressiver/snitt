@@ -144,12 +144,28 @@ public struct CachedTargetResolver: TargetResolver {
         }
     }
 
-    /// Why `bestMatch` found nothing — the two reasons need opposite advice.
+    /// Why `bestMatch` found nothing — the reasons need opposite advice.
+    ///
+    /// THREE reasons, not two. This asked only "does this app have any window
+    /// on screen?", so a named window id that matches nothing fell into
+    /// `targetTooSmall` whenever the app was running: "Chrome has no window
+    /// larger than 100×100 to record", said about an application with thirteen
+    /// windows, with a hint telling you to resize one. Both halves false, and
+    /// the remedy fixes nothing. A caller measured it and had nothing true to
+    /// act on.
+    ///
+    /// Order matters: the id is checked FIRST. A caller who named one is asking
+    /// about that window, and anything said about the application as a whole
+    /// answers a question they did not ask.
     ///
     /// Pure, so the distinction is testable without a screen.
     static func failure(for reference: TargetReference,
                         among candidates: [WindowCandidate]) -> TargetResolutionError {
         let name = reference.bundleIdentifier ?? "unknown application"
+        if let windowID = reference.windowID,
+           !candidates.contains(where: { $0.windowID == windowID }) {
+            return .windowNotFound(id: windowID, app: name)
+        }
         guard let bundleID = reference.bundleIdentifier else { return .targetGone(name) }
         let appIsOnScreen = candidates.contains { $0.bundleIdentifier == bundleID }
         return appIsOnScreen ? .targetTooSmall(name) : .targetGone(name)
