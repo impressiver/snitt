@@ -1007,6 +1007,19 @@ extension AppDelegate: NSMenuDelegate {
     }
 }
 
+// FIRST, before the single-instance check and before any AppKit call.
+//
+// `Contents/MacOS/Snitt status` is the app binary run as if it were the CLI,
+// and on a case-insensitive volume that path looks exactly right. Without this
+// it starts a run loop, prints nothing and never exits, which reads as a wedged
+// app rather than a wrong binary. See `CLIMisuse`.
+if let complaint = CLIMisuse.complaint(forArguments: CommandLine.arguments) {
+    FileHandle.standardError.write(Data(complaint.utf8))
+    // EX_USAGE. A shell script that checks its exit status finds out; one that
+    // does not at least gets the message on stderr rather than a 20-second hang.
+    exit(64)
+}
+
 // Before ANYTHING AppKit-visible. An instance that stands down here has put
 // no status item in the menu bar and registered no hotkey, so the user never
 // sees a second Snitt appear and vanish. See `SingleInstanceGuard`.
