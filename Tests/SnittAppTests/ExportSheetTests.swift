@@ -83,15 +83,14 @@ struct ExportSheetTests {
         #expect(request.estimatesApply == false)
     }
 
-    @Test("Export defaults to a name beside the recording, not inside it")
-    func defaultDestinationSitsBesideTheBundle() {
-        // A `.snitt` IS a directory, so `appendingPathComponent` on it
-        // compiles, runs, and writes the export INSIDE the document bundle —
-        // where the next open would find a stray movie beside `capture.mov`.
-        let bundle = URL(fileURLWithPath: "/Users/somebody/Desktop/Standup.snitt")
-        let export = EditorWindowController.defaultExportURL(forBundle: bundle)
-        #expect(export.path == "/Users/somebody/Desktop/Standup.mp4")
-    }
+    // `defaultDestinationSitsBesideTheBundle` lived here and asserted that an
+    // export lands beside its bundle. That decision is reversed (exports now
+    // default to `~/Downloads`, then to wherever you last exported), so the
+    // test moved rather than being deleted: `LastExportDirectoryTests` owns
+    // the new behaviour, and keeps BOTH halves of the old one — the folder
+    // question, now parameterised, and the part that was never about the
+    // folder, that a `.snitt` is itself a directory and an export must not be
+    // written inside it.
 
     @Test("Each Export request raises the sheet again")
     func everyRequestIsDistinct() async throws {

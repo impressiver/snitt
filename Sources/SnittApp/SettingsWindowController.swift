@@ -153,11 +153,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     ///
     /// It was briefly "Default path", which read as the app's one folder for
     /// everything. It is not: `RecordingCoordinator` is its only consumer, so
-    /// this is where RECORDINGS land and nothing else. Export deliberately
-    /// does not consult it — `defaultExportURL(forBundle:)` puts an export
-    /// beside the bundle it came from, "because a `.snitt` bundle already
-    /// lives where its owner put it". With this folder unchanged the two
-    /// coincide, which is what made the broader name look true.
+    /// this is where RECORDINGS land and nothing else. Export does not
+    /// consult it and never has, though the reason changed: an export used to
+    /// go beside the bundle it came from, and now defaults to `~/Downloads`
+    /// and thereafter to wherever you last exported (`LastExportDirectory`).
+    /// Either way this setting does not govern it.
+    ///
+    /// Worth stating because the two used to COINCIDE whenever this folder was
+    /// left alone, which is what made the broader name look true. They no
+    /// longer do, so the narrow name now earns its keep rather than merely
+    /// being more accurate.
     ///
     /// A noun phrase, like every other heading on this window, rather than the
     /// original "Save recordings to" — a sentence fragment left hanging over a
