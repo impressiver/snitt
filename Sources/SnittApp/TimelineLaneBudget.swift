@@ -88,7 +88,12 @@ public enum TimelineLaneBudget {
     /// Lanes now take what they need and the timeline sizes to fit, capped by
     /// the window share. Everything left over goes to the recording, which is
     /// the whole point of bounding the timeline in the first place.
-    public static let preferredVideoHeight: Double = 36
+    /// 45, up 25% from 36 on product-owner direction (2026-10-30), the same
+    /// move `transcriptLaneHeight` records above. Only the PREFERRED height
+    /// moved: `minimumVideoHeight` is the floor for a cramped window and
+    /// raising it would squeeze the picture, which is the thing this whole
+    /// budget exists to protect.
+    public static let preferredVideoHeight: Double = 45
     public static let preferredAudioHeight: Double = 44
 
     /// The transcript lane's height, and the one place it is written down.

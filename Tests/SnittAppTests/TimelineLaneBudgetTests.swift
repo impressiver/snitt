@@ -75,18 +75,51 @@ struct TimelineLaneBudgetTests {
         #expect(plan.collapsed == both)
     }
 
-    @Test("The filmstrip's share is half the audio bands', not more")
+    @Test("The filmstrip is comparable to a waveform band, not dominant over it")
     func filmstripNoLongerDominates() {
-        // Asserted as a relationship rather than a number: whatever the
-        // preferred heights are, a filmstrip band is shorter than a waveform
-        // band. A test pinning the constants would pass if the distribution
-        // stopped using them.
+        // Asserted as a relationship rather than a number: a test pinning the
+        // constants would pass if the distribution stopped using them.
+        //
+        // This used to read `video < audio`, strictly. The filmstrip went up
+        // 25% on product-owner direction (2026-10-30), 36 -> 45, which puts
+        // it a point ABOVE a 44pt waveform and broke that form of the
+        // assertion. The direction is the newer one and it wins; what the
+        // test was actually defending survives it.
+        //
+        // What it was defending: the filmstrip once ran to 121pt against the
+        // waveforms, which is the state two separate halvings were ordered to
+        // fix. "Within a quarter of a waveform band" still fails hard against
+        // anything resembling that, and no longer fails against two lanes
+        // that are near enough the same height on purpose.
         let natural = TimelineLaneBudget.naturalHeight(audioTracks: both,
                                                        hasTranscript: false)
         let plan = TimelineLaneBudget.plan(availableHeight: natural, audioTracks: both)
         let video = try! #require(plan.height(of: .video))
         let audio = try! #require(plan.height(of: .audio("microphone")))
-        #expect(video < audio, "the filmstrip is \(video)pt against a \(audio)pt waveform")
+        #expect(video <= audio * 1.25,
+                "the filmstrip is \(video)pt against a \(audio)pt waveform")
+    }
+
+    @Test("A window with room gives the filmstrip its full preferred height")
+    func filmstripGetsItsPreferredHeightWhenThereIsRoom() {
+        // The "25% taller" direction only means anything if `distribute`
+        // actually honours the constant. It gives the filmstrip whatever is
+        // left after the other lanes, so a change to any of THEM could
+        // silently take the increase back.
+        let natural = TimelineLaneBudget.naturalHeight(audioTracks: both,
+                                                       hasTranscript: false)
+        let plan = TimelineLaneBudget.plan(availableHeight: natural, audioTracks: both)
+        #expect(plan.height(of: .video) == TimelineLaneBudget.preferredVideoHeight)
+    }
+
+    @Test("The filmstrip's preferred height is the one that was asked for")
+    func filmstripPreferredHeightIsPinned() {
+        // An exact pin, unlike everything else in this suite, and
+        // deliberately so: 45 is a product decision (2026-10-30, up 25% from
+        // 36), not a number arithmetic will reproduce. Nothing else here can
+        // fail if it silently goes back, because every other assertion is a
+        // relationship that 36 also satisfies.
+        #expect(TimelineLaneBudget.preferredVideoHeight == 45)
     }
 
     @Test("The transcript lane is taller than the target floor, not equal to it")
