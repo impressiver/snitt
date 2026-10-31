@@ -176,7 +176,15 @@ struct LastExportDirectoryTests {
 }
 
 /// The wording the sheet uses when the remembered folder was not there.
+///
+/// `@MainActor` because `ExportSheet` is a SwiftUI `View` and so is
+/// main-actor isolated, which makes `unavailableNote` isolated too. Stated
+/// rather than inferred: the local toolchain (Swift 6.4) accepted the
+/// un-annotated suite and CI's macos-26 runner rejected it with
+/// "call to main actor-isolated static method ... in a synchronous
+/// nonisolated context". Explicit is the fix, not a toolchain pin.
 @Suite
+@MainActor
 struct ExportUnavailableNoteTests {
 
     @Test("No substitution means no note")
