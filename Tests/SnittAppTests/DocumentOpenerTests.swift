@@ -209,18 +209,24 @@ struct DocumentOpenerTests {
     @Test("Opening a bundle records it in the recent documents list")
     func openingNotesARecentDocument() async throws {
         let url = try await makeFixtureBundle()
-        defer {
-            try? FileManager.default.removeItem(at: url)
-            // NSDocumentController's recents list is real per-process state
-            // (§ "Do not pollute the maintainer's real recents list"); leave
-            // it as we found it rather than accumulating fixture URLs across
-            // test runs.
-            NSDocumentController.shared.clearRecentDocuments(nil)
-        }
+        defer { try? FileManager.default.removeItem(at: url) }
 
         try await EditorWindowTestGate.run {
             let controller = try await DocumentOpener.open(bundleURL: url)
             defer { controller.close() }
+            // NSDocumentController's recents list is real per-process state
+            // (§ "Do not pollute the maintainer's real recents list"); leave
+            // it as we found it rather than accumulating fixture URLs across
+            // test runs.
+            //
+            // INSIDE the gate, which is the whole point. This clear used to
+            // sit in the function's outer `defer`, so it fired AFTER the gate
+            // was released and could wipe the list out from under another
+            // suite that was already inside the gate relying on it —
+            // `AppDelegateReopenTests.dockClickShowsWelcomeWindow` failed
+            // exactly that way in a full run while passing alone. The gate
+            // can only serialise what is held inside it.
+            defer { NSDocumentController.shared.clearRecentDocuments(nil) }
 
             // The observable outcome, not "note() was called": a menu built after
             // opening must contain the document. Resolved against symlinks: the
