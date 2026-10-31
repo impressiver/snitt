@@ -1781,6 +1781,18 @@ final class AutomationHost: AutomationHandling, @unchecked Sendable {
                     + "axis, because a palette or tooltip is never what was meant. "
                     + "Resize the window, or record a display if a person has "
                     + "allowed full-display agent recording.")
+        case .failed(let message, .windowNotFound):
+            // The MESSAGE is kept, because it names the id, and the id is the
+            // whole question. `targetUnavailable` below discards it and says
+            // the application may not be running — which is what a caller was
+            // told about a Chrome with thirteen windows open.
+            return AutomationError(
+                code: .targetNotFound,
+                message: message,
+                hint: "Run `snitt targets list` for current window ids. They are "
+                    + "transient: an id changes as windows open and close, so one "
+                    + "resolved a moment ago can already be gone. Nothing was "
+                    + "recorded.")
         case .failed(_, .targetUnavailable), .cancelled:
             return AutomationError(
                 code: .targetNotFound,
