@@ -131,6 +131,15 @@ final class EditorTimelineState: ObservableObject {
     var defaultExportURL: URL = URL(fileURLWithPath: NSTemporaryDirectory())
         .appending(path: "export.mp4")
 
+    /// The folder an export WOULD have gone to, when it is gone and
+    /// `~/Downloads` was substituted — otherwise nil.
+    ///
+    /// Carried to the sheet because the fallback is only acceptable while it
+    /// is visible: `ExportSheet` shows a folder's `lastPathComponent` alone,
+    /// so without this a substitution reads as an ordinary choice of
+    /// Downloads. `LastExportDirectory.resolve` explains the whole rule.
+    var exportFolderUnavailable: URL?
+
     /// Which folds are currently expanded, by `Cut.id` (D56, M5f Task 5).
     ///
     /// UI state ONLY, exactly like `selection` above: nothing here is ever
@@ -2791,6 +2800,8 @@ struct EditorContentView: View {
     @State private var exportRequest = ExportRequest(
         destination: URL(fileURLWithPath: NSTemporaryDirectory()).appending(path: "export.mp4"))
     @State private var exportOptions: [ExportOption] = []
+    /// The folder that was substituted when this sheet opened, or nil.
+    @State private var exportFolderNote: URL?
     @State private var measuringExport = false
 
     /// A folder chooser, not a save panel: the filename is already decided
@@ -3051,6 +3062,10 @@ struct EditorContentView: View {
             // toggle: what you set up while watching is what you get when you
             // export. Still overridable in the sheet — this is the default,
             // not a lock.
+            // Captured when the sheet opens, and cleared the moment a folder
+            // is chosen by hand: the note describes the DEFAULT that had to be
+            // substituted, so it stops being true once the user picks.
+            exportFolderNote = state.exportFolderUnavailable
             exportRequest = ExportRequest(destination: state.defaultExportURL,
                                           drawClicks: state.showClicks,
                                           drawSubtitles: state.showSubtitles,
@@ -3076,6 +3091,7 @@ struct EditorContentView: View {
                 options: exportOptions,
                 isMeasuring: measuringExport,
                 durationSeconds: state.displayState(playhead: playhead).duration,
+                unavailableFolder: exportFolderNote,
                 request: $exportRequest,
                 onCancel: { showingExport = false },
                 onExport: {
@@ -3087,6 +3103,7 @@ struct EditorContentView: View {
                         .chooseFolder(startingAt: exportRequest.destination) else { return }
                     exportRequest.destination = folder
                         .appending(path: exportRequest.destination.lastPathComponent)
+                    exportFolderNote = nil
                 })
         }
         .sheet(item: editingMarkerBinding) { marker in
@@ -3505,17 +3522,28 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
                       height: max(derived.height, requestedMinimumSize.height))
     }
 
-/// Where Export lands unless someone changes it: beside the recording,
-    /// named after it, as an `.mp4`.
+/// Where Export lands unless someone changes it: in `directory`, named
+    /// after the recording, as an `.mp4`.
     ///
-    /// Beside rather than in Movies or Downloads because a `.snitt` bundle
-    /// already lives where its owner put it, and the export belongs with the
-    /// thing it was made from. Static and pure so the naming is testable
-    /// without opening a document.
-    static func defaultExportURL(forBundle bundleURL: URL) -> URL {
-        let folder = bundleURL.deletingLastPathComponent()
+    /// **This used to read "beside rather than in Movies or Downloads because
+    /// a `.snitt` bundle already lives where its owner put it, and the export
+    /// belongs with the thing it was made from."** That decision is reversed
+    /// on the product owner's direction; `LastExportDirectory` carries the
+    /// reasoning and the default (`~/Downloads`, then wherever you last
+    /// exported). The old behaviour is now one case of this one — pass the
+    /// bundle's own parent and the path is unchanged, which
+    /// `exportBesideTheBundleStillWorks` pins.
+    ///
+    /// `directory` is a PARAMETER rather than a read of
+    /// `LastExportDirectory.load()` inside here, so this stays static and
+    /// pure and the naming remains testable without defaults or a document.
+    ///
+    /// `appending(path:)` on the FOLDER, never on the bundle: a `.snitt` is
+    /// itself a directory, so appending to it compiles, runs, and writes the
+    /// export inside the document.
+    static func defaultExportURL(forBundle bundleURL: URL, in directory: URL) -> URL {
         let name = bundleURL.deletingPathExtension().lastPathComponent
-        return folder.appending(path: name).appendingPathExtension("mp4")
+        return directory.appending(path: name).appendingPathExtension("mp4")
     }
 
     /// Centres a REQUESTED content size on the screen, clamped to what will
@@ -3638,7 +3666,10 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         let toolbar = EditorWindowToolbar(state: state, chrome: chrome)
         self.toolbar = toolbar
         toolbar.install(on: window)
-        state.defaultExportURL = Self.defaultExportURL(forBundle: bundleURL)
+        let export = Self.resolvedExportDestination(
+            forBundle: Self.normalizedBundleURL(bundleURL))
+        state.defaultExportURL = export.url
+        state.exportFolderUnavailable = export.unavailable
         // Enforced by the window itself, not merely documented: a layout with
         // a stated minimum that nothing stops you dragging past has no
         // minimum.
@@ -4090,14 +4121,45 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
         controller.relocateBundle(to: bundleURL)
         window.title = destination.deletingPathExtension().lastPathComponent
         state.documentTitle = window.title
-        state.defaultExportURL = Self.defaultExportURL(forBundle: bundleURL)
+        resolveExportDestination()
         RecentDocuments.note(bundleURL)
+    }
+
+    /// Works out where this document's export defaults to, and remembers a
+    /// folder that had to be substituted so the sheet can report it.
+    ///
+    /// Called on open and after a relocation, which are the two moments the
+    /// bundle's identity changes. Reads `LastExportDirectory` fresh each
+    /// time rather than caching: an export done from another window in the
+    /// meantime has moved the remembered folder, and the stale value would
+    /// send this window somewhere the user has since stopped using.
+    private func resolveExportDestination() {
+        let resolved = Self.resolvedExportDestination(forBundle: bundleURL)
+        state.defaultExportURL = resolved.url
+        state.exportFolderUnavailable = resolved.unavailable
+    }
+
+    /// STATIC, because `init` needs it before `super.init` — where no method
+    /// may be called on `self`, which is why the assignment it replaced was
+    /// written inline there.
+    static func resolvedExportDestination(forBundle bundleURL: URL)
+        -> (url: URL, unavailable: URL?) {
+        let resolved = LastExportDirectory.resolve(
+            remembered: LastExportDirectory.load().directory)
+        return (defaultExportURL(forBundle: bundleURL, in: resolved.directory),
+                resolved.unavailable)
     }
 
     func performExport(_ request: ExportRequest) {
         Task { @MainActor in
             do {
                 try await performExport(request, pasteboard: .general)
+                // Remembered HERE, on success, and nowhere else. Picking a
+                // folder in the chooser and then cancelling the sheet
+                // expressed no preference; a file actually written to a
+                // folder did. See `LastExportDirectory`.
+                LastExportDirectory(
+                    directory: request.destination.deletingLastPathComponent()).save()
                 self.presentExportSuccess()
             } catch {
                 self.presentExportFailure(error)

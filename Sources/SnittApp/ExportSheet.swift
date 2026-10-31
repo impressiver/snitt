@@ -203,6 +203,9 @@ struct ExportSheet: View {
     /// inventing a duration to compare against would be worse than staying
     /// quiet.
     var durationSeconds: Double = 0
+    /// The folder the export would have gone to, when it was gone and
+    /// `~/Downloads` was substituted. Nil in the ordinary case.
+    var unavailableFolder: URL?
     @Binding var request: ExportRequest
     let onCancel: () -> Void
     let onExport: () -> Void
@@ -479,7 +482,31 @@ struct ExportSheet: View {
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
                 .truncationMode(.middle)
+            if let note = Self.unavailableNote(for: unavailableFolder) {
+                Label(note, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
+    }
+
+    /// What to say when the remembered export folder was not there, or nil
+    /// when it was.
+    ///
+    /// This row shows a folder's `lastPathComponent` and nothing else, so a
+    /// substitution would otherwise be invisible — "Downloads" looks like a
+    /// choice, not a fallback. Naming the FULL path of what went missing is
+    /// the point: "demos is unavailable" is useless when the folder you meant
+    /// was `/Volumes/Archive/demos`, and an unmounted volume is the case this
+    /// exists for.
+    ///
+    /// Pure and static so the wording is testable without building the view,
+    /// matching `durationWarning(for:durationSeconds:)` just above.
+    static func unavailableNote(for folder: URL?) -> String? {
+        guard let folder else { return nil }
+        return "\(folder.path) is unavailable, so this will go to "
+             + "\(LastExportDirectory.defaultDirectory.lastPathComponent) instead."
     }
 
     /// What gets drawn ON the recording, as its own section.

@@ -24,6 +24,17 @@ GestureMatrixTests :: Sources/SnittApp/TimelineView.swift :: guard let cut = fol
 TimelineLaneBudgetTests :: Sources/SnittApp/TimelineLaneBudget.swift :: public static let minimumTargetHeight: Double = 24 :: public static let minimumTargetHeight: Double = 10
 TimelineTrackLayoutTests :: Sources/SnittApp/TimelineTrackLayout.swift :: let stackTop = markerHeight :: let stackTop = markerHeight + 24
 
+# Where an export lands (PR 1). The failure mode worth pinning is the SILENT
+# one: a fallback that does not report what it replaced is the quiet redirect
+# `RecordingCoordinator.prepareOutputDirectory` refuses to perform.
+LastExportDirectoryTests :: Sources/SnittApp/LastExportDirectory.swift :: if isUsable(remembered, fileManager: fileManager) { :: if true {
+LastExportDirectoryTests :: Sources/SnittApp/LastExportDirectory.swift :: let substituted = remembered == fallback ? nil : remembered :: let substituted: URL? = nil
+LastExportDirectoryTests :: Sources/SnittApp/LastExportDirectory.swift ::               isDirectory.boolValue else { return false } ::               isDirectory.boolValue || true else { return false }
+LastExportDirectoryTests :: Sources/SnittApp/LastExportDirectory.swift :: return fileManager.isWritableFile(atPath: url.path) :: return true
+LastExportDirectoryTests :: Sources/SnittApp/LastExportDirectory.swift :: guard let path = defaults.string(forKey: directoryKey), !path.isEmpty else { :: guard let path = defaults.string(forKey: directoryKey), path.isEmpty else {
+LastExportDirectoryTests :: Sources/SnittApp/EditorWindowController.swift :: return directory.appending(path: name).appendingPathExtension("mp4") :: return bundleURL.appending(path: name).appendingPathExtension("mp4")
+ExportUnavailableNoteTests :: Sources/SnittApp/ExportSheet.swift :: return "\(folder.path) is unavailable, so this will go to " :: return "\(folder.lastPathComponent) is unavailable, so this will go to "
+
 # Export wording — a ceiling presented as an estimate is wrong every time.
 ExportPreflightTests :: Sources/SnittApp/ExportPreflight.swift :: "at most %.1f MB" :: "≈ %.1f MB"
 ExportPreflightTests :: Sources/SnittApp/ExportPreflight.swift :: / 1_000_000 :: / 1_048_576
