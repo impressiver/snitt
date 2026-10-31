@@ -184,8 +184,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         offerToOpenADocumentIfLaunchedBare()
     }
 
-    /// Launching Snitt on its own opens the Open dialog; every other way in
-    /// does not. See `LaunchOpenPrompt` for which cases those are and why.
+    /// Launching Snitt on its own shows the welcome window; every other way
+    /// in does not. See `LaunchOpenPrompt` for which cases those are and why.
     ///
     /// **Deferred by a runloop pass, deliberately.** `application(_:open:)`
     /// can arrive either side of `applicationDidFinishLaunching` on a cold
@@ -220,13 +220,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     isRecording: recording,
                     launchedByAgent: CommandLine.arguments.contains(
                         AppLauncher.agentLaunchArgument))
-                guard decision == .prompt else { return }
+                guard decision == .welcome else { return }
                 // Bring the app forward first. A launch from Spotlight or the
-                // Dock usually activates it anyway, but a modal panel run by
+                // Dock usually activates it anyway, but a window shown by
                 // an app that is not frontmost opens behind whatever is —
-                // which looks exactly like the panel never appearing.
+                // which looks exactly like the window never appearing.
                 NSApp.activate(ignoringOtherApps: true)
-                self.openDocument(nil)
+                // Not `[weak self]` here: `self` is already the strong local
+                // the outer `guard let self` bound, and a second weak capture
+                // of it inside this scope is a Swift 6 concurrency error, not
+                // a stronger guarantee — the strength was already decided.
+                WelcomeWindow.show(
+                    // `handleHotkey()` directly, NOT `statusItem.onClick?()`.
+                    // See `newEmptyDocument`'s doc comment for why.
+                    onRecord: { self.handleHotkey() },
+                    onOpenExisting: { self.openDocument(nil) },
+                    onImportVideo: { urls in self.openURLs(urls) },
+                    onOpenRecent: { url in self.openURLs([url]) },
+                    onDroppedFiles: { urls in self.openURLs(urls) })
             }
         }
     }

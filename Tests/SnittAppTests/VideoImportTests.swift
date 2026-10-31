@@ -262,30 +262,22 @@ struct ImportedDocumentSaveTests {
     }
 }
 
-/// The empty document, and where a drop is and is not accepted.
+/// File ▸ New and File ▸ New from Clipboard, and where a drop is and is not
+/// accepted.
 ///
 /// Scope, stated as a test: a drop is accepted by the APP (Dock icon, Finder
-/// "Open With") and by an EMPTY document. An editor that already has video
-/// does not take one, because splicing a second source into a `.snitt` needs
-/// the document to become a sequence of clips — a different format, not a
-/// bigger version of this one.
+/// "Open With") and by the welcome window File ▸ New opens. An editor that
+/// already has video does not take one, because splicing a second source
+/// into a `.snitt` needs the document to become a sequence of clips — a
+/// different format, not a bigger version of this one.
 @Suite(.serialized)
 @MainActor
-struct EmptyDocumentTests {
+struct NewDocumentTests {
     init() { _ = NSApplication.shared }
 
-    @Test("File ▸ New with nothing to import opens ONE empty document")
-    func newOpensOneEmptyDocument() {
-        defer { EmptyDocumentWindow.resetForTesting() }
-        EmptyDocumentWindow.show(onVideos: { _ in }, activate: false)
-        #expect(EmptyDocumentWindow.open.count == 1)
-
-        // A second ⌘N brings the first forward rather than stacking a
-        // duplicate — two of these are indistinguishable, so the person would
-        // be closing windows they never deliberately made.
-        EmptyDocumentWindow.show(onVideos: { _ in }, activate: false)
-        #expect(EmptyDocumentWindow.open.count == 1)
-    }
+    // File ▸ New opening exactly one window, reused rather than stacked on a
+    // second press, is now `WelcomeWindowTests.showTwiceReusesWindow` — that
+    // window replaced `EmptyDocumentWindow` as what this command opens.
 
     @Test("The app declares plain video, so a Dock drop reaches it")
     func theAppAcceptsVideoFiles() throws {

@@ -10,29 +10,29 @@ import Foundation
 import SnittAutomation
 @testable import SnittApp
 
-/// Which launches get an Open dialog (2026-09-11).
+/// Which launches get the welcome window (2026-09-11).
 ///
 /// Opening Snitt from the Dock with nothing else going on used to leave you
-/// in an app with no windows and no next step. Offering Open there is the
-/// answer — and getting it wrong in the other direction is much worse than
-/// leaving it out, which is why each way in is stated separately rather than
-/// as one boolean.
+/// in an app with no windows and no next step. Showing the welcome window
+/// there is the answer — and getting it wrong in the other direction is much
+/// worse than leaving it out, which is why each way in is stated separately
+/// rather than as one boolean.
 @Suite
 struct LaunchOpenPromptTests {
 
-    @Test("Launched on its own, with nothing going on, offers Open")
+    @Test("Launched on its own, with nothing going on, shows the welcome window")
     func bareLaunchPrompts() {
         #expect(LaunchOpenPrompt.decide(openingDocument: false,
                                         hasVisibleWindows: false,
-                                        isRecording: false) == .prompt)
+                                        isRecording: false) == .welcome)
     }
 
     @Test("A recording in progress is never interrupted — §4.11")
     func recordingIsNeverInterrupted() {
         // The one that matters most. The hotkey and the menu-bar item start a
-        // recording with NO window opening, and a modal Open panel is the
-        // loudest possible way to break that: it would appear over whatever is
-        // being demonstrated, in the recording.
+        // recording with NO window opening, and a welcome window that
+        // activates the app is the loudest possible way to break that: it
+        // would appear over whatever is being demonstrated, in the recording.
         #expect(LaunchOpenPrompt.decide(openingDocument: false,
                                         hasVisibleWindows: false,
                                         isRecording: true) == .recording)
@@ -59,11 +59,11 @@ struct LaunchOpenPromptTests {
                                         isRecording: false) == .documentAlreadyOpening)
     }
 
-    @Test("A recording that just finished opens its editor, not a panel")
+    @Test("A recording that just finished opens its editor, not the welcome window")
     func finishingARecordingDoesNotPrompt() {
         // The case named in the request. Capture has stopped — so `isRecording`
-        // is already false — and the editor is on screen. A panel over it would
-        // be in front of the thing the recording was made for.
+        // is already false — and the editor is on screen. The welcome window
+        // over it would be in front of the thing the recording was made for.
         #expect(LaunchOpenPrompt.decide(openingDocument: false,
                                         hasVisibleWindows: true,
                                         isRecording: false) == .windowAlreadyOpen)
@@ -123,19 +123,20 @@ struct ExportMenuValidationTests {
 // missing demonstration — this project has spent whole sessions chasing
 // exactly that, and the field notes say so.
 
-// MARK: - An agent's launch must not open a panel
+// MARK: - An agent's launch must not open a window
 
 @Suite("An agent-initiated launch is silent")
 struct AgentLaunchPromptTests {
 
-    @Test("An agent's launch does not get the Open dialog")
+    @Test("An agent's launch does not get the welcome window")
     func agentLaunchDoesNotPrompt() {
         // WRONG IMPLEMENTATION: the shipped one, which had no notion of who
         // launched the app. Every agent command that found Snitt not running
-        // launched it, got a bare launch, and ran a MODAL Open panel — which
-        // blocks the MAIN ACTOR. `snitt status` kept answering, because it
-        // never hops to it, so the app looked alive while every verb that
-        // touches a window timed out. An unattended agent waits there forever.
+        // launched it, got a bare launch, and showed a window that called
+        // `NSApp.activate` — which steals the MAIN ACTOR. `snitt status` kept
+        // answering, because it never hops to it, so the app looked alive
+        // while every verb that touches a window timed out. An unattended
+        // agent waits there forever.
         //
         // Found by driving the real demo: `snitt targets list` timed out three
         // times in a row against an app that answered `snitt status` instantly.
@@ -147,24 +148,24 @@ struct AgentLaunchPromptTests {
 
     @Test("A person's bare launch still gets it")
     func aPersonStillGetsThePrompt() {
-        // THE CONTROL. Suppressing the panel outright would pass the test
-        // above and delete a feature people rely on: launching Snitt from the
-        // Dock with nothing open is how you get to your recordings.
+        // THE CONTROL. Suppressing the welcome window outright would pass the
+        // test above and delete a feature people rely on: launching Snitt
+        // from the Dock with nothing open is how you get to your recordings.
         #expect(LaunchOpenPrompt.decide(openingDocument: false,
                                         hasVisibleWindows: false,
                                         isRecording: false,
-                                        launchedByAgent: false) == .prompt)
+                                        launchedByAgent: false) == .welcome)
     }
 
     @Test("The agent's launch outranks every other reason, including recording")
     func agentLaunchOutranksTheRest() {
         // WRONG IMPLEMENTATION: checking `launchedByAgent` last, after the
         // three existing reasons. The others describe what the app is already
-        // doing; this one says the panel is actively harmful, so it cannot sit
-        // downstream of a condition that merely happens to be false.
+        // doing; this one says the window is actively harmful, so it cannot
+        // sit downstream of a condition that merely happens to be false.
         //
         // Recording is the sharpest instance: an agent that starts a recording
-        // on a cold launch would race the panel against its own capture, and
+        // on a cold launch would race the window against its own capture, and
         // which reason won would depend on how fast the coordinator answered.
         #expect(LaunchOpenPrompt.decide(openingDocument: true,
                                         hasVisibleWindows: true,
