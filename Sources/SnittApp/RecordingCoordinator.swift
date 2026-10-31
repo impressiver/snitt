@@ -614,7 +614,11 @@ public actor RecordingCoordinator: AgentRecordingControlling {
             _ = focuser.focus(descriptor: target.descriptor)
         }
 
-        let url = Self.bundleURL(directory: directory, git: git,
+        // `descriptor.applicationName` is nil for a display recording, and a
+        // nil `app` is exactly the pre-existing name (see `BundleNaming`), so
+        // a full-screen capture is unaffected by this.
+        let url = Self.bundleURL(directory: directory,
+                                 app: target.descriptor.applicationName, git: git,
                                  timestamp: Int(Date().timeIntervalSince1970))
         do {
             // Provenance is the one metadata field whose entire purpose is
@@ -830,8 +834,10 @@ public actor RecordingCoordinator: AgentRecordingControlling {
     /// `SCContentFilter`, so this pure mapping is what a test exercises
     /// directly to prove a recording lands in `OutputDirectorySettings`'
     /// directory rather than in `~/Desktop` or any other hardcoded path.
-    static func bundleURL(directory: URL, git: GitContext?, timestamp: Int) -> URL {
-        directory.appendingPathComponent(BundleNaming.filename(git: git, timestamp: timestamp))
+    static func bundleURL(directory: URL, app: String? = nil,
+                          git: GitContext?, timestamp: Int) -> URL {
+        directory.appendingPathComponent(
+            BundleNaming.filename(app: app, git: git, timestamp: timestamp))
     }
 
     /// Ensures `directory` (the FRESHLY-READ `OutputDirectorySettings`, not

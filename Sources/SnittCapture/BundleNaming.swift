@@ -7,16 +7,53 @@
 import Foundation
 import SnittDocument
 
-/// Names a bundle after the work it documents (§7).
+/// Names a bundle after the work it documents (§7), and after what was filmed.
 ///
 /// "A demo arrives as `feature-branch-a1b2c3.snitt` rather than
 /// `Screen Recording 2026-09-02.mov`."
+///
+/// **The recorded window's TITLE is deliberately not here, and must not be
+/// added.** The app's name is; the title is not. The difference is not
+/// squeamishness, it is this codebase's existing, documented position on that
+/// one field:
+///
+/// - `RecordingCoordinator.openEditor(for:)` already redacts THIS FILENAME
+///   from its error messages, because the name embeds the git branch and "a
+///   branch called `feat/acme-corp-integration` would name a customer or an
+///   unreleased feature" in a line "collected verbatim into `snitt
+///   diagnostics export`, which people attach to public support threads". The
+///   same comment records a MEASURED leak of this filename through
+///   `NSError.userInfo`'s `NSFilePath`. So the filename is a known leak
+///   surface that has already had to be patched once.
+/// - `DiagnosticsBundle.redactingTarget` replaces the window title with a
+///   per-export SALTED hash on the export path, because "§5.1's own worked
+///   example of why window-scoping matters is a window titled 'Mail Password
+///   Required' — exactly the kind of string this bundle promises never to
+///   carry". `DiagnosticsBundleTests` pins that promise.
+/// - `RecordingMetadata` carries no title field at all, so the title is not
+///   inside the bundle either.
+///
+/// A length cap would not have helped: it shortens a title, it does not
+/// de-identify one, and "Mail Password Required" is 23 characters. An
+/// application name ("Safari", "Xcode") is a fixed, low-entropy string drawn
+/// from a short list of installed apps, which is why it is safe here and the
+/// title is not.
 public enum BundleNaming {
     /// Keeps room for the ".snitt" extension and any future suffix within
     /// macOS's ~255-byte filename limit. A branch name over this would
     /// otherwise make `SnittBundle(creatingAt:)` throw an obscure filesystem
     /// error instead of a name Snitt could simply have prevented.
     private static let maxAssembledLength = 200
+
+    /// The application's own allowance, so a pathological `applicationName`
+    /// cannot eat the branch's entire budget.
+    ///
+    /// Capped rather than trusted: `applicationName` is a plain `String` off
+    /// `SCRunningApplication`, not a known-short identifier like a commit, and
+    /// nothing in ScreenCaptureKit promises it is reasonable. Forty characters
+    /// fits every real app name on a Mac with room to spare, and the cap only
+    /// ever bites on something absurd.
+    private static let maxAppLength = 40
 
     /// The timestamp is ALWAYS part of the name, git context or not.
     ///
@@ -28,29 +65,57 @@ public enum BundleNaming {
     /// filesystem enum, until a human moved the first bundle out of the way.
     /// Two recordings of the same commit are the normal case, not a
     /// collision to be reported.
-    public static func filename(git: GitContext?, timestamp: Int) -> String {
-        let branch = git?.branch.map(sanitize)
-        let commit = git?.commit.map(sanitize)
-
-        var parts = [branch, commit].compactMap { $0 }.filter { !$0.isEmpty }
+    ///
+    /// `app` defaults to nil, and with it nil this returns BYTE-IDENTICAL
+    /// names to the version before the app name existed — pinned by
+    /// `noApplicationIsByteIdenticalToTheOldName`. A display recording, or
+    /// any caller that cannot name an application, keeps the name it had.
+    public static func filename(app: String? = nil,
+                                git: GitContext?,
+                                timestamp: Int) -> String {
         let suffix = "-\(timestamp)"
-        guard !parts.isEmpty else { return "Snitt\(suffix).snitt" }
-
-        // Truncate the BRANCH half, not the commit: the commit is the more
-        // identifying half of the two, and short-circuiting a long branch
-        // name still leaves a usable, disambiguating name. The timestamp is
-        // never truncated — it is what makes the name unique.
         let budget = maxAssembledLength - suffix.utf8.count
-        if parts.count == 2 {
-            let commitPart = parts[1]
-            // Room for "-<commit>" plus the joining "-".
-            parts[0] = String(parts[0].prefix(max(0, budget - commitPart.utf8.count - 1)))
-            parts = parts.filter { !$0.isEmpty }
-        } else {
-            parts[0] = String(parts[0].prefix(max(0, budget)))
+
+        // LABELLED FIELDS, NOT A POSITIONAL ARRAY, and that is the whole
+        // reason this function was restructured rather than extended.
+        //
+        // The budget arithmetic used to index a two-slot `[branch, commit]`
+        // array and branch on `parts.count == 2`, truncating `parts[0]`. That
+        // was correct only while there were exactly two optional components.
+        // Prepending the app made `parts[0]` the APP, so the rule this
+        // function documents — truncate the branch, never the commit — would
+        // have silently become "truncate the app" and shredded the app name
+        // while a 400-character branch sailed through untouched.
+        // `longBranchTruncatesBeforeTheApplication` is the regression test;
+        // it is the only test in the file that a revert to positional
+        // truncation fails.
+        let appPart = applicationPart(app)
+        let commitPart = git?.commit.map(sanitize).flatMap(nonEmpty)
+        let branchPart = git?.branch.map(sanitize).flatMap(nonEmpty)
+
+        guard appPart != nil || commitPart != nil || branchPart != nil else {
+            return "Snitt\(suffix).snitt"
         }
 
-        let assembled = parts.joined(separator: "-")
+        // The branch is the only truncatable field, so everything else is
+        // fixed cost and the branch gets what is left. Ordered app, branch,
+        // commit: the app says what you were looking at, and the commit stays
+        // adjacent to the timestamp where it reads as provenance.
+        let fixed = [appPart, commitPart].compactMap { $0 }
+        let fixedBytes = fixed.reduce(0) { $0 + $1.utf8.count }
+        // One separator per fixed field once the branch joins them, which is
+        // also exactly `fixed.count` when the branch is absent and one of the
+        // joins disappears with it.
+        let allowance = max(0, budget - fixedBytes - fixed.count)
+
+        // `prefix` counts Characters while the budget is in UTF-8 bytes, so a
+        // multi-byte branch name can still exceed `budget` here. That slack
+        // is pre-existing and deliberate — the figure is a safety margin
+        // under 255, not an exact quota — and `finalClamp` below is what
+        // keeps it inside the filesystem's actual limit.
+        let branch = branchPart.map { String($0.prefix(allowance)) }.flatMap(nonEmpty)
+
+        let assembled = [appPart, branch, commitPart].compactMap { $0 }.joined(separator: "-")
 
         // A LEADING dot is stripped separately from the general sanitisation
         // below: dots are fine inside a name ("release.2", "v1.2"), but a
@@ -71,8 +136,37 @@ public enum BundleNaming {
         // a leading "-" makes the bundle awkward to pass to any command line.
         let unhidden = String(assembled.drop { $0 == "." || $0 == "-" })
 
-        let name = unhidden.isEmpty ? "Snitt" : unhidden
+        let name = unhidden.isEmpty ? "Snitt" : String(unhidden.prefix(budget))
         return name + suffix + ".snitt"
+    }
+
+    /// The application's contribution, or nil when it has none to make.
+    ///
+    /// Hyphen runs are collapsed HERE and nowhere else, deliberately. A real
+    /// app name does produce them — "Adobe Photoshop (Beta)" sanitises to
+    /// "Adobe-Photoshop--Beta-", a double hyphen and a trailing one — and
+    /// both are ugly in a name a human reads in Finder. Branch and commit are
+    /// left exactly as they were so that an `app: nil` call still returns the
+    /// old bytes; collapsing globally would have quietly renamed every
+    /// recording whose branch contained a run, which is a change nobody
+    /// asked for.
+    private static func applicationPart(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let collapsed = collapsingHyphens(sanitize(raw))
+        let trimmed = collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        return nonEmpty(String(trimmed.prefix(maxAppLength)))
+    }
+
+    private static func collapsingHyphens(_ raw: String) -> String {
+        var out = ""
+        for character in raw where !(character == "-" && out.last == "-") {
+            out.append(character)
+        }
+        return out
+    }
+
+    private static func nonEmpty(_ value: String) -> String? {
+        value.isEmpty ? nil : value
     }
 
     /// Branch names legitimately contain "/" and ":". The result is appended to
