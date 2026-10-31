@@ -619,11 +619,48 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
         return stack
     }
 
-    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.dateTimeStyle = .named
+    /// Dated precisely enough to tell two recordings apart.
+    ///
+    /// This used to be a `RelativeDateTimeFormatter`, which collapsed every
+    /// bundle older than a few weeks to the same phrase. The product owner's
+    /// own list showed four DIFFERENT recordings, taken seconds apart on one
+    /// branch at one commit, as four identical rows reading
+    /// "726d2ac · last month". A recents list whose rows cannot be told
+    /// apart does not do the one thing it exists for.
+    ///
+    /// `doesRelativeDateFormatting` keeps the friendly head of the range, so
+    /// today and yesterday still read as words, and everything older gets a
+    /// real date. The TIME is the part that actually disambiguates, and it
+    /// is why `timeStyle` is not `.none`: two recordings on one afternoon
+    /// share a date and differ only by clock time.
+    ///
+    /// Still collides for recordings made inside the same minute. That is
+    /// the shape of a development machine hammering the record hotkey, not
+    /// of use, and the alternative is seconds in a sidebar.
+    private static let rowDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        formatter.doesRelativeDateFormatting = true
         return formatter
     }()
+
+    /// The row's second line: what the name carried, then when it was made.
+    ///
+    /// Split out of `makeRecentRow` so a test can reach it. The window is
+    /// the right home for it even so — `WelcomeContent`'s doc comment gives
+    /// the reason, which is that formatting a date is locale-dependent
+    /// presentation and testing it one layer down would mean pinning
+    /// English.
+    ///
+    /// Main-actor isolated, unlike the pure string helpers beside it:
+    /// `DateFormatter` is not `Sendable`, and a cached one shared across
+    /// actors is exactly the data race the compiler is right to refuse.
+    static func rowDetail(_ entry: WelcomeContent.Entry) -> String {
+        [entry.detail, rowDateFormatter.string(from: entry.modified)]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+    }
 
     /// One row in the recents sidebar list.
     ///
@@ -651,11 +688,7 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
         button.setButtonType(.momentaryChange)
         button.cell?.representedObject = entry.url
 
-        let detailLine = [entry.detail,
-                          Self.relativeDateFormatter.localizedString(for: entry.modified,
-                                                                     relativeTo: Date())]
-            .compactMap { $0 }
-            .joined(separator: " · ")
+        let detailLine = Self.rowDetail(entry)
 
         let icon = NSImageView(image: NSImage(systemSymbolName: "film",
                                               accessibilityDescription: nil) ?? NSImage())

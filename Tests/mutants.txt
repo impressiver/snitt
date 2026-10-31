@@ -731,3 +731,5 @@ MascotViewTests :: Sources/SnittApp/MascotView.swift :: let factor = min(1, dist
 WelcomeWindowTests/captionCentresWithTheSidebarButtons :: Sources/SnittApp/WelcomeWindow.swift :: caption.centerYAnchor.constraint(equalTo: buttons.centerYAnchor).isActive = true :: caption.centerYAnchor.constraint(equalTo: buttons.centerYAnchor).isActive = false
 WelcomeWindowTests/recentsRowKeepsAnAccessibilityLabel :: Sources/SnittApp/WelcomeWindow.swift ::             : "\(entry.title), \(detailLine)") ::             : "")
 WelcomeWindowTests/recentsRowIsLeftAlignedAndClearOfTheIcon :: Sources/SnittApp/WelcomeWindow.swift ::         text.alignment = .leading ::         text.alignment = .centerX
+WelcomeWindowTests/rowDatesTellCloseRecordingsApart :: Sources/SnittApp/WelcomeWindow.swift ::         formatter.timeStyle = .short ::         formatter.timeStyle = .none
+WelcomeWindowTests/rowDetailKeepsTheCommit :: Sources/SnittApp/WelcomeWindow.swift ::         [entry.detail, rowDateFormatter.string(from: entry.modified)] ::         [nil, rowDateFormatter.string(from: entry.modified)]

@@ -139,6 +139,45 @@ struct WelcomeWindowTests {
         #expect(label.contains("a1b2c3d"))
     }
 
+    // MARK: - Row dates
+
+    @Test("Two recordings on one afternoon do not read identically")
+    func rowDatesTellCloseRecordingsApart() throws {
+        // THE REGRESSION. `RelativeDateTimeFormatter` rendered both of these
+        // as "last month", so the product owner's sidebar showed four
+        // different bundles as four identical rows.
+        let base = Date(timeIntervalSinceNow: -30 * 24 * 3600)
+        let first = WelcomeContent.Entry(url: URL(fileURLWithPath: "/tmp/a.snitt"),
+                                         title: "feature-demos-and-cta",
+                                         detail: "726d2ac",
+                                         modified: base)
+        let second = WelcomeContent.Entry(url: URL(fileURLWithPath: "/tmp/b.snitt"),
+                                          title: "feature-demos-and-cta",
+                                          detail: "726d2ac",
+                                          modified: base.addingTimeInterval(37 * 60))
+        #expect(WelcomeWindow.rowDetail(first) != WelcomeWindow.rowDetail(second))
+    }
+
+    @Test("The row date still carries what the name said")
+    func rowDetailKeepsTheCommit() throws {
+        let entry = WelcomeContent.Entry(url: URL(fileURLWithPath: "/tmp/a.snitt"),
+                                         title: "feature-demos-and-cta",
+                                         detail: "726d2ac",
+                                         modified: Date())
+        // Catches a mutant that drops the name's own detail and leaves the
+        // row with nothing but a date.
+        #expect(WelcomeWindow.rowDetail(entry).hasPrefix("726d2ac · "))
+    }
+
+    @Test("A name with nothing to add gets a date and no stray separator")
+    func rowDetailWithoutACommitHasNoSeparator() throws {
+        let entry = WelcomeContent.Entry(url: URL(fileURLWithPath: "/tmp/a.snitt"),
+                                         title: "Standup", detail: nil, modified: Date())
+        let detail = WelcomeWindow.rowDetail(entry)
+        #expect(!detail.contains("·"))
+        #expect(!detail.isEmpty)
+    }
+
     // MARK: - Bottom edge
 
     @Test("The menu-bar caption sits on the same line as the sidebar buttons")
