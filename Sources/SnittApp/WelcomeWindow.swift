@@ -157,6 +157,25 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
     /// machinery, which races another suite's real window close.
     static func resetForTesting() { open.removeAll() }
 
+    /// Dismisses the front door, because something better is now on screen.
+    ///
+    /// Called from `EditorWindowController.show()`. The dependency points
+    /// that way deliberately: this is the welcome window's own rule — it is
+    /// shown only when there is no document on screen — so putting the rule
+    /// here keeps the editor ignorant of a window it has no other reason to
+    /// know about, and one call site means the rule cannot be half applied.
+    ///
+    /// A notification would decouple it further. SnittApp uses
+    /// `NotificationCenter` nowhere at all, and introducing the first one
+    /// for a single in-module call would trade a checked reference for an
+    /// unchecked string.
+    ///
+    /// Iterates a COPY: `window.close()` runs `windowWillClose`, which
+    /// removes the controller from `open` while the loop is reading it.
+    static func closeForEditor() {
+        for controller in open { controller.window.close() }
+    }
+
     private init(guidance: WelcomeContent.Guidance,
                 recents: [WelcomeContent.Entry],
                 permissionRows: [WelcomeContent.PermissionRow],

@@ -3920,6 +3920,13 @@ public final class EditorWindowController: NSObject, NSWindowDelegate {
             Self.count += 1
             Self.open.append(self)
         }
+        // Outside the `isShown` guard on purpose. The welcome window is the
+        // front door, and a front door left standing open behind the room
+        // you just walked into is clutter the user has to clear by hand.
+        // Clicking a recent for a document that is ALREADY open takes the
+        // early exit above, and that path has to dismiss it too — it is the
+        // same gesture from the user's side.
+        WelcomeWindow.closeForEditor()
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
     }

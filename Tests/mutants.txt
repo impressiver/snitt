@@ -740,3 +740,5 @@ WelcomeWindowTests/rowDetailKeepsTheCommit :: Sources/SnittApp/WelcomeWindow.swi
 # replaced, which at least failed obviously.
 AgentLaunchPromptTests :: Sources/SnittApp/LaunchOpenPrompt.swift :: if launchedByAgent { return .agentLaunch } :: if false { return .agentLaunch }
 AppDelegateReopenTests :: Sources/SnittApp/main.swift :: isRecording: isCapturing) :: isRecording: false)
+AppDelegateReopenTests/openingAnEditorClosesTheWelcomeWindow :: Sources/SnittApp/EditorWindowController.swift ::         WelcomeWindow.closeForEditor() ::         _ = 0
+AppDelegateReopenTests/reopeningAnOpenDocumentClosesTheWelcomeWindow :: Sources/SnittApp/WelcomeWindow.swift ::         for controller in open { controller.window.close() } ::         for controller in open.prefix(0) { controller.window.close() }
