@@ -652,3 +652,6 @@ ConsentInfoTests :: Sources/SnittAutomation/Protocol.swift :: self.unattendedPer
 #   - SubtitleCues was restructured around placed(.recorded)
 
 FilmstripHoverTests/clickWhileHoveringDoesNotRestore :: Sources/SnittApp/TimelineView.swift :: // is what makes that recommit reachable. :: endHover()
+
+TimelineLaneBudgetTests/filmstripPreferredHeightIsPinned :: Sources/SnittApp/TimelineLaneBudget.swift ::     public static let preferredVideoHeight: Double = 45 ::     public static let preferredVideoHeight: Double = 36
+TimelineLaneBudgetTests/filmstripGetsItsPreferredHeightWhenThereIsRoom :: Sources/SnittApp/TimelineLaneBudget.swift ::         let videoHeight = max(minimumVideoHeight, available - used) ::         let videoHeight = minimumVideoHeight

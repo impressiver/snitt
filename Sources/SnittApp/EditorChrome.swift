@@ -132,6 +132,23 @@ struct TransportBar: View {
                 .overlay(alignment: .top) {
                     SnittPalette.Swatch.ink3.frame(height: 1)
                 }
+                // And a groove along the bottom, where the controls meet the
+                // lanes. Two hairlines, not one: a line darker than the bar
+                // reads as a cut INTO the surface, and the lighter line
+                // under it is the light catching the cut's lower lip. One
+                // line alone reads as a border drawn on top, which is the
+                // web-page look the top edge's comment is already fighting.
+                //
+                // Both are alpha over whatever is beneath rather than fixed
+                // inks, so the groove keeps its relationship to the surface
+                // if the lane colours move.
+                .overlay(alignment: .bottom) {
+                    VStack(spacing: 0) {
+                        Color.black.opacity(0.4)
+                        SnittPalette.Swatch.ink3.opacity(0.5)
+                    }
+                    .frame(height: 2)
+                }
         }
     }
 
