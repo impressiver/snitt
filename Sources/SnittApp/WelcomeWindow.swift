@@ -68,10 +68,20 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
 
     private static let tipIndexKey = "com.impressiver.snitt.welcomeWindow.tipIndex"
 
+    /// Held only so `makeContent` can line the left column's caption up with
+    /// the sidebar's buttons. The two are built by separate methods and the
+    /// constraint spans both, so neither method can own it.
+    private weak var menuBarCaption: NSView?
+    private weak var sidebarButtonRow: NSView?
+
     /// Natural, and only, size — see this type's doc comment on why a fixed
     /// size is correct here rather than a compromise.
-    static let contentSize = NSSize(width: 720, height: 460)
-    private static let leftColumnWidth: CGFloat = 400
+    /// 25% up on the 720x460 this started at. Control metrics, fonts and
+    /// edge insets deliberately did NOT scale with it: macOS controls have
+    /// fixed metrics, so the extra space goes to breathing room rather than
+    /// to a uniformly zoomed window that would look like a scaled bitmap.
+    static let contentSize = NSSize(width: 900, height: 575)
+    private static let leftColumnWidth: CGFloat = 500
 
     // MARK: - Showing
 
@@ -215,6 +225,15 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
             container.addSubview(view)
         }
 
+        // The caption under the left column and the buttons at the foot of
+        // the sidebar are the two things on the window's bottom edge, so they
+        // read as one row and have to sit on one line. Constrained to each
+        // other rather than both to a hardcoded inset, because a push
+        // button's height is a system metric this code does not get to know.
+        if let caption = menuBarCaption, let buttons = sidebarButtonRow {
+            caption.centerYAnchor.constraint(equalTo: buttons.centerYAnchor).isActive = true
+        }
+
         NSLayoutConstraint.activate([
             left.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             left.topAnchor.constraint(equalTo: container.topAnchor),
@@ -290,8 +309,8 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
             tip.font = .systemFont(ofSize: 11.5)
             tip.textColor = .secondaryLabelColor
             tip.alignment = .center
-            tip.preferredMaxLayoutWidth = 270
-            tip.widthAnchor.constraint(lessThanOrEqualToConstant: 270).isActive = true
+            tip.preferredMaxLayoutWidth = 340
+            tip.widthAnchor.constraint(lessThanOrEqualToConstant: 340).isActive = true
             stackViews.append(tip)
         }
 
@@ -309,6 +328,7 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
 
         let menuBarLine = Self.makeMenuBarLine()
         menuBarLine.translatesAutoresizingMaskIntoConstraints = false
+        menuBarCaption = menuBarLine
 
         column.addSubview(mainStack)
         column.addSubview(menuBarLine)
@@ -319,7 +339,8 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
             mainStack.centerXAnchor.constraint(equalTo: column.centerXAnchor),
             mainStack.topAnchor.constraint(greaterThanOrEqualTo: column.topAnchor, constant: 46),
 
-            menuBarLine.bottomAnchor.constraint(equalTo: column.bottomAnchor, constant: -32),
+            menuBarLine.bottomAnchor.constraint(lessThanOrEqualTo: column.bottomAnchor,
+                                                constant: -16),
             menuBarLine.centerXAnchor.constraint(equalTo: column.centerXAnchor),
             menuBarLine.leadingAnchor.constraint(greaterThanOrEqualTo: column.leadingAnchor, constant: 40),
             menuBarLine.trailingAnchor.constraint(lessThanOrEqualTo: column.trailingAnchor, constant: -40),
@@ -334,11 +355,11 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
     /// Held on the window because the window is what drives it: it is the
     /// only party that knows where its own Record button is, and a tracking
     /// area on the mascot could only ever see the pointer while it was
-    /// inside those 150x115 points.
+    /// inside those 188x144 points.
     private func makeMascot() -> MascotView {
-        let mascot = MascotView(frame: NSRect(x: 0, y: 0, width: 150, height: 115))
-        mascot.widthAnchor.constraint(equalToConstant: 150).isActive = true
-        mascot.heightAnchor.constraint(equalToConstant: 115).isActive = true
+        let mascot = MascotView(frame: NSRect(x: 0, y: 0, width: 188, height: 144))
+        mascot.widthAnchor.constraint(equalToConstant: 188).isActive = true
+        mascot.heightAnchor.constraint(equalToConstant: 144).isActive = true
         mascotView = mascot
         return mascot
     }
@@ -493,6 +514,7 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
         topStack.orientation = .vertical
         topStack.alignment = .leading
         topStack.spacing = 10
+        recentsContent.widthAnchor.constraint(equalTo: topStack.widthAnchor).isActive = true
         topStack.translatesAutoresizingMaskIntoConstraints = false
 
         let recordButton = NSButton(title: "Record a Window", target: self,
@@ -529,6 +551,7 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
         bottomRow.distribution = .fillEqually
         bottomRow.spacing = 8
         bottomRow.translatesAutoresizingMaskIntoConstraints = false
+        sidebarButtonRow = bottomRow
 
         sidebar.addSubview(topStack)
         sidebar.addSubview(middle)
@@ -590,6 +613,9 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 2
+        for row in rows {
+            row.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
         return stack
     }
 
@@ -607,6 +633,14 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
     /// this task's spec calls out by name. Only the first row gets a subtle
     /// selection fill, which is the cue a real macOS sidebar list gives for
     /// "the top/most relevant item", not a decoration repeated down the list.
+    ///
+    /// **The two lines are real labels, not an `attributedTitle`.** An
+    /// earlier version put both lines in one attributed string separated by
+    /// a newline and laid the icon over the top of it. That produced the
+    /// defect the product owner photographed: `NSButtonCell` CENTRES its
+    /// title, so the name sat in the middle of the row while the second line
+    /// ran underneath the icon. A cell has no way to indent around a
+    /// sibling subview, so the fix has to be real views in a stack.
     private static func makeRecentRow(_ entry: WelcomeContent.Entry, isFirst: Bool,
                                       target: AnyObject, action: Selector) -> NSButton {
         let button = NSButton(title: "", target: target, action: action)
@@ -617,21 +651,43 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
         button.setButtonType(.momentaryChange)
         button.cell?.representedObject = entry.url
 
-        let detailLine = [entry.detail, Self.relativeDateFormatter.localizedString(for: entry.modified, relativeTo: Date())]
+        let detailLine = [entry.detail,
+                          Self.relativeDateFormatter.localizedString(for: entry.modified,
+                                                                     relativeTo: Date())]
             .compactMap { $0 }
             .joined(separator: " · ")
 
-        let title = NSMutableAttributedString(
-            string: entry.title + "\n",
-            attributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor])
-        title.append(NSAttributedString(
-            string: detailLine,
-            attributes: [.font: NSFont.systemFont(ofSize: 10.5), .foregroundColor: NSColor.secondaryLabelColor]))
-        button.attributedTitle = title
-
-        let icon = NSImageView(image: NSImage(systemSymbolName: "film", accessibilityDescription: nil) ?? NSImage())
+        let icon = NSImageView(image: NSImage(systemSymbolName: "film",
+                                              accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = .secondaryLabelColor
-        icon.translatesAutoresizingMaskIntoConstraints = false
+
+        let title = NSTextField(labelWithString: entry.title)
+        title.font = .systemFont(ofSize: 12)
+        title.textColor = .labelColor
+        let detail = NSTextField(labelWithString: detailLine)
+        detail.font = .systemFont(ofSize: 10.5)
+        detail.textColor = .secondaryLabelColor
+
+        // Truncate rather than compress. A branch name is long and the
+        // sidebar is not wide, so without this the row either grows the
+        // window or squeezes the date off the end; a tail ellipsis keeps the
+        // recognisable head of the name, which is the part being read.
+        for label in [title, detail] {
+            label.lineBreakMode = .byTruncatingTail
+            label.cell?.truncatesLastVisibleLine = true
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+
+        let text = NSStackView(views: [title, detail])
+        text.orientation = .vertical
+        text.alignment = .leading
+        text.spacing = 1
+
+        let row = NSStackView(views: [icon, text])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.spacing = 9
+        row.translatesAutoresizingMaskIntoConstraints = false
 
         button.wantsLayer = true
         button.layer?.cornerRadius = 8
@@ -642,17 +698,26 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
 
         button.translatesAutoresizingMaskIntoConstraints = false
         button.heightAnchor.constraint(greaterThanOrEqualToConstant: 44).isActive = true
-        button.addSubview(icon)
+        button.addSubview(row)
         NSLayoutConstraint.activate([
-            icon.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 8),
-            icon.centerYAnchor.constraint(equalTo: button.centerYAnchor),
+            row.leadingAnchor.constraint(equalTo: button.leadingAnchor, constant: 8),
+            row.trailingAnchor.constraint(lessThanOrEqualTo: button.trailingAnchor,
+                                          constant: -8),
+            row.centerYAnchor.constraint(equalTo: button.centerYAnchor),
             icon.widthAnchor.constraint(equalToConstant: 16),
             icon.heightAnchor.constraint(equalToConstant: 16),
         ])
-        // The icon is decorative — the attributed title already carries the
-        // row's full meaning, so a screen reader is not asked to read a
-        // second, redundant image.
-        icon.setAccessibilityElement(false)
+
+        // The labels and the icon are presentation; the BUTTON is the thing
+        // a screen reader should find, and it needs a title of its own now
+        // that it no longer has one. Without this the row announces as an
+        // unlabelled button, which is worse than the attributedTitle was.
+        for view in [icon, title, detail] as [NSView] {
+            view.setAccessibilityElement(false)
+        }
+        button.setAccessibilityLabel(detailLine.isEmpty
+            ? entry.title
+            : "\(entry.title), \(detailLine)")
 
         return button
     }

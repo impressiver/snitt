@@ -48,6 +48,124 @@ struct WelcomeWindowTests {
                            activate: false)
     }
 
+    /// Depth-first walk of a built window's view tree.
+    ///
+    /// These layout tests need the real hierarchy: the defects they pin
+    /// (a centred row title, a caption off the button baseline) are
+    /// properties of laid-out frames, so a `private(set)` counter seam like
+    /// `recentsRowCount` cannot see them.
+    private func descendants(of view: NSView) -> [NSView] {
+        view.subviews.flatMap { [$0] + descendants(of: $0) }
+    }
+
+    private func laidOutContent(_ controller: WelcomeWindow) -> NSView? {
+        guard let content = controller.window.contentView else { return nil }
+        content.layoutSubtreeIfNeeded()
+        return content
+    }
+
+    private func recentsFixture(_ names: [String]) throws -> (URL, [URL]) {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let urls = try names.map { name -> URL in
+            let url = folder.appendingPathComponent("\(name).snitt")
+            try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+            return url
+        }
+        return (folder, urls)
+    }
+
+    // MARK: - Recents row layout
+
+    @Test("A recents row stacks its two lines against the left edge, clear of the icon")
+    func recentsRowIsLeftAlignedAndClearOfTheIcon() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        let (folder, urls) = try recentsFixture(["feature-demos-and-cta-726d2ac-1788464616"])
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            WelcomeWindow.resetForTesting()
+            try? FileManager.default.removeItem(at: folder)
+        }
+
+        let controller = noOpShow(defaults: defaults, recentURLs: urls)
+        let content = try #require(laidOutContent(controller))
+        let row = try #require(descendants(of: content).compactMap { $0 as? NSButton }
+            .first { $0.identifier?.rawValue == urls[0].absoluteString })
+
+        // The shape of the defect, not just its symptom. The row used to be
+        // one `attributedTitle` with a newline in it plus an icon laid over
+        // the top; `NSButtonCell` centres a title, so the name floated in
+        // the middle of the row and the second line ran under the icon.
+        #expect(row.title.isEmpty)
+        #expect(row.attributedTitle.length == 0)
+
+        let labels = descendants(of: row).compactMap { $0 as? NSTextField }
+        #expect(labels.count == 2)
+        let image = try #require(descendants(of: row).compactMap { $0 as? NSImageView }.first)
+        for label in labels {
+            let frame = label.convert(label.bounds, to: row)
+            #expect(frame.minX >= image.convert(image.bounds, to: row).maxX)
+        }
+        // Both lines share one left edge, which is what "stacked, not
+        // centred" means in a frame assertion.
+        let lefts = labels.map { $0.convert($0.bounds, to: row).minX }
+        #expect(abs((lefts.max() ?? 0) - (lefts.min() ?? 0)) < 0.5)
+    }
+
+    @Test("A recents row still announces itself after losing its title")
+    func recentsRowKeepsAnAccessibilityLabel() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        let (folder, urls) = try recentsFixture(["Safari-main-a1b2c3d-1788464616"])
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            WelcomeWindow.resetForTesting()
+            try? FileManager.default.removeItem(at: folder)
+        }
+
+        // The title moved out of the cell and into sibling labels, which is
+        // exactly the change that silently unlabels a button. Catches a
+        // mutant that drops `setAccessibilityLabel`.
+        let controller = noOpShow(defaults: defaults, recentURLs: urls)
+        let content = try #require(laidOutContent(controller))
+        let row = try #require(descendants(of: content).compactMap { $0 as? NSButton }
+            .first { $0.identifier?.rawValue == urls[0].absoluteString })
+        let label = try #require(row.accessibilityLabel())
+        // Asserted against the two things THIS layer puts in the label, not
+        // against how `WelcomeContent.name(forStem:)` happens to split the
+        // stem today — that is the content layer's concern and its own tests
+        // pin it.
+        #expect(label.hasPrefix("Safari"))
+        #expect(label.contains("a1b2c3d"))
+    }
+
+    // MARK: - Bottom edge
+
+    @Test("The menu-bar caption sits on the same line as the sidebar buttons")
+    func captionCentresWithTheSidebarButtons() throws {
+        let (defaults, suiteName) = try fixtureDefaults()
+        defer {
+            defaults.removePersistentDomain(forName: suiteName)
+            WelcomeWindow.resetForTesting()
+        }
+
+        let controller = noOpShow(defaults: defaults)
+        let content = try #require(laidOutContent(controller))
+        let all = descendants(of: content)
+        let caption = try #require(all.compactMap { $0 as? NSTextField }
+            .first { $0.stringValue.hasPrefix("Snitt looks like") })
+        let open = try #require(all.compactMap { $0 as? NSButton }
+            .first { $0.title == "Open…" })
+
+        // Catches a mutant that pins the caption to its column's bottom edge
+        // with a hardcoded inset again. A push button's height is a system
+        // metric, so any constant that happens to line up today stops lining
+        // up the moment AppKit changes it.
+        let captionMid = caption.convert(caption.bounds, to: content).midY
+        let buttonMid = open.convert(open.bounds, to: content).midY
+        #expect(abs(captionMid - buttonMid) < 1.0)
+    }
+
     // MARK: - Mascot keenness and nodding (pure)
 
     @Test("The mascot is calm when the pointer is nowhere near the button")

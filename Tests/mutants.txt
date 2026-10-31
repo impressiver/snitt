@@ -728,3 +728,6 @@ MascotViewTests :: Sources/SnittApp/MascotView.swift :: if k > 0.5 { geometry.mo
 MascotViewTests :: Sources/SnittApp/MascotView.swift :: geometry.leftPupilRadius += k * Design.keennessPupilRadius :: geometry.leftPupilRadius += k * Design.keennessEyeRy
 MascotViewTests :: Sources/SnittApp/MascotView.swift :: let clamped = min(max(keenness, 0), 1) :: let clamped = keenness
 MascotViewTests :: Sources/SnittApp/MascotView.swift :: let factor = min(1, distance / reach) :: let factor = distance / reach
+WelcomeWindowTests/captionCentresWithTheSidebarButtons :: Sources/SnittApp/WelcomeWindow.swift :: caption.centerYAnchor.constraint(equalTo: buttons.centerYAnchor).isActive = true :: caption.centerYAnchor.constraint(equalTo: buttons.centerYAnchor).isActive = false
+WelcomeWindowTests/recentsRowKeepsAnAccessibilityLabel :: Sources/SnittApp/WelcomeWindow.swift ::             : "\(entry.title), \(detailLine)") ::             : "")
+WelcomeWindowTests/recentsRowIsLeftAlignedAndClearOfTheIcon :: Sources/SnittApp/WelcomeWindow.swift ::         text.alignment = .leading ::         text.alignment = .centerX
