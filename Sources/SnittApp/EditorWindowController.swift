@@ -505,9 +505,134 @@ final class EditorTimelineState: ObservableObject {
         // is the new target — not "no target", which is what this used to
         // record and what left navigation reading a stale clock.
         pendingSeekTarget = trimmedTime
+        // A click made WHILE hovering recommits: the position the pointer's
+        // exit returns to is the one just clicked, not the one the hover
+        // began from. Without this, clicking the frame you are previewing and
+        // then moving the pointer away silently undoes the click.
+        if hoverReturnTarget != nil { hoverReturnTarget = trimmedTime }
         controller.pause()
-        Task { await controller.seek(toSeconds: trimmedTime) }
+        pendingSeekTask = Task { await controller.seek(toSeconds: trimmedTime) }
         refreshPlaybackState()
+    }
+
+    // MARK: - The filmstrip hover preview
+
+    /// Where to put the playhead back when the pointer leaves the filmstrip,
+    /// in TRIMMED time. Nil whenever no preview is live, which is also the
+    /// flag for "a hover is in progress".
+    ///
+    /// Captured from `pendingSeekTarget ?? currentOutputSeconds`, in that
+    /// order, and NOT from the player alone. `pendingSeekTarget`'s own doc
+    /// comment is the reason: "every seek in this editor hands the work to a
+    /// `Task`, so `player.currentTime()` still reports the OLD position for a
+    /// beat afterwards". Click the timeline and move the pointer up onto the
+    /// filmstrip in one motion and the player's clock is still reporting the
+    /// position before the click, so reading it would snap back to the wrong
+    /// place — the exact staleness the pending target was introduced to fix.
+    private var hoverReturnTarget: Double?
+
+    /// The in-flight COMMITTED seek, so a test can await it.
+    ///
+    /// The same shape and the same reason as `pendingSaveTask`: these seeks
+    /// are unstructured `Task`s, so a test that scrubs and then asserts the
+    /// playhead is racing one. A timing-based wait was tried first and failed
+    /// in the only place that matters — inside the full `SnittAppTests` run,
+    /// where this AVFoundation-heavy target contends with itself and a seek
+    /// that takes milliseconds alone took tens of seconds. A poll with a
+    /// timeout turns that into a silent give-up and the race comes straight
+    /// back, which is exactly how it was found.
+    ///
+    /// Never cleared on completion, deliberately: `waitForPendingSeek`
+    /// compares identity, so a stale handle is awaited once and returns
+    /// immediately, while a newer one enqueued meanwhile is picked up by the
+    /// loop. That is how `waitForPendingSave` already works.
+    private var pendingSeekTask: Task<Void, Never>?
+
+    /// Awaits the in-flight committed seek. Test seam.
+    func waitForPendingSeek() async {
+        while let task = pendingSeekTask {
+            await task.value
+            if pendingSeekTask == task { return }
+        }
+    }
+
+    /// The instant the preview is currently aiming at, and the single task
+    /// draining it. Together these coalesce.
+    private var hoverSeekTarget: Double?
+    private var hoverSeekExact = false
+    private var hoverSeekTask: Task<Void, Never>?
+
+    /// Previews `time` (SOURCE seconds), or restores the committed position
+    /// when `time` is nil.
+    ///
+    /// **Never pauses, and never records a destination.** Both are what
+    /// separate this from `onScrub`, which does both deliberately. A hover is
+    /// the user asking what is at an instant; a scrub is the user saying to
+    /// be there. Writing `pendingSeekTarget` here would make mark-to-mark
+    /// navigation reason from wherever the pointer last rested.
+    ///
+    /// **Only while paused**, on the product owner's direction. Hovering
+    /// during playback does nothing at all: seeking against a running clock
+    /// shows a frame that is already gone, and pausing on hover would stop
+    /// the picture every time the pointer crossed the timeline.
+    func hoverPreview(toSource time: Double?) {
+        guard !isPlaying else {
+            // Playback started while hovering (the space bar, or the
+            // transport). Abandon the preview rather than restoring: yanking
+            // the picture back now would fight the playback that just began.
+            hoverReturnTarget = nil
+            return
+        }
+        guard let time else {
+            guard let target = hoverReturnTarget else { return }
+            hoverReturnTarget = nil
+            // Exact, not tolerant: this is a committed position again.
+            enqueueHoverSeek(to: target, exact: true)
+            return
+        }
+        guard let trimmed = TimeRangeMapping.nearestTrimmedTime(
+            toSourceTime: time, keptRanges: controller.keptRanges) else { return }
+        if hoverReturnTarget == nil {
+            hoverReturnTarget = pendingSeekTarget ?? currentOutputSeconds
+        }
+        enqueueHoverSeek(to: trimmed, exact: false)
+    }
+
+    /// COALESCED, because `mouseMoved` arrives at pointer speed and an
+    /// `AVPlayer.seek` does not complete at pointer speed.
+    ///
+    /// One task drains the latest target rather than one task per event: a
+    /// task per event queues them, and the picture then walks through every
+    /// intermediate position after the pointer has already stopped. Keeping
+    /// only the newest target means intermediate ones are dropped, which is
+    /// what a scrub preview wants — nobody is asking to see the frames the
+    /// pointer passed over on its way.
+    private func enqueueHoverSeek(to trimmed: Double, exact: Bool) {
+        hoverSeekTarget = trimmed
+        hoverSeekExact = exact
+        guard hoverSeekTask == nil else { return }
+        hoverSeekTask = Task { @MainActor [weak self] in
+            while let next = self?.hoverSeekTarget {
+                let exact = self?.hoverSeekExact ?? false
+                self?.hoverSeekTarget = nil
+                if exact {
+                    await self?.controller.seek(toSeconds: next)
+                } else {
+                    await self?.controller.previewSeek(toSeconds: next)
+                }
+            }
+            self?.hoverSeekTask = nil
+        }
+    }
+
+    /// Awaits the in-flight preview chain, not a fixed sleep — the same seam
+    /// `waitForPendingSave` is, for the same reason: "a test that slept would
+    /// be a flake this project has already paid for once".
+    func waitForHoverPreview() async {
+        while let task = hoverSeekTask {
+            await task.value
+            if hoverSeekTask == task { return }
+        }
     }
 
     /// Sends the playhead back to the start.
@@ -525,7 +650,7 @@ final class EditorTimelineState: ObservableObject {
         // pressing Next straight after a rewind must step from zero, not from
         // wherever the playhead had not yet left.
         pendingSeekTarget = 0
-        Task { await controller.seek(toSeconds: 0) }
+        pendingSeekTask = Task { await controller.seek(toSeconds: 0) }
         // A rewind while watching is a replay, not a stop — so the flag is
         // refreshed rather than cleared, and stays whatever the player is.
         refreshPlaybackState()
@@ -1093,7 +1218,7 @@ final class EditorTimelineState: ObservableObject {
         // to that stale clock.
         pendingSeekTarget = seconds
         controller.pause()
-        Task { await controller.seek(toSeconds: seconds) }
+        pendingSeekTask = Task { await controller.seek(toSeconds: seconds) }
         refreshPlaybackState()
     }
 
@@ -2618,6 +2743,7 @@ struct TimelineViewRepresentable: NSViewRepresentable {
         // the first render rather than only after the first update pass.
         state.timelineView = view
         view.onScrub = { [weak state] in state?.onScrub($0) }
+        view.onHoverPreview = { [weak state] in state?.hoverPreview(toSource: $0) }
         view.onSelect = { [weak state] in state?.onSelect($0) }
         view.onToggleExpansion = { [weak state] in state?.toggleExpansion(of: $0) }
         view.onExpandAndSelectFold = { [weak state] in state?.expandAndSelect(foldID: $0) }
