@@ -56,6 +56,23 @@ import SnittExport
 @MainActor
 public final class TimelineView: NSView {
     public var onScrub: (Double) -> Void = { _ in }
+
+    /// Where the pointer is hovering over the FILMSTRIP, in SOURCE time, or
+    /// nil the moment it stops hovering.
+    ///
+    /// A separate callback from `onScrub` rather than a reuse of it, because
+    /// the two mean opposite things to playback. `onScrub` is the user saying
+    /// where to BE: `EditorTimelineState.onScrub` pauses and records the
+    /// destination, deliberately ("Scrubbing STOPS playback (D87)"). A hover
+    /// is the user ASKING what is there, and must leave the committed
+    /// position untouched so there is something to snap back to. Routing
+    /// hover through `onScrub` would pause the picture every time the pointer
+    /// crossed the timeline and overwrite the very position the exit is
+    /// supposed to restore.
+    ///
+    /// One callback for both edges, nil meaning "no longer hovering", so a
+    /// consumer cannot handle the enter and forget the exit.
+    public var onHoverPreview: (Double?) -> Void = { _ in }
     /// Called every time a drag resolves: `Selection(range:)` for a drag
     /// that cleared the pixel threshold, `nil` for a plain click (or a drag
     /// too short to count) — either way, always a REPLACEMENT of whatever
@@ -199,6 +216,17 @@ public final class TimelineView: NSView {
     /// event. See `sourceSeconds(forOutput:)`.
     private var timebase = Timebase(sourceDuration: 0, edl: EditDecisionList())
     private var gesture = TrimGesture()
+
+    /// The hovered instant in OUTPUT time, or nil when not hovering.
+    ///
+    /// Doubles as the "is a preview live" flag, which is what makes
+    /// `endHover()` idempotent: a redundant exit finds nil and reports
+    /// nothing, so a pointer wandering across the band's edge does not
+    /// re-seek the player back to a position it is already at.
+    private var hoverOutputTime: Double?
+
+    /// The hover tracking area, rebuilt rather than moved.
+    private var hoverTrackingArea: NSTrackingArea?
 
     /// Current zoom, relative to "the whole (uncut) recording fits exactly
     /// in `bounds.width`" — 1 is that default, unzoomed level; `zoomIn()`/
@@ -415,12 +443,20 @@ public final class TimelineView: NSView {
             ?? AudioTrackOrder.recorded(in: trackStates, health: nil, overdubbed: false)
         self.waveforms = waveforms
         self.filmstrip = filmstrip
+        // Both of these change the filmstrip band: the audio lane count and
+        // the transcript lane are inputs to `TimelineTrackLayout.bands`. So
+        // the preview is cancelled and the tracking area rebuilt, which
+        // AppKit will not do for a change that leaves `bounds` alone.
+        cancelPreviewForGeometryChange()
         rebuildGeometry()
+        updateTrackingAreas()
         needsDisplay = true
     }
 
     public override func layout() {
         super.layout()
+        // A resize remaps time to x, and the pointer has not moved.
+        cancelPreviewForGeometryChange()
         rebuildGeometry()
         viewportDidChange()
         needsDisplay = true
@@ -464,6 +500,11 @@ public final class TimelineView: NSView {
     // MARK: - Scrolling
 
     public func scroll(bySeconds delta: Double) {
+        // A horizontal pan moves the timeline under a stationary pointer, so
+        // it is the same class as a zoom even though it changes no scale.
+        // Reached from the scrollbar and from `scrollWheel`'s horizontal
+        // branch, which never passes through `setZoom`.
+        cancelPreviewForGeometryChange()
         scrollOffsetSeconds = geometry.scrollOffset + delta
         rebuildGeometry()
         viewportDidChange()
@@ -718,6 +759,9 @@ public final class TimelineView: NSView {
 
     public func update(phrases newPhrases: [TranscriptPhrase]) {
         phrases = newPhrases
+        // Gaining or losing the transcript lane resizes the filmstrip band.
+        cancelPreviewForGeometryChange()
+        updateTrackingAreas()
         needsDisplay = true
     }
 
@@ -942,6 +986,9 @@ public final class TimelineView: NSView {
     /// rather than mutating either property directly, so the clamp can
     /// never be skipped by a new caller.
     private func setZoom(_ factor: Double, anchoredAtOutput anchor: Double) {
+        // Funnels zoomIn/zoomOut/scrollWheel/magnify, none of which consult
+        // the pointer, so this one call covers every zoom route.
+        cancelPreviewForGeometryChange()
         zoomFactor = min(max(factor, Self.minZoomFactor), Self.maxZoomFactor)
         // The slider reads `zoomFraction` off this view, which is a plain
         // property on an NSView and publishes nothing — so a scroll or a pinch
@@ -1113,7 +1160,115 @@ public final class TimelineView: NSView {
 
     // MARK: - Mouse handling
 
+    /// The filmstrip band, computed with the EXACT arguments `draw` uses.
+    ///
+    /// Not a cached rect, and not `phraseHit`'s shortcut of passing
+    /// `audioTracks: []`. That shortcut is sound for the transcript lane,
+    /// whose height is claimed off the bottom before audio divides what is
+    /// left, and it would be wrong here: `TimelineTrackLayout` derives the
+    /// video band's height FROM the audio lane count, so hit-testing with an
+    /// empty lane list would gate hover on a band that is not the band being
+    /// drawn. "Hit-testing on a different axis than the drawing is this
+    /// view's oldest defect class, and it is the reason `GestureAxisTests`
+    /// exists" — so this reads the same inputs as the drawing, every time.
+    private var filmstripBand: CGRect {
+        TimelineTrackLayout.bands(in: bounds,
+                                  markerHeight: markerTrackHeight,
+                                  audioTracks: audioLanes,
+                                  hasTranscript: !phrases.isEmpty).video
+    }
+
+    /// Y-GATED HERE, IN THE HANDLER, NOT IN THE TRACKING AREA, and that is a
+    /// decision the Step 0 collision test made rather than one the plan
+    /// brought with it (`FilmstripHoverTests` says why at length).
+    ///
+    /// Two reasons the rect cannot be the gate. A test drives `mouseMoved`
+    /// directly, so a gate living only in the rect is a gate no test can
+    /// reach — on the one view in this project whose gating has already
+    /// regressed twice. And the rect goes stale: `update(duration:...)` and
+    /// `update(phrases:)` both change this band's height and both end in
+    /// `needsDisplay = true`, while AppKit re-fires `updateTrackingAreas()`
+    /// only on a real bounds change. With the gate here, a stale rect is
+    /// harmless — the handler simply rejects a point outside the band.
+    public override func mouseMoved(with event: NSEvent) {
+        // A gesture owns the pointer while it is dragging. Previewing
+        // mid-drag would fight the selection the drag is making, and AppKit
+        // delivers `mouseMoved` around a drag as well as during it.
+        guard gesture.phase == .idle, activeMarkerDrag == nil,
+              activeFoldClick == nil, !activePhraseClick else { return }
+
+        let point = convert(event.locationInWindow, from: nil)
+        guard filmstripBand.contains(point) else {
+            // Sliding out of the band without leaving the VIEW is still an
+            // exit: the view is taller than the band, and one active tracking
+            // area makes AppKit deliver `mouseMoved` for all of it.
+            endHover()
+            return
+        }
+
+        let output = snappedOutputTime(atX: point.x)
+        // Nothing to preview when there is no output timeline to map onto.
+        // Reported as no hover at all rather than as an exit, so a recording
+        // still loading does not look like a pointer that just left.
+        guard let source = sourceSeconds(forOutput: output) else { return }
+
+        hoverOutputTime = output.seconds
+        onHoverPreview(source)
+        needsDisplay = true
+    }
+
+    public override func mouseExited(with event: NSEvent) {
+        endHover()
+    }
+
+    /// Cancels a live preview because the GEOMETRY changed under a pointer
+    /// that did not move (D3).
+    ///
+    /// Its own method, called from every route that remaps time to x — zoom,
+    /// pan, a resize, a lane-count change, a transcript lane appearing —
+    /// rather than five bare `endHover()` calls. Two reasons: the call sites
+    /// then say WHY they cancel, and this is one line a mutant can delete to
+    /// prove the whole class is tested (`Tests/mutants.txt`), which five
+    /// identical calls could not be.
+    ///
+    /// Cancelling rather than recomputing from a cached pointer position is
+    /// deliberate: it adds no new state to a view whose gesture state has
+    /// already produced two shipped regressions. The cost is that zooming
+    /// while aiming drops the preview until the pointer next moves.
+    private func cancelPreviewForGeometryChange() { endHover() }
+
+    /// Stops previewing and asks the consumer to restore the committed
+    /// position. Idempotent, and silent when no preview is live.
+    private func endHover() {
+        guard hoverOutputTime != nil else { return }
+        hoverOutputTime = nil
+        onHoverPreview(nil)
+        needsDisplay = true
+    }
+
+    /// Rebuilt from a freshly computed band every time, never moved.
+    ///
+    /// Called explicitly from `apply(_:)`/`update(phrases:)` as well, because
+    /// those change the band without changing the view's bounds and AppKit
+    /// would not re-fire this on its own.
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let existing = hoverTrackingArea { removeTrackingArea(existing) }
+        // `.inVisibleRect` is deliberately NOT used: it would force the area
+        // to the whole visible rect and discard the band this passes.
+        let area = NSTrackingArea(rect: filmstripBand,
+                                  options: [.mouseEnteredAndExited, .mouseMoved,
+                                            .activeInKeyWindow],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        hoverTrackingArea = area
+    }
+
     public override func mouseDown(with event: NSEvent) {
+        // A click commits a position, so whatever was being previewed stops
+        // being a preview. Ended BEFORE the gesture machinery below so the
+        // consumer restores nothing over the top of the scrub about to fire.
+        endHover()
         let point = convert(event.locationInWindow, from: nil)
         // D50/D56 (M5f Task 6): checked BEFORE the fold hit-test and any
         // scrub/drag logic, for the same reason Task 5's fold check runs
@@ -1627,6 +1782,15 @@ public final class TimelineView: NSView {
         static let audioBandMuted = SnittPalette.ink1
         static let separator = SnittPalette.ink3
         static let playhead = SnittPalette.playheadInk
+        /// The hover preview's marker.
+        ///
+        /// `signalBright` is the rev 5 style sheet's own assignment for
+        /// "hover / selected mark" (its token table), so this is the
+        /// established token rather than a new one. Amber against the
+        /// near-white `playhead` is what makes the two readable as different
+        /// things: one is where you ARE, the other is where you are LOOKING.
+        /// No dashes needed, and none invented.
+        static let hoverMarker = SnittPalette.signalBright
         static let waveform = SnittPalette.signal
         static let waveformMuted = SnittPalette.signal.withAlphaComponent(0.28)
 
@@ -1865,6 +2029,23 @@ public final class TimelineView: NSView {
         Palette.playhead.setFill()
         let playheadX = geometry.x(atOutput: OutputTime(playhead))
         NSBezierPath(rect: NSRect(x: playheadX - 1, y: 0, width: 2, height: bounds.height)).fill()
+
+        // AFTER the playhead, so the thing the pointer is asking about is not
+        // hidden underneath the thing it is asking relative to.
+        //
+        // Drawn at all because without it the picture moves while the only
+        // marker on the timeline stays put, which reads as the view drifting
+        // out of sync with itself rather than as a preview. Confined to the
+        // filmstrip band: it belongs to the lane that owns the gesture, and a
+        // full-height line would claim the lanes that deliberately do not
+        // hover.
+        if let hoverOutputTime {
+            Palette.hoverMarker.setFill()
+            let band = filmstripBand
+            let hoverX = geometry.x(atOutput: OutputTime(hoverOutputTime))
+            NSBezierPath(rect: NSRect(x: hoverX - 1, y: band.minY,
+                                      width: 2, height: band.height)).fill()
+        }
     }
 }
 

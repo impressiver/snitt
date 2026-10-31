@@ -20,6 +20,14 @@ GestureMatrixTests :: Sources/SnittApp/TimelineView.swift :: guard let cut = fol
 # bearing. `TimelineViewTests.fullyCutRecordingHasNoFoldPositions` pins the
 # BEHAVIOUR; a mutant that cannot fail would only have inflated the count.
 
+# Filmstrip hover (PR 3a) — a gate that swallows a gesture, and a preview
+# that lies about where the pointer is. Both render; neither throws.
+FilmstripHoverTests :: Sources/SnittApp/TimelineView.swift :: guard filmstripBand.contains(point) else { :: guard bounds.contains(point) else {
+FilmstripHoverTests :: Sources/SnittApp/TimelineView.swift :: audioTracks: audioLanes, :: audioTracks: [],
+FilmstripHoverTests :: Sources/SnittApp/TimelineView.swift :: private func cancelPreviewForGeometryChange() { endHover() } :: private func cancelPreviewForGeometryChange() { }
+FilmstripHoverTests :: Sources/SnittApp/TimelineView.swift :: guard hoverOutputTime != nil else { return } :: if hoverOutputTime == nil { hoverOutputTime = 0 }
+FilmstripHoverTests :: Sources/SnittApp/TimelineView.swift :: guard gesture.phase == .idle, activeMarkerDrag == nil, :: guard activeMarkerDrag == nil,
+
 # Lane geometry — wrong sizes render, they do not throw.
 TimelineLaneBudgetTests :: Sources/SnittApp/TimelineLaneBudget.swift :: public static let minimumTargetHeight: Double = 24 :: public static let minimumTargetHeight: Double = 10
 TimelineTrackLayoutTests :: Sources/SnittApp/TimelineTrackLayout.swift :: let stackTop = markerHeight :: let stackTop = markerHeight + 24
