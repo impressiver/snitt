@@ -503,7 +503,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// See `EmptyDocumentWindow` for why this is its own window rather than an
     /// editor with nothing in it.
     @objc func newEmptyDocument(_ sender: Any?) {
-        EmptyDocumentWindow.show { [weak self] urls in self?.openURLs(urls) }
+        WelcomeWindow.show(
+            onRecord: { [weak self] in self?.statusItem.onClick?() },
+            onOpenExisting: { [weak self] in self?.openDocument(nil) },
+            onImportVideo: { [weak self] urls in self?.openURLs(urls) },
+            onOpenRecent: { [weak self] url in self?.openURLs([url]) },
+            onDroppedFiles: { [weak self] urls in self?.openURLs(urls) })
     }
 
     /// File ▸ Save (⌘S). Only an imported document has anything to do here —
