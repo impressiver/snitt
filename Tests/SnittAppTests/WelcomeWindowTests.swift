@@ -19,9 +19,9 @@ import Foundation
 /// Per this suite's own house rule (see `SettingsWindowTests`), every test
 /// that touches `UserDefaults` gets its own throwaway suite rather than
 /// `.standard`, so one test's state can never leak into another's — and
-/// `WelcomeWindow.resetForTesting()` plays the same role for the static
-/// `open` list that `EmptyDocumentWindow.resetForTesting()` plays for that
-/// window.
+/// `WelcomeWindow.resetForTesting()` drops every open window from the
+/// static `open` list the same way, without touching AppKit's own close
+/// machinery, which races another suite's real window close.
 @Suite(.serialized)
 @MainActor
 struct WelcomeWindowTests {
@@ -325,8 +325,8 @@ struct WelcomeWindowTests {
         }
 
         // Catches a mutant that drops the `open.first` reuse check and
-        // always constructs a new controller — the same stacking bug
-        // `EmptyDocumentWindow.show` guards against for ⌘N.
+        // always constructs a new controller, which would stack a second
+        // window behind the first on a repeated ⌘N instead of refocusing it.
         let first = noOpShow(defaults: defaults)
         let second = noOpShow(defaults: defaults)
         #expect(first === second)

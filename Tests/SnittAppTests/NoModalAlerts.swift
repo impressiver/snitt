@@ -17,13 +17,15 @@ import Foundation
 /// their polling loop needs the same MainActor the modal is holding.
 ///
 /// This is what actually caused the ten-minute hang investigated on
-/// 2026-09-09. `DockReopenTests` calls the real
-/// `AppDelegate.applicationShouldHandleReopen`, whose "most recent document"
-/// comes from `NSDocumentController.recentDocumentURLs` — machine-global
-/// state that `AppShellTests` and `DocumentOpenerTests` each clear in a
-/// `defer`. Lose that race and the reopen path finds no recents and raises
+/// 2026-09-09. A test calling the real `AppDelegate.applicationShouldHandleReopen`
+/// raced its "most recent document" lookup — `NSDocumentController.recentDocumentURLs`,
+/// machine-global state that `AppShellTests` and `DocumentOpenerTests` each
+/// clear in a `defer` — and the reopen path, back when "no recents" raised an
+/// alert rather than showing the welcome window, found none and presented
 /// "Snitt has no recent recordings to reopen." The dialog was photographed
-/// mid-run before anyone identified it.
+/// mid-run before anyone identified it. That particular alert is gone along
+/// with the branch that raised it, but the seam this type patches stays
+/// load-bearing for every alert still reachable from a test.
 ///
 /// Installed rather than asserted: the point is to remove the possibility, not
 /// to notice it afterwards. `silence()` is idempotent and safe to call from

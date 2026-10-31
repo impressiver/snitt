@@ -9,18 +9,19 @@ import Foundation
 import SnittCapture
 import SnittDocument
 
-/// The window File ▸ New opens.
+/// The window File ▸ New opens, and also the front door: a bare launch and a
+/// Dock click with no window open both show this rather than an `NSOpenPanel`
+/// or silently reopening the last document — see `LaunchOpenPrompt`.
 ///
-/// A later PR retires `EmptyDocumentWindow` in favour of this one; for now
-/// both exist, and this file is additive. Where `EmptyDocumentWindow` only
-/// ever had one thing to say ("drop a video here"), this window has a
-/// person's actual state to report — recent recordings, a hotkey that may
-/// have been rebound, a permission that may still be missing — so it reads
-/// from `WelcomeContent`, the pure decision layer, rather than deciding any
-/// of that itself. This file is the AppKit half: layout, callbacks, and the
-/// handful of OS reads (`RecentDocuments`, the three `*Access.isGranted()`
-/// checks, `HotkeySettings.load`) that `WelcomeContent` cannot reach on its
-/// own because it is deliberately not `@MainActor` and touches no UI.
+/// This replaced `EmptyDocumentWindow`, which only ever had one thing to say
+/// ("drop a video here"). This window has a person's actual state to
+/// report — recent recordings, a hotkey that may have been rebound, a
+/// permission that may still be missing — so it reads from `WelcomeContent`,
+/// the pure decision layer, rather than deciding any of that itself. This
+/// file is the AppKit half: layout, callbacks, and the handful of OS reads
+/// (`RecentDocuments`, the three `*Access.isGranted()` checks,
+/// `HotkeySettings.load`) that `WelcomeContent` cannot reach on its own
+/// because it is deliberately not `@MainActor` and touches no UI.
 ///
 /// **This window never asks for a permission.** It reads `isGranted()` on
 /// each service and nothing else — never `ensureGranted()`, never a
@@ -40,8 +41,8 @@ import SnittDocument
 @MainActor
 final class WelcomeWindow: NSObject, NSWindowDelegate {
     /// Open windows, so a second ⌘N brings the first forward rather than
-    /// stacking a duplicate — the same reuse `EmptyDocumentWindow.open` and
-    /// the one shared `SettingsWindowController` already do.
+    /// stacking a duplicate — the same reuse the one shared
+    /// `SettingsWindowController` already does.
     private(set) static var open: [WelcomeWindow] = []
 
     let window: NSWindow
@@ -153,9 +154,27 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
     }
 
     /// Test-only: drops every open window without touching AppKit's close
-    /// machinery, which races another suite's real window close — the same
-    /// reason `EmptyDocumentWindow.resetForTesting()` exists.
+    /// machinery, which races another suite's real window close.
     static func resetForTesting() { open.removeAll() }
+
+    /// Dismisses the front door, because something better is now on screen.
+    ///
+    /// Called from `EditorWindowController.show()`. The dependency points
+    /// that way deliberately: this is the welcome window's own rule — it is
+    /// shown only when there is no document on screen — so putting the rule
+    /// here keeps the editor ignorant of a window it has no other reason to
+    /// know about, and one call site means the rule cannot be half applied.
+    ///
+    /// A notification would decouple it further. SnittApp uses
+    /// `NotificationCenter` nowhere at all, and introducing the first one
+    /// for a single in-module call would trade a checked reference for an
+    /// unchecked string.
+    ///
+    /// Iterates a COPY: `window.close()` runs `windowWillClose`, which
+    /// removes the controller from `open` while the loop is reading it.
+    static func closeForEditor() {
+        for controller in open { controller.window.close() }
+    }
 
     private init(guidance: WelcomeContent.Guidance,
                 recents: [WelcomeContent.Entry],
@@ -253,8 +272,8 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
 
         // Catches drags anywhere over the window — including over the
         // sidebar and the controls inside it — while declining clicks, so
-        // every button underneath keeps working. Layered LAST, exactly as
-        // `EmptyDocumentWindow.makeContent` does.
+        // every button underneath keeps working. Layered LAST, so it sits
+        // above everything else and still catches the drag.
         let drop = VideoDropView(frame: .zero)
         drop.translatesAutoresizingMaskIntoConstraints = false
         drop.onDrop = { [weak self] urls in self?.handleDrop(urls) }

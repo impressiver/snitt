@@ -733,3 +733,12 @@ WelcomeWindowTests/recentsRowKeepsAnAccessibilityLabel :: Sources/SnittApp/Welco
 WelcomeWindowTests/recentsRowIsLeftAlignedAndClearOfTheIcon :: Sources/SnittApp/WelcomeWindow.swift ::         text.alignment = .leading ::         text.alignment = .centerX
 WelcomeWindowTests/rowDatesTellCloseRecordingsApart :: Sources/SnittApp/WelcomeWindow.swift ::         formatter.timeStyle = .short ::         formatter.timeStyle = .none
 WelcomeWindowTests/rowDetailKeepsTheCommit :: Sources/SnittApp/WelcomeWindow.swift ::         [entry.detail, rowDateFormatter.string(from: entry.modified)] ::         [nil, rowDateFormatter.string(from: entry.modified)]
+
+# --- the welcome window as the front door, 2026-10-30 ---
+# Both suppressions that matter: a window that activates the app over a
+# live or agent-started recording is worse than the modal panel it
+# replaced, which at least failed obviously.
+AgentLaunchPromptTests :: Sources/SnittApp/LaunchOpenPrompt.swift :: if launchedByAgent { return .agentLaunch } :: if false { return .agentLaunch }
+AppDelegateReopenTests :: Sources/SnittApp/main.swift :: isRecording: isCapturing) :: isRecording: false)
+AppDelegateReopenTests/openingAnEditorClosesTheWelcomeWindow :: Sources/SnittApp/EditorWindowController.swift ::         WelcomeWindow.closeForEditor() ::         _ = 0
+AppDelegateReopenTests/reopeningAnOpenDocumentClosesTheWelcomeWindow :: Sources/SnittApp/WelcomeWindow.swift ::         for controller in open { controller.window.close() } ::         for controller in open.prefix(0) { controller.window.close() }
