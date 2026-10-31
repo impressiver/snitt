@@ -55,6 +55,25 @@ FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: if h
 #    one's seek is still in flight. That is a race in the test seam, and any
 #    test for it would itself be a race. Kept; not pinnable.
 
+# The welcome window's decisions. The failure modes here are all quiet: a
+# recents row that no longer exists, a tip reporting a hotkey the user has
+# rebound, a permission warning for a feature nobody switched on.
+#
+# The tipIndex entry reports "killed (crash)" rather than a clean failure, and
+# that is the mutant's own doing: a bare `tipIndex % count` indexes with a
+# negative number and traps inside `guidance` before any assertion runs. The
+# kill is real; there is no assertion style that would make it tidier.
+WelcomeContentTests :: Sources/SnittApp/WelcomeContent.swift :: guard hasRecordings else { return .gettingStarted } :: guard !hasRecordings else { return .gettingStarted }
+WelcomeContentTests :: Sources/SnittApp/WelcomeContent.swift :: return .tip(all[((tipIndex % all.count) + all.count) % all.count]) :: return .tip(all[tipIndex % all.count])
+WelcomeContentTests :: Sources/SnittApp/WelcomeContent.swift :: "Hold Shift with \(recordShortcut) to record a window without bringing it to the front.", :: "Hold Shift with ⌥⌘5 to record a window without bringing it to the front.",
+WelcomeContentTests :: Sources/SnittApp/WelcomeContent.swift :: (try? fileManager.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date :: (try? fileManager.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date ?? Date()
+WelcomeContentTests :: Sources/SnittApp/WelcomeContent.swift :: return Array(found.sorted { $0.modified > $1.modified }.prefix(max(0, limit))) :: return Array(found.prefix(max(0, limit)))
+WelcomeContentTests :: Sources/SnittApp/WelcomeContent.swift :: return Array(found.sorted { $0.modified > $1.modified }.prefix(max(0, limit))) :: return Array(found.sorted { $0.modified > $1.modified })
+WelcomeContentTests :: Sources/SnittApp/WelcomeContent.swift :: if let last = parts.last, last.allSatisfy(\.isNumber) { :: if let last = parts.last, !last.isEmpty {
+WelcomeContentTests :: Sources/SnittApp/WelcomeContent.swift :: if microphoneEnabled { :: if true {
+WelcomeContentTests :: Sources/SnittApp/WelcomeContent.swift :: requiresRelaunch: false)) :: requiresRelaunch: true))
+WelcomeContentTests :: Sources/SnittApp/WelcomeContent.swift :: rows.contains { !$0.isGranted } :: rows.contains { $0.isGranted }
+
 # Lane geometry — wrong sizes render, they do not throw.
 TimelineLaneBudgetTests :: Sources/SnittApp/TimelineLaneBudget.swift :: public static let minimumTargetHeight: Double = 24 :: public static let minimumTargetHeight: Double = 10
 TimelineTrackLayoutTests :: Sources/SnittApp/TimelineTrackLayout.swift :: let stackTop = markerHeight :: let stackTop = markerHeight + 24
