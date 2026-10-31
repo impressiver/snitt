@@ -14,6 +14,14 @@
 #   <test-filter> :: <file> :: <find> :: <replace>
 # Blank lines and lines starting with # are ignored. `::` separates fields,
 # so none of them may contain it.
+#
+# <find> may begin with an occurrence selector, `[2]` for the second match
+# and so on, when the text it anchors to is not unique in the file. Without
+# one the FIRST match is replaced, which is silently the wrong line whenever
+# the anchor repeats — eleven identical `guard policy().allowsAgentAccess`
+# lines in AutomationHost.swift are why this exists. `Scripts/check-mutants.sh`
+# rejects a repeated anchor that carries no selector, and a selector that
+# points past the last match.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
@@ -26,6 +34,11 @@ fi
 
 survived=0
 total=0
+# Counted and reported, never quietly subtracted. A mutant that could not be
+# applied or did not compile tests exactly as much as one that was never
+# written, and the old code decremented `total` for both — so a run with a
+# dead mutant in it still printed "N of N killed" and looked perfect.
+skipped=0
 
 while IFS= read -r line; do
   case "$line" in ''|'#'*) continue ;; esac
@@ -36,6 +49,7 @@ while IFS= read -r line; do
 
   if [ ! -f "$file" ]; then
     echo "SKIP  (no such file: $file)"
+    skipped=$((skipped + 1))
     continue
   fi
   total=$((total + 1))
@@ -45,15 +59,27 @@ while IFS= read -r line; do
   # Python rather than sed: the find/replace text is literal, and sed would
   # treat it as a regex.
   if ! FIND="$find" REPLACE="$replace" FILE="$file" python3 -c '
-import os, sys
+import os, re, sys
 path, find, replace = os.environ["FILE"], os.environ["FIND"], os.environ["REPLACE"]
+# An optional leading [n] selects WHICH match to replace. Matched strictly so
+# a find that legitimately opens with a bracket — a Swift array literal, say —
+# is not mistaken for a selector.
+which = 1
+m = re.match(r"^\[(\d+)\](.*)$", find, re.S)
+if m:
+    which, find = int(m.group(1)), m.group(2)
 s = open(path).read()
-if find not in s:
+if s.count(find) < which or which < 1:
     sys.exit(3)
-open(path, "w").write(s.replace(find, replace, 1))
+# Walk to the nth occurrence, then splice.
+index = -1
+for _ in range(which):
+    index = s.find(find, index + 1)
+open(path, "w").write(s[:index] + replace + s[index + len(find):])
 '; then
     cp "$backup" "$file"; rm -f "$backup"
     echo "SKIP  anchor not found: ${find:0:50}"
+    skipped=$((skipped + 1))
     total=$((total - 1))
     continue
   fi
@@ -80,7 +106,11 @@ open(path, "w").write(s.replace(find, replace, 1))
   if grep -q "signal code\|Fatal error" "$log"; then
     echo "killed (crash)  ${find:0:60}"
   elif [ -z "$summary" ]; then
+    # Almost always a replacement that does not type-check — `selector: nil`
+    # against a non-optional `Selector`, say. The mutant is invalid, not the
+    # code, and it must not pass for a kill.
     echo "SKIP  (build failed)  ${find:0:50}"
+    skipped=$((skipped + 1))
     total=$((total - 1))
   elif [[ "$summary" == *failed* ]]; then
     echo "killed          ${find:0:60}"
@@ -95,7 +125,14 @@ done < "$spec"
 
 echo
 echo "$((total - survived))/$total mutants killed."
+if [ "$skipped" -gt 0 ]; then
+  echo "$skipped mutant(s) SKIPPED and not counted above. A skipped mutant is"
+  echo "not a passing one: re-anchor it, or fix a replacement that will not"
+  echo "compile. Scripts/check-mutants.sh catches the anchor kind before CI."
+fi
 if [ "$survived" -gt 0 ]; then
   echo "Investigate every survivor: it is either missing coverage or dead code."
+fi
+if [ "$survived" -gt 0 ] || [ "$skipped" -gt 0 ]; then
   exit 1
 fi

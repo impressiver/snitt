@@ -89,6 +89,14 @@ jobs:
             echo "::error::tab characters in:"; echo "$hits"; exit 1
           fi
 
+      - name: Mutants anchor to code that exists
+        # `Scripts/mutate.sh` skips a mutant whose find-text has gone and
+        # subtracts it from its own total, so the run still says "N of N
+        # killed" and the rot is invisible. Twenty-four had died that way
+        # before this step existed. Text matching only, so it needs no
+        # compiler and belongs in this job rather than behind the macOS build.
+        run: ./Scripts/check-mutants.sh
+
       - name: Scripts are executable and parse
         run: |
           for script in $(git ls-files 'Scripts/*.sh' 'Scripts/**/*.sh'); do

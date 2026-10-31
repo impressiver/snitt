@@ -69,8 +69,8 @@ ReleaseScriptTests :: Scripts/notarize.sh :: if ! probe="$(xcrun notarytool hist
 FilmstripSamplerTests :: Sources/SnittExport/FilmstripSampler.swift :: let time = CMTime(seconds: Double(index) * interval + interval / 2, :: let time = CMTime(seconds: 0 * interval + interval / 2,
 
 # --- rev 5 W1: the brand palette (SnittPalette) ---
-SnittPaletteTests :: Sources/SnittApp/SnittPalette.swift :: static let ink0 = NSColor(srgbRed: 0.078, green: 0.090, blue: 0.118, alpha: 1) :: static let ink0 = NSColor(white: 0.13, alpha: 1)
-SnittPaletteTests :: Sources/SnittApp/SnittPalette.swift :: static let recordRed = NSColor(srgbRed: 0.933, green: 0.267, blue: 0.267, alpha: 1) :: static let recordRed = NSColor.systemRed
+SnittPaletteTests :: Sources/SnittBrand/SnittPalette.swift :: static let ink0 = NSColor(srgbRed: 0.078, green: 0.090, blue: 0.118, alpha: 1) :: static let ink0 = NSColor(white: 0.13, alpha: 1)
+SnittPaletteTests :: Sources/SnittBrand/SnittPalette.swift :: static let recordRed = NSColor(srgbRed: 0.933, green: 0.267, blue: 0.267, alpha: 1) :: static let recordRed = NSColor.systemRed
 SnittPaletteTests :: Sources/SnittApp/FoldPalette.swift :: static let base = SnittPalette.recordRed :: static let base = NSColor.systemRed
 SnittPaletteTests :: Sources/SnittApp/TimelineView.swift :: static let waveform = SnittPalette.signal :: static let waveform = NSColor.systemOrange
 SnittPaletteTests :: Sources/SnittApp/EditorChromePalette.swift :: static let currentHighlightColor: NSColor = SnittPalette.amberText :: static let currentHighlightColor: NSColor = .systemOrange
@@ -96,7 +96,7 @@ SilenceKernelTests :: Sources/SnittExport/SpeechChunker.swift :: max(absoluteSil
 AutoDeepTrimTests :: Sources/SnittExport/AutoDeepTrim.swift :: SpeechChunker.silenceThreshold(for: track.peaks, :: SpeechChunker.silenceThreshold(for: [0.5],
 
 # --- rev 5 W13: the gain ladder in brand colours ---
-GainMeterAppearanceTests :: Sources/SnittApp/TimelineGutter.swift :: ? SnittPalette.Swatch.recordRed :: ? SnittPalette.Swatch.signal
+GainMeterAppearanceTests :: Sources/SnittApp/TimelineGutter.swift :: if GainMeter.isHot(segment: index) { return SnittPalette.Swatch.recordRed } :: if GainMeter.isHot(segment: index) { return SnittPalette.Swatch.signal }
 GainMeterAppearanceTests :: Sources/SnittApp/TimelineGutter.swift :: SnittPalette.Swatch.ink3.opacity(muted ? 0.28 : 1) :: SnittPalette.Swatch.ink3
 
 # --- rev 5 W14: the words lane asks the tier model ---
@@ -104,15 +104,12 @@ WordLaneViewTests :: Sources/SnittApp/TimelineView.swift :: WordLaneTiers.tier(w
 WordLaneViewTests :: Sources/SnittApp/TimelineView.swift :: var wordCountForTesting: Int { phrases.reduce(0) { $0 + $1.words.count } } :: var wordCountForTesting: Int { phrases.count }
 
 # --- rev 5 W3: one deck of chrome, and the title still exists ---
-TitlebarChromeTests :: Sources/SnittApp/EditorWindowController.swift :: window.titleVisibility = .hidden :: window.titleVisibility = .visible
-TitlebarChromeTests :: Sources/SnittApp/EditorWindowController.swift :: window.titlebarAppearsTransparent = true :: window.titlebarAppearsTransparent = false
-TitlebarChromeTests :: Sources/SnittApp/EditorWindowController.swift ::                         .fullSizeContentView], ::                         .titled],
+TitlebarChromeTests :: Sources/SnittApp/EditorWindowController.swift :: window.titleVisibility = .visible :: window.titleVisibility = .hidden
 TitlebarChromeTests :: Sources/SnittApp/EditorWindowController.swift :: window.title = title :: window.title = ""
-TitlebarChromeTests :: Sources/SnittApp/EditorChrome.swift :: static let trafficLightInset: Double = 78 :: static let trafficLightInset: Double = 12
 
 # --- rev 5 W9: the sweep ---
 PolishSweepTests :: Sources/SnittApp/StatusItemController.swift :: attributes: [.font: NSFont.monospacedDigitSystemFont(ofSize: size, :: attributes: [.font: NSFont.systemFont(ofSize: size,
-PolishSweepTests :: Sources/SnittApp/EditorChrome.swift :: return key.isEmpty ? label : "\(label) — \(key)" :: return label
+PolishSweepTests :: Sources/SnittApp/KeyboardShortcutRegistry.swift :: return shortcut.isEmpty ? label : "\(label) (\(shortcut))" :: return label
 SweptSurfaceTests :: Sources/SnittApp/RecordingHUDPanel.swift :: SnittPalette.ink1.withAlphaComponent(0.94).cgColor :: NSColor.windowBackgroundColor.cgColor
 
 # --- fixes from use, 2026-09-11 ---
@@ -120,7 +117,7 @@ MarkerNavigationOriginTests :: Sources/SnittDocument/MarkerNavigation.swift :: i
 MarkerNavigationOriginTests :: Sources/SnittDocument/MarkerNavigation.swift :: return (pending, false) :: return (live, false)
 SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: height: max(fitted.height, 1)) :: height: 620)
 WaveformBarsTests :: Sources/SnittApp/TimelineView.swift :: static let waveformBarWidth: Double = 2 :: static let waveformBarWidth: Double = 3
-SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: stack.setCustomSpacing(10, after: rule) :: stack.setCustomSpacing(2, after: rule)
+SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: static let ruleMargin: Double = 16 :: static let ruleMargin: Double = 2
 LaunchOpenPromptTests :: Sources/SnittApp/LaunchOpenPrompt.swift :: if isRecording { return .recording } :: if false { return .recording }
 LaunchOpenPromptTests :: Sources/SnittApp/LaunchOpenPrompt.swift :: if openingDocument { return .documentAlreadyOpening } :: if false { return .documentAlreadyOpening }
 LaunchOpenPromptTests :: Sources/SnittApp/LaunchOpenPrompt.swift :: if hasVisibleWindows { return .windowAlreadyOpen } :: if false { return .windowAlreadyOpen }
@@ -174,7 +171,7 @@ ShowClicksMenuTests :: Sources/SnittApp/ExportSheet.swift :: self.drawClicks = d
 # the top-left corner, which reads as a positioning bug, not a units bug.
 ShowClicksMenuTests :: Sources/SnittExport/ClickOverlay.swift :: naturalSize: CGSize(width: 1, height: 1) :: naturalSize: CGSize(width: 1920, height: 1080)
 # The menu item loses its action and silently does nothing when picked.
-ShowClicksMenuTests :: Sources/SnittApp/KeyboardShortcutRegistry.swift :: action: #selector(AppDelegate.toggleShowClicks(_:)) :: action: nil
+ShowClicksMenuTests :: Sources/SnittApp/KeyboardShortcutRegistry.swift :: selector: #selector(AppDelegate.toggleShowClicks(_:)) :: selector: #selector(AppDelegate.goToNextMark(_:))
 
 # Settings is the ONLY route to crash reporting since the status-menu item
 # was removed.
@@ -184,11 +181,11 @@ SettingsWindowTests :: Sources/SnittApp/SettingsWindowController.swift :: CrashR
 # The status menu's grouping, and Show Clicks' binding.
 # Separators stop being emitted — the capture toggles run straight into the
 # update actions, which is what the crash-reports removal did by accident.
-StatusItemMenuTests :: Sources/SnittApp/StatusItemController.swift :: menu.addItem(.separator()) :: let _ = menu
+StatusItemMenuTests :: Sources/SnittApp/StatusItemController.swift :: [1]menu.addItem(.separator()) :: let _ = menu
 # Show Clicks loses its modifier mask and becomes plain Cmd-C, which is Copy.
 ShowClicksMenuTests :: Sources/SnittApp/KeyboardShortcutRegistry.swift :: entry.keyEquivalentModifierMask = shortcut.modifiers :: let _ = shortcut.modifiers
 # The grouping separator in the Playback menu is dropped.
-ShowClicksMenuTests :: Sources/SnittApp/KeyboardShortcutRegistry.swift :: if shortcut.startsGroup { menu.addItem(.separator()) } :: let _ = shortcut.startsGroup
+ShowClicksMenuTests :: Sources/SnittApp/KeyboardShortcutRegistry.swift :: return shortcut.startsGroup ? [.separator(), entry] : [entry] :: return [entry]
 
 # The status menu reads its checkmarks from the store as it is built.
 StatusItemMenuStateTests :: Sources/SnittApp/StatusItemController.swift :: microphoneItem.state = MicrophoneSettings.load(defaults).enabled ? .on : .off :: microphoneItem.state = .off
@@ -198,8 +195,8 @@ StatusItemMenuStateTests :: Sources/SnittApp/StatusItemController.swift :: self.
 
 # The two version numbers, and the post-release bump that needs them split.
 BundleLayoutTests :: Scripts/make-app.sh :: <key>CFBundleVersion</key><string>$BUILD_NUMBER</string> :: <key>CFBundleVersion</key><string>$APP_VERSION</string>
-ReleaseScriptTests :: Scripts/release.sh :: printf '%s.%s.0-dev\n' "$major" "$((minor + 1))" :: printf '%s.%s.0-dev\n' "$major" "$minor"
-ReleaseScriptTests :: Scripts/release.sh :: printf '%s.%s.0-dev\n' "$major" "$((minor + 1))" :: printf '%s.%s.0\n' "$major" "$((minor + 1))"
+ReleaseScriptTests :: Scripts/release.sh :: printf '%s.%s.%s-dev\n' "$major" "$minor" "$((patch + 1))" :: printf '%s.%s.%s-dev\n' "$major" "$minor" "$patch"
+ReleaseScriptTests :: Scripts/release.sh :: printf '%s.%s.%s-dev\n' "$major" "$minor" "$((patch + 1))" :: printf '%s.%s.%s\n' "$major" "$minor" "$((patch + 1))"
 # The development-version guard is removed: a marked version would tag
 # v0.5.0-dev, name every artifact after it, and ship an app telling every user
 # it is a development build.
@@ -208,7 +205,7 @@ ReleaseScriptTests :: Scripts/release.sh :: bare="${VERSION%%-*}" :: bare="$VERS
 # The automation socket knows who is calling it.
 PeerIdentityTests :: Sources/SnittAutomation/PeerIdentity.swift :: guard getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, &pid, &size) == 0, pid > 0 :: guard false
 PeerIdentityTests :: Sources/SnittAutomation/PeerIdentity.swift :: default: signature = "unsigned" :: default: signature = "\(signingIdentifier ?? "") (no team)"
-AutomationHostTests :: Sources/SnittApp/AutomationHost.swift :: guard policy().allowsAgentAccess else { :: if false {
+RecordingListingTests :: Sources/SnittApp/AutomationHost.swift :: [9]guard policy().allowsAgentAccess else { return .failure(Self.agentAccessOffError) } :: if false { return .failure(Self.agentAccessOffError) }
 # Passthrough export: copying samples is only correct when nothing changes a pixel.
 PassthroughEligibilityTests :: Sources/SnittExport/PassthroughEligibility.swift :: if hasAudioMix { return .audioMix } :: if false { return .audioMix }
 PassthroughEligibilityTests :: Sources/SnittExport/PassthroughEligibility.swift :: if let crop = edl.crop, !crop.isFullFrame { return .crop } :: if false { return .crop }
@@ -358,11 +355,9 @@ ExportPresetSelectionTests :: Sources/SnittApp/ExportSheet.swift :: for known in
 
 # D93 — narration is anchored to the FOOTAGE. A voiceover that ignores the
 # kept ranges plays over whatever slid under it after the next cut.
-VoiceoverPlacementTests :: Sources/SnittDocument/VoiceoverTrack.swift :: sourceStart: range.start + (enterAtOutput - outputCursor), :: sourceStart: enterAtOutput,
-VoiceoverPlacementTests :: Sources/SnittDocument/VoiceoverTrack.swift :: let overlapEnd = min(segment.sourceEnd, range.end) :: let overlapEnd = segment.sourceEnd
 # Passthrough copies encoded samples; narration has none to copy, so an
 # "eligible" export ships the picture and no voiceover at all — silently.
-VoiceoverTests :: Sources/SnittExport/PassthroughEligibility.swift :: if edl.voiceover != nil { return .voiceover } :: if false { return .voiceover }
+VoiceoverTests :: Sources/SnittExport/PassthroughEligibility.swift :: if edl.hasOverdubs { return .overdub } :: if false { return .overdub }
 
 # Save relocates the PREVIEW too, or every later edit writes to a scratch
 # directory that no longer exists — silently, because the writes are async.
@@ -384,7 +379,6 @@ EmptyDocumentTests :: Sources/SnittApp/main.swift :: return ClipboardMedia.video
 GainMeterTests :: Sources/SnittApp/GainMeter.swift :: if segment <= 0 { return 0 } :: if false { return 0 }
 # The voiceover lane must be drawn on the CAPTURE's clock, or narration
 # recorded over source 30 appears at the start of the recording.
-VoiceoverWaveformTests :: Sources/SnittExport/VoiceoverWaveform.swift :: let toBase = Int((segment.sourceStart * rate).rounded()) :: let toBase = Int((segment.voiceoverStart * rate).rounded())
 # A window that can be dragged below the requested floor drops transport
 # controls, which is where the wrapped duration was reported from.
 EditorWindowMinimumSizeTests :: Sources/SnittApp/EditorWindowController.swift :: return NSSize(width: max(derived.width, requestedMinimumSize.width), :: return NSSize(width: min(derived.width, requestedMinimumSize.width),
@@ -396,21 +390,18 @@ VoiceoverMixTests :: Sources/SnittExport/CompositionBuilder.swift :: let mix = a
 
 # A document narrated before the lane existed carries `voiceover` and no
 # matching TrackState — the narration plays and nothing shows it.
-VoiceoverBackfillTests :: Sources/SnittDocument/EditDecisionList.swift :: trackStates.append(TrackState(track: "voiceover")) :: return
 # The lane's label is the one part of a new track nothing forces you to add.
-VoiceoverLaneLabelTests :: Sources/SnittApp/EditorChrome.swift :: case "voiceover": return "Voiceover" :: case "voiceover": return track
+VoiceoverLaneLabelTests :: Sources/SnittApp/EditorChrome.swift :: case "voiceover": return "Synthesised" :: case "voiceover": return track
 
 # A document OPENED rather than just recorded never sampled its voiceover, so
 # the lane drew empty over audio you could hear.
-VoiceoverWaveformLoadTests :: Sources/SnittApp/EditorWindowController.swift :: loadVoiceoverWaveform() :: _ = 0
 
 # Two waveform loads over two files: a plain assignment wipes whichever
 # finished first, so the voiceover lane drew empty depending on a race.
-WaveformMergeTests :: Sources/SnittApp/EditorWindowController.swift :: self?.waveforms = (samples ?? []) + voiceover :: self?.waveforms = (samples ?? [])
 
 # Narration and recorded speech interleave: appending one list to the other
 # puts every narrated word after every recorded one, however early it was said.
-VoiceoverTranscriptTests :: Sources/SnittApp/Transcriber.swift :: merged.words = (transcript.words + voiceover).sorted { $0.start < $1.start } :: merged.words = transcript.words + voiceover
+VoiceoverTranscriptTests :: Sources/SnittApp/Transcriber.swift :: merged.words = (surviving + takeWords).sorted { $0.start < $1.start } :: merged.words = surviving + takeWords
 # A muted track is not in the exported file, so its speech must leave the
 # transcript too — in BOTH surfaces, from one derivation.
 AudibleTranscriptTests :: Sources/SnittDocument/AudibleTranscript.swift :: return words.filter { !muted.contains($0.track) } :: return words
@@ -431,10 +422,8 @@ TrackColourTests :: Sources/SnittBrand/SnittPalette.swift :: track == "voiceover
 TrackColourTests :: Sources/SnittApp/TimelineGutter.swift :: return SnittPalette.Swatch.track(track) :: return SnittPalette.Swatch.signal
 # Lanes read in composition order. The old hardcoded list put the microphone
 # first, disagreeing with the only order that is load-bearing.
-AudioLaneOrderTests :: Sources/SnittApp/TimelineTrackLayout.swift :: let order = AudioTrackOrder.canonical :: let order = ["microphone", "systemAudio", "voiceover"]
 # A cue is ONE VOICE. Without the split, two people talking at once come out as
 # their sentences shuffled together in time order.
-SpeakerSeparationTests :: Sources/SnittExport/SubtitleCues.swift :: let recorded = words.filter { !AudibleTranscript.isVoiceover($0) } :: let recorded = words
 # Sharing the frame moves a caption off the centre line.
 SpeakerSeparationTests :: Sources/SnittExport/SubtitleCues.swift :: overlaps($0, narration) ? $0.placed(.recorded) : $0 :: $0
 # The lookup is plural. A singular one silently drops a caption at the draw
@@ -479,7 +468,7 @@ SignOffTests :: CLA.md :: # The Snitt CLA has been retired :: # Snitt Contributo
 # the timestamp to the last line — invisible until rows started wrapping.
 TimestampAlignmentTests :: Sources/SnittApp/TranscriptPane.swift :: guard guide == .firstTextBaseline, let first = subviews.first else { return nil } :: guard false, let first = subviews.first else { return nil }
 # A wrapped row measures its widest LINE, not the cursor's running total.
-WrappingLayoutTests :: Sources/SnittApp/TranscriptPane.swift :: widest = max(widest, x - spacing) :: widest = max(widest, x)
+WrappingLayoutTests :: Sources/SnittApp/TranscriptPane.swift :: [2]widest = max(widest, x - spacing) :: widest = max(widest, x)
 # A box wider than the row is placed and overhangs, rather than wrapping onto
 # empty lines for ever.
 WrappingLayoutTests :: Sources/SnittApp/TranscriptPane.swift :: if x > 0, x + size.width > width { :: if x + size.width > width {
@@ -597,3 +586,18 @@ ConsentInfoTests :: Sources/SnittAutomation/Protocol.swift :: switch grant.stand
 # `unattended != .off` is the wrong test and reads as the right one: `.lapsed`
 # is also not `.off`, so that form quietly authorises an expired grant.
 ConsentInfoTests :: Sources/SnittAutomation/Protocol.swift :: self.unattendedPermitted = grant.status(now: now).isActive :: self.unattendedPermitted = self.unattended != .off
+
+# Removed 2026-10-30, with the mutant-rot guard that would have caught them:
+# each anchored to code that no longer exists, so Scripts/mutate.sh skipped
+# it and still reported N of N killed.
+#   - titlebarAppearsTransparent, reversed by D97: the titlebar is the system's again
+#   - .fullSizeContentView, deliberately removed from the style mask by D97
+#   - trafficLightInset, gone with the hand-built row NSToolbar replaced
+#   - VoiceoverTrack.swift, removed with D93's legacy voiceover track
+#   - VoiceoverTrack.swift, removed with D93's legacy voiceover track
+#   - VoiceoverWaveform.swift, removed with D93
+#   - the D93 voiceover backfill, removed along with VoiceoverBackfillTests
+#   - loadVoiceoverWaveform(), removed along with VoiceoverWaveformLoadTests
+#   - the capture-clock waveform merge, gone with the overdub rework
+#   - lane ordering moved out of TimelineTrackLayout into AudioTrackOrder
+#   - SubtitleCues was restructured around placed(.recorded)
