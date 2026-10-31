@@ -28,6 +28,33 @@ FilmstripHoverTests :: Sources/SnittApp/TimelineView.swift :: private func cance
 FilmstripHoverTests :: Sources/SnittApp/TimelineView.swift :: guard hoverOutputTime != nil else { return } :: if hoverOutputTime == nil { hoverOutputTime = 0 }
 FilmstripHoverTests :: Sources/SnittApp/TimelineView.swift :: guard gesture.phase == .idle, activeMarkerDrag == nil, :: guard activeMarkerDrag == nil,
 
+# The hover PREVIEW's effect on playback (PR 3b).
+FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: guard !isPlaying else { :: guard 1 == 1 else {
+FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: hoverReturnTarget = pendingSeekTarget ?? currentOutputSeconds :: hoverReturnTarget = currentOutputSeconds
+FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: if hoverReturnTarget != nil { hoverReturnTarget = trimmedTime } :: if hoverReturnTarget != nil { }
+# PARKED, not forgotten, x2. Both were written, measured, and cannot be
+# killed, so they are recorded here rather than left as phantom coverage.
+#
+# 1. `enqueueHoverSeek(to: target, exact: true)` -> `exact: false`. The
+#    restore is routed through the zero-tolerance `seek` because it puts the
+#    playhead back on a COMMITTED position, which is what the rest of the
+#    editor uses that seek for. But it is unobservable: measured both ways,
+#    the player lands at exactly the requested time either way, because
+#    `AVPlayer.currentTime()` reports the seek TARGET (see
+#    `PreviewController.currentFrameFingerprint`'s own note). A test that
+#    asserted the difference would be asserting AVFoundation's discretion.
+#    Kept for consistency with every other committed seek, not for a measured
+#    effect.
+#
+# 2. `guard hoverSeekTask == nil else { return }` -> removed. The seek COUNT
+#    is not what this guard protects: the single `hoverSeekTarget` slot is,
+#    and `FilmstripHoverCoalescingTests` still passes without the guard. What
+#    the guard actually protects is the meaning of `hoverSeekTask`, and so of
+#    `waitForHoverPreview`: without it each event overwrites the handle, and
+#    the wait can return when the LAST-created task finishes while the first
+#    one's seek is still in flight. That is a race in the test seam, and any
+#    test for it would itself be a race. Kept; not pinnable.
+
 # Lane geometry — wrong sizes render, they do not throw.
 TimelineLaneBudgetTests :: Sources/SnittApp/TimelineLaneBudget.swift :: public static let minimumTargetHeight: Double = 24 :: public static let minimumTargetHeight: Double = 10
 TimelineTrackLayoutTests :: Sources/SnittApp/TimelineTrackLayout.swift :: let stackTop = markerHeight :: let stackTop = markerHeight + 24

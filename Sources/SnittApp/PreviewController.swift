@@ -286,6 +286,44 @@ public class PreviewController {
         await seek(toSeconds: point.timeSeconds)
     }
 
+    /// How many preview seeks have actually been issued.
+    ///
+    /// Exists because coalescing is otherwise INVISIBLE to a test: without it
+    /// every hover event could issue its own seek, yet the player would still
+    /// end at the last hovered instant, so no assertion about POSITION can
+    /// tell the two apart. The property being protected is the NUMBER of
+    /// seeks, so that is what the test reads.
+    private(set) var previewSeekCount = 0
+
+    /// A seek for a PREVIEW, with a frame of tolerance either side.
+    ///
+    /// `seek(toSeconds:)` above asks for `.zero` tolerance because the
+    /// positions it serves are decisions — a cut point, a mark, a timecode
+    /// typed in — and being a frame out there changes what gets exported.
+    /// A filmstrip hover is a question, not a decision: it asks roughly what
+    /// is at this instant, at pointer speed, and a zero-tolerance seek has to
+    /// decode every frame between the keyframe and the target to answer it.
+    ///
+    /// One frame of tolerance at 30fps lets AVFoundation serve the nearest
+    /// already-decodable frame instead. `FilmstripSampler` makes the same
+    /// trade for the same reason and says so: "A filmstrip wants speed, not
+    /// frame accuracy."
+    ///
+    /// The RESTORE on exit deliberately does not come through here — it puts
+    /// the playhead back on a committed position, which is a decision again.
+    public func previewSeek(toSeconds seconds: Double) async {
+        previewSeekCount += 1
+        var waited = 0.0
+        while item.status == .unknown && waited < 8.0 {
+            try? await Task.sleep(nanoseconds: 20_000_000)
+            waited += 0.02
+        }
+        let clamped = max(0, min(seconds, durationSeconds))
+        let target = CMTime(seconds: clamped, preferredTimescale: 600)
+        let tolerance = CMTime(seconds: 1.0 / 30.0, preferredTimescale: 600)
+        await player.seek(to: target, toleranceBefore: tolerance, toleranceAfter: tolerance)
+    }
+
     /// A cheap fingerprint of the frame `AVFoundation` actually decoded at
     /// the item's current time — not the seek target `currentTime()`
     /// reports, but the pixel buffer `AVPlayerItemVideoOutput` hands back
