@@ -9,9 +9,9 @@ import Foundation
 /// Everything the welcome window DECIDES, with none of the AppKit it decides
 /// it for.
 ///
-/// Same split `LaunchOpenPrompt` and `DockReopen` already use, and for the
-/// same reason: the window itself cannot be exercised in a headless test, so
-/// the judgements move out to where they can be. This type is deliberately
+/// Same split `LaunchOpenPrompt` already uses, and for the same reason: the
+/// window itself cannot be exercised in a headless test, so the judgements
+/// move out to where they can be. This type is deliberately
 /// NOT `@MainActor` — nothing here touches UI, and isolating it would drag
 /// every caller onto the main actor for no safety benefit.
 ///

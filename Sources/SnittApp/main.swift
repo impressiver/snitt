@@ -352,12 +352,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// The bounded test gates added the same day are useless against it for
     /// exactly that reason: their polling loop never gets scheduled either.
     ///
-    /// That is not hypothetical. `DockReopenTests` calls the real
-    /// `applicationShouldHandleReopen`, and its "most recent document" comes
-    /// from `NSDocumentController.recentDocumentURLs` — machine-global state
-    /// that two other suites clear in their own `defer`s. Lose that race and
-    /// the reopen path finds no recents, raises this alert, and the run stops
-    /// dead with no output. Observed 2026-09-09, on screen.
+    /// That is not hypothetical. It happened via the Dock reopen path's own
+    /// `applicationShouldHandleReopen`, back when "no recents" raised this
+    /// alert instead of showing the welcome window: its most-recent-document
+    /// lookup came from `NSDocumentController.recentDocumentURLs` — machine-
+    /// global state that two other suites clear in their own `defer`s. Lose
+    /// that race and the reopen path found no recents, raised this alert,
+    /// and the run stopped dead with no output. Observed 2026-09-09, on
+    /// screen. The reopen path no longer has an alert branch to race, but the
+    /// seam stays load-bearing for every other message routed through
+    /// `notify` — a failed hotkey registration, a save that could not
+    /// complete — any of which can race the same way.
     ///
     /// So tests replace this. Not to observe the message — to make raising a
     /// modal impossible rather than unlikely.
@@ -739,18 +744,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `.regular` policy the Dock icon is present even after the last
     /// editor window closes — without this, clicking it does nothing.
     ///
-    /// §4.11 note: this fires only from an explicit reopen gesture with
-    /// `flag == false`. It never runs at launch (`hasVisibleWindows` is not
-    /// consulted there) and it does not fight the no-window-at-launch
-    /// design the hotkey depends on — it only answers a click the user
-    /// deliberately made.
+    /// Routed through the same `LaunchOpenPrompt` decision the bare-launch
+    /// path uses, not just AppKit's `flag`. `flag` alone cannot see a
+    /// recording in progress, human or agent-started — this method used to
+    /// run no recording check at all, which is a real hole: showing the
+    /// welcome window unconditionally here would call `NSApp.activate` and
+    /// pop a window directly over a live capture, the exact §4.11 failure
+    /// the bare-launch path exists to avoid. One suppression rule serving
+    /// both doors is the point of routing through `LaunchOpenPrompt` rather
+    /// than growing a second, separate recording check here.
     ///
-    /// The decision (reopen the most recent document, or explain there is
-    /// none) is delegated to `DockReopen.handle` so it can be tested
-    /// without a real `NSAlert` or a real bundle on disk; `openURLs` is the
-    /// exact same path File ▸ Open / Open Recent / Finder double-click use,
-    /// so an already-open window for that document is focused rather than
-    /// duplicated.
+    /// `openingDocument` and `launchedByAgent` are always `false` here —
+    /// no document arrives with a Dock click, and this fires at runtime
+    /// against an already-launched process, not at launch — so this can
+    /// only ever land on `.recording` or `.welcome`. `isCapturing` (not an
+    /// `await` on the coordinator) because this method returns
+    /// synchronously, like `applicationShouldTerminate`, and that mirror is
+    /// the one way to ask "is a capture running" without one.
     ///
     /// Returns `false` unconditionally when there were no visible windows:
     /// this method has already decided what to do, so AppKit's own default
@@ -758,14 +768,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// no windows — should not also run.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         guard !flag else { return true }
-        DockReopen.handle(
-            recentURLs: RecentDocuments.urls(),
-            open: { [weak self] url in self?.openURLs([url]) },
-            explainNoRecents: { [weak self] in
-                self?.notify("Snitt has no recent recordings to reopen. Use ⌥⌘5 to "
-                            + "start one, or File ▸ Open to pick a file.")
-            }
-        )
+        let decision = LaunchOpenPrompt.decide(
+            openingDocument: false,
+            hasVisibleWindows: flag,
+            isRecording: isCapturing)
+        guard decision == .welcome else { return false }
+        WelcomeWindow.show(
+            onRecord: { [weak self] in self?.handleHotkey() },
+            onOpenExisting: { [weak self] in self?.openDocument(nil) },
+            onImportVideo: { [weak self] urls in self?.openURLs(urls) },
+            onOpenRecent: { [weak self] url in self?.openURLs([url]) },
+            onDroppedFiles: { [weak self] urls in self?.openURLs(urls) })
         return false
     }
 

@@ -11,8 +11,8 @@ import Foundation
 /// What the welcome window decides, asserted without the window.
 ///
 /// `WelcomeContent` exists to be testable at all: the window itself cannot
-/// run in a headless suite, which is the same reason `LaunchOpenPrompt` and
-/// `DockReopen` are pure decisions with thin AppKit around them.
+/// run in a headless suite, which is the same reason `LaunchOpenPrompt` is a
+/// pure decision with thin AppKit around it.
 @Suite
 struct WelcomeContentTests {
 

@@ -185,8 +185,8 @@ struct ImportedDocumentSaveTests {
     /// `EditorWindowTestGate` and close what it opened.
     ///
     /// `EditorWindowController.openWindowCount` is a process-global that
-    /// `EditorWindowControllerTests` and `DockReopenTests` assert exact values
-    /// against, and Swift Testing runs suites concurrently — so a window this
+    /// `EditorWindowControllerTests` and `AppDelegateReopenTests` assert exact
+    /// values against, and Swift Testing runs suites concurrently — so a window this
     /// suite opens can appear between their snapshot and their assertion. That
     /// is not hypothetical: leaving these ungated failed both of those suites
     /// on the first full run, with counts off by exactly the number of
