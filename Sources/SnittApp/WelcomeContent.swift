@@ -124,37 +124,50 @@ enum WelcomeContent {
         (try? fileManager.attributesOfItem(atPath: url.path))?[.modificationDate] as? Date
     }
 
-    /// Splits a bundle's name into the bit worth reading first and the rest.
+    /// Splits a bundle's name into something readable and the commit it was
+    /// taken at.
     ///
-    /// `BundleNaming` assembles `App-branch-commit-timestamp`, so the leading
-    /// component is the most recognisable thing in it and the timestamp is
-    /// the least. This drops the timestamp and promotes the first component.
+    /// **Do not split on every hyphen.** An earlier version took the first
+    /// hyphen-separated component as the title, which is right only when the
+    /// leading component is a whole word. Real branches are hyphenated, so
+    /// `feature-demos-and-cta-726d2ac-1788464616` showed as "feature" over
+    /// "demos · and · cta · 726d2ac" — the name shredded into syllables and
+    /// the one useful word thrown away. Seen on the product owner's own
+    /// machine, where every row read "feature".
     ///
-    /// **This couples the welcome list to `BundleNaming`'s shape, knowingly.**
-    /// The alternative was reading every bundle's `meta.json` at launch for
-    /// the git context, which is more I/O for the same answer and still
-    /// could not supply the application name: `RecordingMetadata` carries
-    /// `git`, `createdAt` and the pixel size, but deliberately no app name
-    /// and no window title. So the name on disk is the only place the app is
-    /// recorded, and parsing it is the cheap way to read it.
+    /// So only the two components whose SHAPE identifies them are peeled off
+    /// the end: a trailing all-digit run is `BundleNaming`'s timestamp, and
+    /// the one before it is the short commit when it looks like one. What is
+    /// left keeps its hyphens and is the title, because nothing in the name
+    /// says where an application name stops and a branch begins — both may
+    /// contain hyphens, and guessing is what produced "feature".
     ///
-    /// Degrades rather than guesses. A name that does not match the shape —
-    /// an imported video, a hand-renamed bundle, a display recording with no
-    /// app component — comes back whole as the title. It cannot tell a
-    /// display recording's leading BRANCH from an application name, and does
-    /// not try: either way the first component is the useful one to lead
-    /// with.
+    /// A branch whose last component happens to be seven or more hex
+    /// characters ("deadbeef") loses it to the commit slot. Rare, harmless,
+    /// and preferable to the alternative, which mangles every ordinary name.
     static func name(forStem stem: String) -> (title: String, detail: String?) {
         var parts = stem.split(separator: "-").map(String.init)
         guard parts.count > 1 else { return (stem, nil) }
-        // Only a trailing all-digit run is the timestamp. A commit like
-        // "a1b2c3d" is not, and neither is a branch named "v2".
+
         if let last = parts.last, last.allSatisfy(\.isNumber) {
             parts.removeLast()
         }
-        guard let title = parts.first else { return (stem, nil) }
-        let rest = parts.dropFirst()
-        return (title, rest.isEmpty ? nil : rest.joined(separator: " · "))
+
+        var commit: String?
+        if parts.count > 1, let last = parts.last, looksLikeCommit(last) {
+            commit = last
+            parts.removeLast()
+        }
+
+        let title = parts.joined(separator: "-")
+        return (title.isEmpty ? stem : title, commit)
+    }
+
+    /// Seven to forty hex characters, which is what `git rev-parse --short`
+    /// and a full SHA bracket. Six or fewer would start eating ordinary words
+    /// like "added" and "faced".
+    private static func looksLikeCommit(_ part: String) -> Bool {
+        (7...40).contains(part.count) && part.allSatisfy(\.isHexDigit)
     }
 
     // MARK: - Permissions

@@ -73,6 +73,8 @@ WelcomeContentTests :: Sources/SnittApp/WelcomeContent.swift :: if let last = pa
 WelcomeContentTests :: Sources/SnittApp/WelcomeContent.swift :: if microphoneEnabled { :: if true {
 WelcomeContentTests :: Sources/SnittApp/WelcomeContent.swift :: requiresRelaunch: false)) :: requiresRelaunch: true))
 WelcomeContentTests :: Sources/SnittApp/WelcomeContent.swift :: rows.contains { !$0.isGranted } :: rows.contains { $0.isGranted }
+WelcomeContentTests/hyphenatedNameIsNotShredded :: Sources/SnittApp/WelcomeContent.swift ::         let title = parts.joined(separator: "-") ::         let title = parts[0]
+WelcomeContentTests :: Sources/SnittApp/WelcomeContent.swift ::         (7...40).contains(part.count) && part.allSatisfy(\.isHexDigit) ::         (1...40).contains(part.count) && part.allSatisfy(\.isHexDigit)
 
 # Lane geometry — wrong sizes render, they do not throw.
 TimelineLaneBudgetTests :: Sources/SnittApp/TimelineLaneBudget.swift :: public static let minimumTargetHeight: Double = 24 :: public static let minimumTargetHeight: Double = 10

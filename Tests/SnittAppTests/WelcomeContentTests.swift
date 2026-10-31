@@ -102,40 +102,71 @@ struct WelcomeContentTests {
 
     // MARK: - Reading a bundle's name
 
-    @Test("An app-led name splits into the app and its git context")
-    func nameSplitsAppFromGit() {
+    @Test("A hyphenated branch name stays in one piece")
+    func hyphenatedNameIsNotShredded() {
+        // THE REGRESSION. Splitting on every hyphen and taking the first
+        // component showed this real bundle as "feature" over
+        // "demos · and · cta · 726d2ac" — every row on the product owner's
+        // machine read "feature", because real branches are hyphenated.
+        let parts = WelcomeContent.name(forStem: "feature-demos-and-cta-726d2ac-1788464616")
+        #expect(parts.title == "feature-demos-and-cta")
+        #expect(parts.detail == "726d2ac")
+    }
+
+    @Test("The timestamp and the commit come off; everything else stays")
+    func timestampAndCommitArePeeled() {
         let parts = WelcomeContent.name(forStem: "Safari-main-a1b2c3d-1788464616")
-        #expect(parts.title == "Safari")
-        #expect(parts.detail == "main · a1b2c3d")
+        #expect(parts.title == "Safari-main")
+        #expect(parts.detail == "a1b2c3d")
     }
 
-    @Test("The timestamp never shows")
-    func timestampIsDropped() {
-        let parts = WelcomeContent.name(forStem: "Xcode-feat-hover-9f2c1ab-1788451002")
-        #expect(parts.title == "Xcode")
-        #expect(parts.detail?.contains("1788451002") == false)
-    }
-
-    @Test("A name with nothing but an app and a timestamp has no detail")
+    @Test("A name with nothing but a word and a timestamp has no detail")
     func appOnlyHasNoDetail() {
         let parts = WelcomeContent.name(forStem: "Snitt-1788464616")
         #expect(parts.title == "Snitt")
         #expect(parts.detail == nil)
     }
 
-    @Test("A commit is not mistaken for a timestamp")
-    func commitSurvives() {
-        // Only an all-digit trailing run is the timestamp. "a1b2c3d" is not,
-        // and a mutant that strips the last component unconditionally loses
-        // the commit — the more identifying half of the git context.
-        let parts = WelcomeContent.name(forStem: "Safari-main-a1b2c3d")
-        #expect(parts.detail == "main · a1b2c3d")
+    @Test("A short word is not mistaken for a commit")
+    func shortWordsSurvive() {
+        // Six characters or fewer would start eating ordinary words. "added"
+        // and "faced" are both hex-only, and both are plausible branch tails.
+        #expect(WelcomeContent.name(forStem: "fix-added-1788464616").title == "fix-added")
+        #expect(WelcomeContent.name(forStem: "fix-added-1788464616").detail == nil)
+        #expect(WelcomeContent.name(forStem: "wip-faced-1788464616").title == "wip-faced")
+    }
+
+    @Test("A non-hex tail is not mistaken for a commit")
+    func nonHexTailSurvives() {
+        // "cta" is not hex, so it belongs to the name. A mutant that peels
+        // the last component unconditionally fails here.
+        let parts = WelcomeContent.name(forStem: "feature-cta-1788464616")
+        #expect(parts.title == "feature-cta")
+        #expect(parts.detail == nil)
+    }
+
+    @Test("Only an all-digit tail counts as the timestamp")
+    func nonNumericTailIsNotPeeledAsATimestamp() {
+        // A renamed bundle has no trailing timestamp at all, and the last
+        // component is then an ordinary word. Catches a mutant that peels
+        // whatever is last instead of testing that it is all digits, which
+        // would silently eat the branch off every renamed file.
+        let parts = WelcomeContent.name(forStem: "Safari-main")
+        #expect(parts.title == "Safari-main")
+        #expect(parts.detail == nil)
+    }
+
+    @Test("A name that is only a commit and a timestamp keeps the commit visible")
+    func commitOnlyStaysInTheTitle() {
+        // Nothing is left for the title, so the commit stays as the name
+        // rather than leaving the row blank.
+        let parts = WelcomeContent.name(forStem: "a1b2c3d-1788464616")
+        #expect(parts.title == "a1b2c3d")
+        #expect(parts.detail == nil)
     }
 
     @Test("A name that does not match the shape comes back whole")
     func unparseableNameIsKeptIntact() {
-        // An imported video or a hand-renamed bundle. Degrading to the whole
-        // stem beats guessing at a structure that is not there.
         #expect(WelcomeContent.name(forStem: "Standup").title == "Standup")
         #expect(WelcomeContent.name(forStem: "Standup").detail == nil)
     }
@@ -171,7 +202,10 @@ struct WelcomeContentTests {
 
         var urls: [URL] = []
         for (index, name) in ["Old", "Newest", "Middle"].enumerated() {
-            let url = folder.appendingPathComponent("\(name)-main-abc-\(index).snitt")
+            // Named so the title is the whole word: the parser keeps hyphens
+            // now, so "Old-main-abc" would be the title and this test is
+            // about ORDER, not parsing.
+            let url = folder.appendingPathComponent("\(name)-\(index).snitt")
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
             let stamp = Date(timeIntervalSince1970: 1_700_000_000
                              + Double(["Old": 0, "Newest": 9_000, "Middle": 4_000][name]!))
@@ -196,7 +230,7 @@ struct WelcomeContentTests {
 
         var urls: [URL] = []
         for index in 0..<9 {
-            let url = folder.appendingPathComponent("App\(index)-main-abc-\(index).snitt")
+            let url = folder.appendingPathComponent("App\(index)-\(index).snitt")
             try FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
             urls.append(url)
         }
