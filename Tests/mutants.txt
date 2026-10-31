@@ -623,3 +623,5 @@ ConsentInfoTests :: Sources/SnittAutomation/Protocol.swift :: self.unattendedPer
 #   - the capture-clock waveform merge, gone with the overdub rework
 #   - lane ordering moved out of TimelineTrackLayout into AudioTrackOrder
 #   - SubtitleCues was restructured around placed(.recorded)
+
+FilmstripHoverTests/clickWhileHoveringDoesNotRestore :: Sources/SnittApp/TimelineView.swift :: // is what makes that recommit reachable. :: endHover()

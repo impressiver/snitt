@@ -1265,10 +1265,22 @@ public final class TimelineView: NSView {
     }
 
     public override func mouseDown(with event: NSEvent) {
-        // A click commits a position, so whatever was being previewed stops
-        // being a preview. Ended BEFORE the gesture machinery below so the
-        // consumer restores nothing over the top of the scrub about to fire.
-        endHover()
+        // DELIBERATELY NOT `endHover()` here, and that is a correction.
+        //
+        // This used to call it, with a comment claiming it stopped the
+        // consumer restoring over the top of the scrub about to fire.
+        // Backwards: `endHover` is what ASKS for the restore. It calls
+        // `onHoverPreview(nil)`, and `EditorTimelineState` answers that by
+        // seeking back to the pre-hover position. So a click enqueued a seek
+        // to where you were BEFORE hovering, then `onScrub` enqueued one to
+        // the frame you actually clicked, on a separate unstructured task
+        // with no ordering between them.
+        //
+        // A click inside the band does not end the hover at all: the pointer
+        // is still over the filmstrip and still asking what is there. What it
+        // changes is the position the eventual exit returns to, which is
+        // `onScrub`'s job and which it already does. Leaving the preview live
+        // is what makes that recommit reachable.
         let point = convert(event.locationInWindow, from: nil)
         // D50/D56 (M5f Task 6): checked BEFORE the fold hit-test and any
         // scrub/drag logic, for the same reason Task 5's fold check runs

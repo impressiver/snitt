@@ -121,6 +121,42 @@ struct FilmstripHoverTests {
         #expect(previews.first.flatMap { $0 } != nil, "and it reports a time, not an exit")
     }
 
+    @Test("A click while hovering commits without asking for a restore first")
+    func clickWhileHoveringDoesNotRestore() {
+        // THE REGRESSION, and it was invisible at the state layer.
+        // `FilmstripHoverSeekTests.clickWhileHoveringRecommits` calls
+        // `EditorTimelineState.onScrub` directly, so it never ran the
+        // ordering `mouseDown` actually produces.
+        //
+        // `mouseDown` used to open with `endHover()`, carrying a comment that
+        // said it stopped the consumer restoring over the top of the scrub.
+        // The opposite: `endHover` is what ASKS for the restore, by sending
+        // `onHoverPreview(nil)`. So one click enqueued a seek back to the
+        // pre-hover position AND a seek to the clicked frame, on two
+        // unstructured tasks with no ordering between them.
+        //
+        // A click inside the band does not end the hover. The pointer is
+        // still over the filmstrip; what changed is only where the eventual
+        // exit returns to, which is `onScrub`'s job.
+        let r = rig()
+        var previews: [Double?] = []
+        var scrubs: [Double] = []
+        r.view.onHoverPreview = { previews.append($0) }
+        r.view.onScrub = { scrubs.append($0) }
+
+        let point = NSPoint(x: 400.0, y: r.bands.video.midY)
+        r.view.mouseMoved(with: .syntheticMove(at: point, in: r.view))
+        #expect(previews.count == 1, "the hover previews first")
+        previews.removeAll()
+
+        r.view.mouseDown(with: .synthetic(at: point, in: r.view))
+
+        #expect(previews.isEmpty,
+                "a click must not ask for a restore, got \(previews)")
+        #expect(scrubs.count == 1,
+                "and it still commits the clicked position, got \(scrubs)")
+    }
+
     /// What a single click in one lane resolved to.
     ///
     /// Compared as a whole rather than field by field so that adding a
