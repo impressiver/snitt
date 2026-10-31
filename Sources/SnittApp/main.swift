@@ -493,17 +493,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         openURLs([clipboard])
     }
 
-    /// File ▸ New (⇧⌘N) — an empty document: a window that takes a drop, or
-    /// offers a file chooser, and becomes a real editor as soon as it has a
-    /// video.
+    /// File ▸ New (⇧⌘N) — the welcome window: recents, the two openers, and a
+    /// drop target, with the record action as its default button.
     ///
     /// Its own command rather than a fallback inside the one above, because
     /// that one is now allowed to be DISABLED. A menu item that is dead half
     /// the time cannot also be the only route to something that always works.
-    /// See `EmptyDocumentWindow` for why this is its own window rather than an
-    /// editor with nothing in it.
+    ///
+    /// Not an editor with nothing in it, for the reason `EmptyDocumentWindow`
+    /// used to give and which still holds: the editor is built around a
+    /// `PreviewController`, which is built around a composition, which
+    /// `CompositionBuilder` refuses to make without a video track, so an
+    /// "empty editor" is a window whose every control addresses something
+    /// that does not exist.
     @objc func newEmptyDocument(_ sender: Any?) {
-        EmptyDocumentWindow.show { [weak self] urls in self?.openURLs(urls) }
+        WelcomeWindow.show(
+            // `handleHotkey()` directly, NOT `statusItem.onClick?()`. Both end
+            // up here today, but that one is §5.3's kill switch — a control
+            // whose documented job is stopping a recording — so routing the
+            // record button through it couples this button to a decision about
+            // something else, and it is an OPTIONAL: with no status item
+            // installed it is nil and the button would silently do nothing.
+            onRecord: { [weak self] in self?.handleHotkey() },
+            onOpenExisting: { [weak self] in self?.openDocument(nil) },
+            onImportVideo: { [weak self] urls in self?.openURLs(urls) },
+            onOpenRecent: { [weak self] url in self?.openURLs([url]) },
+            onDroppedFiles: { [weak self] urls in self?.openURLs(urls) })
     }
 
     /// File ▸ Save (⌘S). Only an imported document has anything to do here —

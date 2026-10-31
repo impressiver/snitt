@@ -676,3 +676,60 @@ FilmstripHoverTests/clickWhileHoveringDoesNotRestore :: Sources/SnittApp/Timelin
 
 TimelineLaneBudgetTests/filmstripPreferredHeightIsPinned :: Sources/SnittApp/TimelineLaneBudget.swift ::     public static let preferredVideoHeight: Double = 45 ::     public static let preferredVideoHeight: Double = 36
 TimelineLaneBudgetTests/filmstripGetsItsPreferredHeightWhenThereIsRoom :: Sources/SnittApp/TimelineLaneBudget.swift ::         let videoHeight = max(minimumVideoHeight, available - used) ::         let videoHeight = minimumVideoHeight
+
+# The welcome window. Mascot keenness and nodding are read nowhere yet (the
+# real mascot does not exist in this worktree), so their only witness is the
+# pure function itself — a wrong ramp direction or a missing clamp would
+# render as a mascot that gets MORE excited the farther you are from Record.
+WelcomeWindowTests :: Sources/SnittApp/WelcomeWindow.swift :: if distance <= innerRadius { :: if false {
+WelcomeWindowTests :: Sources/SnittApp/WelcomeWindow.swift :: } else if distance >= outerRadius { :: } else if distance >= outerRadius + 10_000 {
+WelcomeWindowTests :: Sources/SnittApp/WelcomeWindow.swift :: keenness = 1.0 - (distance - innerRadius) / rampWidth :: keenness = (distance - innerRadius) / rampWidth
+WelcomeWindowTests :: Sources/SnittApp/WelcomeWindow.swift :: return (keenness, buttonFrame.contains(pointer)) :: return (keenness, true)
+
+# The relaunch footnote: wrong pluralisation reads as a typo nobody notices
+# until it ships, because "Both"/"These" differ by one word in a sentence
+# nobody proofreads against a live permission denial.
+WelcomeWindowTests :: Sources/SnittApp/WelcomeWindow.swift :: case 0: return nil :: case 0: return "Takes effect after you relaunch Snitt."
+WelcomeWindowTests :: Sources/SnittApp/WelcomeWindow.swift :: case 2: return "Both take effect after you relaunch Snitt." :: case 2: return "These take effect after you relaunch Snitt."
+
+# The hotkey is rebindable in Settings; a literal shortcut in the caption
+# would misreport it for anyone who changed it, same as `WelcomeContent.tips`.
+WelcomeWindowTests :: Sources/SnittApp/WelcomeWindow.swift :: "or press \(combination.displayString) anywhere" :: "or press ⌥⌘5 anywhere"
+
+# The two headlines must stay distinguishable — this is the one thing that
+# tells a first-time user and a returning one apart on sight.
+WelcomeWindowTests :: Sources/SnittApp/WelcomeWindow.swift :: case .gettingStarted: return "Welcome to Snitt" :: case .gettingStarted: return "Ready when you are"
+
+# Reuse rather than stack: a second ⌘N must bring the first window forward,
+# exactly as `EmptyDocumentWindow.show` already does for its own window.
+WelcomeWindowTests :: Sources/SnittApp/WelcomeWindow.swift :: if let existing = open.first { :: if false, let existing = open.first {
+
+# The over-release trap every window in this app documents: a programmatically
+# created NSWindow defaults this to true, freeing it out from under the
+# reference this controller holds.
+WelcomeWindowTests :: Sources/SnittApp/WelcomeWindow.swift :: window.isReleasedWhenClosed = false :: window.isReleasedWhenClosed = true
+
+# A healthy, fully-granted launch must show no permission section at all —
+# not a row of green ticks on the app's front door.
+WelcomeWindowTests :: Sources/SnittApp/WelcomeWindow.swift :: if WelcomeContent.needsAttention(permissionRows), :: if true,
+
+# One sidebar row per filtered recents entry, not per raw URL handed to `show`.
+WelcomeWindowTests :: Sources/SnittApp/WelcomeWindow.swift :: recentsRowCount = rows.count :: recentsRowCount = rows.count + 1
+
+# The mascot. Every failure mode here is silent: a face that looks the wrong
+# way, keenness that overrides a blink, a poke that reads as a sulk.
+MascotViewTests :: Sources/SnittApp/MascotView.swift :: base = FaceGeometry(leftEyeRy: 0.5, rightEyeRy: 7.4, :: base = FaceGeometry(leftEyeRy: 7.4, rightEyeRy: 0.5,
+MascotViewTests :: Sources/SnittApp/MascotView.swift :: mood = side == .left ? .pokeLeft : .pokeRight :: mood = side == .left ? .pokeRight : .pokeLeft
+MascotViewTests :: Sources/SnittApp/MascotView.swift :: case .pokedLeft: return "M43.5 60.6q3.7 -1.2 7.4 0.8t7.4 1.4" :: case .pokedLeft: return "M43.5 62.8q3.7 1.4 7.4 -0.8t7.4 -1.4"
+MascotViewTests :: Sources/SnittApp/MascotView.swift :: "Poke the left eye" :: "Poke the right eye"
+MascotViewTests :: Sources/SnittApp/MascotView.swift :: button.isBordered = false :: button.isBordered = true
+MascotViewTests :: Sources/SnittApp/MascotView.swift :: guard mood == .idle else { return base } :: guard mood == .pokeLeft else { return base }
+MascotViewTests :: Sources/SnittApp/MascotView.swift :: if k > 0.5 { geometry.mouth = .happy } :: if k > 1.5 { geometry.mouth = .happy }
+MascotViewTests :: Sources/SnittApp/MascotView.swift :: geometry.leftPupilRadius += k * Design.keennessPupilRadius :: geometry.leftPupilRadius += k * Design.keennessEyeRy
+MascotViewTests :: Sources/SnittApp/MascotView.swift :: let clamped = min(max(keenness, 0), 1) :: let clamped = keenness
+MascotViewTests :: Sources/SnittApp/MascotView.swift :: let factor = min(1, distance / reach) :: let factor = distance / reach
+WelcomeWindowTests/captionCentresWithTheSidebarButtons :: Sources/SnittApp/WelcomeWindow.swift :: caption.centerYAnchor.constraint(equalTo: buttons.centerYAnchor).isActive = true :: caption.centerYAnchor.constraint(equalTo: buttons.centerYAnchor).isActive = false
+WelcomeWindowTests/recentsRowKeepsAnAccessibilityLabel :: Sources/SnittApp/WelcomeWindow.swift ::             : "\(entry.title), \(detailLine)") ::             : "")
+WelcomeWindowTests/recentsRowIsLeftAlignedAndClearOfTheIcon :: Sources/SnittApp/WelcomeWindow.swift ::         text.alignment = .leading ::         text.alignment = .centerX
+WelcomeWindowTests/rowDatesTellCloseRecordingsApart :: Sources/SnittApp/WelcomeWindow.swift ::         formatter.timeStyle = .short ::         formatter.timeStyle = .none
+WelcomeWindowTests/rowDetailKeepsTheCommit :: Sources/SnittApp/WelcomeWindow.swift ::         [entry.detail, rowDateFormatter.string(from: entry.modified)] ::         [nil, rowDateFormatter.string(from: entry.modified)]
