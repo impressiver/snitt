@@ -188,6 +188,9 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        mascotView?.lookAway()
+        mouseTracker?.stop()
+        mouseTracker = nil
         Self.open.removeAll { $0 === self }
     }
 
@@ -268,7 +271,7 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
                                 permissionRows: [WelcomeContent.PermissionRow]) -> NSView {
         let column = NSView()
 
-        let mascot = Self.makeMascotPlaceholder()
+        let mascot = makeMascot()
         let headline = NSTextField(labelWithString: Self.headlineText(for: guidance))
         headline.font = .systemFont(ofSize: 21, weight: .semibold)
         headline.alignment = .center
@@ -326,17 +329,18 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
         return column
     }
 
-    /// The mascot's stand-in until it exists in this worktree.
+    /// The face, at its natural size.
     ///
-    /// TODO(MascotView): replace this view with `MascotView(frame:)`, sized
-    /// 150x115 the same way, once it lands. Kept in its own factory method
-    /// for exactly that swap — everything else in this file addresses the
-    /// mascot only by this method's return value, never by concrete type.
-    private static func makeMascotPlaceholder() -> NSView {
-        let placeholder = NSView(frame: NSRect(x: 0, y: 0, width: 150, height: 115))
-        placeholder.widthAnchor.constraint(equalToConstant: 150).isActive = true
-        placeholder.heightAnchor.constraint(equalToConstant: 115).isActive = true
-        return placeholder
+    /// Held on the window because the window is what drives it: it is the
+    /// only party that knows where its own Record button is, and a tracking
+    /// area on the mascot could only ever see the pointer while it was
+    /// inside those 150x115 points.
+    private func makeMascot() -> MascotView {
+        let mascot = MascotView(frame: NSRect(x: 0, y: 0, width: 150, height: 115))
+        mascot.widthAnchor.constraint(equalToConstant: 150).isActive = true
+        mascot.heightAnchor.constraint(equalToConstant: 115).isActive = true
+        mascotView = mascot
+        return mascot
     }
 
     /// "Welcome to Snitt" the first time there is nothing to show yet,
@@ -669,17 +673,24 @@ final class WelcomeWindow: NSObject, NSWindowDelegate {
             let frame = buttonFrameProvider()
             self.recordButtonFrame = frame
             let (keenness, isNodding) = Self.keennessAndNodding(pointer: pointInWindow, buttonFrame: frame)
-            // TODO(MascotView): assign `keenness`/`isNodding` onto the real
-            // mascot view once it exists — `mascotView.keenness = keenness`,
-            // `mascotView.isNodding = isNodding`.
             self.latestKeenness = keenness
             self.latestIsNodding = isNodding
+            guard let mascot = self.mascotView else { return }
+            mascot.keenness = keenness
+            mascot.isNodding = isNodding
+            // Converted into the mascot's own coordinates, since that is what
+            // `lookAt` expects and the tracker reports in the content view's.
+            if let content = mascot.window?.contentView {
+                mascot.lookAt(mascot.convert(pointInWindow, from: content))
+            }
         }
         mouseTracker = tracker
     }
 
     /// Held only so `MouseMoveTracker`'s local monitor outlives this method.
     private var mouseTracker: MouseMoveTracker?
+    /// Weak: the view belongs to the window's own view tree.
+    private weak var mascotView: MascotView?
     /// Where the last computed values land until `MascotView` exists to
     /// receive them. Not read anywhere yet; kept so the computation this
     /// task asks for is actually wired to live mouse movement rather than
@@ -791,9 +802,26 @@ final class MouseMoveTracker {
     }
 
     private func handle(_ event: NSEvent) {
-        guard let view, let windowView = view.window?.contentView else { return }
+        guard let view, let window = view.window,
+              let windowView = window.contentView else { return }
+        // A local monitor sees mouse-moved events for EVERY window in the
+        // app, and `locationInWindow` is relative to whichever window the
+        // event belongs to. Without this guard a pointer moving over an open
+        // editor drove the mascot, in this window's coordinate space.
+        guard event.window === window else { return }
         let point = windowView.convert(event.locationInWindow, from: nil)
         onMove(point)
+    }
+
+    /// Removes the monitor without waiting to be deallocated.
+    ///
+    /// `deinit` does this too, but the window is held in a static registry
+    /// until `windowWillClose` empties it, so relying on deallocation timing
+    /// would leave a monitor running for an indeterminate stretch after the
+    /// window is gone.
+    func stop() {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+        monitor = nil
     }
 
     deinit {
