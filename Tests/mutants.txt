@@ -742,3 +742,8 @@ AgentLaunchPromptTests :: Sources/SnittApp/LaunchOpenPrompt.swift :: if launched
 AppDelegateReopenTests :: Sources/SnittApp/main.swift :: isRecording: isCapturing) :: isRecording: false)
 AppDelegateReopenTests/openingAnEditorClosesTheWelcomeWindow :: Sources/SnittApp/EditorWindowController.swift ::         WelcomeWindow.closeForEditor() ::         _ = 0
 AppDelegateReopenTests/reopeningAnOpenDocumentClosesTheWelcomeWindow :: Sources/SnittApp/WelcomeWindow.swift ::         for controller in open { controller.window.close() } ::         for controller in open.prefix(0) { controller.window.close() }
+
+# Notarization credentials that stop resolving mid-release (0.9.0).
+lockedKeychainIsCaughtBeforeSubmission :: Scripts/notarize.sh :: [4]if [ -n "$NOTARY_PROFILE_VALUE" ]; then :: if [ -z "$NOTARY_PROFILE_VALUE" ]; then
+apiKeyPathIsNotRePprobed :: Scripts/notarize.sh :: [4]if [ -n "$NOTARY_PROFILE_VALUE" ]; then :: if true; then
+submitFailureDistinguishesLockedFromMissing :: Scripts/notarize.sh :: if xcrun notarytool history "${NOTARIZE_ARGS[@]}" >/dev/null 2>&1; then :: if false; then

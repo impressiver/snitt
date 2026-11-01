@@ -287,6 +287,13 @@ func notarizeRejectsMalformedKeyPath() throws {
     #expect(result.stderr.contains("NOTARY_KEY does not point at a file"))
 }
 
+// The fake `xcrun`s below answer `notarytool history` as well as `submit`.
+// That is not padding: on the keychain-profile path notarize.sh re-probes
+// the credential immediately before submitting, because a login keychain
+// that locks during a long build makes a verified profile unreadable by the
+// time the submission runs (0.9.0 failed exactly there). A fake that only
+// knows `submit` fails that probe and never reaches the step these tests
+// are about.
 @Test("Both the keychain-profile and API-key-trio credential paths are reachable, and NOTARY_PROFILE takes precedence")
 func notarizeCredentialPathsAreReachableWithStatedPrecedence() throws {
     // These stop short of a real submission (no Apple credentials exist
@@ -307,6 +314,9 @@ func notarizeCredentialPathsAreReachableWithStatedPrecedence() throws {
         """
         #!/bin/sh
         if [ "$1" = "--find" ]; then
+          exit 0
+        fi
+        if [ "$1" = "notarytool" ] && [ "$2" = "history" ]; then
           exit 0
         fi
         if [ "$1" = "notarytool" ] && [ "$2" = "submit" ]; then
@@ -463,6 +473,134 @@ func notarizeFailsWhenNotarytoolSubcommandAbsent() throws {
     #expect(result.stderr.contains("notarytool not found"))
 }
 
+// 0.9.0 shipped after a submission failed with "No Keychain password item
+// found for profile: snitt" against a profile that existed and worked. The
+// screen had locked during the universal build, which locks the login
+// keychain. notarytool says the same thing for a locked keychain as for a
+// profile that was never created, and acting on the wrong one sends a
+// releaser off to re-create a credential that is already there.
+
+@Test("A keychain that locks between the check and the submission is caught before submitting")
+func lockedKeychainIsCaughtBeforeSubmission() throws {
+    let app = try makeStubApp()
+    defer { try? FileManager.default.removeItem(at: app) }
+    #expect(try signAdHoc(app) == 0)
+
+    // `history` fails the way a locked keychain fails; `submit` records that
+    // it was reached. The marker is the assertion that matters: a message
+    // alone would pass even if the script submitted anyway.
+    let marker = FileManager.default.temporaryDirectory
+        .appending(path: "snitt-submit-marker-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: marker) }
+    let fakeBin = try makeFakeBin(name: "xcrun", script: """
+    #!/bin/sh
+    if [ "$1" = "--find" ]; then
+      exit 0
+    fi
+    if [ "$1" = "notarytool" ] && [ "$2" = "history" ]; then
+      echo "Error: No Keychain password item found for profile: synthetic-test-profile" >&2
+      exit 1
+    fi
+    if [ "$1" = "notarytool" ] && [ "$2" = "submit" ]; then
+      echo reached > "\(marker.path)"
+      exit 0
+    fi
+    exit 1
+    """)
+    defer { try? FileManager.default.removeItem(at: fakeBin) }
+
+    let result = runScript([app.path],
+                           env: ["NOTARY_PROFILE": "synthetic-test-profile"],
+                           extraPath: fakeBin.path)
+    #expect(result.status != 0)
+    #expect(!FileManager.default.fileExists(atPath: marker.path),
+            "the submission must not be attempted once the credential stopped resolving")
+    #expect(result.stderr.contains("LOCKED LOGIN KEYCHAIN"),
+            "the message must name the cause a releaser can act on, got: \(result.stderr)")
+}
+
+@Test("An API key is not re-probed, because a file cannot lock")
+func apiKeyPathIsNotRePprobed() throws {
+    let app = try makeStubApp()
+    defer { try? FileManager.default.removeItem(at: app) }
+    #expect(try signAdHoc(app) == 0)
+
+    // Catches a mutant that drops the `NOTARY_PROFILE` guard and probes on
+    // every path: that would add a round trip to every API-key submission,
+    // which is the cost the script's own comment refuses to pay.
+    let marker = FileManager.default.temporaryDirectory
+        .appending(path: "snitt-submit-marker-\(UUID().uuidString)")
+    defer { try? FileManager.default.removeItem(at: marker) }
+    let fakeBin = try makeFakeBin(name: "xcrun", script: """
+    #!/bin/sh
+    if [ "$1" = "--find" ]; then
+      exit 0
+    fi
+    if [ "$1" = "notarytool" ] && [ "$2" = "history" ]; then
+      exit 1
+    fi
+    if [ "$1" = "notarytool" ] && [ "$2" = "submit" ]; then
+      echo reached > "\(marker.path)"
+      exit 0
+    fi
+    if [ "$1" = "stapler" ]; then exit 0; fi
+    exit 0
+    """)
+    defer { try? FileManager.default.removeItem(at: fakeBin) }
+
+    let keyFile = FileManager.default.temporaryDirectory
+        .appending(path: "snitt-synthetic-key-\(UUID().uuidString).p8")
+    try "SYNTHETIC-NOT-A-REAL-KEY".write(to: keyFile, atomically: true, encoding: .utf8)
+    defer { try? FileManager.default.removeItem(at: keyFile) }
+
+    _ = runScript([app.path],
+                  env: ["NOTARY_KEY": keyFile.path,
+                        "NOTARY_KEY_ID": "SYNTHETICKEYID99",
+                        "NOTARY_ISSUER": "00000000-synthetic-issuer-0000"],
+                  extraPath: fakeBin.path)
+    #expect(FileManager.default.fileExists(atPath: marker.path),
+            "a failing history probe must not block the API-key path")
+}
+
+@Test("A submit failure that names the keychain says whether the profile is really missing")
+func submitFailureDistinguishesLockedFromMissing() throws {
+    let app = try makeStubApp()
+    defer { try? FileManager.default.removeItem(at: app) }
+    #expect(try signAdHoc(app) == 0)
+
+    // The exact shape of the 0.9.0 failure: the pre-submit probe passes (the
+    // keychain was readable a moment ago), the submission then fails on the
+    // keychain, and a retry of the probe succeeds — which proves the profile
+    // was never missing and the releaser should resume, not re-create it.
+    let fakeBin = try makeFakeBin(name: "xcrun", script: """
+    #!/bin/sh
+    if [ "$1" = "--find" ]; then
+      exit 0
+    fi
+    if [ "$1" = "notarytool" ] && [ "$2" = "history" ]; then
+      exit 0
+    fi
+    if [ "$1" = "notarytool" ] && [ "$2" = "submit" ]; then
+      echo "Error: No Keychain password item found for profile: synthetic-test-profile" >&2
+      exit 1
+    fi
+    exit 1
+    """)
+    defer { try? FileManager.default.removeItem(at: fakeBin) }
+
+    let result = runScript([app.path],
+                           env: ["NOTARY_PROFILE": "synthetic-test-profile"],
+                           extraPath: fakeBin.path)
+    #expect(result.status != 0)
+    // Asserted on a phrase that does not wrap. "was never missing" reads
+    // better but is split across two lines in the real output, so matching
+    // it would fail for a reason that has nothing to do with the behaviour.
+    #expect(result.stderr.contains("resolves NOW"),
+            "a profile that resolves on retry must be reported as present, got: \(result.stderr)")
+    #expect(!result.stderr.contains("store-credentials"),
+            "it must not tell the releaser to re-create a credential that is already there")
+}
+
 // R26: the brief's own emphasised requirement — "It must staple and then
 // verify... fail on either" — had zero coverage. Swallowing both `stapler
 // staple` and `spctl --assess` failures with `|| true` passed the full
@@ -477,6 +615,9 @@ private func fakeXcrunScript(stapleSucceeds: Bool) -> String {
     """
     #!/bin/sh
     if [ "$1" = "--find" ]; then
+      exit 0
+    fi
+    if [ "$1" = "notarytool" ] && [ "$2" = "history" ]; then
       exit 0
     fi
     if [ "$1" = "notarytool" ] && [ "$2" = "submit" ]; then

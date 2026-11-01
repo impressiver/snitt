@@ -214,6 +214,11 @@ if [ "$CHECK_CREDENTIALS_ONLY" -eq 1 ]; then
   # notarization is about to talk to Apple anyway and does not need a probe
   # first; putting it there would add a round trip to every submission and
   # change behaviour for a path that is working.
+  #
+  # REVISED for the keychain path, see the submit step. That argument holds
+  # for an API key, which is a file and cannot become unreadable mid-run. A
+  # keychain item can, and did: 0.9.0 failed at submission with a profile
+  # this check had verified minutes before.
   if ! probe="$(xcrun notarytool history "${NOTARIZE_ARGS[@]}" 2>&1)"; then
     echo "error: notarization credentials did not work." >&2
     if [ -n "$NOTARY_PROFILE_VALUE" ]; then
@@ -257,11 +262,64 @@ else
   SUBMISSION="$APP"
 fi
 
+# A CREDENTIAL THAT WORKED AT PREFLIGHT CAN STOP WORKING BEFORE SUBMISSION,
+# and only on the keychain path. Cutting 0.9.0, the screen locked during the
+# universal build; that locks the login keychain, and the submit three steps
+# later could no longer read the profile. Preflight had verified it minutes
+# earlier and was right at the time.
+#
+# This revises the note below, which argued no probe belongs here because a
+# submission is about to talk to Apple anyway. True for the API-key path: a
+# key is a file on disk and does not become unreadable halfway through a
+# build. A keychain item does. So the probe runs for the profile path only,
+# where the failure mode actually exists, and the key path keeps the single
+# round trip it always had.
+if [ -n "$NOTARY_PROFILE_VALUE" ]; then
+ if ! recheck="$(xcrun notarytool history "${NOTARIZE_ARGS[@]}" 2>&1)"; then
+  echo "error: the keychain profile '$NOTARY_PROFILE_VALUE' stopped working" >&2
+  echo "between the credential check and this submission." >&2
+  echo "" >&2
+  echo "The usual cause is a LOCKED LOGIN KEYCHAIN: the screen locking during" >&2
+  echo "a long build is enough, and notarytool then reports the profile as" >&2
+  echo "though it did not exist. Unlock the keychain and run again." >&2
+  echo "" >&2
+  printf '%s\n' "$recheck" >&2
+  exit 1
+ fi
+fi
+
 echo "==> Submitting to Apple's notary service (this can take several minutes)..."
-if ! xcrun notarytool submit "$SUBMISSION" "${NOTARIZE_ARGS[@]}" --wait; then
+if ! submit_output="$(xcrun notarytool submit "$SUBMISSION" "${NOTARIZE_ARGS[@]}" --wait 2>&1)"; then
+  printf '%s\n' "$submit_output" >&2
   echo "error: xcrun notarytool submit failed — see output above" >&2
+  # "No Keychain password item found" is what notarytool says BOTH for a
+  # profile that was never created and for one it cannot read because the
+  # keychain is locked. Indistinguishable from the message alone, and the
+  # wrong guess sends a releaser off to re-create a credential that is
+  # already there. So ask again: the probe is a second and says which.
+  case "$submit_output" in
+    *"No Keychain password item"*|*"could not find"*|*"not found for profile"*)
+      if [ -n "$NOTARY_PROFILE_VALUE" ]; then
+        echo "" >&2
+        if xcrun notarytool history "${NOTARIZE_ARGS[@]}" >/dev/null 2>&1; then
+          echo "The profile '$NOTARY_PROFILE_VALUE' resolves NOW, so it was never" >&2
+          echo "missing — the keychain was locked when the submission ran, and" >&2
+          echo "reading it just now is what unlocked it. Nothing to re-create:" >&2
+          echo "run again, or resume the release at this step." >&2
+        else
+          echo "The profile '$NOTARY_PROFILE_VALUE' does not resolve on a retry" >&2
+          echo "either. Either it was never created under that name, or the" >&2
+          echo "keychain is still locked. Create one with:" >&2
+          echo "" >&2
+          echo "  xcrun notarytool store-credentials $NOTARY_PROFILE_VALUE \\" >&2
+          echo "    --apple-id <apple-id> --team-id <team-id> \\" >&2
+          echo "    --password <app-specific-password>" >&2
+        fi
+      fi ;;
+  esac
   exit 1
 fi
+printf '%s\n' "$submit_output"
 # Known, unverified-here uncertainty (review finding, not a bug): on some
 # Xcode versions `notarytool submit --wait` has been reported to exit 0
 # even when the submission's own status is "Invalid" rather than
