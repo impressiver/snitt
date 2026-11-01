@@ -10,8 +10,8 @@
 # arrives there carrying no terms at all and takes whatever that repo says.
 
 cask "snitt" do
-  version "0.8.0"
-  sha256 "4282d12fc69de4a1c0ec06af67792b862c6835561c7eb12bc4670c79ec217053"
+  version "0.9.0"
+  sha256 "a3c36b2873024fa705c717408ed7bb868c2aaf3422e4900d80fedb9433ebe4cf"
 
   url "https://github.com/impressiver/snitt/releases/download/v#{version}/Snitt-#{version}.zip"
   name "Snitt"
