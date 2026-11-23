@@ -30,10 +30,16 @@ FilmstripHoverTests :: Sources/SnittApp/TimelineView.swift :: guard gesture.phas
 FilmstripHoverTests :: Sources/SnittApp/TimelineView.swift :: if hoverMapping != before { cancelPreviewForGeometryChange() } :: cancelPreviewForGeometryChange()
 
 # The hover PREVIEW's effect on playback (PR 3b).
-FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: hoverResumesPlayback = isPlaying || resumeAfterRestore :: hoverResumesPlayback = false
-FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: if isPlaying && hoverReturnTarget != nil { abandonHover() } :: if false { abandonHover() }
-FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: hoverReturnTarget = restoringTo ?? pendingSeekTarget ?? currentOutputSeconds :: hoverReturnTarget = currentOutputSeconds
-FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: if hoverReturnTarget != nil { hoverReturnTarget = trimmedTime } :: if hoverReturnTarget != nil { }
+FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: guard !playing else { :: guard 1 == 1 else {
+FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: if playing { abandonHover(); return } :: if false { abandonHover(); return }
+FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: if pendingSeekTarget == target { pendingSeekTarget = nil } :: _ = target
+FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: if isPlaying { abandonHover() } :: if false { abandonHover() }
+FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: hoverReturnTarget = pendingSeekTarget ?? restoringTo ?? currentOutputSeconds :: hoverReturnTarget = restoringTo ?? pendingSeekTarget ?? currentOutputSeconds
+FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: hoverReturnTarget = trimmedTime :: _ = trimmedTime
+FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: objectWillChange.send() :: _ = 0
+FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: markedPlayhead: hoverReturnTarget) :: markedPlayhead: nil)
+FilmstripHoverTests :: Sources/SnittApp/TimelineView.swift :: self.markedPlayhead = markedPlayhead :: self.markedPlayhead = nil
+FilmstripHoverTests :: Sources/SnittApp/TimelineView.swift :: if resolved == nil, moved, let source :: if resolved == nil, let source
 # PARKED, not forgotten, x2. Both were written, measured, and cannot be
 # killed, so they are recorded here rather than left as phantom coverage.
 #
@@ -389,9 +395,12 @@ MarkerPreviewTimeTests :: Sources/SnittExport/MarkerBanners.swift :: guard resti
 # Mark navigation must reason from where a seek is GOING, not from a player
 # clock that has not caught up — the difference is a button press that looks
 # like it did nothing.
-NavigationOriginTests :: Sources/SnittApp/EditorWindowController.swift :: pendingSeekTarget = seconds :: pendingSeekTarget = nil
-NavigationOriginTests :: Sources/SnittApp/EditorWindowController.swift :: pendingSeekTarget = trimmedTime :: pendingSeekTarget = nil
-NavigationOriginTests :: Sources/SnittApp/EditorWindowController.swift :: if decision.dropPending { pendingSeekTarget = nil } :: if false { pendingSeekTarget = nil }
+# Every committed seek (scrub, pane click, rewind) arms through `commitSeek`.
+NavigationOriginTests :: Sources/SnittApp/EditorWindowController.swift :: pendingSeekTarget = target :: pendingSeekTarget = nil
+# PARKED: `if decision.dropPending { pendingSeekTarget = nil }` -> `if false`.
+# Unkillable since `commitSeek` disarms every committed target when its seek
+# lands; this lazy drop is now a fallback, kept for any future seek path that
+# arms the target without going through `commitSeek`.
 
 # A press that resolves in mouseDown must CLAIM the gesture, or the trailing
 # mouseUp reads it as a bare click: it clears the selection and re-scrubs to

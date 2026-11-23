@@ -154,14 +154,12 @@ struct PhraseSelectionTests {
         view.mouseDown(with: .synthetic(at: elsewhere, in: view))
         view.mouseUp(with: .synthetic(at: elsewhere, in: view))
 
-        // Three, not two: an ORDINARY click scrubs on the press and again on
-        // the release, both to the same x — harmless, long-standing, and not
-        // what was reported. The phrase click contributes exactly one. Stated
-        // as the total so this test also pins that the phrase path did not
-        // quietly acquire the second scrub.
-        #expect(scrubs.count == 3, "the second click did not scrub twice: \(scrubs)")
-        #expect(scrubs.dropFirst().allSatisfy { abs($0 - scrubs[1]) < 1e-9 },
-                "the ordinary click's two scrubs disagree: \(scrubs)")
+        // Two: one per click. An ordinary click used to scrub on the press
+        // AND the release, which stopped being harmless once a click stopped
+        // pausing (it restarts playback from the click twice). Stated as the
+        // total so this also pins that the phrase path did not quietly
+        // acquire a second scrub.
+        #expect(scrubs.count == 2, "expected one scrub per click: \(scrubs)")
         #expect(reported.last as? Selection == nil,
                 "a plain click must clear the phrase selection, and left \(String(describing: reported.last))")
     }

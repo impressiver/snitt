@@ -71,12 +71,16 @@ struct EditorTransportTests {
         #expect(currentSeconds(state) < 0.05, "landed at \(currentSeconds(state))")
     }
 
-    @Test("Scrubbing the timeline stops playback")
-    func scrubbingStopsPlayback() async throws {
-        // The reported problem: the picture kept moving after a click, so the
-        // playhead walked away from where it had just been put and the click
-        // read as ignored.
-        let state = try await makeState()
+    @Test("A timeline click during playback moves the playhead and keeps playing")
+    func scrubbingKeepsPlaying() async throws {
+        // Product owner, reversing D87: a click while watching says "play
+        // from HERE", not "stop". It used to pause.
+        //
+        // The click jumps BACKWARDS, from 8s to 1s, so "below 6" proves the
+        // jump happened with seconds of slack for a loaded machine. A forward
+        // jump needs an upper bound that playback under load overruns.
+        let state = try await makeState(seconds: 12.0)
+        await state.controller.seek(toSeconds: 8.0)
         // Started through `togglePlayback` rather than `controller.play()`.
         // Playing is the state's own published fact now — it has to be, or
         // nothing can tell the transport that playback ran off the end — and
@@ -85,9 +89,22 @@ struct EditorTransportTests {
         state.togglePlayback()
         #expect(state.isPlaying, "the fixture never started playing")
 
-        state.onScrub(2.0)
+        state.onScrub(1.0)
+        await state.waitForPendingSeek()
 
-        #expect(state.isPlaying == false)
+        #expect(state.isPlaying, "the click stopped playback")
+        #expect(currentSeconds(state) >= 0.95 && currentSeconds(state) < 6.0,
+                "playback continues from the click, got \(currentSeconds(state))")
+        state.pauseForAgent()
+    }
+
+    @Test("A timeline click while paused stays paused")
+    func scrubbingWhilePausedStaysPaused() async throws {
+        let state = try await makeState()
+        state.onScrub(2.0)
+        await state.waitForPendingSeek()
+        #expect(!state.isPlaying)
+        #expect(abs(currentSeconds(state) - 2.0) < 0.05)
     }
 
     @Test("Rewind does NOT stop playback")
@@ -109,12 +126,11 @@ struct EditorTransportTests {
         #expect(state.isPlaying, "rewind paused playback")
     }
 
-    @Test("A chapter or transcript click stops playback too")
-    func seekingFromAPaneStopsPlayback() async throws {
+    @Test("A chapter or transcript click keeps playing too")
+    func seekingFromAPaneKeepsPlaying() async throws {
         // `seek(toOutput:)` and `seek(toWord:)` both route through `onScrub`
-        // on purpose — same act, different target. Pausing only on the
-        // timeline's own path would leave the panes behaving differently from
-        // the lane for no reason a user could predict.
+        // on purpose — same act, different target. Behaving differently from
+        // the lane would be a difference no user could predict.
         let state = try await makeState()
         // Started through `togglePlayback` rather than `controller.play()`.
         // Playing is the state's own published fact now — it has to be, or
@@ -126,7 +142,8 @@ struct EditorTransportTests {
 
         state.seek(toOutput: 2.0)
 
-        #expect(state.isPlaying == false)
+        #expect(state.isPlaying, "a pane click stopped playback")
+        state.pauseForAgent()
     }
 }
 
