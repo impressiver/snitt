@@ -510,6 +510,15 @@ final class EditorTimelineState: ObservableObject {
         // began from. Without this, clicking the frame you are previewing and
         // then moving the pointer away silently undoes the click.
         if hoverReturnTarget != nil { hoverReturnTarget = trimmedTime }
+        // And a click is a stop (D87), even under a hover that interrupted
+        // playback: the exit lands on the click and stays paused there.
+        hoverResumesPlayback = false
+        resumeAfterRestore = false
+        // A preview still queued behind the click must not land after it.
+        hoverSeekTarget = nil
+        // A click re-arms a hover that playback had abandoned: the pointer
+        // is still on the filmstrip, and the timeline is paused again.
+        hoverAbandoned = false
         controller.pause()
         pendingSeekTask = Task { await controller.seek(toSeconds: trimmedTime) }
         refreshPlaybackState()
@@ -530,6 +539,20 @@ final class EditorTimelineState: ObservableObject {
     /// position before the click, so reading it would snap back to the wrong
     /// place — the exact staleness the pending target was introduced to fix.
     private var hoverReturnTarget: Double?
+
+    /// Whether the hover interrupted playback, so its exit resumes it.
+    private var hoverResumesPlayback = false
+
+    /// Set when playback starts while the pointer is still on the filmstrip
+    /// (the space bar, the transport). Every move until the exit is then
+    /// ignored: re-pausing on the next pixel would make Play unpressable.
+    private var hoverAbandoned = false
+
+    /// The exit's restore, while it is still in flight, and whether playback
+    /// resumes once it lands. A hover that starts again before then returns
+    /// to this rather than to a player clock that has not caught up yet.
+    private var restoringTo: Double?
+    private var resumeAfterRestore = false
 
     /// The in-flight COMMITTED seek, so a test can await it.
     ///
@@ -565,37 +588,67 @@ final class EditorTimelineState: ObservableObject {
     /// Previews `time` (SOURCE seconds), or restores the committed position
     /// when `time` is nil.
     ///
-    /// **Never pauses, and never records a destination.** Both are what
-    /// separate this from `onScrub`, which does both deliberately. A hover is
-    /// the user asking what is at an instant; a scrub is the user saying to
-    /// be there. Writing `pendingSeekTarget` here would make mark-to-mark
-    /// navigation reason from wherever the pointer last rested.
+    /// **Never records a destination.** That is what separates this from
+    /// `onScrub`. A hover is the user asking what is at an instant; a scrub is
+    /// the user saying to be there. Writing `pendingSeekTarget` here would
+    /// make mark-to-mark navigation reason from wherever the pointer rested.
     ///
-    /// **Only while paused**, on the product owner's direction. Hovering
-    /// during playback does nothing at all: seeking against a running clock
-    /// shows a frame that is already gone, and pausing on hover would stop
-    /// the picture every time the pointer crossed the timeline.
+    /// **Scrubs whatever playback is doing**, on the product owner's
+    /// direction (replacing the earlier paused-only rule): a hover over a
+    /// playing timeline pauses it, and the exit puts the playhead back and
+    /// resumes. Pressing play mid-hover plays from the hovered frame and
+    /// ends the hover until the pointer leaves.
     func hoverPreview(toSource time: Double?) {
-        guard !isPlaying else {
-            // Playback started while hovering (the space bar, or the
-            // transport). Abandon the preview rather than restoring: yanking
-            // the picture back now would fight the playback that just began.
-            hoverReturnTarget = nil
-            return
-        }
         guard let time else {
+            hoverAbandoned = false
             guard let target = hoverReturnTarget else { return }
             hoverReturnTarget = nil
+            restoringTo = target
+            resumeAfterRestore = hoverResumesPlayback
+            hoverResumesPlayback = false
             // Exact, not tolerant: this is a committed position again.
             enqueueHoverSeek(to: target, exact: true)
+            return
+        }
+        guard !hoverAbandoned else { return }
+        if isPlaying && hoverReturnTarget != nil {
+            abandonHover()
             return
         }
         guard let trimmed = TimeRangeMapping.nearestTrimmedTime(
             toSourceTime: time, keptRanges: controller.keptRanges) else { return }
         if hoverReturnTarget == nil {
-            hoverReturnTarget = pendingSeekTarget ?? currentOutputSeconds
+            hoverReturnTarget = restoringTo ?? pendingSeekTarget ?? currentOutputSeconds
+            hoverResumesPlayback = isPlaying || resumeAfterRestore
+            restoringTo = nil
+            resumeAfterRestore = false
+            if isPlaying {
+                controller.pause()
+                refreshPlaybackState()
+            }
         }
         enqueueHoverSeek(to: trimmed, exact: false)
+    }
+
+    /// Playback started under a live hover: keep playing from the frame on
+    /// screen, drop the restore, and ignore the pointer until it leaves.
+    private func abandonHover() {
+        hoverReturnTarget = nil
+        hoverResumesPlayback = false
+        hoverSeekTarget = nil
+        hoverAbandoned = true
+    }
+
+    /// Runs when the preview chain drains: an exit's restore has landed, so
+    /// playback the hover interrupted picks up from there.
+    private func finishRestore() {
+        guard restoringTo != nil else { return }
+        restoringTo = nil
+        if resumeAfterRestore {
+            resumeAfterRestore = false
+            controller.play()
+            refreshPlaybackState()
+        }
     }
 
     /// COALESCED, because `mouseMoved` arrives at pointer speed and an
@@ -622,6 +675,7 @@ final class EditorTimelineState: ObservableObject {
                 }
             }
             self?.hoverSeekTask = nil
+            self?.finishRestore()
         }
     }
 
@@ -662,8 +716,11 @@ final class EditorTimelineState: ObservableObject {
     /// was always a no-op — press Play while playing and nothing happens, with
     /// no way to tell that from a broken button.
     func togglePlayback() {
+        // An explicit toggle outranks a resume still waiting on its restore.
+        resumeAfterRestore = false
         if controller.player.rate == 0 { controller.play() } else { controller.pause() }
         refreshPlaybackState()
+        if isPlaying && hoverReturnTarget != nil { abandonHover() }
     }
 
     /// Raises the "Agent editing" cue and keeps it up for a few seconds past

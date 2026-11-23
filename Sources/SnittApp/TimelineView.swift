@@ -425,6 +425,7 @@ public final class TimelineView: NSView {
                        audioLanes: [String]? = nil,
                        waveforms: [WaveformSamples] = [],
                        filmstrip: FilmstripFrames? = nil) {
+        let before = hoverMapping
         self.duration = duration
         self.cuts = cuts
         self.markerPoints = markerPoints
@@ -447,17 +448,24 @@ public final class TimelineView: NSView {
         // the transcript lane are inputs to `TimelineTrackLayout.bands`. So
         // the preview is cancelled and the tracking area rebuilt, which
         // AppKit will not do for a change that leaves `bounds` alone.
-        cancelPreviewForGeometryChange()
+        //
+        // Only when they ACTUALLY changed. This runs on every 20Hz playhead
+        // tick, and the hover's own seek moves the playhead, so an
+        // unconditional cancel restored the pre-hover position ~50ms after
+        // every preview: the snap-back the scrub was reported for.
         rebuildGeometry()
+        cancelPreviewIfMappingChanged(from: before)
         updateTrackingAreas()
         needsDisplay = true
     }
 
     public override func layout() {
+        let before = hoverMapping
         super.layout()
-        // A resize remaps time to x, and the pointer has not moved.
-        cancelPreviewForGeometryChange()
+        // A resize remaps time to x, and the pointer has not moved. A layout
+        // pass that resized nothing remaps nothing, so it keeps the preview.
         rebuildGeometry()
+        cancelPreviewIfMappingChanged(from: before)
         viewportDidChange()
         needsDisplay = true
     }
@@ -758,9 +766,10 @@ public final class TimelineView: NSView {
     private(set) var phrases: [TranscriptPhrase] = []
 
     public func update(phrases newPhrases: [TranscriptPhrase]) {
+        let before = hoverMapping
         phrases = newPhrases
         // Gaining or losing the transcript lane resizes the filmstrip band.
-        cancelPreviewForGeometryChange()
+        cancelPreviewIfMappingChanged(from: before)
         updateTrackingAreas()
         needsDisplay = true
     }
@@ -1236,6 +1245,22 @@ public final class TimelineView: NSView {
     /// already produced two shipped regressions. The cost is that zooming
     /// while aiming drops the preview until the pointer next moves.
     private func cancelPreviewForGeometryChange() { endHover() }
+
+    /// What a hovered point means: which band it is in, and which instant
+    /// its x maps to. A re-render that leaves both alone has not moved the
+    /// time under the pointer, so it has nothing to cancel.
+    private struct HoverMapping: Equatable {
+        let band: CGRect
+        let geometry: TimelineGeometry
+    }
+
+    private var hoverMapping: HoverMapping {
+        HoverMapping(band: filmstripBand, geometry: geometry)
+    }
+
+    private func cancelPreviewIfMappingChanged(from before: HoverMapping) {
+        if hoverMapping != before { cancelPreviewForGeometryChange() }
+    }
 
     /// Stops previewing and asks the consumer to restore the committed
     /// position. Idempotent, and silent when no preview is live.

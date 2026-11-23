@@ -117,33 +117,128 @@ struct FilmstripHoverSeekTests {
                 "the exit must honour the click, not the position the hover began from, got \(state.currentOutputSeconds)")
     }
 
-    @Test("A hover while PLAYING is ignored and does not stop playback")
-    func hoverWhilePlayingIsInert() async throws {
-        // The product owner's choice: preview only while paused. A hover that
-        // seeks mid-playback fights the playback clock, and one that paused
-        // would stop the picture every time the pointer crossed the timeline.
+    @Test("A hover while PLAYING pauses and previews the hovered frame")
+    func hoverWhilePlayingPausesAndPreviews() async throws {
+        // Product owner, reversing the earlier preview-only-while-paused rule:
+        // a scrubbing timeline scrubs whatever playback is doing.
         let state = try await makeState()
         state.togglePlayback()
         #expect(state.isPlaying, "precondition: playing")
 
         state.hoverPreview(toSource: 6.0)
         await state.waitForHoverPreview()
-        #expect(state.isPlaying, "a hover must not pause")
-        // AND it must not move the picture. Asserting only that playback
-        // continued was too weak to be worth writing: a preview does not
-        // pause, so deleting the `isPlaying` guard altogether left that
-        // assertion passing. Playback from 0 cannot have reached 6s in the
-        // moment this takes, so a position anywhere near the hovered instant
-        // means the hover seeked when it should have done nothing.
-        #expect(state.currentOutputSeconds < 2.0,
-                "a hover while playing must not seek, got \(state.currentOutputSeconds)")
-
-        // And the exit must not yank the picture back either, since nothing
-        // was previewed to begin with.
+        #expect(!state.isPlaying, "a hover over a playing timeline pauses it")
+        #expect(abs(state.currentOutputSeconds - 6.0) < 0.2,
+                "the hover previews while playing, got \(state.currentOutputSeconds)")
         state.hoverPreview(toSource: nil)
         await state.waitForHoverPreview()
-        #expect(state.isPlaying, "an exit must not pause")
+        state.pauseForAgent()
+    }
+
+    @Test("Leaving a hover that interrupted playback resumes from where it was")
+    func exitResumesInterruptedPlayback() async throws {
+        let state = try await makeState()
+        state.onScrub(2.0)
+        await state.waitForPendingSeek()
         state.togglePlayback()
+
+        state.hoverPreview(toSource: 6.0)
+        await state.waitForHoverPreview()
+        state.hoverPreview(toSource: nil)
+        await state.waitForHoverPreview()
+
+        #expect(state.isPlaying, "the exit resumes playback")
+        #expect(abs(state.currentOutputSeconds - 2.0) < 0.5,
+                "playback resumes from the pre-hover position, got \(state.currentOutputSeconds)")
+        state.pauseForAgent()
+    }
+
+    @Test("A click during a hover over playback is a stop: the exit stays paused on the click")
+    func clickDuringPlayingHoverStops() async throws {
+        let state = try await makeState()
+        state.onScrub(1.0)
+        await state.waitForPendingSeek()
+        state.togglePlayback()
+
+        state.hoverPreview(toSource: 5.0)
+        await state.waitForHoverPreview()
+        state.onScrub(5.0)
+        await state.waitForPendingSeek()
+        state.hoverPreview(toSource: 6.5)
+        await state.waitForHoverPreview()
+        state.hoverPreview(toSource: nil)
+        await state.waitForHoverPreview()
+
+        #expect(!state.isPlaying, "a click cancels the resume")
+        #expect(abs(state.currentOutputSeconds - 5.0) < 0.2,
+                "the exit lands on the clicked frame, got \(state.currentOutputSeconds)")
+    }
+
+    @Test("Leaving a hover over a PAUSED timeline stays paused")
+    func exitFromPausedHoverStaysPaused() async throws {
+        let state = try await makeState()
+        state.onScrub(1.0)
+        await state.waitForPendingSeek()
+        state.hoverPreview(toSource: 5.0)
+        await state.waitForHoverPreview()
+        state.hoverPreview(toSource: nil)
+        await state.waitForHoverPreview()
+        #expect(!state.isPlaying)
+    }
+
+    @Test("Pressing play mid-hover plays from the hovered frame and ends the hover")
+    func playDuringHoverAbandonsIt() async throws {
+        let state = try await makeState()
+        state.onScrub(1.0)
+        await state.waitForPendingSeek()
+        state.hoverPreview(toSource: 4.0)
+        await state.waitForHoverPreview()
+
+        state.togglePlayback()
+        // The pointer is still in the band and still moving.
+        state.hoverPreview(toSource: 7.0)
+        await state.waitForHoverPreview()
+        #expect(state.isPlaying, "a move after play must not pause again")
+        #expect(state.currentOutputSeconds < 6.0,
+                "a move after play must not seek, got \(state.currentOutputSeconds)")
+        state.hoverPreview(toSource: nil)
+        await state.waitForHoverPreview()
+        #expect(state.isPlaying, "the exit must not stop playback")
+        #expect(state.currentOutputSeconds > 3.5,
+                "the exit must not restore the pre-hover position, got \(state.currentOutputSeconds)")
+        state.pauseForAgent()
+    }
+
+    @Test("Pressing play mid-hover, then leaving without moving, keeps playing from the hovered frame")
+    func playThenExitWithoutMovingKeepsPosition() async throws {
+        let state = try await makeState()
+        state.onScrub(1.0)
+        await state.waitForPendingSeek()
+        state.hoverPreview(toSource: 4.0)
+        await state.waitForHoverPreview()
+
+        state.togglePlayback()
+        state.hoverPreview(toSource: nil)
+        await state.waitForHoverPreview()
+        #expect(state.isPlaying)
+        #expect(state.currentOutputSeconds > 3.5,
+                "the exit must not restore over playback, got \(state.currentOutputSeconds)")
+        state.pauseForAgent()
+    }
+
+    @Test("A click beats a preview seek still queued behind it")
+    func clickOutranksQueuedPreview() async throws {
+        let state = try await makeState()
+        state.onScrub(0.5)
+        await state.waitForPendingSeek()
+
+        state.hoverPreview(toSource: 3.0)   // in flight
+        state.hoverPreview(toSource: 4.0)   // queued behind it
+        state.onScrub(6.0)
+        await state.waitForPendingSeek()
+        await state.waitForHoverPreview()
+        #expect(abs(state.currentOutputSeconds - 6.0) < 0.2,
+                "the click is where the playhead lands, got \(state.currentOutputSeconds)")
     }
 
     @Test("Rapid hovers coalesce to the last one")

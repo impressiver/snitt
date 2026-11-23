@@ -27,10 +27,12 @@ FilmstripHoverTests :: Sources/SnittApp/TimelineView.swift :: audioTracks: audio
 FilmstripHoverTests :: Sources/SnittApp/TimelineView.swift :: private func cancelPreviewForGeometryChange() { endHover() } :: private func cancelPreviewForGeometryChange() { }
 FilmstripHoverTests :: Sources/SnittApp/TimelineView.swift :: guard hoverOutputTime != nil else { return } :: if hoverOutputTime == nil { hoverOutputTime = 0 }
 FilmstripHoverTests :: Sources/SnittApp/TimelineView.swift :: guard gesture.phase == .idle, activeMarkerDrag == nil, :: guard activeMarkerDrag == nil,
+FilmstripHoverTests :: Sources/SnittApp/TimelineView.swift :: if hoverMapping != before { cancelPreviewForGeometryChange() } :: cancelPreviewForGeometryChange()
 
 # The hover PREVIEW's effect on playback (PR 3b).
-FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: guard !isPlaying else { :: guard 1 == 1 else {
-FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: hoverReturnTarget = pendingSeekTarget ?? currentOutputSeconds :: hoverReturnTarget = currentOutputSeconds
+FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: hoverResumesPlayback = isPlaying || resumeAfterRestore :: hoverResumesPlayback = false
+FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: if isPlaying && hoverReturnTarget != nil { abandonHover() } :: if false { abandonHover() }
+FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: hoverReturnTarget = restoringTo ?? pendingSeekTarget ?? currentOutputSeconds :: hoverReturnTarget = currentOutputSeconds
 FilmstripHoverSeekTests :: Sources/SnittApp/EditorWindowController.swift :: if hoverReturnTarget != nil { hoverReturnTarget = trimmedTime } :: if hoverReturnTarget != nil { }
 # PARKED, not forgotten, x2. Both were written, measured, and cannot be
 # killed, so they are recorded here rather than left as phantom coverage.

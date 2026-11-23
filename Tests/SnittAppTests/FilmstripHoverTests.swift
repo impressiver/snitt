@@ -316,6 +316,26 @@ struct FilmstripHoverTests {
         #expect(previews.last == .some(nil))
     }
 
+    @Test("A re-render that changes no geometry leaves the preview live")
+    func playheadTickDoesNotCancel() {
+        // The snap-back defect. The editor re-applies its whole display state
+        // on every 20Hz playhead tick, and the hover's own seek moves the
+        // playhead, so an unconditional cancel in `update(...)` restored the
+        // pre-hover position ~50ms after every preview.
+        let r = rig()
+        var previews: [Double?] = []
+        r.view.onHoverPreview = { previews.append($0) }
+
+        r.view.mouseMoved(with: .syntheticMove(at: NSPoint(x: 400, y: r.bands.video.midY),
+                                               in: r.view))
+        #expect(previews.count == 1)
+        r.view.update(duration: duration, cuts: [r.cut], markerPoints: [r.marker],
+                      playhead: 9, audioLanes: ["microphone"])
+        r.view.update(phrases: r.view.phrases)
+        r.view.layout()
+        #expect(previews.count == 1, "a playhead-only update must not end the hover, got \(previews)")
+    }
+
     @Test("A drag that began in the filmstrip is not interrupted by hover")
     func dragSuppressesHover() {
         // A trim drag sends `mouseDragged`, and AppKit also delivers
