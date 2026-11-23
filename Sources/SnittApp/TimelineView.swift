@@ -61,14 +61,13 @@ public final class TimelineView: NSView {
     /// nil the moment it stops hovering.
     ///
     /// A separate callback from `onScrub` rather than a reuse of it, because
-    /// the two mean opposite things to playback. `onScrub` is the user saying
-    /// where to BE: `EditorTimelineState.onScrub` pauses and records the
-    /// destination, deliberately ("Scrubbing STOPS playback (D87)"). A hover
-    /// is the user ASKING what is there, and must leave the committed
-    /// position untouched so there is something to snap back to. Routing
-    /// hover through `onScrub` would pause the picture every time the pointer
-    /// crossed the timeline and overwrite the very position the exit is
-    /// supposed to restore.
+    /// the two mean opposite things. `onScrub` is the user saying where to
+    /// BE: `EditorTimelineState.onScrub` moves the playhead and records the
+    /// destination. A hover is the user ASKING what is there, and must leave
+    /// the committed position untouched so there is something to snap back
+    /// to. Routing hover through `onScrub` would move the real playhead every
+    /// time the pointer crossed the timeline and overwrite the very position
+    /// the exit is supposed to restore.
     ///
     /// One callback for both edges, nil meaning "no longer hovering", so a
     /// consumer cannot handle the enter and forget the exit.
@@ -172,6 +171,10 @@ public final class TimelineView: NSView {
     /// `TrimGesture` itself never sees pixels; it takes the converted
     /// threshold as a parameter to `ended(atTime:minimumSeconds:)`.
     private static let minimumDragPixels: Double = 3.0
+
+    /// Where the press that began the current scrub/drag landed, so a release
+    /// at the same spot does not scrub a second time.
+    private var scrubPressX: CGFloat?
 
     /// Pixels of slop a click gets around a fold's own line (drawn just 2px
     /// wide, see `draw`) before it counts as "aimed at this fold" rather
@@ -320,6 +323,10 @@ public final class TimelineView: NSView {
     /// composition `CompositionBuilder` built from kept ranges only, so its
     /// `currentTime()` already IS output time before it ever reaches here.
     private var playhead: Double = 0
+    /// OUTPUT time. The actual playhead position while a filmstrip scrub
+    /// has `playhead` following the pointer; nil when not scrubbing. Drawn
+    /// as a dimmed second playhead.
+    private var markedPlayhead: Double?
     /// SOURCE time (M5f Task 4) — the last COMMITTED selection, i.e. what a
     /// completed drag reported through `onSelect`. Set locally the instant
     /// a drag ends (for an immediate redraw, with no round trip through the
@@ -414,7 +421,8 @@ public final class TimelineView: NSView {
                trackStates: display.trackStates,
                audioLanes: display.audioLanes,
                waveforms: display.waveforms,
-               filmstrip: display.filmstrip)
+               filmstrip: display.filmstrip,
+               markedPlayhead: display.markedPlayhead)
     }
 
     public func update(duration: Double, cuts: [Cut], markerPoints: [JumpPoint],
@@ -424,7 +432,10 @@ public final class TimelineView: NSView {
                        trackStates: [TrackState] = [],
                        audioLanes: [String]? = nil,
                        waveforms: [WaveformSamples] = [],
-                       filmstrip: FilmstripFrames? = nil) {
+                       filmstrip: FilmstripFrames? = nil,
+                       markedPlayhead: Double? = nil) {
+        let before = hoverMapping
+        self.markedPlayhead = markedPlayhead
         self.duration = duration
         self.cuts = cuts
         self.markerPoints = markerPoints
@@ -447,17 +458,24 @@ public final class TimelineView: NSView {
         // the transcript lane are inputs to `TimelineTrackLayout.bands`. So
         // the preview is cancelled and the tracking area rebuilt, which
         // AppKit will not do for a change that leaves `bounds` alone.
-        cancelPreviewForGeometryChange()
+        //
+        // Only when they ACTUALLY changed. This runs on every 20Hz playhead
+        // tick, and the hover's own seek moves the playhead, so an
+        // unconditional cancel restored the pre-hover position ~50ms after
+        // every preview: the snap-back the scrub was reported for.
         rebuildGeometry()
+        cancelPreviewIfMappingChanged(from: before)
         updateTrackingAreas()
         needsDisplay = true
     }
 
     public override func layout() {
+        let before = hoverMapping
         super.layout()
-        // A resize remaps time to x, and the pointer has not moved.
-        cancelPreviewForGeometryChange()
+        // A resize remaps time to x, and the pointer has not moved. A layout
+        // pass that resized nothing remaps nothing, so it keeps the preview.
         rebuildGeometry()
+        cancelPreviewIfMappingChanged(from: before)
         viewportDidChange()
         needsDisplay = true
     }
@@ -758,9 +776,10 @@ public final class TimelineView: NSView {
     private(set) var phrases: [TranscriptPhrase] = []
 
     public func update(phrases newPhrases: [TranscriptPhrase]) {
+        let before = hoverMapping
         phrases = newPhrases
         // Gaining or losing the transcript lane resizes the filmstrip band.
-        cancelPreviewForGeometryChange()
+        cancelPreviewIfMappingChanged(from: before)
         updateTrackingAreas()
         needsDisplay = true
     }
@@ -844,6 +863,7 @@ public final class TimelineView: NSView {
     }
 
     var markerTrackHeightForTesting: Double { markerTrackHeight }
+    var markedPlayheadForTesting: Double? { markedPlayhead }
 
     private func foldHit(atX x: Double) -> Cut? {
         // A degenerate geometry (zero width, or zero OUTPUT duration —
@@ -1237,6 +1257,22 @@ public final class TimelineView: NSView {
     /// while aiming drops the preview until the pointer next moves.
     private func cancelPreviewForGeometryChange() { endHover() }
 
+    /// What a hovered point means: which band it is in, and which instant
+    /// its x maps to. A re-render that leaves both alone has not moved the
+    /// time under the pointer, so it has nothing to cancel.
+    private struct HoverMapping: Equatable {
+        let band: CGRect
+        let geometry: TimelineGeometry
+    }
+
+    private var hoverMapping: HoverMapping {
+        HoverMapping(band: filmstripBand, geometry: geometry)
+    }
+
+    private func cancelPreviewIfMappingChanged(from before: HoverMapping) {
+        if hoverMapping != before { cancelPreviewForGeometryChange() }
+    }
+
     /// Stops previewing and asks the consumer to restore the committed
     /// position. Idempotent, and silent when no preview is live.
     private func endHover() {
@@ -1366,6 +1402,7 @@ public final class TimelineView: NSView {
         activePhraseClick = false
         let output = time(for: event)
         gesture.began(atTime: output.seconds)
+        scrubPressX = point.x
         // `onScrub`'s contract is SOURCE time (see
         // `EditorTimelineState.onScrub`), so the conversion happens here,
         // at the call that needs it. Nothing to scrub to when there is no
@@ -1437,7 +1474,14 @@ public final class TimelineView: NSView {
         // already moved the playhead to the drag's start.
         selection = resolved.map { Selection(range: $0) }
         onSelect(selection)
-        if resolved == nil, let source = sourceSeconds(forOutput: output) {
+        // The press already scrubbed to where the click landed. Scrubbing
+        // again on release, at the same spot, restarts playback from the
+        // click a second time now that a click no longer pauses: an audible
+        // hitch. Only a release that moved past click jitter scrubs again.
+        let releaseX = convert(event.locationInWindow, from: nil).x
+        let moved = scrubPressX.map { abs(releaseX - $0) >= Self.minimumDragPixels } ?? true
+        scrubPressX = nil
+        if resolved == nil, moved, let source = sourceSeconds(forOutput: output) {
             // A drag that resolved to a range but could not be expressed in
             // source time falls through to the click path deliberately,
             // rather than being dropped: an unreported gesture is the silent
@@ -2036,6 +2080,17 @@ public final class TimelineView: NSView {
             let x = geometry.x(atOutput: OutputTime(seconds))
             NSBezierPath(rect: NSRect(x: x - 3, y: 1, width: 6,
                                       height: max(0, markerTrackHeight - 2))).fill()
+        }
+
+        // The actual position, while a scrub has the drawn playhead
+        // following the pointer. Same hue and full height, so it reads as "the
+        // playhead", dimmed so it reads as "not where the picture is".
+        // BEFORE the playhead, which wins where the two overlap.
+        if let markedPlayhead {
+            Palette.playhead.withAlphaComponent(0.4).setFill()
+            let markedX = geometry.x(atOutput: OutputTime(markedPlayhead))
+            NSBezierPath(rect: NSRect(x: markedX - 1, y: 0, width: 2,
+                                      height: bounds.height)).fill()
         }
 
         Palette.playhead.setFill()

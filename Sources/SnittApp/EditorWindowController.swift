@@ -429,6 +429,11 @@ final class EditorTimelineState: ObservableObject {
         let waveforms: [WaveformSamples]
         /// Source-time thumbnails; nil until decoding finishes.
         let filmstrip: FilmstripFrames?
+        /// OUTPUT time. The playhead's actual position while a filmstrip
+        /// scrub is live; nil when not scrubbing. The scrub is ephemeral and
+        /// `playhead` follows the pointer during it, so this is the only
+        /// place on screen the real position shows.
+        let markedPlayhead: Double?
     }
 
     /// The selection in OUTPUT seconds, which is what an agent passed in and
@@ -478,7 +483,8 @@ final class EditorTimelineState: ObservableObject {
                     trackStates: edl.trackStates,
                     audioLanes: audioLaneNames,
                     waveforms: waveforms,
-                    filmstrip: filmstrip)
+                    filmstrip: filmstrip,
+                    markedPlayhead: hoverReturnTarget)
     }
 
     /// `time` arrives in SOURCE time — the view's own axis — and must be
@@ -489,10 +495,10 @@ final class EditorTimelineState: ObservableObject {
     /// doing nothing. The cut is drawn on the timeline, so it is a visible
     /// thing the user aimed at; swallowing that click with no feedback is
     /// the silent no-op this project keeps finding elsewhere.
-    /// Scrubbing STOPS playback (D87). Aiming at a frame while the picture
-    /// keeps moving means the frame you aimed at is gone by the time the seek
-    /// lands and you look at it — and the playhead then walks away from where
-    /// you just put it, which reads as the click having been ignored.
+    /// Scrubbing does NOT change the transport (D87, reversed by the product
+    /// owner): a click while playing moves the playhead and playback carries
+    /// on from there; a click while paused stays paused. It used to pause,
+    /// which made "play from here" impossible without a second keystroke.
     ///
     /// Every navigation gesture shares this path deliberately — the timeline,
     /// a chapter in the panel, a word in the transcript — because they are the
@@ -504,14 +510,17 @@ final class EditorTimelineState: ObservableObject {
         // A scrub is the user saying where to be, and where they are saying
         // is the new target — not "no target", which is what this used to
         // record and what left navigation reading a stale clock.
-        pendingSeekTarget = trimmedTime
+        commitSeek(to: trimmedTime)
         // A click made WHILE hovering recommits: the position the pointer's
         // exit returns to is the one just clicked, not the one the hover
         // began from. Without this, clicking the frame you are previewing and
         // then moving the pointer away silently undoes the click.
-        if hoverReturnTarget != nil { hoverReturnTarget = trimmedTime }
-        controller.pause()
-        pendingSeekTask = Task { await controller.seek(toSeconds: trimmedTime) }
+        if hoverReturnTarget != nil {
+            objectWillChange.send()
+            hoverReturnTarget = trimmedTime
+        }
+        // A preview still queued behind the click must not land after it.
+        hoverSeekTarget = nil
         refreshPlaybackState()
     }
 
@@ -529,7 +538,19 @@ final class EditorTimelineState: ObservableObject {
     /// filmstrip in one motion and the player's clock is still reporting the
     /// position before the click, so reading it would snap back to the wrong
     /// place — the exact staleness the pending target was introduced to fix.
+    ///
+    /// Drawn by the timeline (`markedPlayhead`), but deliberately NOT
+    /// `@Published`: a geometry change ends the hover from inside
+    /// `updateNSView`, and SwiftUI forbids publishing from a view update.
+    /// Every other change rides a redraw the playhead already causes, except
+    /// a click recommitting it under a still pointer, which `onScrub`
+    /// announces itself.
     private var hoverReturnTarget: Double?
+
+    /// The exit's restore, while it is still in flight. A hover that starts
+    /// again before it lands returns to this rather than to a player clock
+    /// that has not caught up yet.
+    private var restoringTo: Double?
 
     /// The in-flight COMMITTED seek, so a test can await it.
     ///
@@ -565,37 +586,51 @@ final class EditorTimelineState: ObservableObject {
     /// Previews `time` (SOURCE seconds), or restores the committed position
     /// when `time` is nil.
     ///
-    /// **Never pauses, and never records a destination.** Both are what
-    /// separate this from `onScrub`, which does both deliberately. A hover is
-    /// the user asking what is at an instant; a scrub is the user saying to
-    /// be there. Writing `pendingSeekTarget` here would make mark-to-mark
-    /// navigation reason from wherever the pointer last rested.
+    /// **Never records a destination.** That is what separates this from
+    /// `onScrub`. A hover is the user asking what is at an instant; a scrub is
+    /// the user saying to be there. Writing `pendingSeekTarget` here would
+    /// make mark-to-mark navigation reason from wherever the pointer rested.
     ///
-    /// **Only while paused**, on the product owner's direction. Hovering
-    /// during playback does nothing at all: seeking against a running clock
-    /// shows a frame that is already gone, and pausing on hover would stop
-    /// the picture every time the pointer crossed the timeline.
+    /// **Only while paused**, on the product owner's direction: while
+    /// playing, a scrub does not change playback at all. Only a paused
+    /// timeline shows the hovered frame in the main window. Pausing mid-hover
+    /// starts previewing on the next move; playing mid-hover keeps playing
+    /// from the frame on screen and drops the restore.
     func hoverPreview(toSource time: Double?) {
-        guard !isPlaying else {
-            // Playback started while hovering (the space bar, or the
-            // transport). Abandon the preview rather than restoring: yanking
-            // the picture back now would fight the playback that just began.
-            hoverReturnTarget = nil
-            return
-        }
+        // The player's rate, not `isPlaying`: that flag is refreshed only by
+        // `togglePlayback` and the 20Hz tick, so playback an agent started a
+        // moment ago still reads as paused, and the exit would restore over it.
+        let playing = controller.player.rate != 0
         guard let time else {
+            if playing { abandonHover(); return }
             guard let target = hoverReturnTarget else { return }
             hoverReturnTarget = nil
+            restoringTo = target
             // Exact, not tolerant: this is a committed position again.
             enqueueHoverSeek(to: target, exact: true)
+            return
+        }
+        guard !playing else {
+            abandonHover()
             return
         }
         guard let trimmed = TimeRangeMapping.nearestTrimmedTime(
             toSourceTime: time, keptRanges: controller.keptRanges) else { return }
         if hoverReturnTarget == nil {
-            hoverReturnTarget = pendingSeekTarget ?? currentOutputSeconds
+            // A committed destination first: a click made while a restore was
+            // still in flight supersedes that restore.
+            hoverReturnTarget = pendingSeekTarget ?? restoringTo ?? currentOutputSeconds
+            restoringTo = nil
         }
         enqueueHoverSeek(to: trimmed, exact: false)
+    }
+
+    /// Playback is running under the pointer: drop the restore and any
+    /// queued preview, so neither yanks the picture back mid-playback.
+    ///
+    private func abandonHover() {
+        hoverReturnTarget = nil
+        hoverSeekTarget = nil
     }
 
     /// COALESCED, because `mouseMoved` arrives at pointer speed and an
@@ -622,6 +657,7 @@ final class EditorTimelineState: ObservableObject {
                 }
             }
             self?.hoverSeekTask = nil
+            self?.restoringTo = nil
         }
     }
 
@@ -649,8 +685,7 @@ final class EditorTimelineState: ObservableObject {
         // Outranks anything already asked for, and is itself a destination:
         // pressing Next straight after a rewind must step from zero, not from
         // wherever the playhead had not yet left.
-        pendingSeekTarget = 0
-        pendingSeekTask = Task { await controller.seek(toSeconds: 0) }
+        commitSeek(to: 0)
         // A rewind while watching is a replay, not a stop — so the flag is
         // refreshed rather than cleared, and stays whatever the player is.
         refreshPlaybackState()
@@ -664,6 +699,7 @@ final class EditorTimelineState: ObservableObject {
     func togglePlayback() {
         if controller.player.rate == 0 { controller.play() } else { controller.pause() }
         refreshPlaybackState()
+        if isPlaying { abandonHover() }
     }
 
     /// Raises the "Agent editing" cue and keeps it up for a few seconds past
@@ -744,6 +780,24 @@ final class EditorTimelineState: ObservableObject {
 
     /// Test-only: what the editor believes it is seeking to.
     var pendingSeekTargetForTesting: Double? { pendingSeekTarget }
+
+    /// Every committed seek: records the destination, seeks, and DISARMS the
+    /// destination once it lands, if nothing newer replaced it.
+    ///
+    /// The disarm is what navigation stopping pausing made necessary. The
+    /// target used to be dropped only when navigation found the player
+    /// sitting on it, which held while every click paused. A click during
+    /// playback leaves the clock running past it, so it stayed armed and
+    /// steered Next/Previous and the hover snap-back to where the click was,
+    /// long after. Once the seek lands the player's clock is right again.
+    private func commitSeek(to target: Double) {
+        pendingSeekTarget = target
+        pendingSeekTask = Task { [weak self] in
+            guard let self else { return }
+            await controller.seek(toSeconds: target)
+            if pendingSeekTarget == target { pendingSeekTarget = nil }
+        }
+    }
 
     private func jump(toMarkAt seconds: Double) {
         // No re-arming here any more: `seek(toOutput:)` records its own
@@ -1216,9 +1270,9 @@ final class EditorTimelineState: ObservableObject {
         // reported defect turned on: navigation reads `pendingSeekTarget` when
         // the player's clock has not caught up yet, and a nil here sent it back
         // to that stale clock.
-        pendingSeekTarget = seconds
-        controller.pause()
-        pendingSeekTask = Task { await controller.seek(toSeconds: seconds) }
+        // No pause, like `onScrub` (D87 reversed): navigation moves the
+        // playhead and leaves the transport as it was.
+        commitSeek(to: seconds)
         refreshPlaybackState()
     }
 

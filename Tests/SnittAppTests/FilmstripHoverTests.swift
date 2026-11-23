@@ -316,6 +316,51 @@ struct FilmstripHoverTests {
         #expect(previews.last == .some(nil))
     }
 
+    @Test("A re-render that changes no geometry leaves the preview live")
+    func playheadTickDoesNotCancel() {
+        // The snap-back defect. The editor re-applies its whole display state
+        // on every 20Hz playhead tick, and the hover's own seek moves the
+        // playhead, so an unconditional cancel in `update(...)` restored the
+        // pre-hover position ~50ms after every preview.
+        let r = rig()
+        var previews: [Double?] = []
+        r.view.onHoverPreview = { previews.append($0) }
+
+        r.view.mouseMoved(with: .syntheticMove(at: NSPoint(x: 400, y: r.bands.video.midY),
+                                               in: r.view))
+        #expect(previews.count == 1)
+        r.view.update(duration: duration, cuts: [r.cut], markerPoints: [r.marker],
+                      playhead: 9, audioLanes: ["microphone"])
+        r.view.update(phrases: r.view.phrases)
+        r.view.layout()
+        #expect(previews.count == 1, "a playhead-only update must not end the hover, got \(previews)")
+    }
+
+    @Test("The marked playhead the editor hands down is what the view keeps")
+    func markedPlayheadReachesTheView() {
+        let r = rig()
+        r.view.update(duration: duration, cuts: [r.cut], markerPoints: [r.marker],
+                      playhead: 9, audioLanes: ["microphone"], markedPlayhead: 3)
+        #expect(r.view.markedPlayheadForTesting == 3)
+        r.view.update(duration: duration, cuts: [r.cut], markerPoints: [r.marker],
+                      playhead: 9, audioLanes: ["microphone"])
+        #expect(r.view.markedPlayheadForTesting == nil)
+    }
+
+    @Test("A plain click scrubs once, not on both press and release")
+    func plainClickScrubsOnce() {
+        // Playback no longer pauses on a click, so a second scrub on release
+        // restarts playback from the click AGAIN: an audible hitch replaying
+        // whatever played while the button was down.
+        let r = rig()
+        var scrubs: [Double] = []
+        r.view.onScrub = { scrubs.append($0) }
+        let point = NSPoint(x: 400.0, y: r.bands.video.midY)
+        r.view.mouseDown(with: .synthetic(at: point, in: r.view))
+        r.view.mouseUp(with: .synthetic(at: point, in: r.view))
+        #expect(scrubs.count == 1, "got \(scrubs)")
+    }
+
     @Test("A drag that began in the filmstrip is not interrupted by hover")
     func dragSuppressesHover() {
         // A trim drag sends `mouseDragged`, and AppKit also delivers
